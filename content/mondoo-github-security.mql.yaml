@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-github-organization-security
     name: Mondoo GitHub Organization Security
-    version: 1.8.4
+    version: 1.8.5
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -56,7 +56,7 @@ policies:
     scoring_system: highest impact
   - uid: mondoo-github-repository-security
     name: Mondoo GitHub Repository Security
-    version: 1.8.4
+    version: 1.8.5
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -163,21 +163,19 @@ queries:
     mql: github.organization.twoFactorRequirementEnabled
     docs:
       desc: |
-        This check ensures that GitHub Organizations are configured to require all users to enable two-factor authentication (2FA), providing an additional layer of security for user accounts.
+        This check verifies that the GitHub organization requires two-factor authentication for everyone who belongs to it.
+
+        GitHub calls this Require two-factor authentication for everyone in your organization, under Organization Settings, Security, Authentication security. The check passes only when the requirement is turned on. Turning it on has immediate consequences for people who have not enrolled: members and billing managers keep their seats but cannot reach the organization's resources until they add a second factor, and outside collaborators are removed from the organization and lose access to its repositories along with their forks of its private repositories. An owner can reinstate a removed collaborator's access and settings if that person enables two-factor authentication within three months of the removal.
 
         **Why this matters**
 
-        Two-factor authentication (2FA) is a critical security measure that requires users to provide two forms of authentication when logging into their accounts. This ensures that even if a user's password is compromised, an attacker cannot gain access without the second factor. Enforcing 2FA for all users in a GitHub Organization is highly recommended for the following reasons:
-          - It significantly reduces the risk of unauthorized access to the organization's repositories and sensitive data.
-          - It protects against credential theft, phishing attacks, and other common security threats.
-          - It ensures compliance with security best practices and frameworks, such as CIS Controls and ISO 27001.
-          - It enhances the overall security posture of the organization by mitigating the impact of compromised credentials.
+        A GitHub password is one of the most widely reused credentials a developer holds, and it appears in credential dumps constantly. Without a second factor, an attacker who buys a password from a dump, phishes one with a lookalike login page, or pulls one out of a developer's browser profile gets everything that account can reach. For a typical engineer that means push access to dozens of repositories at once.
 
-        Failure to enforce 2FA can lead to:
-          - Unauthorized access to repositories, potentially exposing sensitive code or intellectual property.
-          - Compromised accounts being used to inject malicious code or manipulate repositories.
-          - Non-compliance with security standards and organizational policies.
-          - Increased risk of reputational damage and financial loss due to security breaches.
+        What follows is fast and quiet. The attacker pushes a commit that edits a build script, a lockfile, or a workflow in a repository nobody is actively watching, then waits for the next pipeline run to execute it with whatever deploy credentials that pipeline holds. Because the commit is authored under a real maintainer's identity, it survives casual review and shows up in blame as ordinary work.
+
+        Account takeover also tends to become persistent. An attacker who is inside for even a few minutes adds an SSH key, creates a personal access token, or authorizes an OAuth app. Those artifacts keep working after the victim resets the password, so the eventual password rotation closes nothing.
+
+        Two-factor enforcement covers interactive sign-in, and that is its limit. Personal access tokens, SSH deploy keys, GitHub App installation tokens, and CI service credentials authenticate without a second factor, so a leaked token bypasses this control entirely. Pair the requirement with short token lifetimes, secret scanning with push protection, and a periodic review of which tokens and deploy keys still have write access.
       audit: |
         ### Audit via Console
 
@@ -244,19 +242,19 @@ queries:
     mql: github.organization.isVerified
     docs:
       desc: |
-        This check ensures that GitHub organizations have a verified domain attached to confirm their identity and enhance trust.
+        This check verifies that the GitHub organization has proven control of at least one domain it publishes under.
+
+        Domain verification lives under Organization Settings, Security, Verified and approved domains. An owner adds a domain there, GitHub generates a DNS TXT record for it, the owner publishes that record with the domain's DNS host, and GitHub confirms it. Once confirmed, a Verified badge appears on the organization profile and the organization gains the option to restrict email notifications to addresses on its verified domains. The check passes only when at least one domain has been verified this way.
 
         **Why this matters**
 
-        Verifying your organization's domain with GitHub provides several benefits:
-          - It confirms your organization's identity, adding a "Verified" badge to the organization's profile.
-          - It ensures that email notifications sent to members of your organization originate from approved domains.
-          - It enhances the credibility of your organization, especially for public repositories and open-source projects.
+        GitHub organization names are first come, first served, and nothing stops someone from registering a name that reads like yours with a hyphen, a plural, or a swapped character. An attacker who does this gets a profile that looks legitimate to anyone who has not memorized your exact slug. They fill it with forks of your public repositories so the activity graph looks real, then publish a package, a container image, or a reusable GitHub Actions workflow under that name.
 
-        Failure to verify a domain can lead to:
-          - Reduced trust in your organization's profile and repositories.
-          - Potential misuse of your organization's name by malicious actors.
-          - Challenges in managing email notifications and ensuring they are delivered securely.
+        The payoff comes when an engineer or an automated dependency update points at the wrong organization. A workflow that references an action from the impostor organization runs attacker-controlled code inside your CI with whatever secrets that job is granted, and the reference looks correct in review because the organization name is nearly identical. The same trick works on install instructions pasted into a README or a support ticket.
+
+        A verified badge is the signal that closes this off. It is checkable at a glance and cannot be forged without control of the DNS zone.
+
+        Verification proves who owns the namespace, not that the code inside it is safe, and it does nothing about a squatted name someone already registered. Report those to GitHub for trademark takedown, and treat domain verification as one half of a pair with pinning third-party actions to a full commit SHA rather than a tag or branch.
       audit: |
         ### Audit via Console
 
@@ -328,20 +326,17 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that GitHub Organizations have base permissions configured to control the default level of access members have to the organization's repositories.
+        This check verifies that new members of the GitHub organization receive read access to organization repositories by default rather than the ability to write to them.
+
+        GitHub calls this Base permissions, under Organization Settings, Member privileges in the Access section of the sidebar. The level chosen applies automatically to every member for every repository in the organization, on top of access granted through teams or direct invitations, and a higher level granted on an individual repository overrides it. The levels run from no access at all up through Read, Write, and Admin. The check passes only on Read. The Terraform version of this check reads `default_repository_permission` on a `github_organization_settings` resource and requires the same level.
 
         **Why this matters**
 
-        By default, members of a GitHub Organization are granted Read permissions to the organization's repositories. Configuring base permissions ensures that access is appropriately restricted, adhering to the principle of least privilege:
-          - It prevents unauthorized or excessive access to sensitive repositories.
-          - It simplifies access management by providing a consistent baseline for all members.
-          - It reduces the risk of accidental or malicious changes to repositories by limiting default permissions.
+        When the base permission is `write`, every person in the organization can push to every repository, including ones they have never opened and that no one expects them to touch. The blast radius of a single compromised account is then the entire code estate. An attacker holding one stolen personal access token or one phished session picks the least-watched repository in the organization, edits a build script or a dependency manifest, and lets that repository's pipeline execute the change with its own deploy credentials. Nobody who works on the busy repositories sees any of it.
 
-        Failure to configure base permissions can lead to:
-          - Unintended exposure of sensitive repositories to all organization members.
-          - Challenges in enforcing access control policies across the organization.
-          - Non-compliance with security best practices and frameworks, such as CIS Controls and ISO 27001.
-          - Increased risk of data leakage or unauthorized repository modifications.
+        A base permission of `admin` is worse in a specific way: it hands every member the settings surface. From there an attacker can disable branch protection on a release branch, register a webhook that streams every push to a server they control, add a deploy key for durable access, or delete a repository outright and take the history with it.
+
+        Some organizations run a stricter baseline than this check asks for, setting base permissions to `none` and granting repository access only through explicit team assignments. That model is tighter than `read`, and this check would need adjusting to accept it. Keep in mind that even `read` exposes full source and full git history to every member, so repositories whose history contains credentials need those credentials rotated regardless.
       audit: |
         ### Audit via Console
 
@@ -446,20 +441,17 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that repositories define a security policy to provide instructions for reporting security vulnerabilities in the project.
+        This check verifies that a security policy is published for the repository, either as an organization-wide default or as a file in the repository itself.
+
+        There is no console toggle behind this check. The artifact is a `SECURITY.md` file, and GitHub resolves it in two places. A `SECURITY.md` in the organization's public `.github` repository serves as the default security policy for every repository the organization owns that does not carry its own, and a repository that does carry one uses its own file instead of the default. GitHub looks for the file in the `.github` folder, the root of the repository, or the `docs` folder. The check passes when the scanned repository is covered either by the organization default or by a file it publishes itself.
 
         **Why this matters**
 
-        Adding a security policy to a repository is a critical step in ensuring that vulnerabilities are reported and addressed in a timely manner. A well-defined security policy:
-          - Provides clear guidance to users and contributors on how to report security issues.
-          - Helps maintainers respond quickly to vulnerabilities, reducing the risk of exploitation.
-          - Enhances trust and transparency for users and collaborators by demonstrating a commitment to security best practices.
+        A security policy is the published answer to a question outsiders will otherwise answer badly: where do I send this bug. Without it, a researcher who has found a working authentication bypass or a remote code execution path has no private channel and improvises. The common improvisation is a public issue with reproduction steps, which turns a private finding into a working exploit visible to everyone watching the repository, and watchers include bots that mirror new issues within seconds.
 
-        Failure to define a security policy can lead to:
-          - Delayed or missed reporting of vulnerabilities, increasing the risk of exploitation.
-          - Confusion among users and contributors about how to handle security issues.
-          - Reputational damage due to perceived negligence in addressing security concerns.
-          - Non-compliance with security standards and frameworks, such as OpenSSF Scorecard and ISO 27001.
+        The other improvisations are no better. Some researchers post to a mailing list or social media on a disclosure clock you never agreed to. Some email an address they guess at, get no reply because nobody monitors it, and conclude the project does not care. Some sell the finding. In each case the first your team hears of the flaw is a public exploit or an incident in production.
+
+        Publishing the policy is process, not defense, and it neither finds nor fixes anything on its own. Back it with GitHub's private vulnerability reporting so submissions land in a real queue, and make sure the contact address in the file reaches people who are on call, since a policy pointing at a dead mailbox is worse than none at all.
       audit: |
         ### Audit via Console
 
@@ -569,20 +561,19 @@ queries:
         .all( isProtected == true )
     docs:
       desc: |
-        This check ensures that the default branch for the repository has branch protection enabled. Branch protection enforces certain workflows or requirements are met before a collaborator can push changes to a branch in a repository.
+        This check verifies that the repository's default branch has branch protection turned on.
+
+        Branch protection rules live under Repository Settings, Branches, and each rule applies to the branches matched by its branch name pattern. The check passes only when a rule matches the default branch. Protection is the switch that makes every other rule enforceable: required pull request reviews, required status checks, restrictions on who may push, and blocks on deletion all hang off a protection rule, and none of them can apply to a branch that has no rule. GitHub also offers rulesets as an alternative to branch protection rules.
 
         **Why this matters**
 
-        By default, GitHub repositories do not enforce branch protection rules, leaving the default branch vulnerable to unauthorized changes. Enabling branch protection provides several benefits:
-          - It ensures that only authorized changes are merged into the default branch, maintaining code integrity.
-          - It enforces workflows such as requiring pull request reviews, status checks, or signed commits before merging.
-          - It reduces the risk of accidental or malicious changes to critical branches.
+        The default branch is the one everyone else consumes. It is what a clone lands on, what a fork copies, what a dependency reference resolves to when someone points a package manager at the git URL, and in most pipelines it is what a deploy job builds from. Anything that reaches it reaches production and reaches every downstream copy.
 
-        Failure to enable branch protection can lead to:
-          - Unrestricted access to the default branch, increasing the risk of unauthorized changes.
-          - Non-compliance with security best practices and organizational policies.
-          - Challenges in maintaining a secure and stable codebase.
-          - Reputational damage or operational disruptions due to unverified changes being introduced.
+        With no protection rule, a write-scoped credential is enough to put code there directly. An attacker with a stolen personal access token or a hijacked maintainer session pushes a commit that adds an install-time script to a package manifest or edits a workflow file, and there is no review step and no required status check standing between that push and the next build. The workflow path is especially attractive, because a job that triggers on push to the default branch typically holds the deploy credentials the attacker actually wants.
+
+        The propagation is what makes it hard to clean up. Every fork taken after the push carries the change, and developers who pull get it without any signal that something unusual happened.
+
+        Protection being present is not the same as protection being strict. A branch can carry a rule that requires zero approving reviews, requires no status checks, and lets administrators bypass everything, and it still reports as protected here. Read this result alongside the checks that assert the individual rules, especially required reviews and blocked force pushes.
       audit: |
         ### Audit via Console
 
@@ -706,20 +697,19 @@ queries:
         .all( isProtected == true )
     docs:
       desc: |
-        This check ensures that any release branches (e.g., 'release-x.y.z') have branch protection rules enabled. Branch protection enforces certain workflows or requirements that must be met before a collaborator can push changes to a branch in a repository. It is recommended that release branches have branch protection enabled, with branch protection rules applied.
+        This check verifies that the repository's release branches carry a branch protection rule.
+
+        Branch protection rules live under Repository Settings, Branches, and each rule applies to the branches matched by its branch name pattern. Which branches count as release branches comes from a policy property that the operator sets to the naming convention the team actually uses, defaulting to names beginning with `release`, so the check evaluates the right branches rather than a convention GitHub imposes. Every branch matching that convention must be covered by a protection rule for the check to pass.
 
         **Why this matters**
 
-        By default, GitHub repositories do not enforce branch protection rules, leaving release branches vulnerable to unauthorized changes. Enabling branch protection provides several benefits:
-          - It ensures that only authorized changes are merged into release branches, maintaining code integrity.
-          - It enforces workflows such as requiring pull request reviews, status checks, or signed commits before merging.
-          - It reduces the risk of accidental or malicious changes to critical branches.
+        A release branch is the code customers are running. It is cut from the default branch and then diverges, and from that point it lives on a different clock: hotfixes and backports land on it directly, long after mainline development has moved several versions ahead. That combination makes it both important and quiet. Far fewer people watch a branch called `release-4.2` than watch `main`, and reviewers who do look at it are often doing so under incident pressure.
 
-        Failure to enable branch protection on release branches can lead to:
-          - Unrestricted access to release branches, increasing the risk of unauthorized changes.
-          - Non-compliance with security best practices and organizational policies.
-          - Challenges in maintaining a secure and stable codebase.
-          - Reputational damage or operational disruptions due to unverified changes being introduced.
+        An attacker who wants their code running in a customer environment without going through mainline review targets exactly this. An unprotected release branch accepts a direct push from any write-scoped credential, and the release automation watching that branch builds the result, signs it, and ships it. There is no required review to satisfy and no status check to defeat, so the path from stolen token to signed artifact in a customer's environment is a single push.
+
+        Branches under long-term support make this worse, because they may be the only branch still receiving changes for a widely deployed version that will not be upgraded soon.
+
+        Coverage here depends entirely on the naming pattern. A team that names its branches `v2.1.x` or `stable` will match nothing, and a check with nothing to evaluate reports success, so confirm the property matches reality before trusting a pass. Note also that protection applies to branches and not to tags, which can be deleted and repointed at a different commit independently of any branch rule.
       audit: |
         ### Audit via Console
 
@@ -841,22 +831,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the default branch does not allow force pushes. Branch protection enforces certain workflows or requirements that must be met before a collaborator can push changes to a branch in a repository. It is highly recommended to disable force pushes to the default repository branch.
+        This check verifies that the repository's default branch is protected and that force pushes to it are refused.
+
+        Two things must hold. The default branch must be covered by a branch protection rule at all, under Repository Settings, Branches, and on that rule the Allow force pushes setting must be off. A default branch with no protection rule fails on the first count, since nothing is in place to refuse a force push. The Terraform version of this check reads `allows_force_pushes` on a `github_branch_protection` resource and requires that it not be true.
 
         **Why this matters**
 
-        By default, GitHub blocks force pushes on all protected branches. However, when force pushes are enabled, they introduce significant risks:
-          - Force pushes can overwrite commits that other collaborators have based their work on, leading to merge conflicts or corrupted pull requests.
-          - They allow changes to bypass standard workflows, such as requiring pull request reviews or status checks.
-          - They increase the likelihood of accidental or malicious changes to critical branches.
+        A normal push adds to history. A force push replaces it, and that difference is what an attacker is after. The cleanest abuse is post-approval substitution: a pull request is reviewed and approved, and then the branch is rewritten so the commit that lands carries the reviewed message and subject but different content. The approval sits on the record, no new review event fires, and the diff a human already read no longer describes what shipped.
 
-        If force pushes are allowed on the default branch, it can lead to:
-          - Disruption of collaborative workflows and potential data loss.
-          - Non-compliance with security best practices and organizational policies.
-          - Challenges in maintaining a secure and stable codebase.
-          - Reputational damage or operational disruptions due to unverified changes being introduced.
+        Rewriting also erases. Someone who pushed a malicious commit, waited for a workflow to run it against the repository secrets, and got what they came for can force push the branch back to its prior state. Afterward `git log` in every fresh clone shows nothing unusual. Traces survive in the server-side reflog and the organization audit log, but only for a team that knows to look there before retention expires.
 
-        Enabling force pushes does not override other branch protection rules. For example, if a branch requires a linear commit history, you cannot force push merge commits to that branch.
+        There is collateral damage even when the intent is benign. A rewrite invalidates every existing clone, and developers who unstick themselves with a hard reset destroy their own local evidence of what the branch contained.
+
+        This setting governs the force push path for one branch and nothing more. It does not restrict who may push normally, it does not extend to other branches or to tags, and unless the rule is configured to apply to administrators as well, an account with admin rights on the repository can still bypass it.
       audit: |
         ### Audit via Console
 
@@ -990,22 +977,19 @@ queries:
         .all( protectionRules.allowForcePushesEnabled == false )
     docs:
       desc: |
-        This check ensures that the release branch does not allow force pushes. Branch protection enforces certain workflows or requirements that must be met before a collaborator can push changes to a branch in a repository. It is recommended to disable force pushes to any release branches.
+        This check verifies that the repository's release branches are protected and that history on them cannot be rewritten by a force push.
+
+        This applies the same Allow force pushes setting to every branch whose name matches the release branch naming convention the operator configures as a policy property. Each matching branch must be covered by a branch protection rule under Repository Settings, Branches, and force pushes must be off on that rule. Both conditions must hold for every matching branch, since a branch with no protection rule has nothing in place to refuse a rewrite of its history.
 
         **Why this matters**
 
-        By default, GitHub blocks force pushes on all protected branches. However, enabling force pushes introduces significant risks:
-          - Force pushes can overwrite commits that other collaborators have based their work on, leading to merge conflicts or corrupted pull requests.
-          - They allow changes to bypass standard workflows, such as requiring pull request reviews or status checks.
-          - They increase the likelihood of accidental or malicious changes to critical branches.
+        The history on a release branch is the authoritative record of what shipped. It is what an incident responder reaches for when the question is which code was running in the version a customer deployed, and that question gets answered by diffing the branch against the last known-good tag. A force push changes the answer retroactively, so the diff comes back clean and the responder concludes nothing changed when something did.
 
-        If force pushes are allowed on release branches, it can lead to:
-          - Disruption of collaborative workflows and potential data loss.
-          - Non-compliance with security best practices and organizational policies.
-          - Challenges in maintaining a secure and stable codebase.
-          - Reputational damage or operational disruptions due to unverified changes being introduced.
+        That is the outcome an attacker wants from a release branch specifically. Land a change, let the release pipeline build and publish from it, then rewrite the branch to remove the commit. The customer-facing artifact is out the door, and the commit that produced it is no longer reachable from any branch. Reconstructing what happened then takes the server-side reflog or a build log that captured the original SHA, and neither is where anyone looks first.
 
-        Enabling force pushes does not override other branch protection rules. For example, if a branch requires a linear commit history, you cannot force push merge commits to that branch.
+        Rewriting also desynchronizes the artifact registry. Automation keyed to the branch head will rebuild and republish after a rewrite, leaving a published version whose contents match no commit anyone can find.
+
+        This check does not speak to the default branch, which needs its own force push rule. Its coverage is also bounded by the naming pattern in the property, so branches the team names differently are simply not evaluated. Deleting a release branch and recreating it at a different commit produces much the same rewrite, so block branch deletion on the same rule.
       audit: |
         ### Audit via Console
 
@@ -1116,20 +1100,17 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that a branch protection rule is configured to require all comments on the pull request to be resolved before it can be merged to a protected branch. Branch protection enforces certain workflows or requirements that must be met before a collaborator can push changes to a branch in a repository.
+        This check verifies that a pull request cannot be merged into the default branch while review comments on it are still unresolved.
+
+        Require conversation resolution before merging is an option on the branch protection rule that covers the default branch. Two things must hold for the check to pass: the default branch has a protection rule at all, and that option is turned on. The Terraform version of this check reads `require_conversation_resolution` on a `github_branch_protection` resource and requires it to be `true`.
 
         **Why this matters**
 
-        By default, GitHub repositories do not enforce conversation resolution before merging pull requests. Enabling this requirement provides several benefits:
-          - It ensures that all comments, including those identifying potential issues or improvements, are addressed before merging.
-          - It promotes better collaboration and code quality by resolving discussions prior to integration.
-          - It reduces the risk of unresolved issues being introduced into the codebase.
+        Review comments are where a reviewer records the thing that worried them. A reviewer notices that a pull request adds a `curl ... | bash` step to a release workflow, or bumps a third-party GitHub Action from a pinned SHA to a floating tag, or quietly widens the `permissions:` block on a job that already holds a deploy credential, and writes a comment asking why. Without required conversation resolution, that comment is advisory text. Anyone with write access can merge over the top of it, and the reviewer's objection ends up in a closed thread that nobody reads again.
 
-        Failure to require conversation resolution can lead to:
-          - Unaddressed feedback or unresolved issues being merged into the codebase.
-          - Decreased code quality and potential technical debt.
-          - Challenges in maintaining a secure and stable codebase.
-          - Non-compliance with organizational policies or best practices for code review.
+        An attacker working from a compromised maintainer account depends on exactly that gap. The malicious change does not need to survive scrutiny, only to outrun it. A single approval from a reviewer skimming a large diff, followed by an immediate merge while an unanswered question sits on the relevant line, is enough to put attacker-controlled code on the branch that builds and deploys. Once merged, the change is in the release history and the audit trail shows a normal approved pull request.
+
+        The setting forces resolution, not agreement. A pull request author with write access can mark their own threads resolved and merge, so this is a speed bump against carelessness rather than a control against a determined insider. Pair it with required reviews from code owners and with a protected branch that admins cannot bypass.
       audit: |
         ### Audit via Console
 
@@ -1263,20 +1244,17 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that all required CI tests pass before collaborators can merge changes to a protected branch. Branch protection enforces certain workflows or requirements that must be met before a collaborator can push changes to a branch in a repository.
+        This check verifies that the default branch requires at least one status check to pass before a pull request can be merged into it.
+
+        On the branch protection rule for the default branch, GitHub calls this Require status checks to pass before merging. Turning it on reveals a search field beneath it where an administrator picks the individual checks that become required. The check passes only when the default branch is protected and that required list holds at least one entry. It asserts nothing about which checks are named or what they do. The Terraform version of this check asserts that a `required_status_checks` block is present on a `github_branch_protection` resource.
 
         **Why this matters**
 
-        By default, GitHub repositories do not enforce passing status checks before merging pull requests. Enabling this requirement provides several benefits:
-          - It ensures that all CI tests, including those identifying potential issues or regressions, are successfully completed before merging.
-          - It promotes better code quality and stability by validating changes prior to integration.
-          - It reduces the risk of introducing bugs or vulnerabilities into the codebase.
+        Automated checks are frequently the only reviewer that actually reads every line of a large diff. Secret scanning, dependency review, static analysis, and the test suite run on the merge result and report back as commit statuses. If nothing is required, those checks still run and still turn red, and the merge button stays green next to them. A maintainer merging twenty pull requests in an afternoon will not stop for a failing job that does not block anything.
 
-        Failure to require passing status checks can lead to:
-          - Unverified or unstable code being merged into the codebase.
-          - Decreased code quality and potential technical debt.
-          - Challenges in maintaining a secure and stable codebase.
-          - Non-compliance with organizational policies or best practices for code review.
+        That is directly exploitable. An attacker who lands a pull request through a compromised contributor account, or who has stolen a personal access token with `repo` scope, wants the change on the default branch before a human correlates the red check with the diff. A dependency swapped to a typosquatted package, an added postinstall script, or a workflow edit that exfiltrates `GITHUB_TOKEN` all produce loud automated failures and no enforcement.
+
+        Because the condition is only that the list is non-empty, a repository can satisfy it with one trivial check while the build and the security scans stay optional. Review which contexts are actually listed, and consider also requiring branches to be up to date before merging so that checks are evaluated against the current tip rather than a stale base.
       audit: |
         ### Audit via Console
 
@@ -1416,20 +1394,17 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that a branch protection rule exists to require signed commits on the default branch. Signing commits and tags locally gives other people confidence about the origin of changes made to a project. If a commit or tag has a GPG, SSH, or S/MIME signature that is cryptographically verifiable, GitHub marks the commit or tag as "Verified" or "Partially verified."
+        This check verifies that every commit landing on the default branch carries a verified cryptographic signature.
+
+        Require signed commits is an option on the branch protection rule for the default branch, and the check passes only when the default branch is protected and that option is turned on. GitHub accepts GPG, SSH, and S/MIME signatures, and marks a commit Verified when the signature checks out against a key registered to the account. The Terraform version of this check reads `require_signed_commits` on a `github_branch_protection` resource and requires it to be `true`.
 
         **Why this matters**
 
-        By default, GitHub repositories do not enforce signed commits on the default branch. Enabling this requirement provides several benefits:
-          - It ensures that all commits are verified, reducing the risk of unauthorized or malicious changes.
-          - It enhances trust and accountability by confirming the identity of commit authors.
-          - It promotes better security practices and compliance with organizational policies.
+        The author and committer fields in a git commit are ordinary text supplied by whoever runs `git commit`. Nothing in git verifies them. Anyone with push access can set `user.name` and `user.email` to a trusted maintainer's values, and the resulting commit will display that person's name and avatar in the GitHub history. An attacker with a stolen personal access token or a compromised CI credential uses this to make a backdoor look like routine work from someone the team trusts, which delays discovery and misdirects the eventual investigation.
 
-        Failure to require signed commits can lead to:
-          - Unverified or unauthorized changes being introduced into the codebase.
-          - Decreased trust in the integrity of the repository.
-          - Challenges in maintaining a secure and stable codebase.
-          - Non-compliance with security best practices or organizational requirements.
+        Signature enforcement removes that option. To land a commit attributed to a maintainer, the attacker now needs that maintainer's signing key, not just some write credential. It also gives incident response a reliable pivot: after a token compromise, the set of commits that carry a valid signature and the set that would have been rejected are separable, so the blast radius can be bounded instead of guessed.
+
+        Signing proves origin, not intent or quality, and a signed commit from a compromised workstation is still malicious. Note also that commits created through the GitHub web editor and through the API are signed automatically with GitHub's own key, so a stolen token used against the API produces commits that satisfy this rule. Keep required reviews in place alongside it.
       audit: |
         ### Audit via Console
 
@@ -1557,20 +1532,17 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that branch protection rules cannot be bypassed. By default, the restrictions of a branch protection rule do not apply to people with admin permissions to the repository or custom roles with the "bypass branch protections" permission in a repository.
+        This check verifies that branch protection on the default branch applies to administrators as well as to ordinary contributors.
+
+        GitHub calls this Do not allow bypassing the above settings, the last option on the branch protection rule for the default branch, and the check passes only when the default branch is protected and that option is turned on. By default the restrictions of a branch protection rule do not apply to people with admin permission on the repository, nor to anyone holding a custom role with the bypass branch protections permission, so those accounts can push directly and merge without satisfying the rules. The Terraform version of this check reads `enforce_admins` on a `github_branch_protection` resource and requires it to be `true`.
 
         **Why this matters**
 
-        Allowing branch protection rules to be bypassed introduces significant risks:
-          - It permits administrators or users with specific roles to make changes that bypass established workflows, such as requiring pull request reviews or status checks.
-          - It undermines the integrity of the branch protection rules, potentially leading to unauthorized or unverified changes.
-          - It increases the likelihood of accidental or malicious changes to critical branches.
+        Every control configured on the branch, required reviews, required status checks, signed commits, linear history, is conditional until admins are included. The rules describe what happens to contributors; the exemption describes what happens to the accounts an attacker most wants.
 
-        Failure to enforce branch protection rules for all users can lead to:
-          - Disruption of collaborative workflows and potential data loss.
-          - Non-compliance with security best practices and organizational policies.
-          - Challenges in maintaining a secure and stable codebase.
-          - Reputational damage or operational disruptions due to unverified changes being introduced.
+        Admin accounts are the highest value target in a repository for exactly this reason. A phished maintainer session or a stolen personal access token belonging to an owner turns into a direct push to the default branch: no pull request, no review, no test run, no reviewer notification. The change is live in the branch that CI builds and deploys from, and the first visible artifact is a deployment rather than a review request. The same path lets an attacker force-push to rewrite recent history and hide the insertion, or amend a release commit after it has been approved.
+
+        Turning enforcement on also removes the routine habit of merging past a red check during an incident, which is where accidental regressions tend to enter. Plan the break-glass path in advance, since genuine emergencies now require an audited change to the protection settings. Note also that repository rulesets are a separate mechanism with their own bypass actor list, which this check does not read.
       audit: |
         ### Audit via Console
 
@@ -1689,20 +1661,17 @@ queries:
       github.repository.securityFile.exists
     docs:
       desc: |
-        This check ensures that the repository defines a security policy to provide instructions for reporting security vulnerabilities in the project.
+        This check verifies that the repository publishes a security policy telling people how to report a vulnerability.
+
+        No console toggle governs this one. GitHub looks for a `SECURITY.md` file in the repository root, in the `docs` folder, or in the `.github` folder, and surfaces whichever one it finds under the repository's Security tab, where anyone who wants to report a vulnerability can read it. The check passes when such a file exists, and it tests only for presence, not for what the file says.
 
         **Why this matters**
 
-        Adding a security policy to a repository is a critical step in ensuring that vulnerabilities are reported and addressed in a timely manner. A well-defined security policy:
-          - Provides clear guidance to users and contributors on how to report security issues.
-          - Helps maintainers respond quickly to vulnerabilities, reducing the risk of exploitation.
-          - Enhances trust and transparency for users and collaborators by demonstrating a commitment to security best practices.
+        Without a stated reporting path, a finder has to guess. The common guesses are all bad. Some open a public issue describing the flaw in detail, which turns a private report into a public exploit note and starts a race between the maintainers and everyone scraping GitHub issues. Some email an address pulled from a commit log that belongs to a contributor who left three years ago, and the report is never read. Some post to social media out of frustration after weeks of silence. Some sell it. Each of those outcomes is caused by the absence of a documented channel, not by the reporter acting in bad faith.
 
-        Failure to define a security policy can lead to:
-          - Delayed or missed reporting of vulnerabilities, increasing the risk of exploitation.
-          - Confusion among users and contributors about how to handle security issues.
-          - Reputational damage due to perceived negligence in addressing security concerns.
-          - Non-compliance with security standards and frameworks, such as OpenSSF Scorecard and ISO 27001.
+        The delay itself is the damage. The window between a researcher finding a bug and a maintainer learning about it is the window in which the same bug is available to anyone who repeats the research, and for a widely consumed library that exposure extends to every downstream consumer. A policy file also lets you set expectations that keep a report private while a fix is prepared: where to send it, what response time to expect, and which versions are still supported.
+
+        A file that exists but names no contact address or no supported versions passes this check and helps nobody, so review the content. An organization-wide policy stored in the organization's `.github` repository is surfaced in the user interface for repositories that lack their own, but this check inspects the repository itself.
       audit: |
         ### Audit via Console
 
@@ -1794,20 +1763,17 @@ queries:
         .all( files.where( type != "dir").all( isBinary == false) )
     docs:
       desc: |
-        This check ensures that the project does not include generated executable (binary) artifacts in the source repository. Binary artifacts pose significant security challenges because they cannot be reviewed, and their inclusion in the repository can lead to unsafe practices.
+        This check verifies that the repository does not carry committed binary files in its top levels.
+
+        Nothing in the GitHub interface configures this. The instrument is the repository's own committed files, the ones a reader sees when browsing the repository. The check looks at the files sitting in the repository root and the files one directory level below it, and requires that none of them is a binary. Anything nested deeper than one directory is never inspected.
 
         **Why this matters**
 
-        Including binary artifacts in a source repository introduces several risks:
-          - Binary artifacts cannot be audited or reviewed for malicious content, increasing the risk of security vulnerabilities.
-          - Users may directly use these executables without verifying their integrity, leading to unsafe behaviors.
-          - It undermines the principle of building software from source, which ensures transparency and reproducibility.
+        A binary in source control is code that nobody reviews. Pull request review reads diffs, and the diff for a compiled artifact is an unreadable blob, so an approving reviewer is approving the commit message. That makes a committed executable, library, or installer the cheapest place in the repository to hide a backdoor. An attacker with write access, whether through a compromised maintainer account or a stolen personal access token, replaces the checked-in binary with a rebuilt copy containing extra behavior, writes a plausible message such as a version bump, and the change passes human review by construction.
 
-        Failure to avoid binary artifacts can lead to:
-          - Unverified or malicious code being distributed to users.
-          - Challenges in maintaining a secure and transparent development process.
-          - Non-compliance with security best practices and organizational policies.
-          - Reputational damage due to potential exploitation of unreviewed binaries.
+        The consequence extends past the repository. Committed binaries are frequently the ones executed by build scripts, developer setup steps, and CI jobs, so the modified artifact runs on maintainer workstations and on runners holding deploy credentials. Because it was built somewhere off the record, there is no source, no build log, and no way to reproduce it, so after an incident you cannot prove what the shipped bytes actually did. Any vulnerable dependency compiled into it is invisible to dependency scanning as well.
+
+        Some repositories legitimately contain binary data: images used in documentation, fonts, compiled test fixtures, and sample media. Those will fail here, and the answer is to move them out of the reviewed source tree, to Git LFS or to a release asset, or to accept the exception deliberately. Because the scan stops one directory below the root, a binary buried deeper still needs review discipline.
       audit: |
         ### Audit via Console
 
@@ -1886,20 +1852,17 @@ queries:
         .all( files.one( name.in(["dependabot.yaml", "dependabot.yml"]) ) )
     docs:
       desc: |
-        This check ensures the existence of a GitHub Actions workflow to run Dependabot checks on the repository by looking for the existence of a `.github/dependabot.yml` or `.github/dependabot.yaml` configuration file.
+        This check verifies that the repository is configured for automated dependency update pull requests.
+
+        The artifact here is a configuration file a developer writes and commits, at `.github/dependabot.yml` or `.github/dependabot.yaml`. It declares which package ecosystems and directories Dependabot should watch and how often it should look for newer versions. The check passes only when exactly one of the two files is present. Having neither fails the check, and having both fails it as well.
 
         **Why this matters**
 
-        Dependabot creates pull requests to keep your dependencies up to date, and you can use GitHub Actions to perform automated tasks when these pull requests are created. Enabling this workflow provides several benefits:
-          - It ensures that dependencies are regularly updated, reducing the risk of vulnerabilities in outdated packages.
-          - It automates dependency management, saving time and effort for developers.
-          - It enhances the security and stability of the codebase by keeping dependencies current.
+        Dependency risk is a function of time. A vulnerability disclosed in a transitive package is public the moment the advisory is published, and exploitation of widely used libraries typically begins within days while affected repositories are still on the old version. When updates depend on someone remembering to run an upgrade, the gap is measured in months, and the version that finally ships is several majors ahead, which makes the upgrade risky enough to defer again.
 
-        Failure to configure a Dependabot workflow can lead to:
-          - Outdated dependencies with known vulnerabilities being used in the project.
-          - Manual and error-prone dependency updates, increasing the risk of issues.
-          - Challenges in maintaining a secure and stable codebase.
-          - Non-compliance with security best practices and organizational policies.
+        The exposure is not limited to production. GitHub Actions dependencies are covered too, and a stale action reference is a live supply chain path: a third-party action pinned to a mutable tag can be repointed by whoever controls that repository, and the replacement runs inside your workflow with whatever `GITHUB_TOKEN` permissions and repository secrets that job holds. Automated update pull requests keep those references moving and put each bump in front of a reviewer with a changelog attached, which is when a suspicious maintainer change is most likely to be noticed.
+
+        This file governs version updates only. Dependabot alerts and automated security fixes are separate repository settings, and enabling them is what tells you an advisory affects code you already shipped. Configure both, and be aware that an update pull request still needs someone to review and merge it.
       audit: |
         ### Audit via Console
 
@@ -2008,21 +1971,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that organization members are not allowed to fork private repositories to their personal GitHub accounts.
+        This check verifies that organization members cannot fork the organization's private and internal repositories.
+
+        GitHub calls this Allow forking of private and internal repositories, under Organization Settings, Member privileges, in the Repository forking section. The check passes only when forking of private and internal repositories is not allowed for the organization. The Terraform version of this check reads `members_can_fork_private_repositories` on a `github_organization_settings` resource and requires it to be `false`.
 
         **Why this matters**
 
-        When members fork a private repository, a copy of the code is created under their personal account, outside the organization's direct control. This introduces significant security risks:
-          - Forked copies persist even if the member is later removed from the organization, creating uncontrolled copies of proprietary code.
-          - Secrets, API keys, or sensitive configuration embedded in the repository history are duplicated into the fork.
-          - The organization loses visibility into who has access to the forked code and what changes are made to it.
-          - Forks may not inherit the same branch protection rules, CI/CD pipelines, or security scanning configurations as the original repository.
+        A fork is a full copy of the repository that lives under a personal account, outside the organization's administrative reach. Organization owners cannot audit its collaborators, cannot apply branch protection to it, cannot see its access log, and cannot delete it. Every secret ever committed to that history, every internal hostname, every deploy script, and every piece of proprietary logic is now sitting in a namespace controlled by an individual.
 
-        Failure to restrict private repository forking can lead to:
-          - Data leakage of proprietary code, trade secrets, or intellectual property.
-          - Unauthorized distribution of sensitive code to third parties.
-          - Non-compliance with data protection regulations and organizational security policies.
-          - Increased attack surface if forked repositories contain exposed credentials.
+        That copy outlives the relationship. When the member leaves and their organization membership is revoked, the personal fork is untouched, so offboarding removes access to the original while leaving a complete snapshot in the departing person's hands. If that account is later phished, or its personal access token leaks in a `.npmrc` or a CI log, the attacker gets the source without ever touching the organization. Worse, the fork owner can change the visibility of their copy, and a private repository turned public is scraped by credential harvesting bots within seconds, at which point any committed key is in use before the disclosure email is written.
+
+        Forks also become an exfiltration route that looks like ordinary work: pushing to a personal remote rarely triggers the alerting that a large clone from a corporate device might.
+
+        Disabling forking does not stop someone with read access from cloning the repository and pushing it elsewhere manually, so treat this as removing the easy path rather than closing the channel. Pair it with secret scanning across the organization and with a review of which repositories genuinely need broad member access.
       audit: |
         ### Audit via Console
 
@@ -2129,21 +2090,17 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that secret scanning is automatically enabled for all new repositories created in the organization.
+        This check verifies that repositories created in the organization have secret scanning turned on from the moment they exist.
+
+        Secret scanning is one of the enablement settings an owner turns on inside a security configuration, which is built under Organization Settings by opening the Security section of the sidebar, then Advanced Security, then Configurations. The check passes only when scanning is on in the configuration GitHub applies by default to newly created repositories. That default takes effect at creation time, so turning it on does not retroactively start scanning repositories that already exist. It protects the next repository somebody creates, not the ones already in the organization. The Terraform version of this check reads `secret_scanning_enabled_for_new_repositories` on a `github_organization_settings` resource and requires the same value.
 
         **Why this matters**
 
-        Secret scanning detects accidentally committed secrets such as API keys, tokens, passwords, and other credentials in repository content. Enabling it by default for new repositories ensures consistent protection:
-          - It prevents newly created repositories from having a gap in security coverage before manual configuration.
-          - It detects exposed credentials early, reducing the window of opportunity for attackers to exploit them.
-          - It helps maintain compliance with security frameworks that require monitoring for credential exposure.
-          - It protects against supply chain attacks that leverage leaked authentication tokens.
+        Credentials reach git repositories constantly, and almost never on purpose. A developer hard-codes an access key to get a script working, commits it while debugging, then deletes the line in a later commit and considers the problem handled. The key is still in the history and still reachable by commit SHA, and anyone who can read the repository can read it.
 
-        Failure to enable secret scanning for new repositories can lead to:
-          - Exposed credentials going undetected in new repositories until manual configuration occurs.
-          - Compromised API keys or tokens being used for unauthorized access to services and infrastructure.
-          - Data breaches resulting from leaked database credentials or cloud provider keys.
-          - Non-compliance with security standards such as SOC 2, ISO 27001, and CIS Controls.
+        On public code the window to exploit that is measured in seconds. Bots watch the public GitHub events feed, clone new pushes, and test any cloud key they find almost immediately, so the account is being enumerated before a human notices the mistake. Publishing tokens are worse still. An npm or PyPI token pulled out of a commit lets an attacker push a backdoored version of a package that thousands of builds install without review, which turns one careless commit into a compromise of every downstream consumer.
+
+        Scanning is detection, not prevention: the secret has already been pushed by the time an alert appears. Turn it on explicitly for repositories that predate this setting, pair it with push protection so the commit is stopped at the boundary, and treat every alert as a credential to rotate rather than a line to delete from history.
       audit: |
         ### Audit via Console
 
@@ -2253,21 +2210,17 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that secret scanning push protection is automatically enabled for all new repositories created in the organization.
+        This check verifies that repositories created in the organization reject pushes that contain a recognized credential.
+
+        Push protection is the enforcing half of secret scanning. It rejects the push itself when a recognized credential pattern appears in the incoming commits, rather than raising an alert after the commit has already landed on GitHub. The Configurations page, reached through Advanced Security in the Security section of the Organization Settings sidebar, lists Push protection as its own setting alongside secret scanning, and the check passes only when the configuration that applies by default to newly created repositories has it turned on. The Terraform version of this check reads `secret_scanning_push_protection_enabled_for_new_repositories` on a `github_organization_settings` resource and requires the same value.
 
         **Why this matters**
 
-        Push protection goes beyond standard secret scanning by blocking commits that contain secrets *before* they are pushed to the repository. This is a critical preventive control:
-          - It prevents secrets from ever entering the repository history, eliminating the need for costly secret rotation and history rewriting.
-          - It provides immediate feedback to developers at push time, creating a security-aware development workflow.
-          - It is significantly more effective than post-commit detection, as secrets in Git history are difficult to fully remove even after deletion.
-          - It reduces incident response burden by preventing exposure rather than detecting it after the fact.
+        The difference between blocking and alerting is the difference between an inconvenience and an incident. Once a commit carrying a live key reaches the remote, it is on GitHub's servers, it is in the events feed, and it is in every fork, clone, and CI cache that pulled afterward. Rewriting history does not un-leak it, and on a public repository harvesting bots will have tested the key long before the rewrite is pushed.
 
-        Failure to enable push protection for new repositories can lead to:
-          - Secrets being committed and pushed before detection, requiring emergency rotation and remediation.
-          - Persistent exposure of credentials in Git history even after the offending commit is removed from the default branch.
-          - Increased risk of automated credential harvesting by attackers scanning public repositories.
-          - Compliance violations for organizations required to prevent credential exposure proactively.
+        What follows is expensive. A leaked cloud key gets used to enumerate storage and IAM within seconds of the push. A leaked npm or PyPI publishing token gets used to ship a backdoored release of a package under the organization's own name, and every consumer that installs it inherits the attacker's code. Even when nothing is exploited, the credential has to be treated as burned, which means rotating it across every service, pipeline, and runtime that depends on it while builds fail in the meantime.
+
+        Push protection only stops patterns it recognizes, which covers partner tokens and any custom patterns the organization defines. A homegrown token format, a database password in a config file, or a private key with no distinguishing prefix passes through untouched, so keep secrets out of the repository by design rather than relying on the block.
       audit: |
         ### Audit via Console
 
@@ -2377,21 +2330,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Dependabot alerts are automatically enabled for all new repositories created in the organization.
+        This check verifies that repositories created in the organization are told when a dependency they use has a known vulnerability.
+
+        Dependabot alerts tell a repository when a dependency it declares matches a published advisory. Organization owners manage the setting from Organization Settings, on the Configurations page that sits under Advanced Security in the Security section of the sidebar, grouped with the other dependency scanning settings. The check passes only when Dependabot alerts are on in the configuration GitHub applies by default to newly created repositories. That is a creation-time default only, and it leaves repositories that already exist untouched. The Terraform version of this check reads `dependabot_alerts_enabled_for_new_repositories` on a `github_organization_settings` resource and requires the same value.
 
         **Why this matters**
 
-        Dependabot alerts notify repository maintainers when dependencies contain known security vulnerabilities. Enabling this by default for new repositories ensures consistent vulnerability monitoring:
-          - It ensures new repositories are immediately monitored for known vulnerabilities in their dependency graph.
-          - It prevents gaps in security coverage that occur when new repositories are created without manual configuration.
-          - It helps organizations maintain a consistent security baseline across all repositories.
-          - It supports timely identification and remediation of vulnerable dependencies before they can be exploited.
+        Most of the code shipped in a modern application was written by somebody else. A manifest with thirty direct dependencies typically resolves to several hundred packages, and nobody on the team chose or reviewed the transitive ones. When a vulnerability is published in any of them, the repository is affected whether or not anyone is watching.
 
-        Failure to enable Dependabot alerts for new repositories can lead to:
-          - Vulnerable dependencies going undetected in newly created repositories.
-          - Exploitation of known vulnerabilities in third-party packages.
-          - Inconsistent security posture across the organization's repository portfolio.
-          - Non-compliance with security standards that require vulnerability monitoring.
+        Attackers watch the advisories, and they read the lockfiles. On a public repository the dependency manifest is right there, so matching a freshly published advisory against every repository that pins the affected version is a scripted exercise. The result is a race between an attacker who already knows the version you run and a team that has not been told there is anything to fix.
+
+        Without alerts there is no signal at all. Vulnerable versions stay pinned through release after release, and the first indication of a problem arrives from an incident rather than from an advisory. The gap is routinely months, because dependency versions only get revisited when something else forces the issue.
+
+        Alerts notify. They do not fix anything. Somebody has to own triage, decide whether the vulnerable path is actually reachable, and land the upgrade, so pair this with Dependabot security updates and a named owner for the alert queue or the notifications will simply accumulate unread.
       audit: |
         ### Audit via Console
 
@@ -2501,21 +2452,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Dependabot security updates are automatically enabled for all new repositories created in the organization.
+        This check verifies that repositories created in the organization automatically get pull requests that upgrade vulnerable dependencies.
+
+        Security updates go a step past alerting: GitHub opens pull requests that raise a vulnerable dependency to the minimum patched version. GitHub labels the setting Security updates and places it beside Dependabot alerts and Dependency graph in the dependency scanning group of a security configuration, under Advanced Security, Configurations in the Security section of the Organization Settings sidebar. Both of those neighbors have to be on as well before security updates can do anything. The check passes only when security updates are on in the configuration that applies by default to newly created repositories. The Terraform version of this check reads `dependabot_security_updates_enabled_for_new_repositories` on a `github_organization_settings` resource and requires the same value.
 
         **Why this matters**
 
-        Dependabot security updates go beyond alerting by automatically creating pull requests to update vulnerable dependencies to the minimum patched version. Enabling this by default provides proactive remediation:
-          - It reduces the mean time to remediate (MTTR) for known vulnerabilities by automating the fix process.
-          - It minimizes the manual effort required from developers to identify and apply security patches.
-          - It ensures that security fixes are applied consistently across all repositories without relying on individual developer action.
-          - It creates an auditable trail of security updates through pull request history.
+        Knowing about a vulnerable dependency and shipping the fix are separated by work that nobody has scheduled. Someone has to find which version fixes it, edit the manifest, regenerate the lockfile, run the build, and get a review. That is an hour of unplanned effort competing with feature work, so it slips, and it slips again, and the vulnerable version stays pinned across several releases.
 
-        Failure to enable Dependabot security updates for new repositories can lead to:
-          - Known vulnerabilities remaining unpatched for extended periods due to manual remediation processes.
-          - Inconsistent patching practices across the organization's repositories.
-          - Increased window of exposure to known exploits in third-party dependencies.
-          - Higher operational burden on security teams to track and enforce vulnerability remediation.
+        Attackers do not need that hour. Public advisories come with the affected version ranges, and often with working exploit code within days. The exposure window is not the time until a patch exists, it is the time until the patch is deployed, and manual dependency bumps make that window long by default.
+
+        The compounding case is the compromised package. When a maintainer account is taken over and a backdoored version is published, the advisory and the fixed release land together, and every hour a repository stays on the bad version is an hour the attacker's code is in the build. Automatic pull requests turn a research task into a review of a diff that is already prepared and already tested by CI.
+
+        The pull request still has to be merged, so this only shortens the gap if someone reviews the queue. It also cannot help where the fix requires a major version bump with breaking changes, which is exactly the case most likely to sit open.
       audit: |
         ### Audit via Console
 
@@ -2614,21 +2563,19 @@ queries:
     mql: github.organization.membersCanChangeRepoVisibility == false
     docs:
       desc: |
-        This check ensures that organization members cannot change the visibility of repositories (e.g., from private to public).
+        This check verifies that only organization owners can change whether a repository is private, internal, or public.
+
+        The control is a checkbox named Allow members to change repository visibilities for this organization, under the Repository visibility change heading on the Member privileges page in Organization Settings, reached from the Access section of the sidebar. The check passes only when that box is cleared. With it cleared, a member who holds admin rights on a repository can still administer it but cannot change whether it is private, internal, or public, and the change has to go through an organization owner.
 
         **Why this matters**
 
-        Changing repository visibility from private to public exposes all code, commit history, issues, and pull requests to the internet. Restricting this capability to organization owners is a critical access control:
-          - It prevents accidental exposure of proprietary code, internal tools, or infrastructure configurations.
-          - It protects against intentional data exfiltration by making repositories public.
-          - It ensures that secrets or credentials embedded in repository history are not inadvertently made public.
-          - It maintains the organization's control over its intellectual property and sensitive data.
+        Making a repository public is one of the few actions in GitHub that cannot be undone. The moment visibility flips, the entire commit history is world readable, and that includes every secret that was ever committed and later removed, because those objects remain reachable by commit SHA. Years of internal architecture, customer names in test fixtures, and the credentials someone rotated out of the working tree but never rotated in the provider are all exposed at once.
 
-        Failure to restrict repository visibility changes can lead to:
-          - Accidental or intentional exposure of private repositories containing sensitive code or data.
-          - Leaked secrets, API keys, or credentials embedded in commit history becoming publicly accessible.
-          - Compliance violations for organizations subject to data protection regulations.
-          - Reputational damage from unintended public disclosure of proprietary code.
+        Automation makes the exposure immediate. Bots follow the public events feed, clone repositories that become visible, and test any cloud key or publishing token they find within seconds. Flipping the repository back to private a few minutes later does nothing about the clones, the forks, and the third-party caches that already have the full history, and it does nothing about a key that has already been used.
+
+        The same control matters for an attacker working from inside. Someone with a stolen session or a phished member account can make a repository public and walk away with the source without moving a single byte through a network path anyone is monitoring, because the exfiltration looks like a settings change rather than a data transfer.
+
+        Owners are unaffected by this setting, and it does not close the other routes source code can take out of the organization, such as a fork into a personal account. Watch the organization audit log for repository visibility changes so a legitimate one is still noticed.
       audit: |
         ### Audit via Console
 
@@ -2689,21 +2636,19 @@ queries:
     mql: github.organization.membersCanDeleteRepositories == false
     docs:
       desc: |
-        This check ensures that organization members cannot delete repositories, restricting this destructive action to organization owners.
+        This check verifies that ordinary organization members cannot remove repositories from the organization.
+
+        Repository deletion and transfer is a heading on the Member privileges page in Organization Settings, under Access in the sidebar, and it carries a single checkbox named Allow members to delete or transfer repositories for this organization. The check passes only when that box is cleared. The one setting governs both actions, so a member holding admin rights on a repository can neither delete it nor transfer it out of the organization, and either move requires an organization owner.
 
         **Why this matters**
 
-        Repository deletion is an irreversible action that permanently removes all code, issues, pull requests, CI/CD configurations, and history. Restricting deletion to organization owners provides an essential safeguard:
-          - It protects against accidental deletion of critical repositories by developers or contributors.
-          - It prevents malicious insiders or compromised accounts from destroying code and development history.
-          - It ensures that repository lifecycle decisions go through appropriate organizational governance.
-          - It maintains the integrity of audit trails and compliance records stored in repository history.
+        Deletion destroys far more than the code. The git history usually survives on somebody's laptop, but issues, pull request discussions, review history, releases and their published binaries, wikis, deploy keys, and branch protection configuration do not. Rebuilding a repository from a developer clone recovers the source and loses the record of why every decision was made, and any pipeline or dependency that resolved against that repository breaks immediately.
 
-        Failure to restrict repository deletion can lead to:
-          - Permanent loss of source code, CI/CD pipelines, and development history.
-          - Disruption to deployments and services that depend on the deleted repository.
-          - Destruction of audit trails needed for compliance and incident investigation.
-          - Extended recovery time if backups are not available or are outdated.
+        Transfer is the quieter half, and it is the one worth worrying about. A transferred repository is not gone, it simply belongs to an account the organization does not control. The attacker now owns the code, the history, and the repository's identity, while redirects keep old links working for a while so the move can go unnoticed. A stolen personal access token with the right scope or a phished maintainer account is enough to do it.
+
+        Both actions are also available to a departing employee acting on impulse, which is a more common cause of a missing repository than any external attacker. The blast radius is the same either way, and the recovery path runs through GitHub support rather than through anything the organization can do for itself.
+
+        This does not protect the contents of a repository that stays in place. History rewrites through force pushes, branch deletion, and tag moves all remain available, so pair this with branch protection rules and an independent backup of anything whose loss would matter.
       audit: |
         ### Audit via Console
 
@@ -2765,21 +2710,17 @@ queries:
     mql: github.repository.secretScanningAlerts.none( state == "open" )
     docs:
       desc: |
-        This check ensures that the repository has no unresolved secret scanning alerts, indicating that all detected exposed credentials have been addressed.
+        This check verifies that the repository has no secret scanning alerts still awaiting action.
+
+        There is no console toggle behind this one. The artifact is the alert list itself, on the repository's Security and quality tab under Secret scanning, and the check passes only when nothing in that list is still open. An alert leaves the open state when somebody closes it, and GitHub asks for a reason: Revoked, False positive, Used in tests, or Won't fix. A repository with no alerts at all passes.
 
         **Why this matters**
 
-        Open secret scanning alerts indicate that credentials such as API keys, tokens, or passwords have been detected in the repository and have not yet been revoked or addressed. These represent active security risks:
-          - Exposed credentials can be exploited by attackers to gain unauthorized access to external services, cloud infrastructure, or APIs.
-          - Secrets in public repositories are actively harvested by automated scanners within minutes of being committed.
-          - Even in private repositories, exposed credentials increase the blast radius of any future compromise.
-          - Unresolved alerts indicate a gap in incident response processes for credential exposure.
+        An open alert is not a warning that a secret might exist. It is GitHub reporting that it matched a recognized credential pattern in the repository's contents or history, and until somebody proves otherwise the credential should be assumed live and assumed known to everyone who can read the repository.
 
-        Failure to resolve open secret scanning alerts can lead to:
-          - Unauthorized access to cloud services, databases, or third-party APIs using leaked credentials.
-          - Data breaches resulting from compromised service accounts or API tokens.
-          - Financial losses from unauthorized use of cloud resources or paid services.
-          - Compliance violations for organizations required to protect credentials and respond to security incidents promptly.
+        Deleting the line does not help. The blob stays in the object store and stays reachable by commit SHA, so anyone with read access, every fork, and every CI cache that pulled the branch still has it. On a public repository the timeline is far shorter than any human response: harvesting bots watch the events feed and test leaked cloud keys within seconds of the push. A publishing token for npm or PyPI is worse, because it lets an attacker ship a backdoored release under the organization's own name into every build that installs the package.
+
+        The honest limitation is in the state machine. This check reads the alert's state, not the credential's. Dismissing an alert as a false positive or as one you will not fix closes it and satisfies this check while the credential stays valid in the provider, so the only safe order is to rotate first and resolve second, and a spike in dismissals deserves the same scrutiny as a spike in alerts.
       audit: |
         ### Audit via Console
 
@@ -2868,21 +2809,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that all webhooks configured on the repository use SSL verification to protect data in transit.
+        This check verifies that every webhook on the repository validates the TLS certificate of the endpoint it delivers to.
+
+        Every webhook whose payload URL is HTTPS carries an SSL verification control, found by opening the repository's Settings, clicking Webhooks in the left sidebar, and editing the hook. GitHub leaves Enable SSL verification selected, and switching it off requires confirming Disable, I understand my webhooks may not be secure. Disabling it tells GitHub to skip certificate validation when delivering the payload. The connection is still TLS, but any certificate is accepted, so someone positioned to intercept it presents their own certificate and the delivery proceeds. The check passes only when every webhook on the repository still has verification enabled. The Terraform version of this check reads `insecure_ssl` inside the `configuration` block of a `github_repository_webhook` resource and requires that it not be true.
 
         **Why this matters**
 
-        Webhooks transmit repository event data (push events, pull request details, issue updates, and potentially code content) to external URLs. Without SSL verification, this data is vulnerable to interception:
-          - Webhook payloads may contain sensitive information including commit contents, branch names, user details, and repository metadata.
-          - Disabling SSL verification allows man-in-the-middle attacks where an attacker can intercept or modify webhook payloads.
-          - Webhook secrets used for payload verification are transmitted in headers and can be captured if SSL is not enforced.
-          - Compromised webhook data can reveal internal development processes, unreleased features, or security-sensitive changes.
+        Interception is the whole attack, and certificate validation is the only thing that normally prevents it. An attacker who can influence DNS resolution for the endpoint hostname, or who sits on any network segment the delivery crosses, answers instead of the real receiver and hands over a self-signed certificate that GitHub accepts without complaint.
 
-        Failure to enforce SSL verification on webhooks can lead to:
-          - Interception of sensitive repository event data by attackers on the network path.
-          - Exposure of webhook secrets enabling attackers to forge webhook deliveries.
-          - Compromised CI/CD pipelines if webhook payloads trigger builds or deployments.
-          - Non-compliance with data protection requirements mandating encryption of data in transit.
+        What arrives is the payload. Push events carry commit messages, branch names, author identities, and the repository's diff content, which on a private repository is source code that was never meant to leave. The delivery also carries the signature header GitHub computes over the body with the webhook's shared secret, so the attacker holds both a message and its HMAC, which is the material needed to brute-force a weak secret offline and then forge deliveries the receiver will trust.
+
+        Forged deliveries are the more damaging half. Webhook receivers start deployments, kick off builds, and update ticket systems, and one that trusts an intercepted feed can be driven to deploy a ref the attacker chose. The same position lets the attacker silently drop deliveries, so a real push produces no build.
+
+        Validation assumes the endpoint presents a certificate a public trust store accepts. An internal receiver using a private certificate authority needs a publicly trusted certificate or a proxy that terminates TLS properly, not this setting turned off.
       audit: |
         ### Audit via Console
 
@@ -3011,19 +2950,17 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that GitHub Actions workflows are required to use SHA-pinned action references instead of mutable tags.
+        This check verifies that workflows in this repository must reference GitHub Actions by full commit SHA instead of by tag or branch name.
+
+        GitHub calls this Require actions to be pinned to a full-length commit SHA, under Repository Settings, Actions, General. Once it is turned on, every action a workflow uses has to be referenced by a full-length commit SHA, including actions published by GitHub itself, though reusable workflows may still be referenced by tag. The check passes only when the requirement is turned on. The Terraform version of this check reads `sha_pinning_required` on a `github_actions_repository_permissions` resource and requires the same value.
 
         **Why this matters**
 
-        Mutable action references (tags and branches) are vulnerable to supply chain attacks:
+        A tag such as `v4` is a mutable pointer. Anyone who gains write access to a third-party action's repository can move that tag to a different commit, and every workflow referencing `owner/action@v4` picks up the new code on its next run with no change on your side and no pull request to review. That is the exact shape of the March 2025 `tj-actions/changed-files` compromise, where a repointed tag caused the action to dump secrets into the workflow logs of thousands of repositories that had done nothing but keep using the version they had always used.
 
-          - **Tag hijacking**: An attacker who compromises an action repository can move a tag to point to malicious code, affecting all workflows that reference that tag.
-          - **Dependency confusion**: Without SHA pinning, there is no guarantee that the action code has not been modified since it was last reviewed.
-          - **Supply chain integrity**: SHA pinning ensures that the exact reviewed version of an action is used in every workflow run.
-          - **Audit trail**: Pinned SHAs provide a deterministic record of which action versions were executed.
-          - **Transitive dependency risk**: Popular actions are high-value targets; a single compromise can affect thousands of repositories.
+        The damage is bounded only by what the compromised step can reach, which is a lot. A job's `GITHUB_TOKEN` can carry write permission to repository contents, packages, and releases, and repository or environment secrets are handed to any step in the job that can read them. Arbitrary code in a workflow step is therefore equivalent to holding those credentials: it can push commits, publish a poisoned package version, cut a release, or ship cloud deployment credentials to an attacker-controlled host. On a self-hosted runner it can also write to the machine and wait for the next job to run.
 
-        Require SHA pinning for all GitHub Actions to ensure supply chain integrity and prevent tag-hijacking attacks.
+        Pinning does not make a dependency trustworthy, it makes it immutable. A pinned SHA still runs whatever that commit contained, so review what you pin, and use Dependabot to move pins forward deliberately rather than letting them rot at an unpatched commit.
       audit: |
         ### Audit via Console
 
@@ -3146,19 +3083,17 @@ queries:
       github.repository.codeScanningAlerts.none(state == "open")
     docs:
       desc: |
-        This check ensures that the repository has no open code scanning alerts. Code scanning identifies security vulnerabilities and coding errors in your codebase using static analysis tools like CodeQL.
+        This check verifies that the repository has no unresolved code scanning alerts.
+
+        There is no console toggle behind this one. The artifact is the repository's code scanning alert list, reached from the repository's security view under Code scanning, and the check passes only when no alert in it is still open. Those alerts come from CodeQL or from any other analysis tool that uploads SARIF results to the repository, so the set reflects whichever scanners this repository has wired into its workflows. An alert leaves the open state when the underlying problem is fixed on the branch or when a maintainer dismisses it with a reason. A repository with no alerts at all passes.
 
         **Why this matters**
 
-        Open code scanning alerts indicate known security vulnerabilities in your codebase:
+        An open code scanning alert is a vulnerability that a tool has already found and localized to a file and a line. If the finding is in a request handler, a deserializer, or a template renderer, an attacker who reaches that endpoint gets the same result the scanner predicted: injected SQL, a path traversal that reads files outside the intended directory, or command execution under whatever identity the service runs as. For public code the analysis is reproducible by anyone, because CodeQL runs against a clone as easily as it runs in your pipeline, so an unaddressed alert is closer to published research than to a private to-do item.
 
-          - **Known vulnerabilities**: Open alerts represent identified security issues such as SQL injection, XSS, path traversal, and other OWASP Top 10 vulnerabilities.
-          - **Attack surface**: Unresolved alerts provide attackers with a roadmap of exploitable vulnerabilities.
-          - **Compliance requirements**: Many security frameworks require timely remediation of identified vulnerabilities.
-          - **Risk accumulation**: Unresolved alerts compound over time, increasing the overall risk to the application.
-          - **Supply chain impact**: Vulnerabilities in your code can affect downstream consumers of your software.
+        Code scanning also examines the workflow files themselves, and those findings are the ones that turn a source bug into a supply chain incident. A workflow that checks out and runs code from a fork under `pull_request_target` executes attacker-authored code with a `GITHUB_TOKEN` that can hold write permission to repository contents, packages, and releases, alongside every repository secret exposed to that job. A pull request from a throwaway account is enough to trigger it.
 
-        Address all open code scanning alerts promptly by fixing the underlying issues, or dismiss false positives with documented justification.
+        Alerts that turn out to be wrong are meant to be dismissed with a reason rather than ignored, which moves them out of the `open` state and out of scope here. Note also that a repository with code scanning switched off has no alerts at all and passes this check trivially, so pair it with a check that scanning is actually enabled.
       audit: |
         ### Audit via Console
 
@@ -3239,19 +3174,17 @@ queries:
       github.repository.dependabotAlerts.none(state == "open" && severity == "critical")
     docs:
       desc: |
-        This check ensures that the repository has no open Dependabot alerts with critical severity. Dependabot identifies known vulnerabilities in your project's dependencies.
+        This check verifies that the repository has no unresolved Dependabot alerts at critical severity.
+
+        The artifact here is the repository's Dependabot alert list, reached from the repository's security view under Dependabot, and there is no setting to turn on or off. Each alert means a dependency version recorded in the repository's manifest or lock files matches a published advisory, and only the alerts GitHub rates Critical are in scope here. An alert closes when the dependency moves past the affected range or when a maintainer dismisses it with a reason. A repository with no critical alerts still open passes, including one with no alerts at all.
 
         **Why this matters**
 
-        Critical Dependabot alerts represent the most severe known vulnerabilities in your dependency tree:
+        A critical advisory usually describes unauthenticated remote code execution or a comparable full compromise, and by the time it carries that rating the technical detail is public. Proof-of-concept code and mass scanners follow within days, and the scanners do not care who you are. Log4Shell is the reference case: a single transitive logging dependency turned any string an application logged into a remote code execution path, and attackers found vulnerable hosts faster than most teams found their own copies of the library.
 
-          - **Transitive risk**: Vulnerable dependencies can be exploited even if your own code is secure.
-          - **Known exploits**: Critical severity alerts often have publicly available exploit code.
-          - **Automated attacks**: Attackers routinely scan for applications using known vulnerable dependencies.
-          - **Supply chain compromise**: Dependency vulnerabilities are a primary vector for software supply chain attacks.
-          - **Compliance requirements**: Security frameworks require tracking and remediating known vulnerabilities in dependencies.
+        Dependencies are also easy for an attacker to enumerate. Lock files in a public repository state the exact versions in use, so an attacker can match your tree against advisories without touching your infrastructure and know precisely which exploit to reach for. Build-time packages deserve the same attention as runtime ones, because a dependency installed during a workflow runs on the runner in a job that can hold a `GITHUB_TOKEN` with write permission to repository contents, packages, and releases, plus every secret exposed to that job.
 
-        Address critical Dependabot alerts immediately by updating to patched versions, or document risk acceptance for any that cannot be resolved.
+        Severity here is the advisory's published rating, not a statement about reachability in your code, so a genuine alert on a code path you never call is still worth triaging explicitly rather than leaving open. Note the scope: only critical alerts fail this check. Open high, medium, and low alerts pass it, and those still need their own triage and remediation process.
       audit: |
         ### Audit via Console
 
@@ -3344,19 +3277,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the default branch requires pull request reviews before merging. Without required reviews, any user with write access can push changes directly to the default branch without peer review.
+        This check verifies that changes to the repository's default branch cannot land without going through a reviewed pull request.
+
+        Two things must hold on the default branch. It has to carry a branch protection rule at all, and that rule has to have Require a pull request before merging turned on together with Require approvals, which is where GitHub asks for the required number of approvals before merging. A protection rule with the review requirement switched off is no better than no rule, so both are asserted. The Terraform version of this check asserts that a `required_pull_request_reviews` block is present on a `github_branch_protection` resource.
 
         **Why this matters**
 
-        Pull request reviews are a fundamental code quality and security control:
+        Without a review requirement, every account with write access can push straight to the branch that ships. That includes accounts nobody is watching: a stolen personal access token, an SSH deploy key with write scope granted years ago for a deployment script, a compromised maintainer session, or a bot whose credentials leaked into a log. The push looks like ordinary work, and if the branch feeds a release or deployment pipeline the change reaches production before any human reads it.
 
-          - **Code review enforcement**: Without required reviews, a single compromised account can push malicious code directly to production branches.
-          - **Bug detection**: Peer review catches bugs, security vulnerabilities, and logic errors before they reach production.
-          - **Audit trail**: Required reviews create a record of who reviewed and approved each change.
-          - **Separation of duties**: Compliance frameworks like SOC 2 and ISO 27001 require independent review of code changes.
-          - **Knowledge sharing**: Code reviews distribute knowledge across the team and improve code quality.
+        The most valuable target for such a push is not application code but the workflow files. A commit that edits `.github/workflows` takes effect on the next run, and that run executes with a `GITHUB_TOKEN` that can carry write permission to repository contents, packages, and releases, along with the repository secrets exposed to the job. An attacker who can push unreviewed is one commit away from publishing a package version or exfiltrating deployment credentials.
 
-        Enable required pull request reviews on the default branch with at least one required reviewer.
+        Requiring review also gives incident response a starting point, since an approved diff carries an author and a reviewer.
+
+        What this does not establish is how much review happens. It does not check the number of required approvals, so one approval from any collaborator satisfies it, and it does not check that approvals are dismissed when new commits arrive, so a diff can change after the approval that blessed it. Configure the approval count and stale review dismissal alongside it.
       audit: |
         ### Audit via Console
 
@@ -3494,18 +3427,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the default branch protection rule blocks the creation of matching branches that bypass protection. When block creations is disabled, users can create branches that match the protection pattern without going through the required checks.
+        This check verifies that the repository's default branch protection also stops branch creation by users who are not permitted to push.
+
+        A branch protection rule offers Restrict who can push to matching branches, and beneath it Restrict pushes that create matching branches, which extends the same push restriction to the act of creating a branch that matches the rule's pattern. Two things must hold for this check to pass: the default branch has a protection rule, and that option is turned on. The Terraform version of this check requires a `restrict_pushes` block on a `github_branch_protection` resource with `blocks_creations` set to `true`.
 
         **Why this matters**
 
-        Allowing uncontrolled branch creation can undermine branch protection rules:
+        Branch protection matches branches by pattern, and push restrictions govern pushes to branches that already exist. Creation is a separate act. When creation is not blocked, someone outside the push allowlist can make a brand-new branch that matches the protected pattern and deliver its full contents in that single creation, so the code arrives having passed no review and tripped no push restriction. A rule written to guard `release/*` is bypassed by creating `release/2.1` from scratch and letting the pattern cover it after the fact.
 
-          - **Protection bypass**: Without block creations, users may create branches matching wildcard patterns that bypass intended protections.
-          - **Namespace pollution**: Uncontrolled branch creation can lead to confusion about which branches are authoritative.
-          - **CI/CD triggering**: New branches may trigger CI/CD pipelines, potentially consuming resources or deploying unreviewed code.
-          - **Access control**: Branch creation should be governed by the same access controls as other branch operations.
+        That matters most when automation keys off the pattern. Release, publishing, and deployment workflows commonly trigger on branches matching a naming convention, so creating a matching branch is a way to make CI run attacker-chosen code. The resulting job holds a `GITHUB_TOKEN` that can carry write permission to repository contents, packages, and releases, plus whatever repository secrets the job can read, which is how a branch name becomes a published artifact or a set of leaked cloud credentials.
 
-        Enable block creations on branch protection rules to prevent unauthorized branch creation.
+        A stolen token with write access but no place in the allowlist is exactly the actor this closes out, since otherwise the allowlist constrains only what they can modify, not what they can introduce.
+
+        Creation is only one of the three ways to change a protected pattern. Deletion and force pushes are governed by their own settings, and allowlisted actors remain able to create matching branches, so this belongs next to restrictions on deletion and force pushing rather than in place of them.
       audit: |
         ### Audit via Console
 
@@ -3651,18 +3585,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that environment protection rules that require reviewers also prevent the deploying user from approving their own deployment. Self-review defeats the purpose of required reviewers by allowing a single person to initiate and approve a deployment.
+        This check verifies that deployment environments requiring reviewer approval do not let the person who triggered a deployment approve it themselves.
+
+        Deployment environments live under Repository Settings, Environments, and an environment that lists Required reviewers offers Prevent self-review beneath it, which stops the person who triggered a deployment from approving their own run. The check looks at every environment that has at least one protection rule, and for each required reviewers rule it requires prevent self-review to be turned on. The Terraform version of this check reads `prevent_self_review` on a `github_repository_environment` resource and requires the same value.
 
         **Why this matters**
 
-        Self-review of deployments undermines separation of duties:
+        An environment is the gate in front of the credentials that matter most. A job targeting a protected environment does not start, and does not receive the environment's secrets, until a required reviewer approves it. Those secrets are typically the production ones: cloud deployment roles, package registry tokens, signing keys, database credentials. The approval step is what stands between a workflow run and all of them.
 
-          - **Single actor risk**: A compromised account can both trigger and approve deployments without independent verification.
-          - **Compliance gap**: Regulatory frameworks require separation between those who request and those who approve changes to production.
-          - **Insider threat**: Self-review enables a malicious insider to deploy unauthorized changes without detection.
-          - **Audit integrity**: Deployment approvals lose their value as an audit control when the same person can self-approve.
+        When self-review is permitted and the person starting the run is also on the reviewer list, that gate becomes a button the same person presses. There is no second pair of eyes on the change, only an extra click. A compromised maintainer account that happens to be a listed reviewer can therefore open a workflow modification, dispatch it against the production environment, approve its own deployment, and pull the environment secrets out, with the audit trail showing an approved deployment that looks entirely routine. The same path is open to an insider acting deliberately, and to an honest engineer approving a change they wrote and misread.
 
-        Enable prevent self-review on all environment protection rules that require reviewers.
+        Preventing self-review also keeps the approval meaningful for ordinary changes, since a reviewer reading someone else's diff catches the mistakes the author already looked past.
+
+        The scope is narrow in one respect worth stating: environments with no protection rules at all are outside this check, and an environment whose rules do not include required reviewers passes it. Confirm separately that your production environments actually carry a required reviewers rule, otherwise there is no approval to protect.
       audit: |
         ### Audit via Console
 
@@ -3788,19 +3723,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that GitHub Advanced Security (GHAS) is automatically enabled for all new repositories created in the organization. GHAS provides code scanning (CodeQL), secret scanning, and dependency review capabilities.
+        This check verifies that GitHub Advanced Security is turned on automatically for repositories newly created in the organization.
+
+        GitHub Advanced Security is the bundle that adds code scanning, secret scanning with push protection, and dependency review to a repository. Turning it on for repositories that do not exist yet is a default in the organization's security settings, where each feature offers an option to enable it by default for new repositories, and the check passes only when that default is on. GitHub has since split Advanced Security into separately licensed products, so the exact wording and placement of the control depend on the plan and the licenses in place. The Terraform version of this check reads `advanced_security_enabled_for_new_repositories` on a `github_organization_settings` resource and requires the same value.
 
         **Why this matters**
 
-        Without automatic GHAS enablement, new repositories may lack critical security scanning:
+        Defaults decide what happens when nobody is thinking about security, which is most of the time a repository gets created. A new service, a proof of concept that turns into production, a fork spun up for a customer demo: none of them start with a security review, and whatever the organization default gives them is what they run with for months.
 
-          - **Security gap**: New repositories created without GHAS lack code scanning, leaving vulnerabilities undetected.
-          - **Inconsistent coverage**: Manual enablement leads to inconsistent security coverage across the organization.
-          - **Developer friction**: Relying on developers to enable security features results in adoption gaps.
-          - **Time to detection**: Vulnerabilities introduced before GHAS is enabled may go undetected until manual activation.
-          - **Compliance coverage**: Automated security scanning is required by many compliance frameworks.
+        Advanced Security is what fills that gap. Secret scanning watches pushes for credentials, and that window is short in a way people consistently underestimate. Harvesting bots monitor public event feeds and pull newly pushed keys within seconds, and cloud provider keys are commonly used to spin up compute within minutes of exposure. A repository created without secret scanning gets no warning and no push protection, so the first sign of trouble is the bill or the incident. Code scanning finds injection and deserialization flaws in the same window, and dependency review flags a pull request that introduces a package with a known advisory before it merges rather than after a scanner catches it in the default branch.
 
-        Enable advanced security for new repositories at the organization level to ensure consistent security coverage.
+        Turning this on organization-wide also removes the argument from every new project, since the scanners are simply present rather than something a team has to request.
+
+        This setting governs repositories created from now on. It does not reach back and enable anything on repositories that already exist, and a repository owner can still switch the features off afterward. Audit the existing estate separately, and rotate anything a first scan of committed history turns up.
       audit: |
         ### Audit via Console
 
@@ -3913,19 +3848,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the dependency graph is automatically enabled for all new repositories in the organization. The dependency graph identifies all dependencies in your project and is required for Dependabot alerts, security updates, and SBOM generation.
+        This check verifies that the dependency graph is turned on automatically for repositories newly created in the organization.
+
+        The dependency graph parses the manifest and lock files committed to a repository and builds the inventory of what that repository depends on. Dependabot alerts, Dependabot security updates, dependency review, and SBOM export all read from it, so none of them has anything to work with until it is on. The organization sets it for repositories that do not exist yet through the option to enable it by default for new repositories, and the check passes only when that default is on. The Terraform version of this check reads `dependency_graph_enabled_for_new_repositories` on a `github_organization_settings` resource and requires the same value.
 
         **Why this matters**
 
-        Without the dependency graph, critical dependency security features are unavailable:
+        The dependency graph is the inventory that everything else about supply chain risk is built on. It parses manifest and lock files to work out what a repository actually depends on, and Dependabot alerts, Dependabot security updates, dependency review on pull requests, and SBOM export all read from it. With the graph switched off, none of those fail loudly. They produce nothing. The repository reports no vulnerable dependencies, and that reading is indistinguishable from a repository that genuinely has none.
 
-          - **Dependency visibility**: The dependency graph provides a complete inventory of direct and transitive dependencies.
-          - **Dependabot prerequisite**: Dependabot alerts and security updates require the dependency graph to function.
-          - **SBOM generation**: Software Bill of Materials generation depends on dependency graph data.
-          - **Vulnerability detection**: Without the dependency graph, known vulnerabilities in dependencies go undetected.
-          - **License compliance**: The dependency graph enables tracking dependency licenses for compliance.
+        That silent zero is the real damage. A team ships a service that pulls in a package version with a published critical advisory, watches a dashboard that shows nothing, and concludes the code is clean. Nobody opens a bump pull request because nobody is told there is anything to bump, and the vulnerable version stays in production through every subsequent release.
 
-        Enable the dependency graph for new repositories to ensure consistent dependency tracking and vulnerability detection.
+        The gap shows up again during an incident. When a package is found to be malicious or a widely used library gets a critical advisory, the first question is which repositories depend on it and at what version. That question is answered by querying the dependency graph across the organization. Repositories missing from it have to be checked by hand, under time pressure, exactly when hands are scarce.
+
+        This applies to repositories created after the setting is enabled and leaves existing ones as they are, so audit those separately. Note too that the graph records what the supported manifest and lock files declare, so libraries vendored into the tree or binaries pulled in a Dockerfile stay invisible to it and need their own scanning.
       audit: |
         ### Audit via Console
 
@@ -4024,19 +3959,19 @@ queries:
       github.organization.auditLogStreamConfig.enabled == true
     docs:
       desc: |
-        This check ensures that the organization streams its audit log to an external destination such as a SIEM or log-management platform.
+        This check verifies that the organization streams its audit log to an external destination.
+
+        The feature is called Log streaming, and it is reached from the audit log settings for the account. It forwards audit and Git events to an external system as they happen, and the destinations GitHub supports include Amazon S3, Azure Event Hubs, Google Cloud Storage, Splunk, and Datadog. The check confirms that a stream is configured and currently turned on, not merely that one was set up at some point and later paused.
 
         **Why this matters**
 
-        The GitHub audit log records security-relevant events across the organization, including membership and permission changes, repository visibility changes, secret and deploy-key management, and branch-protection edits. GitHub retains this log for a limited period, so streaming it to durable external storage is essential for security monitoring and incident response:
-          - It preserves audit records beyond GitHub's retention window, supporting forensic investigation long after an event.
-          - It lets a SIEM correlate GitHub activity with the rest of the environment and alert on suspicious behavior in near real time.
-          - It satisfies compliance frameworks that require centralized, tamper-resistant collection and retention of audit records.
+        The audit log is the record of who changed the shape of the organization: members added and removed, permissions raised, repositories flipped from private to public, secrets and deploy keys created or rotated, branch protection rules edited or removed. Those are precisely the events an intrusion is made of. An attacker with a stolen maintainer session does not usually start by pushing malicious code, they start by adding a deploy key they control, relaxing a protection rule, or granting an outside collaborator access, and each of those actions writes a line in this log.
 
-        Failure to stream the audit log can lead to:
-          - Loss of audit evidence once GitHub's retention window elapses, hindering investigations.
-          - Delayed or missed detection of account takeover, privilege escalation, or exfiltration through the organization.
-          - Non-compliance with standards such as SOC 2, ISO 27001, PCI DSS, and HIPAA that mandate audit-log retention and monitoring.
+        GitHub keeps that log for a limited window. Intrusions routinely surface long after they begin, through a leaked credential turning up in someone else's incident, a strange release artifact, or a customer report. If the retention window has rolled over by then, the questions that matter cannot be answered: when the account was first misused, which repository was made public and for how long, whether branch protection was edited before a push and restored afterward. Streaming to a SIEM or an object store keeps that history for as long as you choose to keep it, and puts GitHub events alongside identity and cloud logs so a single timeline can be assembled instead of three partial ones.
+
+        Streaming also enables near real-time detection, since a new deploy key or a disabled protection rule can raise an alert.
+
+        What this confirms is that streaming is switched on. It says nothing about whether the destination is reachable, whether its credentials still work, whether events are arriving intact, or whether anyone is reading them. Monitor stream health and write detection rules against what lands.
       audit: |
         ### Audit via Console
 
