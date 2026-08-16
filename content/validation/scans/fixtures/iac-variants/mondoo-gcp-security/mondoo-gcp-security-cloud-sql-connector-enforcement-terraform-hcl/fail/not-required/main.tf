@@ -5,11 +5,11 @@ resource "google_sql_database_instance" "fail_example" {
   region           = "us-central1"
 
   settings {
-    tier = "db-custom-2-7680"
+    tier                  = "db-custom-2-7680"
+    connector_enforcement = "NOT_REQUIRED"
 
     ip_configuration {
-      ipv4_enabled          = false
-      connector_enforcement = "NOT_REQUIRED"
+      ipv4_enabled = false
     }
   }
 }
