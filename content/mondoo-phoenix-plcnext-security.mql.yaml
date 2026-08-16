@@ -3,7 +3,7 @@
 policies:
   - uid: phoenix-plcnext
     name: Phoenix PLCnext Security Policy
-    version: 1.2.0
+    version: 1.2.1
     license: BUSL-1.1
     tags:
       benchmark: Mondoo Phoenix PLCnext
@@ -106,15 +106,19 @@ queries:
       }
     docs:
       desc: |
-        Installing the latest firmware is important for several reasons:
+        This check verifies that the controller is running a supported PLCnext firmware release.
 
-        - Security: Firmware updates often include security patches to address vulnerabilities in the system, making it less susceptible to hacking or other security threats.
-        - Bug fixes: Updates often include fixes for bugs and other software issues, which can improve the performance and stability of the device.
-        - New features: Updates may add new features or functionality to the device, making it more versatile and improving its overall performance.
-        - Compatibility: Installing the latest firmware can ensure compatibility with other devices or systems, preventing conflicts or connectivity issues.
-        - Performance: Firmware updates can improve the overall performance of the device, such as improving processing speed, battery life, or other key metrics.
+        The firmware version is recorded in `/etc/plcnext/arpversion`. The check reads that file and requires version `23.0.0` or later. A missing or malformed file fails the check rather than being skipped, since a controller whose firmware cannot be determined cannot be assumed current.
 
-        By installing the latest firmware, you can ensure that your device is secure, performs optimally, and is fully compatible with other systems. This can help reduce downtime, improve productivity, and extend the lifespan of your device.
+        **Why this matters**
+
+        PLCnext controllers run a full Linux system, not the fixed-function firmware of a classic PLC. That means they inherit the vulnerability stream of the kernel, the SSH server, the TLS libraries, and the web-based management interface, and each firmware release carries the accumulated fixes for all of it.
+
+        The exposure lasts longer here than on a server. Controllers are patched during planned downtime, and on a production line that may come once or twice a year, so a controller running old firmware stays vulnerable for months after a fix exists and after the vulnerability is public.
+
+        What an attacker gains is not data but control. Code execution on a controller means the ability to change setpoints, alter interlock logic, suppress alarms, and stop the process, with physical consequences for equipment and for the people working near it.
+
+        Phoenix Contact publishes security advisories for PLCnext through their PSIRT. Track them alongside the firmware release notes, and plan controller updates into scheduled maintenance rather than deferring them until an incident forces one.
       audit: |
         Run the `cat /etc/plcnext/arpversion` command and verify that the reported firmware version is 23.0.0 or later.
       remediation: |-
@@ -160,17 +164,19 @@ queries:
       nftables.tables.contains(name == "plcnext_ip6_filter")
     docs:
       desc: |
-        The hazards in public and even private networks are omnipresent, and nowadays no private user would come up with the idea to put a computer on the network without a proper firewall setting. So how would that be different when working with a PLC?
+        This check verifies that the PLCnext firewall is active for both IPv4 and IPv6.
 
-        PLCnext Technology  relies on the proven and commonly used Linux® firewall nftables. On the PLCnext Control, you don't need to configure the firewall rules via cryptic Linux shell commands: Just log on to the Web-based Management and choose from the predefined basic rules, or add your own rules to the set.
+        PLCnext filters traffic with nftables, and its rules live in two tables created by the platform. The check reads the loaded nftables ruleset and requires both `plcnext_filter` and `plcnext_ip6_filter` to be present.
 
-        In addition to the PLCnext Technology filter table, you can activate other filter tables. This might be necessary if you require certain functions that are not supported by the firewall configuration via the WBM.
+        **Why this matters**
 
-        This additional configuration is implemented via independent filter tables. You have to create the required functions via nftables commands. For this, you can edit a rule set in Linux using a text editor or load the file to the PC and change it.
+        A controller with no firewall accepts connections to every service it runs, from anywhere it is reachable. That includes the web-based management interface, SSH, and the industrial protocol endpoints, none of which were designed on the assumption that the network in front of them is hostile.
 
-        For detailed information on this Linux feature, refer to the nftables documentation.
+        The assumption that they are protected by isolation is usually wrong. Plant networks are routinely flatter than their diagrams suggest, connected to the corporate network for historian data, remote support, or a single engineering workstation that also reads email. Once anything on that path is compromised, an unfiltered controller is directly reachable.
 
-        Here you see a set of firewall filter files that is present in the /etc/nftables directory on a PLCnext Control
+        The IPv6 table matters as much as the IPv4 one and is the half more often missed. Linux enables IPv6 by default, so a controller that is carefully filtered on IPv4 and unfiltered on IPv6 is fully exposed over a path nobody is monitoring.
+
+        PLCnext exposes predefined rule sets through the web-based management interface, so the firewall can be configured without writing nftables syntax. Restrict management access to the engineering network and permit only the industrial protocols the installation actually uses.
       audit: |
         Run the `nft list tables` and `nft list table <table>` command and verify that output.
       remediation: |-
@@ -217,7 +223,20 @@ queries:
       sshd.config.kexs != empty
       sshd.config.kexs.containsOnly(props.PLCKexAlgos)
     docs:
-      desc: Key exchange is any method in cryptography by which cryptographic keys are exchanged between two parties, allowing use of a cryptographic algorithm. If the sender and receiver wish to exchange encrypted messages, each must be equipped to encrypt messages to be sent and decrypt messages received
+      desc: |
+        This check verifies that the SSH server on the controller offers only strong key exchange algorithms.
+
+        Key exchange establishes the session keys that protect everything sent afterward. The check reads the `KexAlgorithms` directive in the SSH configuration and requires that every algorithm it names appears in the approved list carried by this policy's property, currently `sntrup761x25519-sha512@openssh.com`, `curve25519-sha256@libssh.org`, and `diffie-hellman-group-exchange-sha256`. The directive must be present; a configuration relying on the compiled-in default fails this check.
+
+        **Why this matters**
+
+        A weakness in key exchange is not compensated for by a strong cipher, because the attacker derives the same session keys the two endpoints do and then reads the traffic as though it were plaintext.
+
+        The algorithms excluded here are excluded for concrete reasons. `diffie-hellman-group1-sha1` uses a single fixed 1024-bit group shared by everything that implements it, which makes precomputation against that one group worthwhile to a well-resourced attacker, and the Logjam work showed a negotiation can be forced down to it.
+
+        Key exchange also decides whether traffic recorded today can be read later. An exchange without forward secrecy means an attacker who captures sessions now and obtains the host key at any point in the future can decrypt all of it, and on a controller with a ten-year service life that is a long window.
+
+        The SSH session to a controller carries engineering credentials and configuration changes, which is exactly the material worth recording and decrypting later.
       audit: |
         Run `grep -riE '^\s*KexAlgorithms' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null` and review the configured key exchange algorithms.
 
@@ -264,7 +283,20 @@ queries:
       sshd.config.macs != empty
       sshd.config.macs.containsOnly(props.PLCMacAlgos)
     docs:
-      desc: This variable limits the types of MAC algorithms that SSH can use during communication.
+      desc: |
+        This check verifies that the SSH server on the controller offers only strong message authentication algorithms.
+
+        The MAC protects session integrity, preventing an attacker on the network path from altering packets they cannot read. The check reads the `MACs` directive in the SSH configuration and requires that every algorithm it names appears in the approved list carried by this policy's property, currently the SHA-2 based and UMAC-128 variants. The directive must be present; a configuration relying on the compiled-in default fails this check.
+
+        **Why this matters**
+
+        Integrity matters more than confidentiality on a control system. An attacker who reads an engineering session learns the configuration; an attacker who can modify one changes it.
+
+        That is the scenario this defends against. A session in which packets can be altered undetected is one where a command sent to the controller need not be the command that arrives, and on a device that drives physical equipment the consequences are measured in damaged product, damaged machinery, or an unsafe state rather than in disclosed records.
+
+        Two properties separate the approved list from the rest. Algorithms built on MD5 or truncated to 96 bits no longer offer a sufficient margin. And the encrypt-then-MAC variants, marked with the `-etm@openssh.com` suffix, let the receiver reject a forged packet before decrypting it, which removes a class of oracle attacks the older ordering permits.
+
+        Note that AEAD ciphers such as ChaCha20-Poly1305 and the AES-GCM modes provide integrity themselves and ignore this list.
       audit: |
         Run `grep -riE '^\s*MACs' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null` and review the configured MAC algorithms.
 
@@ -311,7 +343,20 @@ queries:
       sshd.config.ciphers != empty
       sshd.config.ciphers.containsOnly(props.PLCSshdCiphers)
     docs:
-      desc: This variable limits the ciphers that SSH can use during communication.
+      desc: |
+        This check verifies that the SSH server on the controller offers only strong encryption ciphers.
+
+        The cipher protects the confidentiality of everything inside the session, and the server's list determines the weakest option a connecting client can select. The check reads the `Ciphers` directive in the SSH configuration and requires that every algorithm it names appears in the approved list carried by this policy's property, currently the ChaCha20-Poly1305, AES-GCM, and AES-CTR variants. The directive must be present; a configuration relying on the compiled-in default fails this check.
+
+        **Why this matters**
+
+        An SSH session to a controller carries the credentials used to reach it and the configuration changes made through it. Recovering that traffic gives an attacker both a way in and a description of how the process is set up.
+
+        Two categories are excluded deliberately. CBC-mode ciphers are subject to a plaintext recovery attack against the SSH binary packet protocol, exploitable by an attacker able to observe and inject traffic. Anything built on RC4, offered as `arcfour` and its variants, is broken outright by biases in its keystream. Both remain compiled into some builds for compatibility with old clients.
+
+        Requiring an explicit directive rather than accepting the default matters on a device with a long service life. Defaults vary between OpenSSH versions, so a controller that negotiates acceptably today can offer a weaker set after a firmware update, and nothing would announce the change.
+
+        Prefer the AEAD constructions, which authenticate and encrypt in a single pass.
       audit: |
         Run `grep -riE '^\s*Ciphers' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null` and review the configured ciphers.
 
@@ -354,7 +399,19 @@ queries:
       file("/etc/ntp.conf").content == /(server|pool)\s+\S+/
     docs:
       desc: |
-        A system's time should be synchronized between all systems in an environment. This is usually done by setting up an authoritative time server with which all systems in an environment synchronize their clocks.
+        This check verifies that the controller's clock is synchronized to a time source.
+
+        The check confirms that an `ntpd` process is running and that `/etc/ntp.conf` defines at least one `server` or `pool` entry. Both are required: a daemon with no configured source has nothing to synchronize against, and a configuration file with no running daemon does nothing.
+
+        **Why this matters**
+
+        On a control system, timestamps are how events on the controller are matched to events in the physical process. Reconstructing why a batch failed, why an interlock tripped, or what preceded an unplanned stop means lining up controller logs against historian data, alarm records, and operator actions from other systems. A controller whose clock has drifted cannot be lined up with any of them, and the drift is silent.
+
+        The security consequence follows from the same property. Determining whether a configuration change on the controller was made by an engineer during a maintenance window or by someone else at another time depends entirely on the clock being right, and an attacker who can move it can place their activity outside the window anyone is examining.
+
+        Accurate time also underpins certificate validity, so a controller with a badly wrong clock will either reject valid certificates or accept expired ones.
+
+        Point the controller at the plant's own time source rather than a public one, so that synchronization does not depend on a path out of the OT network.
       audit: |
         Run the `ntpq -p` command and verify that an NTP peer is listed and selected. Inspect the `/etc/ntp.conf` file and verify that at least one `server` or `pool` entry is configured.
       remediation: |-
@@ -409,7 +466,20 @@ queries:
           permissions.other_executable == false
         }
     docs:
-      desc: An SSH private key is one of two files used in SSH public key authentication. In this authentication method, The possession of the private key is proof of identity. Only a private key corresponding to a public key can authenticate successfully. The private keys need to be stored and handled carefully, and no copies of the private key should be distributed.
+      desc: |
+        This check verifies that the controller's SSH private host keys are readable only by their owner.
+
+        The check reads the permissions of files in `/etc/ssh` matching `ssh_host_*key` and requires that they carry no execute bit for the owner and no read, write, or execute permission for the group or for other users.
+
+        **Why this matters**
+
+        The private host key is the controller's identity. When an engineering workstation connects, the controller proves it holds this key, and the workstation compares the corresponding fingerprint against the one it recorded the first time. That comparison is the entire basis on which anyone can tell they are talking to the right controller.
+
+        An attacker who can read the key can stand up a service that is cryptographically indistinguishable from this controller. An engineer connecting to it sees no host key warning, because the key matches, and enters credentials into the impostor. The warning that would normally make an interception attempt obvious is exactly what a stolen host key suppresses.
+
+        That matters more in a plant than in a data center, because the engineer's next action is usually to push a configuration or logic change, and the impostor is positioned to alter it in transit.
+
+        If a private host key may have been exposed, restoring permissions is not sufficient. Regenerate the host keys, distribute the new fingerprints to the engineering workstations, and treat any credential entered during the exposure window as compromised.
       audit: |
         Run `ls -l /etc/ssh/ssh_host_*_key` and review the mode of each private host key.
 
@@ -456,7 +526,20 @@ queries:
           permissions.other_executable == false
         }
     docs:
-      desc: An SSH public key is one of two files used in SSH public key authentication. In this authentication method, a public key is a key that can be used for verifying digital signatures generated using a corresponding private key. Only a public key corresponding to a private key can authenticate successfully.
+      desc: |
+        This check verifies that the controller's SSH public host keys cannot be modified by unprivileged accounts.
+
+        Public host keys are meant to be readable, so read access is not restricted. The check reads the permissions of files in `/etc/ssh` matching `ssh_host_*key.pub` and requires that they carry no execute bit for the owner and no write or execute permission for the group or for other users.
+
+        **Why this matters**
+
+        Public host keys are not secret, but their integrity determines what the controller advertises about itself. `sshd` reads them to present its identity, and any tooling that collects fingerprints for distribution to engineering workstations reads them too.
+
+        An account that can write these files can therefore change the identity the controller claims. Substituting a key the attacker holds the private half of pre-authorizes their own machine in whatever known-hosts distribution consumes it.
+
+        Even without an attacker, a modified public key file causes host key mismatch failures on every workstation that already recorded the real fingerprint. On a plant floor that presents as engineering access failing during a maintenance window, and the failure looks identical to an interception attempt, which consumes the time of the people least able to spare it.
+
+        Writable key material in `/etc/ssh` is also a signal in itself. The same directory holds the private host keys, and permissions wrong on one file are worth checking on all of them.
       audit: |
         Run `ls -l /etc/ssh/ssh_host_*_key.pub` and review the mode of each public host key.
 
@@ -493,7 +576,18 @@ queries:
     mql: |
       sshd.config.params["Protocol"] == 2
     docs:
-      desc: 'SSH supports two different and incompatible protocols: SSH1 and SSH2. SSH1 was the original protocol and was subject to security issues. SSH2 is more advanced and secure.'
+      desc: |
+        This check verifies that the controller's SSH configuration explicitly declares protocol version 2.
+
+        The check reads `Protocol` in the SSH configuration, which must be `2`. On current firmware this is a documentation requirement rather than a functional one: OpenSSH 7.4 and later implement only protocol 2 and treat the keyword as deprecated, so an absent directive still fails this check even though the behavior is already correct.
+
+        **Why this matters**
+
+        SSH protocol 1 is broken in ways no configuration can compensate for. Its integrity check is a CRC-32, which is not a cryptographic function, and that allowed an attacker able to observe and modify a session to insert chosen ciphertext undetected. The best known result was remote root compromise of the server.
+
+        The reason to keep the directive on a controller rather than relying on the implementation is the service life of the device. A PLC installed today may still be running in fifteen years, through firmware updates, replacement units, and spares pulled from stock that shipped with much older software. An explicit `Protocol 2` line states the requirement in the configuration, so it survives being copied onto a unit whose OpenSSH is old enough for the setting to matter.
+
+        Where this check fails on a controller running genuinely old firmware, the directive closes the immediate exposure but the firmware update is the actual remedy, since software of that age is missing years of fixes to the protocol 2 implementation as well.
       audit: |
         Run `grep -riE '^\s*Protocol' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null`.
 
@@ -532,10 +626,20 @@ queries:
     mql: |
       sshd.config.params["LogLevel"] == /INFO|VERBOSE/
     docs:
-      desc: |-
-        `INFO` level is the basic level that only records the login activity of SSH users. In many situations, such as incident response, it is important to determine when a particular user was active on a system. The logout record can eliminate those users who disconnected, which helps narrow the field.
+      desc: |
+        This check verifies that the controller's SSH server records authentication activity in enough detail to investigate it.
 
-        `VERBOSE` level specifies that login and logout activity as well as the key fingerprint for any SSH key used for login will be logged. This information is important for SSH key management, especially in legacy environments.
+        The check reads `LogLevel` in the SSH configuration, which must be `INFO` or `VERBOSE`. The directive must be present; an absent `LogLevel` fails even though `INFO` is the OpenSSH default.
+
+        **Why this matters**
+
+        SSH log lines are frequently the only record that anyone reached the controller. Controllers are not covered by the endpoint monitoring that watches servers and workstations, so there is rarely a second source to fall back on.
+
+        At `INFO`, the log records each authentication result with the account and the source address, which is what makes it possible to establish who connected to a controller and when. Correlated against a change in process behavior, that is often the whole investigation.
+
+        `VERBOSE` adds the fingerprint of the public key used to authenticate. On a controller that matters more than usual, because engineering access is commonly shared: one account, several authorized keys, several engineers and possibly an integrator or vendor support contract. Without the fingerprint, a login is attributable only to the shared account and the question of which party connected has no answer. With it, a key can be identified and revoked individually.
+
+        Avoid `DEBUG` and above, which are documented as violating user privacy and produce volume that fills the limited storage on an embedded device.
       audit: |
         Run `grep -riE '^\s*LogLevel' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null`.
 
@@ -580,7 +684,20 @@ queries:
     mql: |
       sshd.config.params["X11Forwarding"] == "no"
     docs:
-      desc: The X11Forwarding parameter allows tunneling X11 traffic through the connection to enable remote graphic connections.
+      desc: |
+        This check verifies that the controller's SSH server does not tunnel X11 graphical sessions.
+
+        The check reads `X11Forwarding` in the SSH configuration, which must be `no`. The directive must be present; an absent `X11Forwarding` fails even though `no` is the OpenSSH default.
+
+        **Why this matters**
+
+        X11 forwarding sets up a proxy display on the controller and relays anything drawn to it back to the display on the engineer's workstation.
+
+        The exposure runs from the controller toward the workstation, which is the opposite of how it is usually described. The X protocol provides no separation between clients of the same display, so any process that can reach the forwarded display can read every keystroke sent to it, capture the contents of other windows, and inject synthetic input. If the controller is compromised, the attacker obtains the engineer's keyboard and screen on their own machine, including whatever they type into other applications there.
+
+        On a plant floor that workstation is usually the engineering station that programs every other controller in the cell, which makes it a considerably more valuable target than the PLC itself.
+
+        There is also no reason to enable it here. A controller has no graphical applications to forward; management is through the web-based interface or the command line.
       audit: |
         Run `grep -riE '^\s*X11Forwarding' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null`.
 
@@ -619,7 +736,20 @@ queries:
     mql: |
       sshd.config.params["MaxAuthTries"] <= 4
     docs:
-      desc: The `MaxAuthTries` parameter specifies the maximum number of authentication attempts permitted per connection. When the login failure count reaches half this maximum value, error messages will be written to the `syslog` file detailing the login failure.
+      desc: |
+        This check verifies that the controller's SSH server limits how many authentication attempts a single connection may make.
+
+        The check reads `MaxAuthTries` in the SSH configuration, which must be `4` or lower. The OpenSSH default is `6`.
+
+        **Why this matters**
+
+        `MaxAuthTries` caps authentication attempts within one TCP connection, and `sshd` begins writing failures to the log once more than half the limit is consumed. The value therefore decides both how many guesses a connection buys and how quickly the attempt becomes visible.
+
+        Lowering it makes password guessing expensive. Each small batch of attempts costs the attacker a fresh TCP handshake and key exchange, which is far more work than another guess on an open connection, and it multiplies the number of connection events left behind.
+
+        The visibility half matters most on a controller. There is usually no account lockout, no fail2ban, and no endpoint agent watching, so the log entries this setting produces may be the only indication that anyone is trying.
+
+        Be clear about what it does not do. This is a rate limiter, not a lockout; an attacker can reconnect immediately and continue. Treat it as one layer beneath disabling password authentication entirely, which a companion check in this policy requires, and restricting SSH to named accounts.
       audit: |
         Run `grep -riE '^\s*MaxAuthTries' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null`.
 
@@ -658,7 +788,20 @@ queries:
     mql: |
       sshd.config.params["IgnoreRhosts"] == "yes"
     docs:
-      desc: The `IgnoreRhosts` parameter tells the SSH daemon to ignore `.rhosts` and `.shosts` files when deciding whether to authenticate a user. Those files are part of host-based authentication, an obsolete mechanism that trusts a remote host's claim about which user is connecting. That trust is easily spoofed, so disabling it removes a weak path into the controller.
+      desc: |
+        This check verifies that the controller's SSH server ignores `.rhosts` and `.shosts` files.
+
+        The check reads `IgnoreRhosts` in the SSH configuration, which must be `yes`. The directive must be present; an absent `IgnoreRhosts` fails even though `yes` is the OpenSSH default.
+
+        **Why this matters**
+
+        `.rhosts` and `.shosts` files let an account declare which remote hosts and users may log in as it without presenting a credential. They live in the account's own home directory, which means the account, and anyone able to write to that directory, decides who gets in.
+
+        That inverts the control. An administrator can restrict which accounts may connect, require keys, and disable passwords, and a single `.shosts` file still grants access to whoever it names. Because the file sits in a home directory rather than in `/etc`, it is outside anything a configuration review or a firmware comparison would examine.
+
+        The trust it expresses is weak on its own terms. It identifies the peer by hostname, so anyone able to influence name resolution on a plant network, or to compromise the named host, inherits the access.
+
+        Set the directive explicitly rather than relying on the default, so the intent is recorded in the configuration and survives a firmware update or a replacement unit.
       audit: |
         Run `grep -riE '^\s*IgnoreRhosts' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null`.
 
@@ -699,7 +842,20 @@ queries:
     mql: |
       sshd.config.params["HostbasedAuthentication"] == "no"
     docs:
-      desc: The `HostbasedAuthentication` parameter controls whether the SSH daemon will accept a login based on the remote host vouching for the user, using files such as `.rhosts` or `/etc/hosts.equiv`. This trusts a remote host's claim about who the user is, which is easily spoofed and is considered obsolete, so it should stay disabled.
+      desc: |
+        This check verifies that the controller's SSH server does not accept host-based authentication.
+
+        The check reads `HostbasedAuthentication` in the SSH configuration, which must be `no`. The directive must be present; an absent `HostbasedAuthentication` fails even though `no` is the OpenSSH default.
+
+        **Why this matters**
+
+        Host-based authentication moves the trust decision from the person to the machine. The connecting host proves its own identity with its host key, and the controller then accepts whatever username that host asserts, with no credential from the user at all.
+
+        On a plant network that makes every trusted engineering station a single point of failure for every controller that trusts it. An attacker who obtains administrative access to one workstation authenticates to all of them as any account listed, with no password, no key of their own, and no second factor anywhere in the path.
+
+        The credential involved is also effectively permanent. Host keys are generated once at commissioning and typically remain for the life of the device, so an attacker who reads one from a workstation retains that access indefinitely and across password changes.
+
+        Where automation genuinely needs to reach controllers without an interactive login, use per-account keys with `command=` and source restrictions in `authorized_keys`. That keeps the credential scoped to one task and revocable on its own.
       audit: |
         Run `grep -riE '^\s*HostbasedAuthentication' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null`.
 
@@ -740,7 +896,20 @@ queries:
     mql: |
       sshd.config.params["PermitRootLogin"] == "no" || sshd.config.params["PermitRootLogin"] == "prohibit-password"
     docs:
-      desc: The `PermitRootLogin` parameter specifies if the root user can log in using ssh(1). Blocking direct root login over SSH means an attacker must first compromise a named account before they can reach the most powerful account on the controller, and it ties every privileged action to an individual login for accountability.
+      desc: |
+        This check verifies that the controller does not allow the root account to log in over SSH with a password.
+
+        The check reads `PermitRootLogin` in the SSH configuration, which must be `no` or `prohibit-password`. The directive must be present; an absent `PermitRootLogin` fails even though `prohibit-password` is the OpenSSH default on current versions.
+
+        **Why this matters**
+
+        `root` is the one account name an attacker never has to discover, which is why automated guessing against SSH is aimed at it more than anything else. A single correct guess yields complete control of the controller with no escalation step, and complete control of a controller means the ability to change logic, setpoints, and interlocks.
+
+        Accountability is the other half, and on a controller it is frequently the harder problem. Access to a PLC is shared among plant engineers, integrators, and vendor support, and when they all log in as `root` every action is attributed to `root`. Establishing which party made a change, during an investigation or simply during a dispute about who altered a running process, becomes impossible.
+
+        `prohibit-password` is usually the right setting, permitting key-based root access where automation needs it while removing the guessable path entirely.
+
+        Before applying `no`, confirm a named administrative account exists on the controller, can reach it, and can escalate. Losing administrative access to a PLC in a running plant is not a recoverable mistake during production.
       audit: |
         Run `grep -riE '^\s*PermitRootLogin' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null`.
 
@@ -792,7 +961,20 @@ queries:
     mql: |
       sshd.config.params["PermitEmptyPasswords"] == "no"
     docs:
-      desc: The `PermitEmptyPasswords` parameter specifies if the SSH server allows login to accounts with empty password strings.
+      desc: |
+        This check verifies that the controller's SSH server refuses accounts that have no password set.
+
+        The check reads `PermitEmptyPasswords` in the SSH configuration, which must be `no`. The directive must be present; an absent `PermitEmptyPasswords` fails even though `no` is the OpenSSH default.
+
+        **Why this matters**
+
+        An account with an empty password field authenticates to anyone who supplies an empty password. Where SSH permits it, that account is reachable over the network with no secret at all.
+
+        Accounts reach this state through ordinary work rather than malice. A commissioning process that creates an account before its password is set, a `passwd -d` run while troubleshooting a controller that would not accept a login, or a configuration restored from a unit before its credentials were applied all produce the same result, and the window between creating the account and securing it becomes a window of unauthenticated access.
+
+        That window is longer on a controller than on a server. Commissioning happens under time pressure during installation, the device may sit on the plant network for weeks before anyone revisits its accounts, and nothing about a working controller prompts a review.
+
+        This setting is the backstop for exactly that class of mistake. It keeps the error a local misconfiguration instead of letting it become remote access to a device that drives physical equipment.
       audit: |
         Run `grep -riE '^\s*PermitEmptyPasswords' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null`.
 
@@ -831,7 +1013,22 @@ queries:
     mql: |
       sshd.config.params["PermitUserEnvironment"] == "no"
     docs:
-      desc: The `PermitUserEnvironment` option allows users to present environment options to the `ssh` daemon.
+      desc: |
+        This check verifies that the controller's SSH server does not apply user-supplied environment variables to a session.
+
+        The check reads `PermitUserEnvironment` in the SSH configuration, which must be `no`. The directive must be present; an absent `PermitUserEnvironment` fails even though `no` is the OpenSSH default.
+
+        **Why this matters**
+
+        When this option is enabled, `sshd` reads `~/.ssh/environment` and the `environment=` options in `~/.ssh/authorized_keys` and applies those variables before the session's shell or command starts.
+
+        The variables it applies include the ones controlling the dynamic linker. Setting `LD_PRELOAD` or `LD_LIBRARY_PATH` causes a library the account controls to load into the process at startup, so code of the attacker's choosing runs first, inside a session the controller has just authenticated.
+
+        That defeats the mechanisms used to constrain access to a controller. A key restricted with `command=` to run one specific diagnostic, or an account confined to a restricted shell for a vendor support contract, both assume the session runs the program the controller chose. Preloaded code runs before that program and can replace what it does entirely.
+
+        The exposure applies to any account able to write its own `authorized_keys`, which is normally every account on the device.
+
+        Where a session genuinely needs an environment variable set, use `SetEnv` or `AcceptEnv` in the server configuration, which keeps the decision with the administrator.
       audit: |
         Run `grep -riE '^\s*PermitUserEnvironment' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null`.
 
@@ -875,7 +1072,20 @@ queries:
         _["ClientAliveCountMax"] <= 3
       }
     docs:
-      desc: The two options `ClientAliveInterval` and `ClientAliveCountMax` control the timeout of ssh sessions. When the `ClientAliveInterval` variable is set, ssh sessions that have no activity for the specified length of time are terminated. When the `ClientAliveCountMax` variable is set, `sshd` will send client alive messages at every `ClientAliveInterval` interval. When the number of consecutive client alive messages are sent with no response from the client, the `ssh` session is terminated. For example, if the `ClientAliveInterval` is set to 15 seconds and the `ClientAliveCountMax` is set to 3, the client `ssh` session will be terminated after 45 seconds of idle time.
+      desc: |
+        This check verifies that the controller's SSH server terminates sessions whose client has stopped responding.
+
+        The check reads `ClientAliveInterval`, which must be between 1 and 300 seconds, and `ClientAliveCountMax`, which must be between 1 and 3. `sshd` sends an encrypted keepalive every interval and closes the session after that many go unanswered, so the product of the two is the longest a session can survive with nothing on the other end.
+
+        **Why this matters**
+
+        An abandoned SSH session to a controller is an authenticated shell with engineering privileges, held open with nobody at the other end.
+
+        Plant floors are where this happens most. An engineer connects from a laptop on a cart, gets pulled to another line, and closes the lid; a session opened from a shared HMI station stays live after the engineer walks away. Anyone who reaches that workstation reaches the controller, with no authentication step in between and nothing in the logs to distinguish them from the person who logged in.
+
+        The other reason is availability. Controllers are small embedded devices with limited memory and a low cap on concurrent sessions. Stale sessions accumulate until new connections are refused, and the moment that is discovered is usually the moment someone urgently needs to reach the controller.
+
+        These directives use the encrypted channel, so they detect a genuinely dead peer rather than merely holding a NAT mapping open, which is what the unrelated `TCPKeepAlive` option does.
       audit: |
         Run `grep -riE '^\s*ClientAlive(Interval|CountMax)' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null` and review both values together.
 
@@ -918,7 +1128,22 @@ queries:
         _["LoginGraceTime"] <= 60
       }
     docs:
-      desc: The `LoginGraceTime` parameter specifies the time allowed for successful authentication to the SSH server. The longer the grace period is, the more open unauthenticated connections can exist. Like other session controls, the grace period should be limited to appropriate organizational limits to ensure the service is available for needed access.
+      desc: |
+        This check verifies that the controller's SSH server closes connections that have not authenticated within one minute.
+
+        The check reads `LoginGraceTime` in the SSH configuration, which must be between 1 and 60 seconds. The OpenSSH default is 120 seconds.
+
+        **Why this matters**
+
+        `LoginGraceTime` bounds how long a connection may sit unauthenticated before `sshd` closes it, and every connection in that state holds a slot and an unauthenticated `sshd` process.
+
+        On an embedded controller that is a denial of service parameter rather than a theoretical one. The device has far less memory and a far lower connection ceiling than a server, so the number of half-open connections needed to exhaust it is small. An attacker who opens connections and never authenticates can hold the SSH service full at almost no cost, and the engineer who needs to reach the controller during a fault cannot get in.
+
+        Halving the grace period halves the number of connections required to sustain that.
+
+        The pre-authentication window matters for a second reason: it is where `sshd` parses attacker-supplied protocol data before any credential has been accepted, which on a controller running older firmware is the code least likely to have been patched.
+
+        A minute is generous for an automated client and for an engineer typing a password or touching a hardware key.
       audit: |
         Run `grep -riE '^\s*LoginGraceTime' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null`.
 
@@ -957,16 +1182,20 @@ queries:
     mql: |
       sshd.config.params["AllowUsers"] != empty || sshd.config.params["AllowGroups"] != empty || sshd.config.params["DenyUsers"] != empty || sshd.config.params["DenyGroups"] != empty
     docs:
-      desc: |-
-        There are several options available to limit which users and groups can access the system via SSH. It is recommended that at least one of the following options be leveraged: `AllowUsers`
+      desc: |
+        This check verifies that SSH access to the controller is restricted to an explicit list of accounts or groups.
 
-        The `AllowUsers` variable gives the system administrator the option of allowing specific users to `ssh` into the system. The list consists of space-separated user names. Numeric user IDs are not recognized with this variable. If a system administrator wants to restrict user access further by only allowing the allowed users to log in from a particular host, the entry can be specified in the form of user@host. `AllowGroups`
+        The check reads the SSH configuration and requires that at least one of `AllowUsers`, `AllowGroups`, `DenyUsers`, or `DenyGroups` is present with a non-empty value.
 
-        The `AllowGroups` variable gives the system administrator the option of allowing specific groups of users to `ssh` into the system. The list consists of space-separated group names. Numeric group IDs are not recognized with this variable. `DenyUsers`
+        **Why this matters**
 
-        The `DenyUsers` variable gives the system administrator the option of denying specific users to `ssh` into the system. The list consists of space-separated user names. Numeric user IDs are not recognized with this variable. If a system administrator wants to restrict user access further by specifically denying user access from a particular host, the entry can be specified in the form of user@host. `DenyGroups`
+        Without one of these directives, `sshd` will attempt to authenticate any account that exists on the controller. That set is larger than the set of people who should be reaching it: accounts created during commissioning, accounts belonging to the integrator who installed the line, accounts for vendor support that was needed once, and service accounts added by firmware components.
 
-        The `DenyGroups` variable gives the system administrator the option of denying specific groups of users to `ssh` into the system. The list consists of space-separated group names. Numeric group IDs are not recognized with this variable.
+        Each is a name an attacker can try and an account that must be individually secured. An allowlist reduces that surface to the accounts that are supposed to connect, and it does so at the SSH layer, so a mistake in account management elsewhere on the device does not become remote access.
+
+        This matters more on a controller than on a server because account hygiene is harder to maintain. Devices are commissioned by one party, operated by another, and supported by a third, and nobody owns the account list end to end. The SSH allowlist is the one place that can be reviewed as a single statement of who may connect.
+
+        Prefer `AllowGroups` naming a dedicated group, so access is granted and revoked by membership rather than by editing the configuration and reloading `sshd` on a running controller.
       audit: |
         Run `grep -riE '^\s*(Allow|Deny)(Users|Groups)' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null`.
 
@@ -1012,7 +1241,20 @@ queries:
       sshd.config.params["Banner"] != empty
       sshd.config.params["Banner"] != "none"
     docs:
-      desc: The `Banner` parameter specifies a file whose contents must be sent to the remote user before authentication is permitted. By default, no banner is displayed. A login banner states the system is restricted and use is monitored, which supports legal action against unauthorized access and warns casual intruders off before they authenticate.
+      desc: |
+        This check verifies that the controller displays a warning banner before authentication.
+
+        The check reads `Banner` in the SSH configuration and requires that it is set and is not `none`. `sshd` sends the contents of the named file to the client before any credential is accepted.
+
+        **Why this matters**
+
+        The banner is a legal control rather than a technical one, and it is worth being direct about that: it stops nobody. Its purpose is to establish, before access is attempted, that the system is restricted, that use is limited to authorized purposes, and that activity may be monitored and recorded.
+
+        That notice is what makes monitoring and subsequent action defensible. Cases involving unauthorized access have turned on whether the user was warned, and in a number of jurisdictions consent to monitoring is a precondition for using session records as evidence. A controller without a banner can leave an organization unable to act on what it observed.
+
+        Industrial systems add a second reason. Controllers are reached by employees, contractors, integrators, and vendor support under different agreements, and the banner is the one point at which the same terms are presented to all of them regardless of which contract brought them there.
+
+        Keep the text to the authorization and monitoring notice. Do not include the controller's role, the process it runs, the site, or the firmware version, since the banner is shown before authentication and is therefore readable by anyone who can reach the port.
       audit: |
         Run `grep -riE '^\s*Banner' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null`, then read the file it points at to confirm the notification text is present.
 
@@ -1056,19 +1298,19 @@ queries:
       sshd.config.params["PubkeyAuthentication"] == "yes"
     docs:
       desc: |
-        Using SSH key authentication is considered to be a more secure method of logging into a remote system than using passwords. Here are some reasons why you might want to consider using only SSH key authentication:
+        This check verifies that the controller requires SSH key authentication and does not accept passwords.
 
-        - Increased security: SSH key authentication uses public-key cryptography to secure the connection, which is considered to be much more secure than using passwords. Passwords can be guessed or cracked, whereas an SSH key must be physically acquired by an attacker to be used to gain unauthorized access.
+        The check reads the SSH configuration and requires `PasswordAuthentication` to be `no` and `PubkeyAuthentication` to be `yes`. Both are needed: disabling passwords without keys enabled would leave no way in, and enabling keys while passwords remain accepted leaves the weaker path open alongside the stronger one.
 
-        - Convenience: Once you have set up an SSH key pair, logging into a remote system is faster and more convenient than typing a password every time.
+        **Why this matters**
 
-        - Improved audit trail: SSH key authentication provides a more detailed audit trail, making it easier to detect and respond to unauthorized access attempts.
+        A password on a controller is a shared secret in the worst environment for one. It is handed to plant engineers, to the integrator who commissioned the line, and to vendor support during a callout, it is written in the commissioning documentation, and it is frequently identical across every controller in the plant because that is what made installation practical. It is almost never changed afterward, because changing it means coordinating with everyone who holds it.
 
-        - Automation: SSH key authentication can be automated, making it easier to automate tasks and access remote systems without human intervention.
+        That single password is also guessable over the network. Controllers rarely have account lockout, rate limiting, or any monitoring that would notice sustained attempts, so an attacker who reaches the SSH port can work at it indefinitely and quietly.
 
-        While there are benefits to using only SSH key authentication, it is important to ensure that your SSH keys are managed properly, with strong passwords, and are backed up in case of loss or corruption.
+        Keys remove the shared secret. Each person or system gets their own, access is revoked by deleting one line without affecting anyone else, and there is nothing to guess over the network because the private key never leaves the client.
 
-        In summary, allowing only SSH key authentication can provide a more secure and convenient way to access remote systems, but it is important to manage your keys properly to ensure that the increased security is not compromised.
+        Before applying this, confirm the authorized keys are in place and a working key-based login has been tested. Disabling password authentication on a controller you cannot otherwise reach means a trip to the plant floor with a serial cable.
       audit: |
         Run `grep -riE '^\s*(Password|Pubkey)Authentication' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null` and review both values together.
 
