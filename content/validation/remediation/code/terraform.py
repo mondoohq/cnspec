@@ -87,7 +87,11 @@ PROVIDER_MAP = {
     # from this map produces an empty `required_providers` block, which the
     # terraform preset's terraform_required_providers rule fails on every
     # resource — so a new target needs an entry here to be checkable at all.
-    "alicloud": ("aliyun/alicloud", "~> 2.0"),
+    # `~> 2.0` matched no released version: the registry carries 2.0.0-beta1 and
+    # 2.0.0-beta2 and nothing else in that line, so terraform could not resolve
+    # the provider at all. tflint never noticed because it does not resolve
+    # versions. Current stable is 1.288.0.
+    "alicloud": ("aliyun/alicloud", "~> 1.288"),
     "cloudflare": ("cloudflare/cloudflare", "~> 5.0"),
     "databricks": ("databricks/databricks", "~> 1.0"),
     "digitalocean": ("digitalocean/digitalocean", "~> 2.0"),
@@ -800,31 +804,37 @@ def build_provider_mirror(
     ):
         return
 
-    with tempfile.TemporaryDirectory(prefix="tfmirror_") as tmp:
-        tmp_path = Path(tmp)
-        (tmp_path / "main.tf").write_text(generate_wrapper("", set(wanted)))
-        try:
-            result = subprocess.run(
-                ["terraform", "providers", "mirror", str(mirror_dir)],
-                cwd=tmp_path, capture_output=True, text=True,
-                timeout=1800, env=env,
-            )
-        except subprocess.TimeoutExpired:
-            print(
-                "Warning: terraform providers mirror timed out; "
-                "schema validation will be skipped",
-                file=sys.stderr,
-            )
-            return
-        if result.returncode != 0:
-            print(
-                "Warning: terraform providers mirror failed; schema validation "
-                "will be skipped: "
-                + first_error_line(result.stderr, result.stdout),
-                file=sys.stderr,
-            )
-            return
-
+    # One provider at a time. `terraform providers mirror` is all or nothing, so
+    # a single unresolvable pin, a constraint matching no released version for
+    # instance, would otherwise take every other provider down with it and the
+    # schema pass would silently degrade to nothing.
+    for prov in sorted(wanted):
+        source, constraint = PROVIDER_MAP[prov]
+        if (mirror_dir / "registry.terraform.io" / source).exists():
+            continue
+        with tempfile.TemporaryDirectory(prefix="tfmirror_") as tmp:
+            tmp_path = Path(tmp)
+            (tmp_path / "main.tf").write_text(generate_wrapper("", {prov}))
+            try:
+                result = subprocess.run(
+                    ["terraform", "providers", "mirror", str(mirror_dir)],
+                    cwd=tmp_path, capture_output=True, text=True,
+                    timeout=1800, env=env,
+                )
+            except subprocess.TimeoutExpired:
+                print(
+                    f"Warning: mirroring {source} {constraint} timed out; "
+                    f"its snippets will not be schema checked",
+                    file=sys.stderr,
+                )
+                continue
+            if result.returncode != 0:
+                print(
+                    f"Warning: cannot mirror {source} {constraint}, so its "
+                    f"snippets will not be schema checked: "
+                    + first_error_line(result.stderr, result.stdout),
+                    file=sys.stderr,
+                )
     # Exec every provider binary once, serially, before the workers start. The
     # first launch of a freshly written binary is slow enough to exceed
     # terraform's plugin-start timeout, on macOS because Gatekeeper assesses it,
