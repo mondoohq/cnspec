@@ -1374,7 +1374,7 @@ queries:
 
               logging {
                 target_bucket = alicloud_oss_bucket.log.id
-                target_prefix  = "log/"
+                target_prefix = "log/"
               }
             }
             ```
@@ -2308,7 +2308,6 @@ queries:
     mql: |
       terraform.state.resources.where(type == "alicloud_ecs_disk").map(values).where(_["encrypted"] == true).all(_["kms_key_id"] != empty)
 
-  # No Terraform variants: instance metadata options (HttpTokens/HttpEndpoint) are not exposed as attributes of the alicloud_instance resource, so the token-required posture cannot be asserted from Terraform HCL, plan, or state.
   - uid: mondoo-alibaba-security-ecs-imds-v2-required
     title: Ensure ECS instances require a session token for metadata (IMDSv2)
     impact: 80
@@ -2356,11 +2355,32 @@ queries:
             To require a metadata token on an instance with the `aliyun` CLI:
 
             ```bash
-            aliyun ecs ModifyInstanceMetadataOptions --InstanceId <instance-id> --HttpTokens required
+            aliyun ecs ModifyInstanceMetadataOptions --InstanceId <instance-id> \
+              --HttpEndpoint enabled --HttpTokens required
             ```
-        # No Terraform remediation: instance metadata options are not exposed as an attribute of the alicloud_instance resource, so the token-required posture cannot be set through Terraform.
+
+            `HttpEndpoint` is mandatory on this call, and passing `enabled` keeps the metadata service reachable while the token requirement is added.
+        - id: terraform
+          desc: |
+            To require a metadata token in Terraform, set `http_tokens` to `required` on the instance:
+
+            ```hcl
+            resource "alicloud_instance" "example" {
+              instance_name   = "example-instance"
+              instance_type   = "ecs.g6.large"
+              image_id        = "aliyun_3_x64_20G_alibase_20240819.vhd"
+              security_groups = [alicloud_security_group.example.id]
+              vswitch_id      = alicloud_vswitch.example.id
+
+              http_endpoint = "enabled"
+              http_tokens   = "required"
+            }
+            ```
     variants:
       - uid: mondoo-alibaba-security-ecs-imds-v2-required-alicloud
+      - uid: mondoo-alibaba-security-ecs-imds-v2-required-terraform-hcl
+      - uid: mondoo-alibaba-security-ecs-imds-v2-required-terraform-plan
+      - uid: mondoo-alibaba-security-ecs-imds-v2-required-terraform-state
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: false
@@ -2381,6 +2401,29 @@ queries:
     filters: asset.platform == "alicloud-account"
     mql: |
       alicloud.ecs.instances.where(metadataEndpointEnabled == true).all(metadataHttpTokens == "required")
+  - uid: mondoo-alibaba-security-ecs-imds-v2-required-terraform-hcl
+    filters: |
+      asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_instance")
+    mql: |
+      # An omitted http_endpoint leaves the metadata service enabled, which is the state this
+      # check is about, so only an explicit "disabled" takes an instance out of scope.
+      terraform.resources("alicloud_instance").where(arguments["http_endpoint"] != "disabled").all(
+        arguments["http_tokens"] == "required"
+      )
+  - uid: mondoo-alibaba-security-ecs-imds-v2-required-terraform-plan
+    filters: |
+      asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "alicloud_instance").map(change.after)
+        .where(_["http_endpoint"] != "disabled")
+        .all(_["http_tokens"] == "required")
+  - uid: mondoo-alibaba-security-ecs-imds-v2-required-terraform-state
+    filters: |
+      asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_instance")
+    mql: |
+      terraform.state.resources.where(type == "alicloud_instance").map(values)
+        .where(_["http_endpoint"] != "disabled")
+        .all(_["http_tokens"] == "required")
 
   # ===========================================================================
   # ApsaraDB for RDS
@@ -2936,8 +2979,10 @@ queries:
             ```bash
             aliyun polardb ModifyDBClusterTDE \
               --DBClusterId <cluster-id> \
-              --TDEStatus Enabled
+              --TDEStatus Enable
             ```
+
+            The value this call accepts is `Enable`, while the cluster reports its state back as `Enabled`.
         - id: terraform
           desc: |
             To enable TDE on a PolarDB cluster in Terraform, set `tde_status` to `Enabled`:
@@ -3924,7 +3969,7 @@ queries:
         _["key_usage"] == empty || _["key_usage"].downcase == "encrypt/decrypt"
       ).all(_["automatic_rotation"] == "Enabled")
 
-# No Terraform variants: the check bounds the rotation interval numerically, but Terraform expresses rotation_interval as a duration string ("31536000s") that cannot be parsed to an integer inside a variant query in this engine. The Terraform remediation still shows how to set a compliant interval.
+  # No Terraform variants: the check bounds the rotation interval numerically, but Terraform expresses rotation_interval as a duration string ("31536000s") that cannot be parsed to an integer inside a variant query in this engine. The Terraform remediation still shows how to set a compliant interval.
   - uid: mondoo-alibaba-security-kms-key-rotation-interval
     title: Ensure KMS keys rotate at least once every 365 days
     impact: 70
@@ -4869,7 +4914,8 @@ queries:
 
             ```bash
             aliyun slb CreateLoadBalancerHTTPSListener --LoadBalancerId <lb-id> \
-              --ListenerPort 443 --ServerCertificateId <cert-id> --Bandwidth -1
+              --ListenerPort 443 --ServerCertificateId <cert-id> --Bandwidth -1 \
+              --HealthCheck on
             aliyun slb DeleteLoadBalancerListener --LoadBalancerId <lb-id> --ListenerPort 80
             ```
         # No Terraform remediation: SLB listeners are modeled as standalone alicloud_slb_listener resources decoupled from their load balancer's address type, so this posture is asserted against the running configuration rather than a single Terraform attribute.
@@ -4979,8 +5025,8 @@ queries:
         ### Audit via Console
 
         1. Sign in to the [Cloud SSO console](https://cloudsso.console.aliyun.com/).
-        2. Go to **Settings** > **Multi-Factor Authentication**.
-        3. Review the MFA setting for each directory.
+        2. Go to **Settings** and open the **User Setting** tab.
+        3. Review **MFA Requirement for Logon** in the **Username-password Login** section of each directory.
 
         A passing directory shows MFA enabled for all users. A failing directory shows it disabled, or enabled only for sign-ins judged risky.
 
@@ -4999,8 +5045,8 @@ queries:
             To require MFA for every Cloud SSO sign-in in the console:
 
             1. Sign in to the [Cloud SSO console](https://cloudsso.console.aliyun.com/).
-            2. Go to **Settings** > **Multi-Factor Authentication**.
-            3. Set the MFA policy to require a second factor for all users, and save.
+            2. Go to **Settings** and open the **User Setting** tab.
+            3. In the **Username-password Login** section select **Edit** next to **MFA Requirement for Logon**, set it to require a second factor for all users, and save.
         - id: cli
           desc: |
             To require MFA for every sign-in with the `aliyun` CLI:
@@ -5089,8 +5135,8 @@ queries:
         ### Audit via Console
 
         1. Sign in to the [Cloud SSO console](https://cloudsso.console.aliyun.com/).
-        2. Go to **Settings** > **Password Policy**.
-        3. Review the minimum length and whether passwords may contain the username.
+        2. Go to **Settings** and open the **User Setting** tab.
+        3. In the **Password Policy** section, review the minimum length and whether passwords may contain the username.
 
         A passing directory requires at least 14 characters and forbids the username. A failing directory requires fewer characters or permits it.
 
@@ -5109,7 +5155,7 @@ queries:
             To harden the Cloud SSO password policy in the console:
 
             1. Sign in to the [Cloud SSO console](https://cloudsso.console.aliyun.com/).
-            2. Go to **Settings** > **Password Policy**.
+            2. Go to **Settings**, open the **User Setting** tab, and select **Edit** in the **Password Policy** section.
             3. Set the minimum length to 14 or more, forbid passwords containing the username, and save.
         - id: cli
           desc: |
@@ -5220,8 +5266,8 @@ queries:
         ### Audit via Console
 
         1. Sign in to the [Cloud SSO console](https://cloudsso.console.aliyun.com/).
-        2. Go to **Settings** > **Login Preference**.
-        3. Review whether users may obtain access credentials for themselves.
+        2. Go to **Settings** and open the **User Setting** tab.
+        3. In the **Login Preference** section, review whether users may obtain access credentials for themselves.
 
         A passing directory has the option turned off. A failing directory allows users to retrieve their own credentials.
 
@@ -5240,7 +5286,7 @@ queries:
             To stop users minting their own credentials in the console:
 
             1. Sign in to the [Cloud SSO console](https://cloudsso.console.aliyun.com/).
-            2. Go to **Settings** > **Login Preference**.
+            2. Go to **Settings**, open the **User Setting** tab, and select **Edit** in the **Login Preference** section.
             3. Turn off the option that lets users obtain access credentials, and save.
         - id: cli
           desc: |
@@ -5339,7 +5385,7 @@ queries:
         ### Audit via Console
 
         1. Sign in to the [Container Registry console](https://cr.console.aliyun.com/).
-        2. Open the instance and go to **Repositories**.
+        2. Open the instance and go to **Repository** > **Repositories**.
         3. Review the repository type of each repository.
 
         A passing repository is **Private**. A failing repository is **Public**.
@@ -5359,15 +5405,15 @@ queries:
             To make a repository private in the console:
 
             1. Sign in to the [Container Registry console](https://cr.console.aliyun.com/).
-            2. Open the instance, go to **Repositories**, and select the repository.
-            3. In **Repository Information**, change the repository type to **Private**, and save.
+            2. Open the instance, go to **Repository** > **Repositories**, and select **Manage** on the repository.
+            3. On the **Details** page select **Edit**, set the repository type to **Private** in the **Modify Settings** dialog, and confirm.
         - id: cli
           desc: |
-            To make a repository private with the `aliyun` CLI:
+            To make a repository private with the `aliyun` CLI, pass the repository summary alongside the type, since the call rewrites both:
 
             ```bash
             aliyun cr UpdateRepository --InstanceId <instance-id> \
-              --RepoId <repo-id> --RepoType PRIVATE
+              --RepoId <repo-id> --RepoType PRIVATE --Summary <repository-summary>
             ```
         - id: terraform
           desc: |
@@ -5448,8 +5494,8 @@ queries:
         ### Audit via Console
 
         1. Sign in to the [Container Registry console](https://cr.console.aliyun.com/).
-        2. Open the instance, go to **Repositories**, and select a repository.
-        3. In **Repository Information**, review the tag immutability setting.
+        2. Open the instance, go to **Repository** > **Repositories**, and select **Manage** on a repository.
+        3. On the **Details** page, review whether the repository is marked **Immutable**.
 
         A passing repository has tag immutability enabled. A failing repository has it disabled.
 
@@ -5468,15 +5514,16 @@ queries:
             To enable tag immutability in the console:
 
             1. Sign in to the [Container Registry console](https://cr.console.aliyun.com/).
-            2. Open the instance, go to **Repositories**, and select the repository.
-            3. In **Repository Information**, turn on tag immutability, and save.
+            2. Open the instance, go to **Repository** > **Repositories**, and select **Manage** on the repository.
+            3. On the **Details** page select **Edit**, select **Immutable** in the **Modify Settings** dialog, and confirm.
         - id: cli
           desc: |
-            To enable tag immutability with the `aliyun` CLI:
+            To enable tag immutability with the `aliyun` CLI, pass the repository type and summary alongside the immutability flag, since the call rewrites all of them:
 
             ```bash
             aliyun cr UpdateRepository --InstanceId <instance-id> \
-              --RepoId <repo-id> --TagImmutability true
+              --RepoId <repo-id> --TagImmutability true \
+              --RepoType PRIVATE --Summary <repository-summary>
             ```
         - id: terraform
           desc: |
@@ -5561,7 +5608,7 @@ queries:
         ### Audit via Console
 
         1. Sign in to the [Container Registry console](https://cr.console.aliyun.com/).
-        2. Open the instance and go to **Security** > **Image Scan**.
+        2. Open the instance and go to **Security and Trust** > **Image Scanning**.
         3. Review the configured scan rules.
 
         A passing instance has at least one scan rule. A failing instance has none.
@@ -5581,7 +5628,7 @@ queries:
             To add an image scan rule in the console:
 
             1. Sign in to the [Container Registry console](https://cr.console.aliyun.com/).
-            2. Open the instance and go to **Security** > **Image Scan**.
+            2. Open the instance and go to **Security and Trust** > **Image Scanning**.
             3. Create a scan rule, set its scope to the repositories you want covered, and choose the on-push trigger.
         - id: cli
           desc: |
@@ -5669,8 +5716,10 @@ queries:
 
             ```bash
             aliyun elasticsearch POST /openapi/instances \
-              --body '{"nodeSpec":{"diskEncryption":true}}'
+              --body '{"description":"example-cluster","esVersion":"7.10_with_X-Pack","nodeAmount":2,"esAdminPassword":"<admin-password>","paymentType":"postpaid","nodeSpec":{"spec":"elasticsearch.sn2ne.large","disk":20,"diskType":"cloud_ssd","diskEncryption":true},"networkConfig":{"type":"vpc","vpcId":"<vpc-id>","vswitchId":"<vswitch-id>","vsArea":"<zone-id>"}}'
             ```
+
+            `esVersion`, `nodeAmount`, `esAdminPassword`, `nodeSpec.spec`, and `networkConfig` are all mandatory, so the request has to carry them even though `diskEncryption` is the setting being fixed.
         - id: terraform
           desc: |
             To declare an encrypted cluster in Terraform, set `data_node_disk_encrypted` to `true`:
@@ -5756,8 +5805,8 @@ queries:
         ### Audit via Console
 
         1. Sign in to the [Elasticsearch console](https://elasticsearch.console.aliyun.com/).
-        2. Open each cluster and go to **Security**.
-        3. Review whether the public network endpoint is enabled.
+        2. Open each cluster and go to **Configuration and Management** > **Security**.
+        3. Review whether **Public Network Access** is enabled.
 
         A passing cluster has the public endpoint disabled. A failing cluster has it enabled.
 
@@ -5776,8 +5825,8 @@ queries:
             To turn off the public endpoint in the console:
 
             1. Sign in to the [Elasticsearch console](https://elasticsearch.console.aliyun.com/).
-            2. Open the cluster and go to **Security**.
-            3. Disable the public network access, and save.
+            2. Open the cluster and go to **Configuration and Management** > **Security**.
+            3. Turn off **Public Network Access**, and save.
         - id: cli
           desc: |
             To turn off the public endpoint with the `aliyun` CLI:
@@ -5871,7 +5920,7 @@ queries:
         ### Audit via Console
 
         1. Sign in to the [Elasticsearch console](https://elasticsearch.console.aliyun.com/).
-        2. Open each cluster with a public endpoint and go to **Security** > **Public Network Whitelist**.
+        2. Open each cluster with a public endpoint and go to **Configuration and Management** > **Security**, then review the **Public IP Address Whitelist** section.
         3. Review the entries.
 
         A passing cluster lists only specific ranges, or has no public endpoint at all. A failing cluster lists `0.0.0.0/0`.
@@ -5891,7 +5940,7 @@ queries:
             To narrow the public allowlist in the console:
 
             1. Sign in to the [Elasticsearch console](https://elasticsearch.console.aliyun.com/).
-            2. Open the cluster and go to **Security** > **Public Network Whitelist**.
+            2. Open the cluster, go to **Configuration and Management** > **Security**, and select **Modify** next to **Public IP Address Whitelist**.
             3. Replace `0.0.0.0/0` with the specific ranges that need access, and save.
         - id: cli
           desc: |
@@ -5997,8 +6046,8 @@ queries:
         ### Audit via Console
 
         1. Sign in to the [Function Compute console](https://fcnext.console.aliyun.com/).
-        2. Open each function and go to **Configurations** > **Network**.
-        3. Review whether public internet access is allowed.
+        2. Open each function, select the **Configuration** tab, and open **Advanced Settings**.
+        3. In the **Network** section, review **Allow Default ENI to Access the Internet**.
 
         A passing function has internet access disabled. A failing function has it enabled.
 
@@ -6017,8 +6066,8 @@ queries:
             To turn off internet egress in the console:
 
             1. Sign in to the [Function Compute console](https://fcnext.console.aliyun.com/).
-            2. Open the function and go to **Configurations** > **Network**.
-            3. Set public internet access to disabled, and save.
+            2. Open the function, select the **Configuration** tab, and select **Modify** next to **Advanced Settings**.
+            3. In the **Network** section set **Allow Default ENI to Access the Internet** to disabled, then deploy the change.
         - id: cli
           desc: |
             To turn off internet egress with the `aliyun` CLI:
@@ -6111,8 +6160,8 @@ queries:
         ### Audit via Console
 
         1. Sign in to the [Function Compute console](https://fcnext.console.aliyun.com/).
-        2. Open each function and go to **Configurations** > **Environment Variables**.
-        3. Review the names and values for access keys, tokens, passwords, and private keys.
+        2. Open each function, select the **Configuration** tab, and open **Advanced Settings**.
+        3. In the **Environment Variables** section, review the names and values for access keys, tokens, passwords, and private keys.
 
         A passing function holds only non-sensitive configuration. A failing function holds a credential, or a reference that resolves to one.
 
@@ -6131,8 +6180,8 @@ queries:
             To move a credential out of a function's environment in the console:
 
             1. Store the value in [KMS Secrets Manager](https://kms.console.aliyun.com/) and grant the function's RAM role permission to read it.
-            2. Sign in to the [Function Compute console](https://fcnext.console.aliyun.com/), open the function, and go to **Configurations** > **Environment Variables**.
-            3. Replace the credential with the secret name and have the function fetch the value at startup, then rotate the exposed credential.
+            2. Sign in to the [Function Compute console](https://fcnext.console.aliyun.com/), open the function, select the **Configuration** tab, and select **Modify** next to **Advanced Settings**.
+            3. In the **Environment Variables** section replace the credential with the secret name, have the function fetch the value at startup, then rotate the exposed credential.
         - id: cli
           desc: |
             To replace an inline credential with a secret reference using the `aliyun` CLI:
@@ -6272,7 +6321,7 @@ queries:
         ### Audit via Console
 
         1. Sign in to the [VPC console](https://vpc.console.aliyun.com/).
-        2. Go to **VPN** > **IPsec Connections** and open each connection.
+        2. Go to **Interconnections** > **VPN** > **IPsec Connections** and open each connection.
         3. Review the encryption algorithm in both the **IKE Configuration** and the **IPsec Configuration**.
 
         A passing connection uses an AES algorithm in both. A failing connection uses `des` or `3des` in either.
@@ -6292,7 +6341,7 @@ queries:
             To move a connection onto AES in the console:
 
             1. Sign in to the [VPC console](https://vpc.console.aliyun.com/).
-            2. Go to **VPN** > **IPsec Connections** and edit the connection.
+            2. Go to **Interconnections** > **VPN** > **IPsec Connections** and edit the connection.
             3. Set the encryption algorithm to `aes256` in both the IKE and IPsec configurations, apply the matching change on the customer gateway, and save.
         - id: cli
           desc: |
@@ -6418,7 +6467,7 @@ queries:
         ### Audit via Console
 
         1. Sign in to the [VPC console](https://vpc.console.aliyun.com/).
-        2. Go to **VPN** > **IPsec Connections** and open each connection.
+        2. Go to **Interconnections** > **VPN** > **IPsec Connections** and open each connection.
         3. Review the Diffie-Hellman group in both the **IKE Configuration** and the **IPsec Configuration**.
 
         A passing connection uses `group14` or higher in both. A failing connection uses `group1`, `group2`, `group5`, or has it disabled.
@@ -6438,7 +6487,7 @@ queries:
             To raise the Diffie-Hellman group in the console:
 
             1. Sign in to the [VPC console](https://vpc.console.aliyun.com/).
-            2. Go to **VPN** > **IPsec Connections** and edit the connection.
+            2. Go to **Interconnections** > **VPN** > **IPsec Connections** and edit the connection.
             3. Set the DH group to `group14` or higher in both configurations, apply the matching change on the customer gateway, and save.
         - id: cli
           desc: |
@@ -6767,7 +6816,7 @@ queries:
         ### Audit via Console
 
         1. Sign in to the [KMS console](https://kms.console.aliyun.com/).
-        2. Go to **Secrets Manager** and open each secret.
+        2. Go to **Resource** > **Secrets** and open each secret.
         3. Review the automatic rotation setting.
 
         A passing secret has rotation enabled. A failing secret has it disabled or suspended.
@@ -6787,8 +6836,8 @@ queries:
             To enable automatic rotation in the console:
 
             1. Sign in to the [KMS console](https://kms.console.aliyun.com/).
-            2. Go to **Secrets Manager** and open the secret.
-            3. Enable automatic rotation, set a rotation interval, and save.
+            2. Go to **Resource** > **Secrets** and open the secret.
+            3. Select **Configure Rotation**, turn on **Automatic Rotation**, set a rotation interval, and confirm.
         - id: cli
           desc: |
             To enable automatic rotation with the `aliyun` CLI:
@@ -6878,7 +6927,7 @@ queries:
         ### Audit via Console
 
         1. Sign in to the [KMS console](https://kms.console.aliyun.com/).
-        2. Go to **Secrets Manager** and open each secret.
+        2. Go to **Resource** > **Secrets** and open each secret.
         3. Review the encryption key it is protected by.
 
         A passing secret names a customer master key. A failing secret shows the service default.
@@ -6898,7 +6947,7 @@ queries:
             The encryption key of a secret is chosen at creation. To move to a customer master key in the console:
 
             1. Sign in to the [KMS console](https://kms.console.aliyun.com/) and create or select a customer master key.
-            2. Go to **Secrets Manager** and create a replacement secret, choosing that key.
+            2. Go to **Resource** > **Secrets** and create a replacement secret, choosing that key.
             3. Point consumers at the new secret, then delete the old one and rotate the value.
         - id: cli
           desc: |
@@ -7103,8 +7152,8 @@ queries:
         ### Audit via Console
 
         1. Sign in to the [ECS console](https://ecs.console.aliyun.com/).
-        2. Go to **Instances & Images** > **Images** and select **Custom Images**.
-        3. Review the sharing state of each image.
+        2. Go to **Instances & Images** > **Images** and open the **Custom Images** tab.
+        3. Review whether each image is published as a community image.
 
         A passing image is not public. A failing image is published to all users.
 
@@ -7123,8 +7172,8 @@ queries:
             To un-publish a custom image in the console:
 
             1. Sign in to the [ECS console](https://ecs.console.aliyun.com/).
-            2. Go to **Instances & Images** > **Images** and select the custom image.
-            3. Cancel the public sharing, then treat any credential the image contains as exposed and rotate it.
+            2. Go to **Instances & Images** > **Images** and open the **Custom Images** tab.
+            3. Find the published community image and unpublish it, then treat any credential the image contains as exposed and rotate it.
         - id: cli
           desc: |
             To un-publish a custom image with the `aliyun` CLI:
@@ -7182,7 +7231,7 @@ queries:
         ### Audit via Console
 
         1. Sign in to the [Cloud Firewall console](https://yundun.console.aliyun.com/?p=cfwnext).
-        2. Go to **Access Control** > **Internet Border** and review the inbound rules.
+        2. Go to **Prevention Configuration** > **Access Control** > **Policy Configuration** > **Internet Border** and open the **Inbound** tab.
         3. Look for an enabled rule whose action is **Accept** with `0.0.0.0/0` as both source and destination and a protocol of **ANY**.
 
         A passing account has no such rule. A failing account has at least one.
@@ -7192,7 +7241,7 @@ queries:
         1. List the inbound control policies:
 
         ```bash
-        aliyun cloudfw DescribeControlPolicy --Direction in
+        aliyun cloudfw DescribeControlPolicy --Direction in --CurrentPage 1 --PageSize 50
         ```
 
         A passing account returns no enabled policy with `AclAction` of `accept`, `Proto` of `ANY`, and `0.0.0.0/0` for both `Source` and `Destination`. A failing account returns one.
@@ -7202,7 +7251,7 @@ queries:
             To narrow an accept-any rule in the console:
 
             1. Sign in to the [Cloud Firewall console](https://yundun.console.aliyun.com/?p=cfwnext).
-            2. Go to **Access Control** > **Internet Border** and edit the rule.
+            2. Go to **Prevention Configuration** > **Access Control** > **Policy Configuration** > **Internet Border**, open the **Inbound** tab, and edit the rule.
             3. Name the specific protocol, destination port, and source range the flow needs, or change the action to **Drop**, and save.
         - id: cli
           desc: |
@@ -7210,10 +7259,13 @@ queries:
 
             ```bash
             aliyun cloudfw ModifyControlPolicy --AclUuid <acl-uuid> --Direction in \
-              --AclAction accept --Proto TCP --DestPort 443/443 \
+              --AclAction accept --Proto TCP --ApplicationName HTTPS \
+              --DestPort 443/443 --DestPortType port \
               --Source 203.0.113.0/24 --SourceType net \
               --Destination 10.0.0.0/16 --DestinationType net
             ```
+
+            `ApplicationName` is mandatory on this call, since a policy must name either a single application or an application list.
         - id: terraform
           desc: |
             To declare a scoped inbound rule in Terraform, name the protocol, port, and source:
