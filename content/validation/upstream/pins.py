@@ -56,6 +56,7 @@ from paths import DATA_DIR, DUMP_DIR, REPO_ROOT, VALIDATION_DIR  # noqa: E402
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "validate-remediation.yaml"
 OPENAPI_MODULE = VALIDATION_DIR / "remediation" / "commands" / "openapi.py"
 TERRAFORM_VALIDATOR = VALIDATION_DIR / "remediation" / "code" / "terraform.py"
+API_SPECS_DUMP = VALIDATION_DIR / "upstream" / "dump" / "api_specs.py"
 CMD_DATA = DATA_DIR
 
 USER_AGENT = "cnspec-validation-drift-check"
@@ -159,6 +160,26 @@ def latest_terraform_provider(source: str) -> str:
     if not isinstance(data, dict):
         return "unknown"
     return as_token(data.get("version", "unknown"))
+
+
+def latest_okta_spec_release() -> str:
+    """Newest dated spec directory under the Okta spec repo's dist/.
+
+    Okta ships one directory per release, named YYYY.MM.N, alongside a
+    `current` alias and a `legacy-*` tree. Only the dated ones are candidates,
+    and they sort numerically rather than lexically: 2026.07.10 is newer than
+    2026.07.3, which a string sort gets backwards.
+    """
+    data = fetch_json(
+        "https://api.github.com/repos/okta/okta-management-openapi-spec/contents/dist"
+    )
+    if not isinstance(data, list):
+        return "unknown"
+    dated = [e["name"] for e in data
+             if e.get("type") == "dir" and re.fullmatch(r"\d{4}\.\d{2}\.\d+", e.get("name", ""))]
+    if not dated:
+        return "unknown"
+    return max(dated, key=lambda n: tuple(int(p) for p in n.split(".")))
 
 
 def head_commit_for_path(repo: str, path: str) -> str:
@@ -587,11 +608,43 @@ def sync_dump_script_pins() -> list[str]:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def check_spec_dumps() -> list[Pin]:
+    """Specs that are pinnable upstream but published only as YAML.
+
+    The raw-URL specs in check_spec_pins() are downloaded at validation time,
+    so their pin lives in openapi.py. These are converted to JSON and checked
+    into data/ instead, because the validators are stdlib-only and cannot
+    parse YAML — so the pin lives in the dump script, and the checked-in file
+    carries a copy in its `_meta` recording which revision produced it.
+
+    No `apply`, for the same reason as the grammars: moving the pin means
+    re-running the dump against the new revision, which needs PyYAML and the
+    network, so it happens in a workflow job rather than in-process here.
+    """
+    return [
+        Pin(
+            "okta API spec", "spec-dump",
+            meta_of("okta_openapi.json").get("pin", "unknown"),
+            latest_okta_spec_release(),
+            "bump OKTA_SPEC_VERSION in upstream/dump/api_specs.py and re-run it",
+            files=[API_SPECS_DUMP, CMD_DATA / "okta_openapi.json"],
+        ),
+        Pin(
+            "portainer API spec", "spec-dump",
+            meta_of("portainer_openapi.json").get("pin", "unknown")[:10],
+            head_commit_for_path("portainer/portainer", "api/docs/openapi.yaml")[:10],
+            "bump PORTAINER_SPEC_SHA in upstream/dump/api_specs.py and re-run it",
+            files=[API_SPECS_DUMP, CMD_DATA / "portainer_openapi.json"],
+        ),
+    ]
+
+
 def discover() -> list[Pin]:
     """Every watched pin, with its current value and what upstream has."""
     return (
         check_workflow_tools()
         + check_terraform_pins()
         + check_spec_pins()
+        + check_spec_dumps()
         + check_grammars()
     )

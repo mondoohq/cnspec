@@ -638,14 +638,17 @@ API_PROVIDERS = {
             "pin": CLOUDFLARE_OPENAPI_SHA,
         }],
         "body_exemptions": {
-            # The token-roll endpoint declares its body as `type: object`,
-            # but the Cloudflare API docs (and the live API) require the
-            # literal JSON string "" as the request body.
-            ("PUT", "/user/tokens/{token_id}/value"): "body",
             # Account update reuses the shared account schema, which marks
-            # `id` and `type` required because responses always carry
-            # them; the documented update payload sends only `name` (plus
-            # optional `settings`).
+            # `id` and `type` required because responses always carry them;
+            # the documented update payload sends only `name` (plus optional
+            # `settings`).
+            #
+            # Verifiable from the spec rather than taken on trust: the
+            # requestBody is an allOf over a schema whose `required` is
+            # ['id', 'name', 'type'] and whose properties include response-only
+            # fields such as `created_on` and `managed_by`. A request body
+            # that requires the server's own timestamps is a modelling
+            # artifact, not a payload anyone sends.
             ("PUT", "/accounts/{account_id}"): "required",
         },
         "path_hook": _cloudflare_path_hook,
@@ -682,6 +685,45 @@ API_PROVIDERS = {
             {"name": "atlassian-um", "file": "atlassian_user_management_openapi.json"},
         ],
     },
+    "okta": {
+        # Every Okta fix in this policy is an Admin Console click-through —
+        # the settings have no CLI — so the API surface here is entirely
+        # `audit:`: the vendor-native way for an auditor to reproduce a
+        # finding without trusting Mondoo's output. The policy writes the
+        # org host as the shell variable it tells the reader to set, so that
+        # literal is the host prefix curl calls are matched against.
+        #
+        # Okta publishes the Management API spec as YAML only, and the
+        # validators are stdlib-only, so it is converted to JSON and checked
+        # in by upstream/dump/api_specs.py, pinned to a dated dist/ release.
+        # servers[0].url is the templated `https://{yourOktaDomain}`, whose
+        # path component is empty, so no server prefix is stripped and the
+        # policy's `/api/v1/...` paths match the spec's directly.
+        #
+        # Only the org host is registered. The org's `-admin` subdomain serves
+        # Okta's internal Admin Console API, which has no published spec, so
+        # the five security-notification-email audit steps that call it fall
+        # outside this validator by host rather than by exemption. Registering
+        # that host would mean exempting every path under it, which is the same
+        # as not checking it while looking like it is checked.
+        "policies": ["mondoo-okta-security.mql.yaml"],
+        "host": "https://$OKTA_ORG.okta.com",
+        "specs": [{"name": "okta", "file": "okta_openapi.json"}],
+    },
+    "portainer": {
+        # Portainer is self-hosted; the policy's examples use the
+        # documentation placeholder host below. As with Okta, the fixes are
+        # UI-driven and the API appears only in `audit:` steps.
+        #
+        # Portainer publishes its spec as YAML only, so it is converted and
+        # checked in by upstream/dump/api_specs.py, pinned to the commit that
+        # produced it. Its servers[0].url is the relative "/api", which
+        # _server_prefix strips, so the policy's `/api/settings` matches the
+        # spec's `/settings`.
+        "policies": ["mondoo-portainer-security.mql.yaml"],
+        "host": "https://portainer.example.com",
+        "specs": [{"name": "portainer", "file": "portainer_openapi.json"}],
+    },
     "grafana": {
         # Grafana is self-hosted; the policy's examples use the
         # documentation placeholder host below.
@@ -713,8 +755,16 @@ API_PROVIDERS = {
         "specs": [{"name": "vercel", "file": "vercel_openapi.json"}],
         "remediation_ids": ("cli", "api"),
         "strip_api_version": True,
-        # The list-stores endpoint is live but undocumented in the spec,
-        # which carries only `/storage/stores/{id}`.
+        # The list-stores endpoint is live but undocumented. The spec carries
+        # only `/storage/stores/{id}` (get one), `/storage/stores/blob` (POST)
+        # and `/storage/stores/blob/{id}` (DELETE) — no listing operation at
+        # all — even though Vercel's docs call the spec complete.
+        #
+        # Confirmed live rather than assumed: the mql vercel provider pages
+        # this exact path to populate `vercel.team.stores`
+        # (providers/vercel/resources/stores.go). An exemption that only
+        # asserts "undocumented but real" is indistinguishable from a typo in
+        # the policy, so it needs evidence like this or it is hiding a bug.
         "path_exemptions": {"/storage/stores"},
     },
     "mongodbatlas": {
