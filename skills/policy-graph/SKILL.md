@@ -23,6 +23,8 @@ Navigate and understand cnspec policy bundles (`.mql.yaml` files) using structur
 - Linting bundles (`cnspec policy lint`)
 - Editing policy YAML directly (use the Read/Edit tools for that)
 
+For authoring or changing policies, use the `mql` skill instead. Its **Wiring Policies into Content Validation** section covers the fixtures and validator registrations a policy change in the cnspec repository has to ship with.
+
 ## Commands Reference
 
 | Command | Purpose |

@@ -160,6 +160,43 @@ If the Mondoo MCP server is available, you can use these tools instead of the CL
 | Query compilation validation | `cnspec run local -c "query" --ast` |
 | Policy structure validation | `cnspec policy lint file.mql.yaml -o sarif` |
 
+## Wiring Policies into Content Validation
+
+`cnspec policy lint` proves a policy **compiles**. It does not prove a check reaches the verdict you claim, that an IaC variant ever matches an asset, or that a remediation snippet is well-formed and actually fixes the thing it documents. Those live in a separate suite.
+
+When you are authoring or editing policies **inside the cnspec repository**, every one of those checks lives in `content/validation/`, and [`content/validation/README.md`](../../content/validation/README.md) is the reference for all of it. Authoring rules are in [`content/CLAUDE.md`](../../content/CLAUDE.md).
+
+```bash
+make test/content              # lint + bundle scans + compliance mappings
+make test/content/lint         # run this first, and fix it first
+make test/content/iac          # IaC variant fixture suites
+make test/content/iac/coverage # every IaC variant has pass+fail fixtures
+make test/content/remediation  # remediation code-block linters
+make test/content/commands     # remediation CLI and API validators
+```
+
+**A new policy has to be registered, or nothing validates it.** Every validator except the shell one and the compliance suites is allowlist-driven: it iterates a `TARGETS` dict or a policy slice. A bundle absent from those lists is not reported as unvalidated, it is never visited, so it merges with its variants untested and its remediation unlinted while CI stays green. Register the policy in the same change that adds it:
+
+| Add the policy to | When |
+|---|---|
+| `content/README.md` | always — the user-facing catalog |
+| `tfVariantPolicies` in `content/validation/scans/iac_variants_test.go` | it has `-terraform-hcl` / `-terraform-plan` / `-terraform-state` / `-cloudformation` / `-bicep` variants |
+| `TARGETS` in `content/validation/remediation/code/<language>.py` | it ships that language's remediation. Terraform also needs a `PROVIDER_MAP` entry per resource prefix |
+| a registry under `content/validation/remediation/commands/` | it ships `id: cli` / `id: api` blocks, or `audit:` steps that invoke a CLI or REST call |
+
+**Every IaC variant needs pass and fail fixtures** under `content/validation/scans/fixtures/iac-variants/<policy>/<variant-uid>/{pass,fail}/<scenario>/`, and a coverage gate enforces it at 100%. A variant that asserts exactly what its own `filters:` require has no possible failing input; record that with a `fail/IMPOSSIBLE.md` explaining why, which is the only sanctioned way to ship without a fail fixture.
+
+Scope a run to one check rather than running the whole suite — the trailing slash is what makes it work:
+
+```bash
+go test -tags iac_variants ./content/validation/scans \
+  -run 'TestTerraformVariants/mondoo-aws-security/mondoo-aws-security-s3-bucket-encryption-terraform-hcl/'
+```
+
+Three outcomes are distinguished, and the third matters most: **passed**, **failed**, and **skipped** — the check never ran because no asset matched its `filters:`. A skipped check is a fixture bug, not a pass. It looks identical to a passing one in every report, forever.
+
+**A policy with IaC variants leaves its groups unfiltered.** A group filter is evaluated before the check's own filter, so a group carrying `filters: asset.platform == "<api-platform>"` means a Terraform asset never reaches the variant underneath it and every fixture reports as *skipped*. Let each variant's own `filters:` select its asset instead, and convert the groups in the same change that adds the first variant.
+
 ## MQL Quick Reference
 
 ### Core Syntax
@@ -265,6 +302,7 @@ users.where(shell != null).all(shell == "/bin/bash") # Good
 4. **Write query** - Follow patterns from `mql-reference.md`
 5. **Validate** - Use `cnspec run local -c "query" --ast` to verify syntax
 6. **Test** - Run with `cnspec run` against target systems
+7. **Wire up validation** - For policies in the cnspec repository, add fixtures for any IaC variant and register the policy with the validators that cover its remediation, in the same change. See [Wiring Policies into Content Validation](#wiring-policies-into-content-validation)
 
 ## Platform-Specific Guidance
 

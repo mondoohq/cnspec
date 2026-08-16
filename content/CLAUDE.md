@@ -425,10 +425,34 @@ Five things gate a content change, and each fails differently:
 
 Three traps worth knowing before you hit them:
 
-- **A validator only sees the policies in its `TARGETS`.** When a policy gains its first `terraform`/`ansible`/`bash`/`chef` remediation, add it to that validator's `TARGETS` in the same change — otherwise it ships unlinted and CI stays green. Terraform needs a `PROVIDER_MAP` entry too.
+- **A validator only sees the policies in its `TARGETS`.** When a policy gains its first `terraform`/`ansible`/`powershell`/`chef` remediation, add it to that validator's `TARGETS` in the same change — otherwise it ships unlinted and CI stays green. Terraform needs a `PROVIDER_MAP` entry too. (`bash.py` is the exception: it globs every policy, deliberately.)
 - **A skipped check is a fixture bug, not a pass.** A variant whose filter never matches anything looks identical to one that passes, in every report, forever.
 - **A stale `KNOWN_BUG.md` marker fails the build.** Adding a check means deleting its markers in the same change.
 
 **Never hand-edit** the checked-in CLI grammars and OpenAPI specs in `validation/data/`; re-run the relevant script in `validation/upstream/dump/` instead.
+
+### A new policy is not covered until it is registered
+
+A new *check* inherits the coverage its policy already has. A new *policy* inherits nothing. Every validator above is allowlist-driven except `bash.py` and the compliance suites, so a brand-new `*.mql.yaml` is not reported as unvalidated; it is simply never visited. The bundle merges with its variants untested, its HCL unlinted and its CLI commands unverified, and every gate stays green.
+
+This is not hypothetical. The four SaaS policies added in PR #3338 were invisible to the remediation validators. Registering them with `terraform.py` in a follow-up commit failed **8 of their 11** HCL snippets against the real provider schemas, and hand-checking their CLI snippets found an entire invented `hcp vault` / `hcp consul` command surface and two `neonctl` flags that do not exist.
+
+Wire the policy up in the **same change** that adds it. [`validation/README.md`](validation/README.md#adding-a-policy-what-to-register) is the definitive list, with what breaks in each case; in short, the policy has to be named in:
+
+- `content/README.md`, the user-facing catalog, always.
+- `tfVariantPolicies` in `validation/scans/iac_variants_test.go`, if it has any IaC variant, plus that file's `extraProviders` if its runtime variant needs a provider beyond the base six.
+- `TARGETS` in each `validation/remediation/code/<language>.py` whose method it ships, and `PROVIDER_MAP` as well for Terraform.
+- a registry under `validation/remediation/commands/`, if it ships `id: cli` / `id: api` blocks or `audit:` steps that invoke a CLI or REST call.
+- `typos.toml`, if the vendor's terminology trips the spell checker.
+
+Adding a policy for a platform with **no** non-interactive surface is a legitimate outcome, not a reason to skip a row. Record it as a comment on the check explaining what the vendor does not expose, so the next pass does not re-derive it, and still register the policy with the validators it *can* use so anything added later is checked from the start.
+
+### Groups in a policy with variants carry no platform filter
+
+This one is an authoring decision, not a registration step, and it is invisible until the fixtures exist.
+
+A group filter is evaluated **before** the check's own filter, so a group carrying `filters: asset.platform == "<api-platform>"` means a Terraform asset never reaches the variant underneath it. Every fixture then reports as *skipped* rather than pass or fail, which is the outcome this whole suite exists to catch.
+
+A policy with variants therefore leaves its groups unfiltered and lets each variant's own `filters:` select its asset, the way `mondoo-tailscale-security` and `mondoo-snowflake-security` do. Convert the groups in the same change that adds the first variant.
 
 Reference links for MQL resources, built-in functions, and the authoring guide are in the repository-root [`CLAUDE.md`](../CLAUDE.md), which loads alongside this file.

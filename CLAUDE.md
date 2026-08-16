@@ -66,6 +66,8 @@ make test/content/lint   # cnspec policy lint over content/ and content/querypac
 make test/content/iac    # the IaC fixture suites (slow; run when you touch a variant)
 ```
 
+Most of those validators are **allowlist-driven**, so a new policy is covered only once it is registered with them. Adding a `*.mql.yaml` without wiring it into the variant suites and the remediation validators ships the whole bundle unexamined with every gate green — see [Adding a policy: what to register](content/validation/README.md#adding-a-policy-what-to-register).
+
 ### Scanning & policy linting
 
 ```bash
