@@ -335,6 +335,36 @@ Things to know when touching this:
 - **Grammars are not string bumps.** The pin records which tool produced the checked-in JSON, so it moves by installing that tool and re-running the dump script. `--all` reports them as skipped rather than pretending.
 - **`upstream/dump/vercel.py` is the one place a version is written twice** (its `VERCEL_VERSION` constant and the JSON's `_meta`). `bump.py --sync-dump-pins` pulls the constant back into line after a regeneration.
 
+## Adding a policy: what to register
+
+A new check inherits the coverage its policy already has. A new *policy* inherits nothing. Most
+validators here are allowlist-driven, so a `content/*.mql.yaml` that nobody registers is scanned by
+`bash.py` and the lint pass and by nothing else — the bundle ships unexamined with every gate green.
+`bash.py` is the exception on purpose; the comment on its `TARGETS` explains why.
+
+Register the policy everywhere it applies, in the same change that adds it:
+
+| Where | When it applies | What happens if you skip it |
+|---|---|---|
+| `remediation/code/terraform.py` → `TARGETS` **and** `PROVIDER_MAP` | any `hcl` remediation block | snippets are never resolved against the provider schema |
+| `remediation/code/{cloudformation,bicep,ansible,powershell,chef}.py` → `TARGETS` | that language appears in a remediation block | same, for that language |
+| `remediation/commands/` → `CLI_VALIDATORS`, `COBRA_CLIS`, or `API_PROVIDERS` | any `bash` remediation calls a vendor CLI or REST API | invented commands and endpoints ship unchallenged |
+| `scans/iac_variants_test.go` → `tfVariantPolicies` | the policy has any IaC variant | variants are never scanned, and coverage never asks for fixtures |
+
+A policy in `PROVIDER_MAP` needs a real provider source and a version constraint that resolves; a
+constraint matching only prereleases silently fails to resolve.
+
+### Group filters and variants do not mix
+
+A policy whose groups carry `filters: asset.platform == "<api-platform>"` cannot have IaC variants.
+The group filter is evaluated before the check's own filter, so a Terraform asset never reaches the
+variant and every fixture reports as *skipped* rather than pass or fail. Policies with variants leave
+their groups unfiltered and let each variant's `filters:` select its asset — that is why
+`mondoo-tailscale-security` and `mondoo-snowflake-security` declare no group filters.
+
+The failure mode is loud once you have fixtures (`check did not run against …`) and invisible before
+that, so convert the groups in the same change that adds the first variant.
+
 ## Adding a check: what has to pass
 
 1. `make test/content/lint` — it compiles.

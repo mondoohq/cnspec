@@ -96,6 +96,9 @@ var tfVariantPolicies = []tfVariantPolicy{
 	{"mondoo-hetzner-security-", "mondoo-hetzner-security.mql.yaml", ""},
 	{"mondoo-tailscale-security-", "mondoo-tailscale-security.mql.yaml", ""},
 	{"mondoo-m365-security-", "mondoo-m365-security.mql.yaml", ""},
+	{"mondoo-clickhousecloud-security-", "mondoo-clickhousecloud-security.mql.yaml", ""},
+	{"mondoo-hcp-security-", "mondoo-hcp-security.mql.yaml", ""},
+	{"mondoo-neon-security-", "mondoo-neon-security.mql.yaml", ""},
 }
 
 // checkOutcome distinguishes a check that ran and passed, ran and failed, or was
