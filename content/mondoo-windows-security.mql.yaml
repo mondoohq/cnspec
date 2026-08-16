@@ -229,7 +229,7 @@ queries:
             ```powershell
             $Temp = [System.Environment]::GetEnvironmentVariable('TEMP','Machine')
             secedit /export /cfg $Temp\secpol-export.cfg
-            (gc $Temp\secpol-export.cfg) -replace("SeDebugPrivilege = \S+", "SeDebugPrivilege = ") | Out-File $Temp\secpol-import.cfg
+            (gc $Temp\secpol-export.cfg) -replace("SeDebugPrivilege = \S+", "SeDebugPrivilege = ") | Out-File $Temp\secpol-import.cfg -Encoding Unicode
             secedit /import /db $Temp\secpol-db.sdb /cfg $Temp\secpol-import.cfg
             secedit /configure /db $Temp\secpol-db.sdb
             gpupdate /force
@@ -254,7 +254,7 @@ queries:
                 - name: Remove SeDebugPrivilege assignment
                   ansible.windows.win_powershell:
                     script: |
-                      (Get-Content C:\Windows\Temp\secpol-export.cfg) -replace 'SeDebugPrivilege = \S+', 'SeDebugPrivilege = ' | Out-File C:\Windows\Temp\secpol-import.cfg
+                      (Get-Content C:\Windows\Temp\secpol-export.cfg) -replace 'SeDebugPrivilege = \S+', 'SeDebugPrivilege = ' | Out-File C:\Windows\Temp\secpol-import.cfg -Encoding Unicode
 
                 - name: Import updated security policy
                   ansible.windows.win_command:
@@ -5367,7 +5367,7 @@ queries:
               hosts: windows
               tasks:
                 - name: Set PasswordHistorySize to 24
-                  ansible.windows.win_security_policy:
+                  community.windows.win_security_policy:
                     section: System Access
                     key: PasswordHistorySize
                     value: 24
@@ -5488,7 +5488,7 @@ queries:
               hosts: windows
               tasks:
                 - name: Set MaximumPasswordAge to 365
-                  ansible.windows.win_security_policy:
+                  community.windows.win_security_policy:
                     section: System Access
                     key: MaximumPasswordAge
                     value: 365
@@ -5605,7 +5605,7 @@ queries:
               hosts: windows
               tasks:
                 - name: Set MinimumPasswordAge to 1
-                  ansible.windows.win_security_policy:
+                  community.windows.win_security_policy:
                     section: System Access
                     key: MinimumPasswordAge
                     value: 1
@@ -5732,13 +5732,13 @@ queries:
               hosts: windows
               tasks:
                 - name: Set minimum password length via secedit
-                  ansible.windows.win_security_policy:
+                  community.windows.win_security_policy:
                     section: System Access
                     key: MinimumPasswordLength
                     value: 14
             ```
 
-            Note: The `win_security_policy` module requires the `ansible.windows` collection. Alternatively, use the win_shell module with secedit commands.
+            Note: The `win_security_policy` module ships in the `community.windows` collection, so install it with `ansible-galaxy collection install community.windows`. Alternatively, use the `ansible.windows.win_shell` module with `secedit` commands.
         - id: chef
           desc: |
             **Using Chef Infra**
@@ -5976,7 +5976,7 @@ queries:
               hosts: windows
               tasks:
                 - name: Set LSAAnonymousNameLookup to 0 (Disabled)
-                  ansible.windows.win_security_policy:
+                  community.windows.win_security_policy:
                     section: System Access
                     key: LSAAnonymousNameLookup
                     value: 0
@@ -6562,17 +6562,27 @@ queries:
           desc: |
             **Using Ansible**
 
+            **Warning:**
+
+            Do not clear this list on a domain controller. Domain controllers require the `LSARPC`, `NETLOGON`, and `SAMR` pipes for legacy authentication. The first task below reads the product type so the following two tasks can branch on it, where `2` identifies a domain controller.
+
             ```yaml
             - name: Configure Named Pipes that can be accessed anonymously
               hosts: windows
               tasks:
-                - name: Clear NullSessionPipes on member servers
+                - name: Read the operating system product type
+                  ansible.windows.win_powershell:
+                    script: (Get-CimInstance -ClassName Win32_OperatingSystem).ProductType
+                  changed_when: false
+                  register: product_type
+
+                - name: Clear NullSessionPipes on member servers and workstations
                   ansible.windows.win_regedit:
                     path: HKLM:\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters
                     name: NullSessionPipes
                     data: []
                     type: multistring
-                  when: not is_domain_controller
+                  when: product_type.output[0] != 2
 
                 - name: Allow only required pipes on domain controllers
                   ansible.windows.win_regedit:
@@ -6583,7 +6593,7 @@ queries:
                       - NETLOGON
                       - SAMR
                     type: multistring
-                  when: is_domain_controller
+                  when: product_type.output[0] == 2
             ```
         - id: chef
           desc: |
@@ -6900,7 +6910,7 @@ queries:
         2. Navigate to `HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters`.
         3. Inspect the `NullSessionShares` value.
 
-        The system passes when `NullSessionShares` is empty (no value configured). It fails if the value is missing or set differently.
+        The system passes when `NullSessionShares` lists no shares, and also when the value is absent, because an absent value grants no anonymous access. It fails when any share is listed.
 
         ### Audit via PowerShell
 
@@ -6911,7 +6921,7 @@ queries:
            Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters' -Name 'NullSessionShares'
            ```
 
-        The system passes when `NullSessionShares` is empty (no value configured). It fails if the value is missing or set differently.
+        The system passes when `NullSessionShares` lists no shares, and also when the value is absent, because an absent value grants no anonymous access. It fails when any share is listed.
       remediation:
         - id: grouppolicy
           desc: |
@@ -6935,7 +6945,7 @@ queries:
             ```powershell
             $RegistryPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters'
             $Name         = 'NullSessionShares'
-            $Value        = ''
+            $Value        = @()
 
             # Create the key if it does not exist
             If (-NOT (Test-Path $RegistryPath)) {
@@ -8282,7 +8292,7 @@ queries:
             ```powershell
             $Temp = [System.Environment]::GetEnvironmentVariable('TEMP','Machine')
             secedit /export /cfg $Temp\secpol-export.cfg
-            (gc $Temp\secpol-export.cfg) -replace("PasswordComplexity = \d+", "PasswordComplexity = 1") | Out-File $Temp\secpol-import.cfg
+            (gc $Temp\secpol-export.cfg) -replace("PasswordComplexity = \d+", "PasswordComplexity = 1") | Out-File $Temp\secpol-import.cfg -Encoding Unicode
             secedit /import /db $Temp\secpol-db.sdb /cfg $Temp\secpol-import.cfg
             secedit /configure /db $Temp\secpol-db.sdb
             gpupdate /force
@@ -8307,7 +8317,7 @@ queries:
                 - name: Set PasswordComplexity to 1
                   ansible.windows.win_powershell:
                     script: |
-                      (Get-Content C:\Windows\Temp\secpol-export.cfg) -replace 'PasswordComplexity = \d+', 'PasswordComplexity = 1' | Out-File C:\Windows\Temp\secpol-import.cfg
+                      (Get-Content C:\Windows\Temp\secpol-export.cfg) -replace 'PasswordComplexity = \d+', 'PasswordComplexity = 1' | Out-File C:\Windows\Temp\secpol-import.cfg -Encoding Unicode
 
                 - name: Import updated security policy
                   ansible.windows.win_command:
@@ -9826,7 +9836,7 @@ queries:
             ```powershell
             $Temp = [System.Environment]::GetEnvironmentVariable('TEMP','Machine')
             secedit /export /cfg $Temp\secpol-export.cfg
-            (gc $Temp\secpol-export.cfg) -replace("ClearTextPassword = \d+", "ClearTextPassword = 0") | Out-File $Temp\secpol-import.cfg
+            (gc $Temp\secpol-export.cfg) -replace("ClearTextPassword = \d+", "ClearTextPassword = 0") | Out-File $Temp\secpol-import.cfg -Encoding Unicode
             secedit /import /db $Temp\secpol-db.sdb /cfg $Temp\secpol-import.cfg
             secedit /configure /db $Temp\secpol-db.sdb
             gpupdate /force
@@ -9851,7 +9861,7 @@ queries:
                 - name: Set ClearTextPassword to 0
                   ansible.windows.win_powershell:
                     script: |
-                      (Get-Content C:\Windows\Temp\secpol-export.cfg) -replace 'ClearTextPassword = \d+', 'ClearTextPassword = 0' | Out-File C:\Windows\Temp\secpol-import.cfg
+                      (Get-Content C:\Windows\Temp\secpol-export.cfg) -replace 'ClearTextPassword = \d+', 'ClearTextPassword = 0' | Out-File C:\Windows\Temp\secpol-import.cfg -Encoding Unicode
 
                 - name: Import updated security policy
                   ansible.windows.win_command:
@@ -10440,17 +10450,25 @@ queries:
 
         1. Open the Local Group Policy Editor (`gpedit.msc`).
         2. Navigate to **Computer Configuration** > **Administrative Templates** > **System** > **Device Guard** > **Turn on Virtualization Based Security**.
-        3. Confirm the policy is **Enabled** and that **Virtualization Based Protection of Code Integrity** is set to **Enabled with UEFI lock** (or **Enabled without lock**).
+        3. Confirm the policy is **Enabled** and that **Virtualization Based Protection of Code Integrity** is set to **Enabled with UEFI lock** or **Enabled without lock**.
 
         ### Audit via PowerShell
 
-        1. Query the running Device Guard status:
+        1. Read the Device Guard policy value that the Group Policy setting writes:
+
+           ```powershell
+           Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard' -Name 'HypervisorEnforcedCodeIntegrity'
+           ```
+
+        The system passes when `HypervisorEnforcedCodeIntegrity` is `1` for enabled with UEFI lock, or `2` for enabled without lock. It fails when the value is missing or set to `0`.
+
+        2. Confirm that the configured policy is in effect on the running system:
 
            ```powershell
            (Get-CimInstance -ClassName Win32_DeviceGuard -Namespace root\Microsoft\Windows\DeviceGuard).SecurityServicesRunning
            ```
 
-        If the returned services include `2` (Hypervisor-Enforced Code Integrity), Memory Integrity is running and the check passes. If it does not, the check fails.
+        A returned service list that includes `2` confirms Memory Integrity is running. A configured policy that is not yet running usually means the system has not been restarted, or the hardware does not support Virtualization-Based Security.
       remediation:
         - id: grouppolicy
           desc: |-
@@ -10458,26 +10476,47 @@ queries:
 
             1. Open the Group Policy Editor and go to **Computer Configuration** > **Administrative Templates** > **System** > **Device Guard** > **Turn on Virtualization Based Security**.
             2. Set the policy to **Enabled**.
-            3. Set **Virtualization Based Protection of Code Integrity** to **Enabled with UEFI lock**.
-            4. Apply the policy and restart the system.
+            3. Set **Select Platform Security Level** to **Secure Boot**.
+            4. Set **Virtualization Based Protection of Code Integrity** to **Enabled with UEFI lock**.
+            5. Apply the policy and restart the system.
         - id: powershell
           desc: |-
-            To enable Memory Integrity by setting the Device Guard registry values, then restart:
+            Memory Integrity rides on Virtualization-Based Security, so turning it on means enabling VBS as well. Set all three Device Guard policy values under `HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard`, which is the key the Group Policy setting above writes, then restart:
 
             ```powershell
-            $p = 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity'
+            $p = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard'
             New-Item -Path $p -Force | Out-Null
-            New-ItemProperty -Path $p -Name 'Enabled' -Value 1 -PropertyType DWord -Force
+            New-ItemProperty -Path $p -Name 'EnableVirtualizationBasedSecurity' -Value 1 -PropertyType DWord -Force
+            New-ItemProperty -Path $p -Name 'RequirePlatformSecurityFeatures' -Value 1 -PropertyType DWord -Force
+            New-ItemProperty -Path $p -Name 'HypervisorEnforcedCodeIntegrity' -Value 1 -PropertyType DWord -Force
             ```
+
+            `HypervisorEnforcedCodeIntegrity` takes `1` for enabled with UEFI lock and `2` for enabled without lock. Choose `2` if you need to be able to turn Memory Integrity back off remotely. `RequirePlatformSecurityFeatures` takes `1` for Secure Boot and `3` for Secure Boot with DMA protection; `3` leaves VBS off entirely on hardware without an IOMMU.
         - id: ansible
           desc: |-
-            To enable Memory Integrity with Ansible:
+            To enable Memory Integrity with Ansible, set the three Device Guard policy values that the Group Policy setting writes:
 
             ```yaml
+            - name: Enable Virtualization Based Security
+              ansible.windows.win_regedit:
+                path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard
+                name: EnableVirtualizationBasedSecurity
+                data: 1
+                type: dword
+              notify: reboot
+
+            - name: Require Secure Boot as the platform security level
+              ansible.windows.win_regedit:
+                path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard
+                name: RequirePlatformSecurityFeatures
+                data: 1
+                type: dword
+              notify: reboot
+
             - name: Enable HVCI (Memory Integrity)
               ansible.windows.win_regedit:
-                path: HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity
-                name: Enabled
+                path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard
+                name: HypervisorEnforcedCodeIntegrity
                 data: 1
                 type: dword
               notify: reboot
@@ -10486,15 +10525,15 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            This setting takes effect after the next restart. Use this Chef Infra recipe code to set the `Enabled` registry value that backs this policy to `1`:
+            This setting takes effect after the next restart. Use this Chef Infra recipe code to set the Device Guard policy values that back this policy, including the Virtualization-Based Security values Memory Integrity depends on:
 
             ```ruby
-            registry_key 'HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity' do
-              values [{
-                name: 'Enabled',
-                type: :dword,
-                data: 1,
-              }]
+            registry_key 'HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard' do
+              values [
+                { name: 'EnableVirtualizationBasedSecurity', type: :dword, data: 1 },
+                { name: 'RequirePlatformSecurityFeatures', type: :dword, data: 1 },
+                { name: 'HypervisorEnforcedCodeIntegrity', type: :dword, data: 1 },
+              ]
               recursive true
               action :create
             end
@@ -10543,17 +10582,25 @@ queries:
 
         1. Open the Local Group Policy Editor (`gpedit.msc`).
         2. Navigate to **Computer Configuration** > **Administrative Templates** > **System** > **Device Guard** > **Turn on Virtualization Based Security**.
-        3. Confirm **Credential Guard Configuration** is set to **Enabled with UEFI lock** (or **Enabled without lock**).
+        3. Confirm **Credential Guard Configuration** is set to **Enabled with UEFI lock** or **Enabled without lock**.
 
         ### Audit via PowerShell
 
-        1. Query the running Device Guard status:
+        1. Read the Device Guard policy value that the Group Policy setting writes:
+
+           ```powershell
+           Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard' -Name 'LsaCfgFlags'
+           ```
+
+        The system passes when `LsaCfgFlags` is `1` for enabled with UEFI lock, or `2` for enabled without lock. It fails when the value is missing or set to `0`.
+
+        2. Confirm that the configured policy is in effect on the running system:
 
            ```powershell
            (Get-CimInstance -ClassName Win32_DeviceGuard -Namespace root\Microsoft\Windows\DeviceGuard).SecurityServicesRunning
            ```
 
-        If the returned services include `1` (Credential Guard), it is running and the check passes. If it does not, the check fails.
+        A returned service list that includes `1` confirms Credential Guard is running. A configured policy that is not yet running usually means the system has not been restarted, or the hardware does not support Virtualization-Based Security.
       remediation:
         - id: grouppolicy
           desc: |-
@@ -10561,24 +10608,46 @@ queries:
 
             1. Open the Group Policy Editor and go to **Computer Configuration** > **Administrative Templates** > **System** > **Device Guard** > **Turn on Virtualization Based Security**.
             2. Set the policy to **Enabled**.
-            3. Set **Credential Guard Configuration** to **Enabled with UEFI lock**.
-            4. Apply the policy and restart the system.
+            3. Set **Select Platform Security Level** to **Secure Boot**.
+            4. Set **Credential Guard Configuration** to **Enabled with UEFI lock**.
+            5. Apply the policy and restart the system.
         - id: powershell
           desc: |-
-            To enable Credential Guard by setting the Device Guard registry values, then restart:
+            Credential Guard rides on Virtualization-Based Security, so turning it on means enabling VBS as well. Set all three Device Guard policy values under `HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard`, which is the key the Group Policy setting above writes, then restart:
 
             ```powershell
-            $p = 'HKLM:\SYSTEM\CurrentControlSet\Control\LSA'
+            $p = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard'
+            New-Item -Path $p -Force | Out-Null
+            New-ItemProperty -Path $p -Name 'EnableVirtualizationBasedSecurity' -Value 1 -PropertyType DWord -Force
+            New-ItemProperty -Path $p -Name 'RequirePlatformSecurityFeatures' -Value 1 -PropertyType DWord -Force
             New-ItemProperty -Path $p -Name 'LsaCfgFlags' -Value 1 -PropertyType DWord -Force
             ```
+
+            `LsaCfgFlags` takes `1` for enabled with UEFI lock and `2` for enabled without lock. Choose `2` if you need to be able to turn Credential Guard back off remotely, because a UEFI lock can only be cleared from the firmware. Enable Credential Guard before the device joins a domain; if it is turned on afterwards, the user and device secrets may already have been exposed.
         - id: ansible
           desc: |-
-            To enable Credential Guard with Ansible:
+            To enable Credential Guard with Ansible, set the three Device Guard policy values that the Group Policy setting writes:
 
             ```yaml
+            - name: Enable Virtualization Based Security
+              ansible.windows.win_regedit:
+                path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard
+                name: EnableVirtualizationBasedSecurity
+                data: 1
+                type: dword
+              notify: reboot
+
+            - name: Require Secure Boot as the platform security level
+              ansible.windows.win_regedit:
+                path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard
+                name: RequirePlatformSecurityFeatures
+                data: 1
+                type: dword
+              notify: reboot
+
             - name: Enable Credential Guard
               ansible.windows.win_regedit:
-                path: HKLM:\SYSTEM\CurrentControlSet\Control\LSA
+                path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard
                 name: LsaCfgFlags
                 data: 1
                 type: dword
@@ -10588,15 +10657,15 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            This setting takes effect after the next restart. Use this Chef Infra recipe code to set the `LsaCfgFlags` registry value that backs this policy to `1`:
+            This setting takes effect after the next restart. Use this Chef Infra recipe code to set the Device Guard policy values that back this policy, including the Virtualization-Based Security values Credential Guard depends on:
 
             ```ruby
-            registry_key 'HKLM\SYSTEM\CurrentControlSet\Control\LSA' do
-              values [{
-                name: 'LsaCfgFlags',
-                type: :dword,
-                data: 1,
-              }]
+            registry_key 'HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard' do
+              values [
+                { name: 'EnableVirtualizationBasedSecurity', type: :dword, data: 1 },
+                { name: 'RequirePlatformSecurityFeatures', type: :dword, data: 1 },
+                { name: 'LsaCfgFlags', type: :dword, data: 1 },
+              ]
               recursive true
               action :create
             end
