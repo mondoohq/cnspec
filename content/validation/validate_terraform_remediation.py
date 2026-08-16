@@ -76,7 +76,7 @@ PROVIDER_MAP = {
     # from this map produces an empty `required_providers` block, which the
     # terraform preset's terraform_required_providers rule fails on every
     # resource — so a new target needs an entry here to be checkable at all.
-    "alicloud": ("aliyun/alicloud", "~> 1.0"),
+    "alicloud": ("aliyun/alicloud", "~> 2.0"),
     "cloudflare": ("cloudflare/cloudflare", "~> 5.0"),
     "databricks": ("databricks/databricks", "~> 1.0"),
     "digitalocean": ("digitalocean/digitalocean", "~> 2.0"),
