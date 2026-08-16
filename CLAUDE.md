@@ -12,7 +12,7 @@ cnspec is an open-source, cloud-native security and policy project that assesses
 
 - **`apps/cnspec/cmd/`** — CLI entry point and commands (scan, shell, bundle, etc.).
 - **`policy/`** — policy engine core (resolution, execution, scoring). See `policy/CLAUDE.md` for engine internals, scanning flow, and protobuf/gRPC patterns.
-- **`content/`** — default security policies (`*.mql.yaml`). See `content/CLAUDE.md` for policy authoring rules (variants, compliance tags, MQL).
+- **`content/`** — default security policies (`*.mql.yaml`) and, under `querypacks/`, data-collection bundles that do not score. `content/CLAUDE.md` holds the authoring rules (variants, compliance tags, MQL semantics); `content/README.md` is the user-facing catalog.
 - **`content/validation/`** — every test and validator that runs against those policies, plus its fixtures. `content/validation/README.md` is the definitive reference for content validation.
 - **`cli/`** — reusable CLI components and reporters (SARIF, JUnit, JSON, …).
 - **`internal/bundle/`, `internal/datalakes/`, `internal/lsp/`** — bundle loading, storage, LSP support.
@@ -79,6 +79,32 @@ cnspec policy lint ./content                                    # Lint all polic
 cnspec policy lint ./content/mondoo-linux-security.mql.yaml     # Lint one policy
 ```
 
+## Working in this repo
+
+### Commits and pull requests
+
+Commit titles are `<emoji> <scope>: <lowercase description>`, and the emoji is part of the convention rather than decoration. Across the last 200 commits on `main`: **✨** new capability or coverage (57), **🧹** cleanup, refactor, or maintenance (47), **🐛** bug fix (40), **👷** CI and automation (8), **📝** documentation (3). The scope is the area, not the file — `validation`, `content`, `ci`, or a provider name such as `aws` or `alibaba`.
+
+### Stacked pull requests
+
+Squash-merging a base branch does **not** retarget the PRs stacked on it. The squash lands a new SHA on `main` and leaves the original branch commit orphaned but alive, so GitHub keeps the stacked PR pointed at a dead branch and will happily merge into it. The PR then reports `MERGED` while none of its work is on `main`.
+
+After a base branch merges, check every PR stacked on it:
+
+```bash
+git merge-base --is-ancestor <pr-merge-commit> origin/main && echo on-main || echo ORPHANED
+```
+
+To recover, branch from `origin/main` and `git cherry-pick <pr-merge-commit>` — a squash commit has a single parent, so it applies cleanly — then confirm `git diff <pr-merge-commit> HEAD` is empty before opening the replacement. Also diff the recovered tree against the merged one: a base branch amended after its own squash merge strands those fixes too.
+
+### Worktrees
+
+Feature work happens in worktrees, and many branches are already checked out in one. `git checkout <branch>` fails when it is, so operate on the branch in place with `git -C <worktree>` (find it with `git worktree list`) rather than trying to check it out again.
+
+### Local mql development
+
+A check often needs a provider field that does not exist yet. `make prep/repos` clones mql into `./mql`, and `go.mod` carries a commented `replace go.mondoo.com/mql/v13 => ../mql` for building against a sibling checkout. After changing a provider's `.lr` schema, regenerate and rebuild that provider, then copy it into `~/.config/mondoo/providers/<name>/` — that installed copy, not the source, is what `cnspec policy lint` resolves against.
+
 ## Development rules
 
 ### Dependency management
@@ -120,22 +146,34 @@ This section is for any automated reviewer (mondoo-code-review, Claude, etc.) co
   - To check a real query end to end: `cnquery run <provider> -c '<mql>'` (no TTY needed) or `cnspec policy lint ./content/<file>.mql.yaml`. **Run the query before claiming it returns the wrong thing.**
 - **Operator precedence** — MQL precedence is fixed; consult [`mqlc/parser/operators.go`](https://github.com/mondoohq/mql/blob/main/mqlc/parser/operators.go#L11) before flagging precedence. Notably `&&` binds tighter than `||`, so `a || b && c` already parses as `a || (b && c)` — that is usually intentional, not a bug.
 
-### MQL gotchas that cause false positives
+### Do not flag these — they are correct MQL
 
-- **No parenthesized grouping.** MQL does **not** support `()` to group boolean expressions — `( a == 1 ) || ( b > 0 && b <= 5 )` fails to compile (`expected operand, got token "("`). Do **not** suggest adding parens "for clarity." Authors rely on `&&` > `||` precedence, or split into separate `.any()`/`.all()` calls.
-- **`.all()` / `.none()` on `null` fails; on `[]` it passes vacuously.** An absent HCL/map key (e.g. `values['x']` when `x` is missing) is `null`, not an empty list, so `values['x'].all(...)` *errors* when the block is absent. Don't recommend rewriting `blocks.where(type=='x').all(y)` (vacuously true when nothing matches) into `values['x'].all(y)` — it silently flips absent-case behavior. The null-safe form is `values['x'] == empty || values['x'].all(y)`.
-- **`!= ""` is not null-safe.** `"" == empty` is true, but `null != ""` is also true — use `!= empty` for null-safe non-empty assertions.
-- **`filters:` is asset selection, not logic.** `filters:` only selects which assets a check applies to (`asset.platform == "..."`). Predicate logic (`field != empty`, `flag == true`, …) belongs in `mql:`. Don't flag a query for "duplicating" a condition that legitimately lives in `mql:` rather than `filters:`, and don't suggest lifting predicates into `filters:` — that silently drops assets from scoring. Multi-line `filters:` join with explicit `&&`; multi-line `mql:` uses newline-as-AND.
-- **Newline-as-AND in `mql:`.** Multiple lines in an `mql:` block are implicitly AND-ed. A query that "looks like it ignores" an earlier line is usually relying on this — verify before flagging.
-- **`null && null` is `true`.** MQL boolean logic is three-valued — two null operands `&&`-ed yield `true`, not null or false. A check like `field_a == "x" && field_b == "y"` silently *passes* when both fields are absent (each comparison is null, and `null && null` is true), scoring the asset compliant on data that never resolved. Assert presence first (`field_a != empty`) before comparing, or the check reports a false pass.
-- **A dotted path that is also a resource name compiles to a bare resource, not a field read.** The compiler extends the resource path greedily — the longest matching resource name wins unconditionally over a field on a shorter one, even when the longer resource can't stand on its own. `azure.subscription.aksService.cluster.autoUpgradeProfile.upgradeChannel` builds a bare `…cluster.autoUpgradeProfile` resource (no id, no fields — the cluster's accessor never runs) and every field reads `null`. Combined with asymmetric null comparison (`null != "x"` is true, `null == "x"` is false), the check returns confidently wrong verdicts, not "inconclusive". Suspect it when the value is a sub-object (a profile, config, or settings block) *and* the full path appears in `cnspec providers resources <provider> --json` as a resource in its own right. Confirm by running the query: the log signature is `provider returned no data and no error for a field … id=` with an **empty `id=`** (a populated `id=` means something else, usually the provider genuinely not setting the field). Fix by reaching the value through an accessor whose path is not a resource name (`azure.subscription.aks.cluster.autoUpgradeProfile.upgradeChannel`) or a block bound to the parent (`azure.subscription.aks.cluster { autoUpgradeProfile.upgradeChannel != "none" }`). Not Azure-specific — Cloudflare (`cloudflare.zone.settings.*`), GCP (`gcp.project.gkeService.cluster.networkPolicy.*`), AWS (`aws.emr.cluster.encryptionConfiguration.*`), vSphere, and Arista all have resources shaped this way.
+Each is verified against the compiler and explained in full in [`content/CLAUDE.md`](content/CLAUDE.md). The one-liners here exist so a reviewer that never opens that file still does not raise the false positive.
 
-### Policy/content specifics
+| Pattern | Why it is not a bug |
+|---|---|
+| `a == 1 \|\| b > 0 && b <= 5`, unparenthesized | MQL has no parenthesized grouping anywhere; `(` is rejected as an operand. `&&` binds tighter than `\|\|`, so the grouping already is what the author meant. Never suggest adding parens "for clarity". |
+| `blocks.where(type == 'x').all(y)` where `values['x'].all(y)` looks simpler | Not equivalent. `.all()` passes vacuously on an empty list and fails outright on `null`, and an absent key is `null`. The rewrite flips the absent-block verdict. |
+| `field != empty` rather than `field != ""` | `null != ""` is true, so `!= ""` is not a non-empty test. `!= empty` is the null-safe form. |
+| A predicate in `mql:` that "could" live in `filters:` | `filters:` is asset selection. Moving a predicate there drops assets from scoring rather than failing them. |
+| Several lines in one `mql:` block | Newline is an implicit AND. A later line is not ignoring an earlier one. |
+| A `-terraform-hcl` variant stricter than its `-plan`/`-state` sibling | Usually deliberate: HCL sees author intent, plan/state see resolved values. Do not recommend unifying them by copying one body into another. |
+| A `compliance/*` tag unlike a neighbouring check's | Neighbours map different control objectives. Verify against the framework text before flagging *or* endorsing. |
 
-`content/` holds the security policies (`*.mql.yaml`). See `content/CLAUDE.md` for authoring rules (variants, compliance tags, MQL idioms, validation) and `policy/CLAUDE.md` for engine internals. When reviewing content:
+### Two that are real bugs, and are easy to miss
 
-- **Compliance tags** — never assume a `compliance/*` tag is correct because a neighboring check has it. Verify the control against the framework text before flagging or endorsing.
-- **Variant siblings are not interchangeable** — the Terraform/HCL version of a check is often stricter than the plan/state version; don't recommend unifying them by copying one body into another.
+**`null && null` is `true`** — and it is the only null combination that is. Verified:
+
+```
+m["absent"] && m["also_absent"]   → [ok] true
+m["absent"] && true               → [failed]
+m["absent"] && false              → [failed]
+m["absent"] || false              → [failed]
+```
+
+So two **bare boolean fields** joined with `&&` pass when neither resolved. This does **not** extend to comparisons: `null == "x"` is `false`, not null, so `field_a == "x" && field_b == "y"` fails when both are absent. Flag the bare-field form; leave the comparison form alone. The comparison form has its own asymmetry — `field != "insecure"` passes when the field is absent — which `content/CLAUDE.md` covers.
+
+**A dotted path that is also a resource name is not a field read.** The compiler extends the resource path greedily, so `azure.subscription.aksService.cluster.autoUpgradeProfile.upgradeChannel` builds a bare `…cluster.autoUpgradeProfile` resource whose accessor never runs; every field reads `null` and the check answers confidently wrong. Suspect it when the value is a sub-object and the full path appears as a resource in `cnspec providers resources <provider> --json`; confirm by running the query and looking for `provider returned no data and no error for a field … id=` with an **empty** `id=`. Not Azure-specific — Cloudflare, GCP, AWS, vSphere and Arista all have resources shaped this way. `content/CLAUDE.md` has the full treatment and the fix.
 
 ## Resources
 
