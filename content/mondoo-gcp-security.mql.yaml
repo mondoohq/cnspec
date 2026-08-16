@@ -26906,9 +26906,8 @@ queries:
             Remove any custom `google_compute_route` whose `next_hop_gateway` is the default internet gateway, and replace internet egress with Cloud NAT:
 
             ```hcl
-            # Replace the offending custom route with one that funnels egress
-            # through Cloud NAT (logged + auditable), or remove it entirely if
-            # internet egress is not required.
+            # Cloud NAT carries egress instead of an internet-gateway route, so
+            # traffic is logged and the instances keep private addresses.
             resource "google_compute_router" "egress" {
               name    = "egress-router"
               region  = "us-central1"
@@ -26925,6 +26924,17 @@ queries:
                 enable = true
                 filter = "ALL"
               }
+            }
+
+            # Where a custom default route is still required, send it to an
+            # internal load balancer that inspects the traffic. Never set
+            # next_hop_gateway to default-internet-gateway.
+            resource "google_compute_route" "egress" {
+              name         = "route-through-ilb"
+              network      = google_compute_network.app.id
+              dest_range   = "0.0.0.0/0"
+              next_hop_ilb = google_compute_forwarding_rule.ilb.id
+              priority     = 1000
             }
             ```
         - id: console
@@ -42861,12 +42871,22 @@ queries:
             Grant impersonation on the specific service account resource rather than at the project level:
 
             ```hcl
+            # Project-level bindings keep only roles that confer no impersonation.
+            resource "google_project_iam_member" "log_viewer" {
+              project = var.project_id
+              role    = "roles/logging.viewer"
+              member  = "serviceAccount:caller@my-project.iam.gserviceaccount.com"
+            }
+
+            # Impersonation is granted on the one service account that needs it.
             resource "google_service_account_iam_member" "token_creator" {
               service_account_id = google_service_account.worker.name
               role               = "roles/iam.serviceAccountTokenCreator"
               member             = "serviceAccount:caller@my-project.iam.gserviceaccount.com"
             }
             ```
+
+            Scoping the grant this way limits the caller to the single service account named in `service_account_id`, rather than every service account in the project.
     refs:
       - url: https://cloud.google.com/iam/docs/service-account-impersonation
         title: Service account impersonation

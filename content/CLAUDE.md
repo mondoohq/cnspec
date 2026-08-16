@@ -221,7 +221,9 @@ The closed-loop suite scans each IaC variant's **own remediation snippet** and r
 make test/content/iac/remediation
 ```
 
-A variant whose remediation does not satisfy it yet is listed in `content/validation/scans/remediation-budget.json` with a reason. The list may only shrink: an entry that starts passing fails the test, so it is removed together with the fix, the same contract as a `KNOWN_BUG.md` marker.
+Every variant in the corpus satisfies its own remediation, so this is a flat assertion with no debt list to add to. A snippet that stops closing its check fails here.
+
+Two shapes account for nearly every failure. A snippet that documents only the fixing resource never triggers a check whose `filters:` select on the resource being protected, so it has to declare that resource too. And a value the HCL parser cannot resolve statically, such as a `jsonencode` body containing a resource reference or a policy supplied through an `aws_iam_policy_document` data source, reads as absent rather than as the value it will become at apply time.
 
 See [validation/README.md](validation/README.md) for how the snippet is materialized and what each of the three failure modes means.
 

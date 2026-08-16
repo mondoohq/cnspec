@@ -2251,30 +2251,39 @@ queries:
             To enforce encryption in transit on an EFS file system in Terraform, attach a file system policy that denies non-TLS access:
 
             ```hcl
-            data "aws_iam_policy_document" "efs_tls" {
-              statement {
-                effect    = "Deny"
-                actions   = ["*"]
-                resources = [aws_efs_file_system.example.arn]
-
-                principals {
-                  type        = "AWS"
-                  identifiers = ["*"]
-                }
-
-                condition {
-                  test     = "Bool"
-                  variable = "aws:SecureTransport"
-                  values   = ["false"]
-                }
-              }
+            resource "aws_efs_file_system" "example" {
+              creation_token = "example-shared-data"
+              encrypted      = true
             }
 
             resource "aws_efs_file_system_policy" "example" {
               file_system_id = aws_efs_file_system.example.id
-              policy         = data.aws_iam_policy_document.efs_tls.json
+
+              policy = jsonencode({
+                Version = "2012-10-17"
+                Statement = [
+                  {
+                    Sid    = "DenyInsecureTransport"
+                    Effect = "Deny"
+                    Principal = {
+                      AWS = "*"
+                    }
+                    Action   = "*"
+                    Resource = "arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0123456789abcdef0"
+                    Condition = {
+                      Bool = {
+                        "aws:SecureTransport" = "false"
+                      }
+                    }
+                  },
+                ]
+              })
             }
             ```
+
+            Substitute the ARN of the file system being protected in `Resource`.
+
+            Write the policy body inline with `jsonencode` rather than through an `aws_iam_policy_document` data source. A data source resolves only at apply time, so static analysis of the configuration cannot confirm the condition is present.
         - id: cloudformation
           desc: |
             To enforce encryption in transit on an EFS file system in CloudFormation, embed a file system policy that denies non-TLS access:
@@ -3351,6 +3360,15 @@ queries:
                 ]
               })
             }
+
+            resource "aws_iam_user_login_profile" "example" {
+              user = aws_iam_user.example.name
+            }
+
+            resource "aws_iam_user_policy_attachment" "enforce_mfa" {
+              user       = aws_iam_user.example.name
+              policy_arn = aws_iam_policy.enforce_mfa.arn
+            }
             ```
         - id: cloudformation
           desc: |
@@ -3715,32 +3733,21 @@ queries:
             ```
         - id: terraform
           desc: |
-            To ensure IAM users have only one active access key in Terraform, AWS does not support direct enforcement of single active access keys in Terraform, but you can enforce a security policy to limit IAM users to one active key:
+            To ensure IAM users have only one active access key in Terraform, declare at most one `aws_iam_access_key` per user and delete the surplus resource from the configuration so `terraform apply` removes the key:
 
             ```hcl
-            resource "aws_iam_policy" "limit_access_keys" {
-              name        = "LimitAccessKeys"
-              description = "Ensure IAM users have at most one active access key"
+            resource "aws_iam_access_key" "alice" {
+              user = aws_iam_user.alice.name
+            }
 
-              policy = jsonencode({
-                Version = "2012-10-17",
-                Statement = [
-                  {
-                    Effect   = "Deny",
-                    Action   = "iam:CreateAccessKey",
-                    Resource = "*",
-                    Condition = {
-                      NumericGreaterThan = {
-                        "iam:AccessKeysCount": 1
-                      }
-                    }
-                  }
-                ]
-              })
+            resource "aws_iam_access_key" "bob" {
+              user = aws_iam_user.bob.name
             }
             ```
 
-            AWS does not evaluate a key-count condition at request time, so also remove extra keys directly with `aws iam delete-access-key` for any user that has two active keys.
+            An IAM policy cannot enforce this. AWS does not evaluate a key-count condition such as `iam:AccessKeysCount` at request time, so a `Deny` on `iam:CreateAccessKey` blocks nothing. The key count is controlled by how many `aws_iam_access_key` resources the configuration declares.
+
+            To rotate a key without an outage, add the replacement, deploy the new credential to every consumer, then set the old key to `status = "Inactive"` and remove its resource once nothing uses it.
         - id: cloudformation
           desc: |
             To ensure IAM users have only one active access key in CloudFormation:
@@ -5434,6 +5441,10 @@ queries:
             To ensure VPC flow logging is enabled in all VPCs in Terraform, ensure that VPC Flow Logs are enabled in Terraform:
 
             ```hcl
+            resource "aws_vpc" "main" {
+              cidr_block = "10.0.0.0/16"
+            }
+
             resource "aws_flow_log" "vpc_flow_log" {
               vpc_id          = aws_vpc.main.id
               traffic_type    = "ALL"
@@ -5444,6 +5455,8 @@ queries:
               name = "vpc-flow-logs"
             }
             ```
+
+            Every VPC in the configuration needs its own `aws_flow_log`. A flow log covers only the VPC named in its `vpc_id`.
         - id: cloudformation
           desc: |
             To ensure VPC flow logging is enabled in all VPCs in CloudFormation, enable VPC Flow Logs in CloudFormation:
@@ -8348,6 +8361,12 @@ queries:
             To ensure EBS snapshots are not publicly restorable in Terraform, note: It's not possible to set this on snapshot level via terraform, but you can use a global setting:
 
             ```hcl
+            resource "aws_ebs_snapshot" "example" {
+              volume_id = aws_ebs_volume.example.id
+            }
+
+            # Account-level setting covering every snapshot in the region,
+            # including the one above.
             resource "aws_ebs_snapshot_block_public_access" "secure_snapshot" {
               state = "block-all-sharing"
             }
@@ -14517,14 +14536,17 @@ queries:
             To ensure S3 bucket static website hosting is disabled in Terraform, remove any `aws_s3_bucket_website_configuration` resources associated with the bucket:
 
             ```hcl
-            # Remove or comment out website configuration resources
-            # resource "aws_s3_bucket_website_configuration" "example" {
-            #   bucket = aws_s3_bucket.example.id
-            #   index_document {
-            #     suffix = "index.html"
-            #   }
-            # }
+            resource "aws_s3_bucket" "example" {
+              bucket = "example-private-bucket"
+            }
+
+            # No aws_s3_bucket_website_configuration targets this bucket. Delete
+            # the resource rather than commenting it out, so the next apply calls
+            # DeleteBucketWebsite instead of leaving the live configuration in
+            # place untracked.
             ```
+
+            Serve the content through CloudFront with an origin access control instead. The bucket then stays private and the distribution terminates TLS, which S3 website endpoints cannot do.
         - id: cloudformation
           desc: |
             Do not include the `WebsiteConfiguration` property on `AWS::S3::Bucket` resources. If a bucket currently has website hosting enabled, remove the `WebsiteConfiguration` block from the template and update the stack.
@@ -19793,6 +19815,10 @@ queries:
             To ensure Secrets Manager secrets have automatic rotation enabled in Terraform:
 
             ```hcl
+            resource "aws_secretsmanager_secret" "example" {
+              name = "example-database-credentials"
+            }
+
             resource "aws_secretsmanager_secret_rotation" "example" {
               secret_id           = aws_secretsmanager_secret.example.id
               rotation_lambda_arn = aws_lambda_function.rotation.arn
@@ -19802,6 +19828,8 @@ queries:
               }
             }
             ```
+
+            Every secret needs its own `aws_secretsmanager_secret_rotation`. Rotation is configured per secret, not account-wide.
         - id: cloudformation
           desc: |
             To ensure Secrets Manager secrets have automatic rotation enabled in CloudFormation:
@@ -29490,6 +29518,10 @@ queries:
             To ensure S3 buckets use KMS customer managed keys for encryption in Terraform:
 
             ```hcl
+            resource "aws_s3_bucket" "example" {
+              bucket = "example-encrypted-bucket"
+            }
+
             resource "aws_s3_bucket_server_side_encryption_configuration" "example" {
               bucket = aws_s3_bucket.example.id
 
@@ -30997,6 +31029,10 @@ queries:
             To ensure Route 53 public hosted zones have DNSSEC signing enabled in Terraform, DNSSEC requires both a Key Signing Key and enabling DNSSEC on the hosted zone:
 
             ```hcl
+            resource "aws_route53_zone" "example" {
+              name = "example.com"
+            }
+
             resource "aws_route53_key_signing_key" "example" {
               hosted_zone_id             = aws_route53_zone.example.id
               key_management_service_arn = aws_kms_key.example.arn
@@ -31008,6 +31044,8 @@ queries:
               hosted_zone_id = aws_route53_zone.example.id
             }
             ```
+
+            Every public hosted zone needs its own signing key and `aws_route53_hosted_zone_dnssec`. Private zones, which carry a `vpc` block, are out of scope because DNSSEC does not apply to them.
         - id: cloudformation
           desc: |
             To ensure Route 53 public hosted zones have DNSSEC signing enabled in CloudFormation, note that CloudFormation does not natively support configuring DNSSEC signing for Route 53 hosted zones. Use the AWS CLI or Console to enable DNSSEC, or use a CloudFormation custom resource backed by a Lambda function.
@@ -31595,12 +31633,18 @@ queries:
             To ensure Route 53 public hosted zones have query logging enabled in Terraform, configure query logging for a Route 53 hosted zone:
 
             ```hcl
+            resource "aws_route53_zone" "example" {
+              name = "example.com"
+            }
+
             resource "aws_route53_query_log" "example" {
               depends_on               = [aws_cloudwatch_log_resource_policy.route53]
               cloudwatch_log_group_arn = aws_cloudwatch_log_group.route53.arn
               zone_id                  = aws_route53_zone.example.zone_id
             }
             ```
+
+            Every public hosted zone needs its own `aws_route53_query_log`. The log group must live in `us-east-1`, which is the only region Route 53 writes query logs to.
         - id: cloudformation
           desc: |
             To ensure Route 53 public hosted zones have query logging enabled in CloudFormation, enable query logging via the `QueryLoggingConfig` property:
@@ -60347,6 +60391,11 @@ queries:
             To ensure VPC subnets have flow logs enabled in Terraform:
 
             ```hcl
+            resource "aws_subnet" "main" {
+              vpc_id     = aws_vpc.main.id
+              cidr_block = "10.0.1.0/24"
+            }
+
             resource "aws_flow_log" "subnet_flow_log" {
               subnet_id       = aws_subnet.main.id
               traffic_type    = "ALL"
@@ -60354,6 +60403,8 @@ queries:
               iam_role_arn    = aws_iam_role.flow_log_role.arn
             }
             ```
+
+            Every subnet needs its own `aws_flow_log`, referenced through `subnet_id`. A flow log attached to the parent VPC captures the same packets but gives each subnet no independent destination, filter, or retention.
         - id: cloudformation
           desc: |
             To ensure VPC subnets have flow logs enabled in CloudFormation:
@@ -64617,6 +64668,10 @@ queries:
             To enforce bucket owner ownership using Terraform:
 
             ```hcl
+            resource "aws_s3_bucket" "example" {
+              bucket = "example-owner-enforced-bucket"
+            }
+
             resource "aws_s3_bucket_ownership_controls" "example" {
               bucket = aws_s3_bucket.example.id
 
@@ -64625,6 +64680,8 @@ queries:
               }
             }
             ```
+
+            Every bucket needs its own `aws_s3_bucket_ownership_controls`. Object Ownership is a per-bucket setting with no account-wide equivalent.
         - id: cloudformation
           desc: |
             Set `OwnershipControls.Rules[].ObjectOwnership: BucketOwnerEnforced` on every `AWS::S3::Bucket` to disable ACLs and force bucket-owner ownership of all uploaded objects:
@@ -68983,6 +69040,10 @@ queries:
             Manage Object Ownership with `aws_s3_bucket_ownership_controls` and pin the rule to `BucketOwnerEnforced`:
 
             ```hcl
+            resource "aws_s3_bucket" "example" {
+              bucket = "example-owner-enforced-bucket"
+            }
+
             resource "aws_s3_bucket_ownership_controls" "example" {
               bucket = aws_s3_bucket.example.id
 
@@ -68991,6 +69052,8 @@ queries:
               }
             }
             ```
+
+            `BucketOwnerEnforced` disables ACLs entirely. Remove any `aws_s3_bucket_acl` resource targeting the bucket first, since it conflicts with the setting and fails the apply.
         - id: cloudformation
           desc: |
             Set `OwnershipControls.Rules[].ObjectOwnership: BucketOwnerEnforced` on every `AWS::S3::Bucket`. This is the strongest of the three modes: ACLs are disabled and the bucket owner owns all objects regardless of uploader:
@@ -75023,6 +75086,10 @@ queries:
             To enable Resolver query logging and associate it with a VPC in Terraform, create both the log config and an association:
 
             ```hcl
+            resource "aws_vpc" "example" {
+              cidr_block = "10.0.0.0/16"
+            }
+
             resource "aws_route53_resolver_query_log_config" "example" {
               name            = "vpc-dns-logs"
               destination_arn = aws_cloudwatch_log_group.resolver.arn
@@ -75033,6 +75100,8 @@ queries:
               resource_id                  = aws_vpc.example.id
             }
             ```
+
+            One log config can serve many VPCs, but each VPC needs its own association. Without the association the config records nothing.
         - id: cloudformation
           desc: |
             To enable Resolver query logging and associate it with a VPC in CloudFormation, create both the configuration and an association:
@@ -76895,6 +76964,12 @@ queries:
             To pin the security policy in Terraform, set `security_policy = "TLS_1_2"` on every `domain_name_configuration` block of `aws_apigatewayv2_domain_name`:
 
             ```hcl
+            resource "aws_apigatewayv2_api" "example" {
+              name                       = "example-websocket-api"
+              protocol_type              = "WEBSOCKET"
+              route_selection_expression = "$request.body.action"
+            }
+
             resource "aws_apigatewayv2_domain_name" "example" {
               domain_name = "ws.example.com"
 
