@@ -149,7 +149,7 @@ queries:
             To bind PostgreSQL to specific interfaces using the CLI:
 
             1. Edit `postgresql.conf` and set `listen_addresses` to the addresses the server must serve.
-            2. Reload PostgreSQL so the new value takes effect. Changing `listen_addresses` requires a restart rather than a reload.
+            2. Restart PostgreSQL, because this setting cannot be applied with a reload.
             3. Confirm the server is bound only to the intended addresses.
 
             ```bash
@@ -991,6 +991,7 @@ queries:
                   ansible.builtin.meta: flush_handlers
 
                 - name: Find roles still holding a legacy verifier
+                  become: true
                   become_user: postgres
                   ansible.builtin.command:
                     cmd: psql -tAc "SELECT rolname FROM pg_authid WHERE rolpassword LIKE 'md5%';"
@@ -1323,11 +1324,15 @@ queries:
           desc: |
             To move authentication rules to SCRAM using the CLI:
 
-            1. Set `password_encryption` to `scram-sha-256` and reset any role that still holds a legacy verifier.
-            2. Replace the `md5` method with `scram-sha-256` in `pg_hba.conf`.
-            3. Reload PostgreSQL and confirm no `md5` rules remain.
+            1. Set `password_encryption` to `scram-sha-256` and reload, so that every password set from now on is stored in the new format.
+            2. Reset any role that still holds a legacy verifier, because a `scram-sha-256` rule cannot authenticate one.
+            3. Replace the `md5` method with `scram-sha-256` in `pg_hba.conf`.
+            4. Reload PostgreSQL and confirm no `md5` rules remain.
 
             ```bash
+            sudo -u postgres sed -i "s/^#*\s*password_encryption.*/password_encryption = scram-sha-256/" \
+              /etc/postgresql/16/main/postgresql.conf
+            sudo systemctl reload postgresql
             sudo -u postgres psql -c "SELECT rolname FROM pg_authid WHERE rolpassword LIKE 'md5%';"
             sudo -u postgres psql -c "\password app_user"
             sudo sed -i -E "s/^([^#].*[[:space:]])md5([[:space:]]*)$/\1scram-sha-256\2/" \
@@ -1378,6 +1383,7 @@ queries:
                 postgresql_hba: /etc/postgresql/16/main/pg_hba.conf
               tasks:
                 - name: Count roles still holding a legacy verifier
+                  become: true
                   become_user: postgres
                   ansible.builtin.command:
                     cmd: psql -tAc "SELECT count(*) FROM pg_authid WHERE rolpassword LIKE 'md5%';"
@@ -1493,7 +1499,7 @@ queries:
               printf "hostssl all all %s scram-sha-256\n" "$net" >>"$HBA"
             done
 
-            if grep -qE "^[^#]*[[:space:]](0\.0\.0\.0/0|::/0)[[:space:]]" "$HBA"; then
+            if grep -qE "^host\S*[[:space:]]+\S+[[:space:]]+\S+[[:space:]]+(0\.0\.0\.0/0|::/0|all)([[:space:]]|$)" "$HBA"; then
               echo "wildcard client addresses remain in $HBA; review them manually" >&2
               exit 1
             fi
@@ -1603,7 +1609,7 @@ queries:
 
             ```bash
             sudo -u postgres psql -c "SHOW ssl;"
-            sudo sed -i -E "s/^host(nossl)?(\s+\S+\s+\S+\s+[0-9a-fA-F:.]+\/[0-9]+\s+)/hostssl\2/" \
+            sudo sed -i -E "s/^host(nossl)?(\s+\S+\s+\S+\s+\S+\s+)/hostssl\2/" \
               /etc/postgresql/16/main/pg_hba.conf
             sudo systemctl reload postgresql
             sudo -u postgres psql -c "SELECT count(*) FROM pg_hba_file_rules WHERE type IN ('host', 'hostnossl') AND address IS NOT NULL;"
@@ -1629,7 +1635,7 @@ queries:
             fi
 
             cp -a "$HBA" "${HBA}.bak"
-            sed -i -E "s/^host(nossl)?([[:space:]]+\S+[[:space:]]+\S+[[:space:]]+[0-9a-fA-F:.]+\/[0-9]+[[:space:]]+)/hostssl\2/" "$HBA"
+            sed -i -E "s/^host(nossl)?([[:space:]]+\S+[[:space:]]+\S+[[:space:]]+\S+[[:space:]]+)/hostssl\2/" "$HBA"
 
             systemctl reload postgresql
             ```
@@ -1649,6 +1655,7 @@ queries:
                 postgresql_hba: /etc/postgresql/16/main/pg_hba.conf
               tasks:
                 - name: Read the effective ssl setting
+                  become: true
                   become_user: postgres
                   ansible.builtin.command:
                     cmd: psql -tAc "SHOW ssl;"
@@ -1663,7 +1670,7 @@ queries:
                 - name: Convert remote rules to hostssl
                   ansible.builtin.replace:
                     path: "{{ postgresql_hba }}"
-                    regexp: '^host(nossl)?(\s+\S+\s+\S+\s+[0-9a-fA-F:.]+/[0-9]+\s+)'
+                    regexp: '^host(nossl)?(\s+\S+\s+\S+\s+\S+\s+)'
                     replace: 'hostssl\2'
                   notify: Reload postgresql
               handlers:
@@ -2045,6 +2052,7 @@ queries:
                 postgresql_admin_role: dba_alice
               tasks:
                 - name: Create the named administrative role
+                  become: true
                   become_user: postgres
                   ansible.builtin.command:
                     cmd: >-
@@ -2053,6 +2061,7 @@ queries:
                   register: role_exists
 
                 - name: Add the role when it is missing
+                  become: true
                   become_user: postgres
                   ansible.builtin.command:
                     cmd: psql -c "CREATE ROLE {{ postgresql_admin_role }} LOGIN;"
@@ -3371,17 +3380,20 @@ queries:
             To enable pgaudit using the CLI:
 
             1. Install the extension package matching the server version.
-            2. Add `pgaudit` to `shared_preload_libraries` and restart the server.
-            3. Create the extension and select what it records.
+            2. Read the libraries already preloaded, so adding `pgaudit` does not drop them.
+            3. Append the preload list and the audit classes to `postgresql.conf`, where the last value for a setting is the one that applies.
+            4. Restart the server and create the extension.
 
             ```bash
             sudo apt-get install -y postgresql-16-pgaudit
-            sudo -u postgres sed -i "s/^#*\s*shared_preload_libraries.*/shared_preload_libraries = 'pgaudit'/" \
-              /etc/postgresql/16/main/postgresql.conf
+            libraries=$(sudo -u postgres psql -tAc "SHOW shared_preload_libraries;")
+            sudo -u postgres tee -a /etc/postgresql/16/main/postgresql.conf >/dev/null <<EOF
+            shared_preload_libraries = '${libraries:+$libraries,}pgaudit'
+            pgaudit.log = 'ddl, role, write'
+            EOF
             sudo systemctl restart postgresql
             sudo -u postgres psql -c "CREATE EXTENSION IF NOT EXISTS pgaudit;"
-            sudo -u postgres psql -c "ALTER SYSTEM SET pgaudit.log = 'ddl, role, write';"
-            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SHOW shared_preload_libraries;"
             ```
         - id: script
           desc: |
@@ -3452,6 +3464,7 @@ queries:
                   ansible.builtin.meta: flush_handlers
 
                 - name: Create the extension
+                  become: true
                   become_user: postgres
                   ansible.builtin.command:
                     cmd: psql -c "CREATE EXTENSION IF NOT EXISTS pgaudit;"
@@ -3713,6 +3726,7 @@ queries:
               become: true
               tasks:
                 - name: Resolve the active hba_file path
+                  become: true
                   become_user: postgres
                   ansible.builtin.command:
                     cmd: psql -tAc "SHOW hba_file;"
