@@ -224,9 +224,16 @@ def main() -> None:
             if len(applied) == 1
             else f"🧹 validation: bump {len(applied)} pinned upstreams"
         )
+        # The title interpolates an upstream-supplied version, which reaches
+        # $GITHUB_OUTPUT and from there the pull request title and commit
+        # message. `as_token` already refuses anything but a single version-
+        # shaped token, so a newline cannot get this far -- the heredoc form is
+        # the second layer, and the one that stays correct if a future resolver
+        # returns something richer. `slug` needs neither: it is generated from
+        # a `[^a-z0-9]+` substitution.
         with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
             fh.write(f"applied={len(applied)}\n")
-            fh.write(f"title={title}\n")
+            fh.write(f"title<<PR_TITLE_EOF\n{title}\nPR_TITLE_EOF\n")
             fh.write(f"branch=deps/validation/{first['slug']}\n")
 
     if not applied and not args.dry_run:

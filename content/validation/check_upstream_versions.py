@@ -40,7 +40,10 @@ STATE_MARK = {
 
 
 def render_text(pins: list[Pin]) -> str:
-    width = max(len(p.name) for p in pins)
+    # `default=0` rather than assuming a non-empty list: every discoverer
+    # returns nothing when the file it reads is absent, so a repo layout change
+    # would turn this into a ValueError instead of an empty report.
+    width = max((len(p.name) for p in pins), default=0)
     return "\n".join(
         f"{p.name:<{width}}  pinned={p.pinned:<12} upstream={p.latest:<12} {STATE_MARK[p.state]}"
         for p in pins

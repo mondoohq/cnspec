@@ -71,9 +71,30 @@ GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
 # HTTP helpers
 # ---------------------------------------------------------------------------
 
+# Every value these resolvers return is a version, a release tag, or a commit
+# SHA: one short token. Anything else is not something a pin can be compared
+# against, and a value carrying a newline would break both the markdown table
+# and the `key=value` lines the bump workflow appends to $GITHUB_OUTPUT --
+# where extra lines become extra outputs, which are interpolated straight into
+# a pull request title and branch. Rejecting a malformed value as "unknown" is
+# the fail-safe reading: an upstream we cannot parse stops the bump rather than
+# feeding an upstream-controlled string into a pull request.
+UPSTREAM_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,63}")
+
+
+def as_token(value: object) -> str:
+    text = str(value).strip()
+    return text if UPSTREAM_TOKEN.fullmatch(text) else "unknown"
+
+
 def fetch_json(url: str) -> dict | list | None:
     headers = {"User-Agent": USER_AGENT}
-    if GITHUB_TOKEN and "api.github.com" in url:
+    # Compare the parsed hostname, never a substring of the URL: `"…" in url`
+    # also matches a host that merely mentions api.github.com in its path or
+    # query, which would hand the token to it. Every URL here is built from
+    # constants in this file, so this is hardening rather than a live hole --
+    # but a credential-scoping check should not depend on that staying true.
+    if GITHUB_TOKEN and urllib.parse.urlparse(url).hostname == "api.github.com":
         headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
     req = urllib.request.Request(url, headers=headers)
     try:
@@ -97,21 +118,21 @@ def latest_github_release(repo: str) -> str:
     data = fetch_json(f"https://api.github.com/repos/{repo}/releases/latest")
     if not isinstance(data, dict) or not data.get("tag_name"):
         return "unknown"
-    return str(data["tag_name"]).lstrip("v")
+    return as_token(str(data["tag_name"]).lstrip("v"))
 
 
 def latest_pypi(pkg: str) -> str:
     data = fetch_json(f"https://pypi.org/pypi/{pkg}/json")
     if not isinstance(data, dict):
         return "unknown"
-    return str(data.get("info", {}).get("version", "unknown"))
+    return as_token(data.get("info", {}).get("version", "unknown"))
 
 
 def latest_rubygem(gem: str) -> str:
     data = fetch_json(f"https://rubygems.org/api/v1/gems/{gem}.json")
     if not isinstance(data, dict):
         return "unknown"
-    return str(data.get("version", "unknown"))
+    return as_token(data.get("version", "unknown"))
 
 
 def latest_gitlab_release(project: str) -> str:
@@ -120,14 +141,14 @@ def latest_gitlab_release(project: str) -> str:
     data = fetch_json(f"https://gitlab.com/api/v4/projects/{project}/releases?per_page=1")
     if not isinstance(data, list) or not data:
         return "unknown"
-    return str(data[0].get("tag_name", "unknown")).lstrip("v")
+    return as_token(str(data[0].get("tag_name", "unknown")).lstrip("v"))
 
 
 def latest_npm(pkg: str) -> str:
     data = fetch_json(f"https://registry.npmjs.org/{pkg}/latest")
     if not isinstance(data, dict):
         return "unknown"
-    return str(data.get("version", "unknown"))
+    return as_token(data.get("version", "unknown"))
 
 
 def latest_terraform_provider(source: str) -> str:
@@ -135,7 +156,7 @@ def latest_terraform_provider(source: str) -> str:
     data = fetch_json(f"https://registry.terraform.io/v1/providers/{source}")
     if not isinstance(data, dict):
         return "unknown"
-    return str(data.get("version", "unknown"))
+    return as_token(data.get("version", "unknown"))
 
 
 def head_commit_for_path(repo: str, path: str) -> str:
@@ -143,7 +164,7 @@ def head_commit_for_path(repo: str, path: str) -> str:
     data = fetch_json(f"https://api.github.com/repos/{repo}/commits?path={quoted}&per_page=1")
     if not isinstance(data, list) or not data:
         return "unknown"
-    return str(data[0].get("sha", "unknown"))
+    return as_token(data[0].get("sha", "unknown"))
 
 
 # ---------------------------------------------------------------------------
