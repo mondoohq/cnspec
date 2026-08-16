@@ -167,7 +167,7 @@ queries:
               name = "example"
 
               vercel_authentication = {
-                deployment_type = "standard_protection"
+                deployment_type = "standard_protection_new"
               }
             }
             ```
@@ -255,7 +255,7 @@ queries:
               name = "example"
 
               password_protection = {
-                deployment_type = "standard_protection"
+                deployment_type = "standard_protection_new"
                 password        = var.preview_password
               }
             }
@@ -344,7 +344,7 @@ queries:
               name = "example"
 
               trusted_ips = {
-                deployment_type = "all"
+                deployment_type = "all_deployments"
                 protection_mode = "trusted_ip_required"
                 addresses = [
                   { value = "203.0.113.0/24" }
@@ -435,7 +435,7 @@ queries:
               name = "example"
 
               trusted_ips = {
-                deployment_type = "all"
+                deployment_type = "all_deployments"
                 protection_mode = "trusted_ip_required"
                 addresses = [
                   { value = "203.0.113.0/24", note = "office" },
@@ -960,21 +960,19 @@ queries:
             ```
         - id: terraform
           desc: |
-            To scope firewall IP rules in Terraform, define only the specific ranges on the `vercel_firewall_config` resource and omit any all-addresses allow entry:
+            To scope firewall IP rules in Terraform, declare only the specific ranges on the `vercel_firewall_config` resource and omit any all-addresses entry. The IP rule actions the provider accepts are `bypass`, `log`, `challenge`, and `deny`, so an exception that skips filtering is a `bypass` rule bound to a narrow range:
 
             ```hcl
             resource "vercel_firewall_config" "example" {
               project_id = vercel_project.example.id
               enabled    = true
 
-              ip_rules = {
-                rules = [
-                  {
-                    action = "allow"
-                    ip     = "203.0.113.0/24"
-                    hostname = "*"
-                  }
-                ]
+              ip_rules {
+                rule {
+                  action   = "bypass"
+                  ip       = "203.0.113.0/24"
+                  hostname = "*"
+                }
               }
             }
             ```
@@ -1057,9 +1055,16 @@ queries:
             # Revoke the non-expiring token
             vercel tokens remove <token-id>
             ```
-        # No Terraform remediation: personal API tokens are account credentials that
-        # the vercel Terraform provider does not manage; they are created and revoked
-        # through the dashboard or the REST API only.
+        - id: terraform
+          desc: |
+            To manage a token with an explicit lifetime in Terraform, set `expires_at` on the `vercel_user_token` resource. The value is a Unix timestamp in milliseconds, so pick the shortest lifetime the consumer can work with and move it forward on each rotation:
+
+            ```hcl
+            resource "vercel_user_token" "ci_deployments" {
+              name       = "ci-deployments"
+              expires_at = 1798761600000
+            }
+            ```
     refs:
       - url: https://vercel.com/docs/rest-api/reference/welcome/api-scopes
         title: Vercel access token documentation
@@ -1132,9 +1137,9 @@ queries:
             vercel tokens ls
             vercel tokens remove <token-id>
             ```
-        # No Terraform remediation: personal API tokens are account credentials that
-        # the vercel Terraform provider does not manage; they are created and revoked
-        # through the dashboard or the REST API only.
+        # No Terraform remediation: the fix is to stop a token existing, and the
+        # vercel_user_token resource expresses that by being deleted rather than by
+        # carrying an attribute a snippet could show.
     refs:
       - url: https://vercel.com/docs/rest-api/reference/welcome/api-scopes
         title: Vercel access token documentation
@@ -1213,9 +1218,16 @@ queries:
             # Inspect a specific store
             vercel blob get-store <store-id>
             ```
-        # No Terraform remediation: Vercel Blob stores and their access level are
-        # provisioned through the dashboard and the Blob SDK; the vercel Terraform
-        # provider does not expose a Blob store resource.
+        - id: terraform
+          desc: |
+            To keep a Blob store private in Terraform, set `access` to `private` on the `vercel_blob_store` resource:
+
+            ```hcl
+            resource "vercel_blob_store" "assets" {
+              name   = "assets"
+              access = "private"
+            }
+            ```
     refs:
       - url: https://vercel.com/docs/vercel-blob
         title: Vercel Blob documentation
@@ -1285,9 +1297,16 @@ queries:
             3. Let Vercel reissue an auto-renewing certificate for the domain.
         - id: cli
           desc: |
-            To issue a Vercel-managed certificate that renews automatically, remove the stale certificate and let Vercel reissue one:
+            To issue a Vercel-managed certificate that renews automatically, find the stale certificate, remove it, and let Vercel reissue one:
 
             ```bash
+            # Find the certificate's ID
+            vercel certs ls
+
+            # Remove the certificate that does not renew
+            vercel certs rm <cert-id>
+
+            # Let Vercel issue a managed certificate for the domain
             vercel certs issue <domain>
             ```
         # No Terraform remediation: TLS certificates are issued and auto-renewed by
@@ -1365,10 +1384,14 @@ queries:
             To inspect and verify a domain through the `vercel` CLI:
 
             ```bash
+            # Show the verification challenge and DNS configuration
             vercel domains inspect <domain>
+
+            # Complete verification once the records have propagated
+            vercel domains verify <domain>
             ```
 
-            Add the DNS records the command reports at your DNS provider, then re-run it to confirm the domain reaches a verified state.
+            Add the DNS records the inspect command reports at your DNS provider, then run the verify command to complete the handshake.
         # No Terraform remediation: domain ownership verification is a DNS-record and
         # dashboard workflow tied to the registrar; the vercel Terraform provider does
         # not manage the verification handshake for a team domain.
@@ -1531,8 +1554,10 @@ queries:
               "https://api.vercel.com/v1/projects/<project-id>/protection-bypass?teamId=<team-id>" \
               --data '{ "revoke": { "secret": "<bypass-secret>", "regenerate": false } }'
             ```
-        # No Terraform remediation: protection-bypass secrets are imperative runtime
-        # credentials with no vercel Terraform provider resource to manage them.
+        # No Terraform remediation: the fix is to stop a bypass existing, and the
+        # vercel_project_protection_bypass resource expresses that by being deleted
+        # rather than by carrying an attribute a snippet could show. Bypasses created
+        # outside Terraform are revoked through the dashboard or the REST API.
     refs:
       - url: https://vercel.com/docs/security/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation
         title: Vercel protection bypass for automation documentation
@@ -1614,8 +1639,9 @@ queries:
               "https://api.vercel.com/v2/teams/<team-id>" \
               --data '{ "strictDeploymentProtectionSettings": { "enabled": true }, "strictPasswordProtectionSettings": { "enabled": true } }'
             ```
-        # No Terraform remediation: these team-wide governance toggles have no
-        # resource in the vercel Terraform provider; they are set via the API or dashboard.
+        # No Terraform remediation: vercel_team_config manages team configuration but
+        # exposes neither strict deployment-protection nor strict password-protection
+        # settings, so they are set via the API or dashboard.
     refs:
       - url: https://vercel.com/docs/security/deployment-protection
         title: Vercel deployment protection documentation

@@ -1,4 +1,4 @@
-# required_password_length is unset; the check only flags an explicit weak value.
+# No internal_auth_settings block is declared, so no weak required length is set.
 resource "portainer_settings" "this" {
   authentication_method = 2
 }
