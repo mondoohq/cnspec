@@ -18,6 +18,12 @@ MAJOR_VERSION=v13
 LDFLAGS="-s -w -X go.mondoo.com/mql/${MAJOR_VERSION}.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnspec/${MAJOR_VERSION}.Version=${LATEST_VERSION_TAG} ${LDFLAGSEXTRA}"
 LDFLAGSDIST=-tags production -ldflags ${LDFLAGS}
 
+# Windows version resource generator. The PE version fields are numeric, so strip
+# the leading "v" from the tag (v13.32.1 -> 13.32.1) to match release builds,
+# which use goreleaser's already-stripped {{ .Version }}.
+GO_WINRES=github.com/tc-hib/go-winres@v0.3.3
+WINRES_VERSION=$(LATEST_VERSION_TAG:v%=%)
+
 .PHONY: info/ldflags
 info/ldflags:
 	$(info go run -ldflags ${LDFLAGS} apps/cnspec/cnspec.go)
@@ -90,9 +96,21 @@ cnspec/build/linux:
 cnspec/build/linux/arm:
 	GOOS=linux GOARCH=arm64 go build ${LDFLAGSDIST} apps/cnspec/cnspec.go
 
+# Generates the Windows version resource (VERSIONINFO) and application manifest
+# into apps/cnspec/rsrc_windows_<arch>.syso. Release builds run the equivalent
+# step from the `before` hook in .goreleaser.yml.
+.PHONY: cnspec/winres
+cnspec/winres:
+	go run ${GO_WINRES} make --in apps/cnspec/winres/winres.json --out apps/cnspec/rsrc \
+		--arch amd64,arm64 \
+		--file-version ${WINRES_VERSION} --product-version ${WINRES_VERSION}
+
+# NOTE: the build target must stay a package path, not apps/cnspec/cnspec.go. Go
+# only links rsrc_windows_*.syso when building a package directory; passing an
+# explicit .go file silently drops the version resource and manifest.
 .PHONY: cnspec/build/windows
-cnspec/build/windows:
-	GOOS=windows GOARCH=amd64 go build ${LDFLAGSDIST} apps/cnspec/cnspec.go
+cnspec/build/windows: cnspec/winres
+	GOOS=windows GOARCH=amd64 go build ${LDFLAGSDIST} ./apps/cnspec
 
 .PHONY: cnspec/install
 cnspec/install:
