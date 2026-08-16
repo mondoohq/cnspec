@@ -1,4 +1,5 @@
-# The environment names a secret; the function resolves the value at startup.
+# The key name gives nothing away, but the value is an Alibaba access key ID. Scanning
+# key names alone would miss this, which is why the values are scanned as well.
 resource "alicloud_fcv3_function" "processor" {
   function_name   = "processor"
   runtime         = "python3.10"
@@ -7,9 +8,8 @@ resource "alicloud_fcv3_function" "processor" {
   internet_access = false
 
   environment_variables = {
-    DB_PASSWORD_SECRET = "example-db-password"
-    LOG_LEVEL          = "info"
-    REGION             = var.region
+    UPSTREAM_ID = "LTAI5tExampleNotReal1234"
+    LOG_LEVEL   = "info"
   }
 
   code {

@@ -6215,6 +6215,11 @@ queries:
         arguments["environment_variables"] == empty ||
         arguments["environment_variables"].keys.none(
           _.downcase == /^access_key_id$|^access_key_secret$|^alicloud_access_key$|^alicloud_secret_key$|^security_token$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
+        ) &&
+        arguments["environment_variables"].values.none(
+          _.find(/\bLTAI[A-Za-z0-9]{12,}\b/) != empty ||
+          _.contains("-----BEGIN") && _.contains("PRIVATE KEY-----") ||
+          _.find(/\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b/) != empty
         )
       )
   - uid: mondoo-alibaba-security-fc-function-no-credentials-in-env-terraform-plan
@@ -6225,6 +6230,11 @@ queries:
         change.after["environment_variables"] == empty ||
         change.after["environment_variables"].keys.none(
           _.downcase == /^access_key_id$|^access_key_secret$|^alicloud_access_key$|^alicloud_secret_key$|^security_token$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
+        ) &&
+        change.after["environment_variables"].values.none(
+          _.find(/\bLTAI[A-Za-z0-9]{12,}\b/) != empty ||
+          _.contains("-----BEGIN") && _.contains("PRIVATE KEY-----") ||
+          _.find(/\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b/) != empty
         )
       )
   - uid: mondoo-alibaba-security-fc-function-no-credentials-in-env-terraform-state
@@ -6235,6 +6245,11 @@ queries:
         values["environment_variables"] == empty ||
         values["environment_variables"].keys.none(
           _.downcase == /^access_key_id$|^access_key_secret$|^alicloud_access_key$|^alicloud_secret_key$|^security_token$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
+        ) &&
+        values["environment_variables"].values.none(
+          _.find(/\bLTAI[A-Za-z0-9]{12,}\b/) != empty ||
+          _.contains("-----BEGIN") && _.contains("PRIVATE KEY-----") ||
+          _.find(/\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b/) != empty
         )
       )
 
@@ -6351,6 +6366,9 @@ queries:
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_vpn_connection")
     mql: |
+      # A connection with no ike_config or ipsec_config takes Alibaba's defaults, and the
+      # documented default for both encryption algorithms is aes. An absent block is
+      # therefore a pass here, unlike the Diffie-Hellman check, whose default is group2.
       terraform.resources("alicloud_vpn_connection").all(
         blocks.where(type == "ike_config").all(
           arguments["ike_enc_alg"] != "des" && arguments["ike_enc_alg"] != "3des"
@@ -6490,7 +6508,11 @@ queries:
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_vpn_connection")
     mql: |
+      # Alibaba's documented default for both ike_pfs and ipsec_pfs is group2, which is one
+      # of the groups this check rejects. An omitted block therefore has to fail, so the
+      # blocks are asserted present rather than left to pass vacuously.
       terraform.resources("alicloud_vpn_connection").all(
+        blocks.where(type == "ike_config") != empty &&
         blocks.where(type == "ike_config").all(
           arguments["ike_pfs"] != empty &&
           arguments["ike_pfs"] != "disabled" &&
@@ -6498,6 +6520,7 @@ queries:
           arguments["ike_pfs"] != "group2" &&
           arguments["ike_pfs"] != "group5"
         ) &&
+        blocks.where(type == "ipsec_config") != empty &&
         blocks.where(type == "ipsec_config").all(
           arguments["ipsec_pfs"] != empty &&
           arguments["ipsec_pfs"] != "disabled" &&
@@ -6511,7 +6534,7 @@ queries:
       asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_vpn_connection")
     mql: |
       terraform.plan.resourceChanges.where(type == "alicloud_vpn_connection").map(change.after).all(
-        _["ike_config"] == empty ||
+        _["ike_config"] != empty &&
         _["ike_config"].all(
           _["ike_pfs"] != empty &&
           _["ike_pfs"] != "disabled" &&
@@ -6525,7 +6548,7 @@ queries:
       asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_vpn_connection")
     mql: |
       terraform.state.resources.where(type == "alicloud_vpn_connection").map(values).all(
-        _["ike_config"] == empty ||
+        _["ike_config"] != empty &&
         _["ike_config"].all(
           _["ike_pfs"] != empty &&
           _["ike_pfs"] != "disabled" &&
