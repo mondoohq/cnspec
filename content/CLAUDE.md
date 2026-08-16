@@ -457,10 +457,13 @@ python3 content/validation/check_upstream_versions.py --format json    # same, f
 python3 content/validation/bump_upstream_versions.py --list            # which pins can be bumped mechanically
 python3 content/validation/bump_upstream_versions.py --all --dry-run
 python3 content/validation/bump_upstream_versions.py --only cfn-lint   # rewrite one pin in place
+python3 content/validation/bump_upstream_versions.py --only terraform-provider  # every behind pin of one kind
 python3 content/validation/bump_upstream_versions.py --verify-checksums
 ```
 
-Two workflows run weekly off this. `validation-upstream-drift.yaml` reports the whole table into one long-lived issue. `validation-dependency-updates.yaml` opens one pull request per pin that moved, on a stable branch named for the pin (`deps/validation/<slug>`) and **not** for the version — so next week's run updates the open pull request instead of opening a second one.
+Two workflows run weekly off this. `validation-upstream-drift.yaml` reports the whole table into one long-lived issue. `validation-dependency-updates.yaml` opens one pull request per **kind** of pin that moved, on a stable branch named for the kind (`deps/validation/<kind>`, e.g. `deps/validation/terraform-provider`) and **not** for a version or a single pin — so next week's run updates the open pull request instead of opening a second one.
+
+Per kind and not per pin, because a kind is declared in one dense block of one file: 24 Terraform providers on 24 consecutive lines of `PROVIDER_MAP`, three rulesets on three lines of `TFLINT_PLUGIN_MAP`, four spec SHAs on four lines of `openapi.py`. Git merges with three lines of context, so a pull request per pin meant every bump of a kind conflicted with every other one the moment the first was merged. The trade is that a red bump now blocks its group-mates; if one row needs work the rest should not wait on, drop that line from the branch and merge the rest — the next run offers it again.
 
 Things to know when touching this:
 
