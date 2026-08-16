@@ -42376,6 +42376,20 @@ queries:
               }
             }
             ```
+        - id: cloudformation
+          desc: |
+            Set `GitConfig.SecretArn` on every SageMaker code repository so Git credentials come from Secrets Manager:
+
+            ```yaml
+            Resources:
+              CodeRepository:
+                Type: AWS::SageMaker::CodeRepository
+                Properties:
+                  CodeRepositoryName: example-repo
+                  GitConfig:
+                    RepositoryUrl: https://github.com/example/repo.git
+                    SecretArn: !Ref GitCredentialsSecretArn
+            ```
     refs:
       - url: https://docs.aws.amazon.com/sagemaker/latest/dg/nbi-git-repo.html
         title: Amazon SageMaker - Associate Git Repositories with Notebook Instances
@@ -42750,6 +42764,37 @@ queries:
               }
             }
             ```
+        - id: cloudformation
+          desc: |
+            To ensure the SageMaker domain default execution role is not `AdministratorAccess` in CloudFormation, attach a narrower policy to the role and reference it from `DefaultUserSettings`. `AmazonSageMakerFullAccess` below stands in for that policy and is itself broad; scope it to the buckets, registries, and keys the workload actually uses:
+
+            ```yaml
+            Resources:
+              DomainExecutionRole:
+                Type: AWS::IAM::Role
+                Properties:
+                  RoleName: sagemaker-domain-exec-role
+                  AssumeRolePolicyDocument:
+                    Version: '2012-10-17'
+                    Statement:
+                      - Effect: Allow
+                        Principal:
+                          Service: sagemaker.amazonaws.com
+                        Action: sts:AssumeRole
+                  ManagedPolicyArns:
+                    - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+
+              SageMakerDomain:
+                Type: AWS::SageMaker::Domain
+                Properties:
+                  DomainName: example-domain
+                  AuthMode: IAM
+                  VpcId: !Ref Vpc
+                  SubnetIds:
+                    - !Ref PrivateSubnet
+                  DefaultUserSettings:
+                    ExecutionRole: !GetAtt DomainExecutionRole.Arn
+            ```
     refs:
       - url: https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-roles.html
         title: Amazon SageMaker - Execution Roles
@@ -42876,6 +42921,33 @@ queries:
               role_arn      = aws_iam_role.sagemaker_notebook_exec.arn
               instance_type = "ml.t3.medium"
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To ensure a SageMaker notebook instance uses a scoped IAM role without `AdministratorAccess` in CloudFormation, attach a narrower policy to the execution role and reference it from the notebook. `AmazonSageMakerFullAccess` below stands in for that policy and is itself broad; scope it to the buckets, registries, and keys the notebook actually uses:
+
+            ```yaml
+            Resources:
+              NotebookExecutionRole:
+                Type: AWS::IAM::Role
+                Properties:
+                  RoleName: sagemaker-notebook-exec-role
+                  AssumeRolePolicyDocument:
+                    Version: '2012-10-17'
+                    Statement:
+                      - Effect: Allow
+                        Principal:
+                          Service: sagemaker.amazonaws.com
+                        Action: sts:AssumeRole
+                  ManagedPolicyArns:
+                    - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+
+              NotebookInstance:
+                Type: AWS::SageMaker::NotebookInstance
+                Properties:
+                  NotebookInstanceName: example-notebook
+                  RoleArn: !GetAtt NotebookExecutionRole.Arn
+                  InstanceType: ml.t3.medium
             ```
     refs:
       - url: https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-roles.html
@@ -60948,6 +61020,29 @@ queries:
               })
             }
             ```
+        - id: cloudformation
+          desc: |
+            To restrict CloudWatch log destination access in CloudFormation, name the permitted accounts in `DestinationPolicy` rather than using `"*"`:
+
+            ```yaml
+            Resources:
+              LogDestination:
+                Type: AWS::Logs::Destination
+                Properties:
+                  DestinationName: cross-account-destination
+                  RoleArn: !Ref DestinationRoleArn
+                  TargetArn: !Ref KinesisStreamArn
+                  DestinationPolicy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [{
+                        "Effect": "Allow",
+                        "Principal": {"AWS": "arn:aws:iam::123456789012:root"},
+                        "Action": "logs:PutSubscriptionFilter",
+                        "Resource": "arn:aws:logs:us-east-1:111122223333:destination:cross-account-destination"
+                      }]
+                    }
+            ```
     refs:
       - url: https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CreateDestination.html
         title: AWS Documentation - CloudWatch Logs destinations
@@ -62899,6 +62994,19 @@ queries:
               session_duration = "PT4H"
             }
             ```
+        - id: cloudformation
+          desc: |
+            To ensure Identity Center permission sets have reasonable session durations in CloudFormation, set `SessionDuration`:
+
+            ```yaml
+            Resources:
+              PermissionSet:
+                Type: AWS::SSO::PermissionSet
+                Properties:
+                  Name: example
+                  InstanceArn: !Ref IdentityCenterInstanceArn
+                  SessionDuration: PT4H
+            ```
     refs:
       - url: https://docs.aws.amazon.com/singlesignon/latest/userguide/permissionsetsconcept.html
         title: AWS Documentation - Permission sets
@@ -63050,6 +63158,20 @@ queries:
               managed_policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
               permission_set_arn = aws_ssoadmin_permission_set.example.arn
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To ensure Identity Center permission sets use managed policies in CloudFormation, list them under `ManagedPolicies` and omit `InlinePolicy`:
+
+            ```yaml
+            Resources:
+              PermissionSet:
+                Type: AWS::SSO::PermissionSet
+                Properties:
+                  Name: example
+                  InstanceArn: !Ref IdentityCenterInstanceArn
+                  ManagedPolicies:
+                    - arn:aws:iam::aws:policy/ReadOnlyAccess
             ```
     refs:
       - url: https://docs.aws.amazon.com/singlesignon/latest/userguide/permissionsetsconcept.html
@@ -63525,6 +63647,9 @@ queries:
               enabled = false
             }
             ```
+        # No CloudFormation remediation: serial console access is a per-region account setting with no
+        # CloudFormation resource type. Terraform reaches it through an API-backed resource
+        # (aws_ec2_serial_console_access); CloudFormation has no equivalent, so use the console or CLI.
     refs:
       - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configure-access-to-serial-console.html
         title: Configure access to the EC2 Serial Console
@@ -63650,6 +63775,9 @@ queries:
               state = "block-new-sharing"
             }
             ```
+        # No CloudFormation remediation: AMI block public access is a per-region account setting with no
+        # CloudFormation resource type. Terraform reaches it through an API-backed resource
+        # (aws_ec2_image_block_public_access); CloudFormation has no equivalent, so use the console or CLI.
     refs:
       - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/sharingamis-intro.html
         title: Block public access for AMIs
@@ -64643,6 +64771,9 @@ queries:
               default_large_staging_disk_type = "GP3"
             }
             ```
+        # No CloudFormation remediation: Elastic Disaster Recovery has no CloudFormation resource types, so
+        # the replication configuration template cannot be expressed in a template. Terraform reaches it
+        # through an API-backed resource; use the console or CLI instead.
     refs:
       - url: https://docs.aws.amazon.com/drs/latest/userguide/replication-settings.html
         title: AWS DRS Replication Settings
@@ -64784,6 +64915,9 @@ queries:
               default_large_staging_disk_type = "GP3"
             }
             ```
+        # No CloudFormation remediation: Elastic Disaster Recovery has no CloudFormation resource types, so
+        # the replication configuration template cannot be expressed in a template. Terraform reaches it
+        # through an API-backed resource; use the console or CLI instead.
     refs:
       - url: https://docs.aws.amazon.com/drs/latest/userguide/replication-settings.html
         title: AWS DRS Replication Settings
@@ -68885,6 +69019,20 @@ queries:
               embed_host_domains = ["app.example.com", "portal.example.com"]
             }
             ```
+        - id: cloudformation
+          desc: |
+            To restrict AppStream embed host domains in CloudFormation, list the exact hosts rather than a wildcard:
+
+            ```yaml
+            Resources:
+              AppStreamStack:
+                Type: AWS::AppStream::Stack
+                Properties:
+                  Name: example
+                  EmbedHostDomains:
+                    - app.example.com
+                    - portal.example.com
+            ```
     refs:
       - url: https://docs.aws.amazon.com/appstream2/latest/developerguide/embed-streaming-sessions.html
         title: Amazon AppStream 2.0 - Embed AppStream 2.0 streaming sessions
@@ -69021,6 +69169,20 @@ queries:
                 description = "Corporate egress"
               }
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict WorkSpaces Web IP access settings in CloudFormation, list only routable corporate ranges, never `0.0.0.0/0`:
+
+            ```yaml
+            Resources:
+              IpAccessSettings:
+                Type: AWS::WorkSpacesWeb::IpAccessSettings
+                Properties:
+                  DisplayName: corporate-only
+                  IpRules:
+                    - IpRange: 203.0.113.0/24
+                      Description: Corporate egress
             ```
     refs:
       - url: https://docs.aws.amazon.com/workspaces-web/latest/adminguide/ip-access-settings.html
@@ -69757,6 +69919,23 @@ queries:
               }
             }
             ```
+        - id: cloudformation
+          desc: |
+            To configure a Transfer Family connector with a logging role in CloudFormation, set `LoggingRole`:
+
+            ```yaml
+            Resources:
+              TransferConnector:
+                Type: AWS::Transfer::Connector
+                Properties:
+                  AccessRole: !Ref ConnectorAccessRoleArn
+                  LoggingRole: !Ref ConnectorLoggingRoleArn
+                  Url: sftp://partner.example.com
+                  SftpConfig:
+                    TrustedHostKeys:
+                      - ssh-rsa AAAAB3Nza...
+                    UserSecretId: !Ref ConnectorSecretArn
+            ```
     refs:
       - url: https://docs.aws.amazon.com/transfer/latest/userguide/monitoring.html
         title: AWS Transfer Family - Monitoring with CloudWatch
@@ -69888,6 +70067,27 @@ queries:
 
               access_endpoint = "https://internal.example.com"
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To create a Transfer Family Web App with a non-public endpoint in CloudFormation, give it `EndpointDetails.Vpc` so it resolves inside the VPC, and set an internal `AccessEndpoint`:
+
+            ```yaml
+            Resources:
+              TransferWebApp:
+                Type: AWS::Transfer::WebApp
+                Properties:
+                  IdentityProviderDetails:
+                    InstanceArn: !Ref IdentityCenterInstanceArn
+                    Role: !Ref WebAppRoleArn
+                  EndpointDetails:
+                    Vpc:
+                      VpcId: !Ref Vpc
+                      SubnetIds:
+                        - !Ref PrivateSubnetA
+                      SecurityGroupIds:
+                        - !Ref WebAppSecurityGroup
+                  AccessEndpoint: https://internal.example.com
             ```
     refs:
       - url: https://docs.aws.amazon.com/transfer/latest/userguide/web-apps.html
@@ -70200,6 +70400,9 @@ queries:
               }
             }
             ```
+        # No CloudFormation remediation: AWS::Bedrock::CustomModel is not a CloudFormation resource type, so
+        # customModelKmsKeyId cannot be set from a template. Terraform reaches the customization job through
+        # an API-backed resource; use the console or CLI instead.
     refs:
       - url: https://docs.aws.amazon.com/bedrock/latest/userguide/custom-models-encryption.html
         title: Encryption of custom models
@@ -70999,6 +71202,32 @@ queries:
                 security_group_ids = [aws_security_group.batch.id]
               }
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To create an AWS Batch compute environment that uses only private subnets in CloudFormation, list private subnet IDs under `ComputeResources.Subnets`:
+
+            ```yaml
+            Resources:
+              BatchComputeEnvironment:
+                Type: AWS::Batch::ComputeEnvironment
+                Properties:
+                  ComputeEnvironmentName: example-private
+                  Type: MANAGED
+                  State: ENABLED
+                  ComputeResources:
+                    Type: EC2
+                    MinvCpus: 0
+                    MaxvCpus: 64
+                    DesiredvCpus: 0
+                    InstanceRole: !Ref EcsInstanceProfileArn
+                    InstanceTypes:
+                      - optimal
+                    Subnets:
+                      - !Ref PrivateSubnetA
+                      - !Ref PrivateSubnetB
+                    SecurityGroupIds:
+                      - !Ref BatchSecurityGroup
             ```
     refs:
       - url: https://docs.aws.amazon.com/batch/latest/userguide/compute_environments.html
@@ -72027,6 +72256,24 @@ queries:
               publicly_accessible           = false
               skip_final_snapshot           = true
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To create a Lightsail managed database that is not publicly accessible in CloudFormation, leave `PubliclyAccessible` false and supply the master password through a `NoEcho` parameter rather than a literal:
+
+            ```yaml
+            Resources:
+              LightsailDatabase:
+                Type: AWS::Lightsail::Database
+                Properties:
+                  RelationalDatabaseName: example
+                  AvailabilityZone: us-east-1a
+                  MasterDatabaseName: exampledb
+                  MasterUsername: admin
+                  MasterUserPassword: !Ref DbPassword
+                  RelationalDatabaseBlueprintId: mysql_8_0
+                  RelationalDatabaseBundleId: micro_1_0
+                  PubliclyAccessible: false
             ```
     refs:
       - url: https://docs.aws.amazon.com/lightsail/latest/userguide/amazon-lightsail-managing-database-public-mode.html
@@ -73390,6 +73637,26 @@ queries:
               authorization_type = "AWS_IAM"
             }
             ```
+        - id: cloudformation
+          desc: |
+            To require authorization on a WebSocket route in CloudFormation, set `AuthorizationType` to a non-`NONE` value on every route of a `WEBSOCKET` API:
+
+            ```yaml
+            Resources:
+              WebSocketApi:
+                Type: AWS::ApiGatewayV2::Api
+                Properties:
+                  Name: example-ws
+                  ProtocolType: WEBSOCKET
+                  RouteSelectionExpression: $request.body.action
+
+              ConnectRoute:
+                Type: AWS::ApiGatewayV2::Route
+                Properties:
+                  ApiId: !Ref WebSocketApi
+                  RouteKey: $connect
+                  AuthorizationType: AWS_IAM
+            ```
     refs:
       - url: https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-websocket-api-route-keys-connect-disconnect.html
         title: API Gateway WebSocket API route keys
@@ -73682,6 +73949,23 @@ queries:
               }
             }
             ```
+        - id: cloudformation
+          desc: |
+            To configure a Glue connection without plaintext credentials in CloudFormation, reference a Secrets Manager secret via `SECRET_ID` instead of `USERNAME` and `PASSWORD`:
+
+            ```yaml
+            Resources:
+              GlueConnection:
+                Type: AWS::Glue::Connection
+                Properties:
+                  CatalogId: !Ref AWS::AccountId
+                  ConnectionInput:
+                    Name: example
+                    ConnectionType: JDBC
+                    ConnectionProperties:
+                      JDBC_CONNECTION_URL: jdbc:mysql://host:3306/db
+                      SECRET_ID: !Ref GlueSecretArn
+            ```
     refs:
       - url: https://docs.aws.amazon.com/glue/latest/dg/connection-properties.html
         title: AWS Glue connection properties
@@ -73813,6 +74097,21 @@ queries:
               subnet_id       = aws_subnet.private.id
               connection_type = "CONNECT_SSM"
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To require Systems Manager connectivity for a Cloud9 EC2 environment in CloudFormation, set `ConnectionType` to `CONNECT_SSM`:
+
+            ```yaml
+            Resources:
+              Cloud9Environment:
+                Type: AWS::Cloud9::EnvironmentEC2
+                Properties:
+                  Name: example
+                  InstanceType: t3.small
+                  SubnetId: !Ref PrivateSubnet
+                  ConnectionType: CONNECT_SSM
+                  ImageId: amazonlinux-2023-x86_64
             ```
     refs:
       - url: https://docs.aws.amazon.com/cloud9/latest/user-guide/ec2-ssm.html
@@ -73960,6 +74259,29 @@ queries:
                 value     = aws_acm_certificate.example.arn
               }
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To enable an HTTPS listener on an Elastic Beanstalk environment in CloudFormation, add the listener through `OptionSettings`:
+
+            ```yaml
+            Resources:
+              BeanstalkEnvironment:
+                Type: AWS::ElasticBeanstalk::Environment
+                Properties:
+                  EnvironmentName: example-env
+                  ApplicationName: !Ref BeanstalkApplication
+                  SolutionStackName: 64bit Amazon Linux 2023 v4.5.2 running Docker
+                  OptionSettings:
+                    - Namespace: aws:elbv2:listener:443
+                      OptionName: ListenerEnabled
+                      Value: 'true'
+                    - Namespace: aws:elbv2:listener:443
+                      OptionName: Protocol
+                      Value: HTTPS
+                    - Namespace: aws:elbv2:listener:443
+                      OptionName: SSLCertificateArns
+                      Value: !Ref CertificateArn
             ```
     refs:
       - url: https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/configuring-https.html
@@ -75960,6 +76282,21 @@ queries:
               }
             }
             ```
+        - id: cloudformation
+          desc: |
+            To pin the security policy in CloudFormation, set `SecurityPolicy` on every entry of `DomainNameConfigurations`:
+
+            ```yaml
+            Resources:
+              WebSocketDomainName:
+                Type: AWS::ApiGatewayV2::DomainName
+                Properties:
+                  DomainName: ws.example.com
+                  DomainNameConfigurations:
+                    - CertificateArn: !Ref CertificateArn
+                      EndpointType: REGIONAL
+                      SecurityPolicy: TLS_1_2
+            ```
     refs:
       - url: https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-custom-domain-tls-version.html
         title: Choosing a minimum TLS version for an API Gateway custom domain
@@ -76491,6 +76828,23 @@ queries:
               }
             }
             ```
+        - id: cloudformation
+          desc: |
+            To pin the security policy in CloudFormation, set `TlsConfig.SecurityPolicy` on the domain configuration:
+
+            ```yaml
+            Resources:
+              IoTDomainConfiguration:
+                Type: AWS::IoT::DomainConfiguration
+                Properties:
+                  DomainConfigurationName: example
+                  DomainName: iot.example.com
+                  ServiceType: DATA
+                  ServerCertificateArns:
+                    - !Ref ServerCertificateArn
+                  TlsConfig:
+                    SecurityPolicy: IoTSecurityPolicy_TLS13_1_2_2022_10
+            ```
     refs:
       - url: https://docs.aws.amazon.com/iot/latest/developerguide/transport-security.html
         title: Transport security in AWS IoT Core
@@ -76645,6 +76999,37 @@ queries:
                 automatically_after_days = 30
               }
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To run a Secrets Manager rotation Lambda inside a VPC in CloudFormation, declare `VpcConfig` on the rotation function and point the secret's rotation schedule at it:
+
+            ```yaml
+            Resources:
+              RotationFunction:
+                Type: AWS::Lambda::Function
+                Properties:
+                  FunctionName: secrets-rotation
+                  Role: !Ref RotationRoleArn
+                  Handler: rotate.handler
+                  Runtime: python3.12
+                  Code:
+                    S3Bucket: !Ref DeploymentBucket
+                    S3Key: rotation.zip
+                  VpcConfig:
+                    SubnetIds:
+                      - !Ref PrivateSubnetA
+                      - !Ref PrivateSubnetB
+                    SecurityGroupIds:
+                      - !Ref RotationSecurityGroup
+
+              SecretRotation:
+                Type: AWS::SecretsManager::RotationSchedule
+                Properties:
+                  SecretId: !Ref ApplicationSecret
+                  RotationLambdaARN: !GetAtt RotationFunction.Arn
+                  RotationRules:
+                    AutomaticallyAfterDays: 30
             ```
     refs:
       - url: https://docs.aws.amazon.com/secretsmanager/latest/userguide/rotating-secrets-network-rqmts.html
@@ -78825,6 +79210,20 @@ queries:
               create_database_default_permissions {}
               create_table_default_permissions {}
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To stop new databases and tables granting `IAM_ALLOWED_PRINCIPALS` in CloudFormation, declare the default permission lists as empty:
+
+            ```yaml
+            Resources:
+              DataLakeSettings:
+                Type: AWS::LakeFormation::DataLakeSettings
+                Properties:
+                  Admins:
+                    - DataLakePrincipalIdentifier: !Ref LakeFormationAdminArn
+                  CreateDatabaseDefaultPermissions: []
+                  CreateTableDefaultPermissions: []
             ```
         # No Terraform plan/state variants: the default-permission principal is expressed as a nested block that is
         # frequently absent in plan/state output; the HCL variant covers Terraform source and the runtime check
@@ -84180,6 +84579,31 @@ queries:
               })
             }
             ```
+        - id: cloudformation
+          desc: |
+            To scope an SQS queue policy in CloudFormation, name the allowed principals explicitly rather than using `"*"`:
+
+            ```yaml
+            Resources:
+              Queue:
+                Type: AWS::SQS::Queue
+                Properties:
+                  QueueName: my-queue
+
+              QueuePolicy:
+                Type: AWS::SQS::QueuePolicy
+                Properties:
+                  Queues:
+                    - !Ref Queue
+                  PolicyDocument:
+                    Version: '2012-10-17'
+                    Statement:
+                      - Effect: Allow
+                        Principal:
+                          AWS: !Ref ProducerRoleArn
+                        Action: sqs:SendMessage
+                        Resource: !GetAtt Queue.Arn
+            ```
     refs:
       - url: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-security-best-practices.html
         title: Amazon SQS security best practices
@@ -84277,6 +84701,26 @@ queries:
               cluster_identifier              = "my-cluster"
               db_cluster_parameter_group_name = aws_docdb_cluster_parameter_group.example.name
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To enforce TLS on a DocumentDB cluster in CloudFormation, set the `tls` parameter to `enabled` on the cluster parameter group and associate it with the cluster:
+
+            ```yaml
+            Resources:
+              DocDBClusterParameterGroup:
+                Type: AWS::DocDB::DBClusterParameterGroup
+                Properties:
+                  Family: docdb5.0
+                  Description: Enforce TLS for DocumentDB
+                  Parameters:
+                    tls: enabled
+
+              DocDBCluster:
+                Type: AWS::DocDB::DBCluster
+                Properties:
+                  DBClusterIdentifier: my-cluster
+                  DBClusterParameterGroupName: !Ref DocDBClusterParameterGroup
             ```
     refs:
       - url: https://docs.aws.amazon.com/documentdb/latest/developerguide/security.encryption.ssl.html
