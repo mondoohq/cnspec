@@ -119,7 +119,7 @@ def pr_branch(applied: list[dict]) -> str:
 
 def pr_body(applied: list[dict]) -> str:
     lines = [
-        "Opened by the weekly `Validation Dependency Updates` workflow.",
+        "Opened by the weekly `Bump validation dependencies` workflow.",
         "",
         "These pins decide what the remediation and IaC-variant validators check "
         "against. Nothing else watches them: Dependabot covers `gomod` and "
