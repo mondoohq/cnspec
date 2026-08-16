@@ -1595,27 +1595,43 @@ queries:
           desc: |
             **Using Ansible**
 
-            A bare `fdesetup enable` prompts for a password and cannot run unattended. Use deferred enablement, which activates FileVault at the user's next logout and writes the recovery key to a file you must collect and escrow:
+            A bare `fdesetup enable` prompts for a password and cannot run unattended. Use deferred enablement, which activates FileVault at the user's next logout:
 
             ```yaml
             ---
-            - name: Enable FileVault
+            - name: Configure deferred FileVault enablement
               hosts: all
               become: true
               tasks:
                 - name: Enable FileVault at next logout
                   ansible.builtin.command: fdesetup enable -defer /var/db/filevault-recovery.plist
+            ```
+
+            The recovery key is not generated when this task runs. `fdesetup` writes the property list only once the designated user supplies their password at logout, which is why collecting it is a second pass rather than the next task in the same play. Run the following play after the users have logged out:
+
+            ```yaml
+            ---
+            - name: Escrow the FileVault recovery key
+              hosts: all
+              become: true
+              tasks:
+                - name: Check whether the user has completed enablement
+                  ansible.builtin.stat:
+                    path: /var/db/filevault-recovery.plist
+                  register: filevault_recovery
                 - name: Fetch the recovery key for escrow
                   ansible.builtin.fetch:
                     src: /var/db/filevault-recovery.plist
                     dest: filevault-keys/
+                  when: filevault_recovery.stat.exists
                 - name: Remove the local recovery key copy
                   ansible.builtin.file:
                     path: /var/db/filevault-recovery.plist
                     state: absent
+                  when: filevault_recovery.stat.exists
             ```
 
-            Store the fetched recovery keys in a secure escrow location. If the recovery key is lost and a user forgets their password, the encrypted data cannot be recovered. In MDM-managed fleets, prefer enabling FileVault through an MDM profile with institutional key escrow instead.
+            The `stat` guard matters in both directions: without it the fetch fails on every host whose user has not logged out yet, and the removal task deletes the escrow file on a host where the fetch never ran. Store the fetched recovery keys in a secure escrow location. If the recovery key is lost and a user forgets their password, the encrypted data cannot be recovered. In MDM-managed fleets, prefer enabling FileVault through an MDM profile with institutional key escrow instead.
 
             Note: To pass this check and ensure users cannot turn encryption off, the Device Management profile property [`dontAllowFDEDisable` must be set to true](https://developer.apple.com/documentation/devicemanagement/fdefilevaultoptions).
 
@@ -1776,7 +1792,7 @@ queries:
            /usr/libexec/ApplicationFirewall/socketfilterfw --getstealthmode
            ```
 
-        A passing result reports `Stealth mode enabled`. A failing result reports `Stealth mode disabled`.
+        A passing result reports `Firewall stealth mode is on`. A failing result reports `Firewall stealth mode is off`.
       remediation:
         - id: cli
           desc: |
@@ -2000,14 +2016,23 @@ queries:
           desc: |
             **Using the CLI**
 
-            Run these commands to enable `auditd`:
+            On macOS 14 and later the audit subsystem is disabled by default and no `/etc/security/audit_control` is installed, so clearing the launchd override on its own leaves `auditd` unable to start. Provision the configuration file from the template Apple ships, clear the override, then restart:
+
+            ```bash
+            sudo cp -n /etc/security/audit_control.example /etc/security/audit_control
+            sudo launchctl enable system/com.apple.auditd
+            ```
+
+            Restart the system to finish. `auditd` reads `/etc/security/audit_control` only at startup, so it does not begin collecting events until the restart completes. The `cp -n` form leaves an existing configuration file untouched.
+
+            On macOS 13 and earlier the configuration file is already present and the daemon can be started in place instead:
 
             ```bash
             sudo launchctl enable system/com.apple.auditd
             sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.auditd.plist
             ```
 
-            The `enable` command clears the disabled override so the daemon starts again, and `bootstrap` loads it now. The `bootstrap` command reports an error if the service is already loaded; that error is harmless. On older macOS versions you can use the legacy form `sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.auditd.plist`.
+            The `enable` command clears the disabled override so the daemon starts again, and `bootstrap` loads it now. The `bootstrap` command reports an error if the service is already loaded; that error is harmless.
 
             **Impact:**
 
@@ -2016,7 +2041,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            To enable `auditd` using Ansible, you can use the following playbook:
+            To enable `auditd` using Ansible, you can use the following playbook. It provisions the configuration file that macOS 14 and later no longer install, clears the launchd override, and restarts the host so `auditd` picks the configuration up:
 
             ```yaml
             ---
@@ -2024,16 +2049,22 @@ queries:
               hosts: all
               become: true
               tasks:
+                - name: Provision the audit configuration file if it is missing
+                  ansible.builtin.copy:
+                    src: /etc/security/audit_control.example
+                    dest: /etc/security/audit_control
+                    remote_src: true
+                    force: false
+                    owner: root
+                    group: wheel
+                    mode: '0600'
                 - name: Clear the disabled override on the audit daemon
                   ansible.builtin.command: launchctl enable system/com.apple.auditd
-                - name: Load the audit daemon
-                  ansible.builtin.command: launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.auditd.plist
-                  register: bootstrap_result
-                  failed_when: false
-                  changed_when: bootstrap_result.rc == 0
+                - name: Restart so the audit daemon starts with the new configuration
+                  ansible.builtin.reboot:
             ```
 
-            The `bootstrap` task exits non-zero harmlessly when the daemon is already loaded; that failure is suppressed with `failed_when: false`, and `changed` is reported only when it actually loads the service. The `enable` task runs `launchctl` through `ansible.builtin.command`, which always reports `changed` even when the daemon is already enabled, so this playbook is not fully idempotent.
+            `force: false` leaves an existing configuration file untouched, so the task is safe to re-run and does not overwrite a tuned retention policy. The `enable` task runs `launchctl` through `ansible.builtin.command`, which always reports `changed` even when the daemon is already enabled, so this playbook is not fully idempotent.
 
             **Impact:**
 
@@ -2220,15 +2251,7 @@ queries:
 
         Without these protections, AirDrop may inadvertently expose the system to potential threats, undermining its overall security posture.
       audit: |
-        ### Audit via Finder
-
-        1. Open **Finder**.
-        2. Select **Go**, then **AirDrop**.
-        3. Review the **Allow me to be discovered by** setting.
-
-        A passing result shows **No One** selected. A failing result shows **Contacts Only** or **Everyone**.
-
-        ### Audit via CLI
+        Verify that AirDrop is turned off from the macOS shell. The **Allow me to be discovered by** control in Finder and the **AirDrop** control in **System Settings** set discoverability only, so neither answers this question.
 
         1. Open the **Terminal** app.
         2. Read the AirDrop preference for the logged-in user:
@@ -2237,7 +2260,13 @@ queries:
            defaults read com.apple.NetworkBrowser DisableAirDrop
            ```
 
-        A passing result returns `1`. A failing result returns `0` or reports that the key does not exist.
+        3. On a managed Mac, read the restriction delivered by a configuration profile instead:
+
+           ```bash
+           defaults read /Library/Managed\ Preferences/com.apple.applicationaccess allowAirDrop
+           ```
+
+        A passing result returns `1` for `DisableAirDrop`, or `0` for `allowAirDrop`. A failing result returns `0` for `DisableAirDrop`, or reports that neither key exists.
       remediation:
         - id: cli
           desc: |
@@ -2264,10 +2293,7 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **Finder**
-            2. Select **Go**
-            3. Select **AirDrop**
-            4. Set **Allow me to be discovered by:** to **No One**
+            macOS provides no graphical control for the preference that turns AirDrop off. The **Allow me to be discovered by** control in Finder and the **AirDrop** control in **System Settings** under **General**, **AirDrop & Handoff** change discoverability only. They leave AirDrop itself available and do not resolve this finding. Use the CLI command above, or deploy a configuration profile with the `com.apple.applicationaccess` payload that sets `allowAirDrop` to false.
 
             **Impact:**
 
@@ -2649,7 +2675,13 @@ queries:
           desc: |
             **Using the CLI**
 
-            Edit the `/etc/security/audit_control` file to set the audit retention length. The `expire-after` parameter controls how long audit logs are retained.
+            On macOS 14 and later no `/etc/security/audit_control` is installed until you provision one, so create it from the template Apple ships before editing it:
+
+            ```bash
+            sudo cp -n /etc/security/audit_control.example /etc/security/audit_control
+            ```
+
+            The `cp -n` form leaves an existing configuration file untouched. Then edit the file to set the audit retention length. The `expire-after` parameter controls how long audit logs are retained.
 
             ```bash
             sudo vi /etc/security/audit_control
@@ -2682,7 +2714,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            To set the audit retention length using Ansible, you can use the following playbook:
+            To set the audit retention length using Ansible, you can use the following playbook. The first task provisions the configuration file that macOS 14 and later no longer install, because `lineinfile` fails outright on a path that does not exist:
 
             ```yaml
             ---
@@ -2690,6 +2722,15 @@ queries:
               hosts: all
               become: true
               tasks:
+                - name: Provision the audit configuration file if it is missing
+                  ansible.builtin.copy:
+                    src: /etc/security/audit_control.example
+                    dest: /etc/security/audit_control
+                    remote_src: true
+                    force: false
+                    owner: root
+                    group: wheel
+                    mode: '0600'
                 - name: Set audit retention to 60 days
                   ansible.builtin.lineinfile:
                     path: /etc/security/audit_control
@@ -2757,13 +2798,19 @@ queries:
         Verify the maximum password age from the macOS shell.
 
         1. Open the **Terminal** app.
-        2. Read the global password policy:
+        2. Read the account policies, which is where macOS records a policy delivered by a configuration profile:
+
+           ```bash
+           pwpolicy -getaccountpolicies
+           ```
+
+        3. Read the legacy global policy, which still applies on hosts configured before account policies replaced it:
 
            ```bash
            pwpolicy -n /Local/Default -getglobalpolicy
            ```
 
-        A passing result shows `maxMinutesUntilChangePassword` set to `525600` (365 days) or fewer minutes. A failing result shows a larger value or no expiration policy.
+        A passing result shows a `policyCategoryPasswordChange` entry expiring the password after 365 days or fewer, or `maxMinutesUntilChangePassword` set to `525600` minutes or fewer. A failing result shows a longer interval or no expiration policy at all. Apple marks the global policy commands deprecated, so on a Mac whose policy arrives by configuration profile the legacy command prints nothing and only the account policies show the setting.
       remediation:
         - id: cli
           desc: |
@@ -2780,6 +2827,8 @@ queries:
             ```bash
             sudo pwpolicy -n /Local/Default -setglobalpolicy "maxMinutesUntilChangePassword=43200"
             ```
+
+            Apple marks `-setglobalpolicy` deprecated in favor of account policies. On a managed Mac, deploy an MDM passcode configuration profile that sets `maxPINAgeInDays` to 365 or less, which is the form macOS records and reports through `pwpolicy -getaccountpolicies`.
 
             **Impact:**
 
@@ -2867,13 +2916,19 @@ queries:
         Verify the password history depth from the macOS shell.
 
         1. Open the **Terminal** app.
-        2. Read the global password policy:
+        2. Read the account policies, which is where macOS records a policy delivered by a configuration profile:
+
+           ```bash
+           pwpolicy -getaccountpolicies
+           ```
+
+        3. Read the legacy global policy, which still applies on hosts configured before account policies replaced it:
 
            ```bash
            pwpolicy -n /Local/Default -getglobalpolicy
            ```
 
-        A passing result shows `usingHistory` set to `15` or greater. A failing result shows a smaller value or no history policy.
+        A passing result shows a `policyCategoryPasswordContent` entry with a history depth of 15 or greater, or `usingHistory` set to `15` or greater. A failing result shows a smaller value or no history policy. Apple marks the global policy commands deprecated, so on a Mac whose policy arrives by configuration profile the legacy command prints nothing and only the account policies show the setting.
       remediation:
         - id: cli
           desc: |
@@ -2890,6 +2945,8 @@ queries:
             ```bash
             sudo pwpolicy -n /Local/Default -setglobalpolicy "usingHistory=15"
             ```
+
+            Apple marks `-setglobalpolicy` deprecated in favor of account policies. On a managed Mac, deploy an MDM passcode configuration profile that sets `pinHistory` to 15 or more, which is the form macOS records and reports through `pwpolicy -getaccountpolicies`.
 
             **Impact:**
 
@@ -3163,13 +3220,19 @@ queries:
         Verify the minimum password length from the macOS shell.
 
         1. Open the **Terminal** app.
-        2. Read the global password policy:
+        2. Read the account policies, which is where macOS records a policy delivered by a configuration profile:
+
+           ```bash
+           pwpolicy -getaccountpolicies
+           ```
+
+        3. Read the legacy global policy, which still applies on hosts configured before account policies replaced it:
 
            ```bash
            pwpolicy -n /Local/Default -getglobalpolicy
            ```
 
-        A passing result shows `minChars` set to `15` or greater. A failing result shows a smaller value or no minimum length policy.
+        A passing result shows a `policyCategoryPasswordContent` entry with a `minimumLength` of 15 or greater, or `minChars` set to `15` or greater. A failing result shows a smaller value or no minimum length policy. Apple marks the global policy commands deprecated, so on a Mac whose policy arrives by configuration profile the legacy command prints nothing and only the account policies show the setting.
       remediation:
         - id: cli
           desc: |
@@ -3181,11 +3244,13 @@ queries:
             sudo pwpolicy -n /Local/Default -setglobalpolicy "minChars=15"
             ```
 
+            Apple marks `-setglobalpolicy` deprecated in favor of account policies. On a managed Mac, deploy an MDM passcode configuration profile that sets `minLength` to 15 or more, which is the form macOS records and reports through `pwpolicy -getaccountpolicies`.
+
             **Impact:**
 
             Enforcing a minimum password length may inconvenience users accustomed to shorter passwords. However, the security benefits outweigh the potential inconvenience, especially in environments handling sensitive data.
 
-            **Note:** This setting cannot be configured through the System Preferences GUI. Use the CLI command above or deploy an MDM configuration profile to enforce minimum password length policies.
+            **Note:** This setting cannot be configured through System Settings. Use the CLI command above or deploy an MDM configuration profile to enforce minimum password length policies.
         - id: ansible
           desc: |
             **Using Ansible**
