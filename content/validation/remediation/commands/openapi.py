@@ -682,6 +682,50 @@ API_PROVIDERS = {
             {"name": "atlassian-um", "file": "atlassian_user_management_openapi.json"},
         ],
     },
+    "okta": {
+        # Every Okta fix in this policy is an Admin Console click-through —
+        # the settings have no CLI — so the API surface here is entirely
+        # `audit:`: the vendor-native way for an auditor to reproduce a
+        # finding without trusting Mondoo's output. The policy writes the
+        # org host as the shell variable it tells the reader to set, so that
+        # literal is the host prefix curl calls are matched against.
+        #
+        # Okta publishes the Management API spec as YAML only, and the
+        # validators are stdlib-only, so it is converted to JSON and checked
+        # in by upstream/dump/api_specs.py, pinned to a dated dist/ release.
+        # servers[0].url is the templated `https://{yourOktaDomain}`, whose
+        # path component is empty, so no server prefix is stripped and the
+        # policy's `/api/v1/...` paths match the spec's directly.
+        "policies": ["mondoo-okta-security.mql.yaml"],
+        "host": "https://$OKTA_ORG.okta.com",
+        "specs": [{"name": "okta", "file": "okta_openapi.json"}],
+        "path_exemptions": {
+            # Five checks audit the org's security notification email
+            # settings (reportSuspiciousActivityEnabled and friends) through
+            # this path. It is absent from the published Management API spec,
+            # and so are those field names — the spec's org endpoints are
+            # /api/v1/org and the /api/v1/org/settings/<name> children, with
+            # no bare /api/v1/org/settings among them. Whether Okta serves it
+            # undocumented or the audit steps name the wrong endpoint is not
+            # something the spec can answer, so it is exempted rather than
+            # rewritten to an endpoint nobody has confirmed.
+            "/api/v1/org/settings",
+        },
+    },
+    "portainer": {
+        # Portainer is self-hosted; the policy's examples use the
+        # documentation placeholder host below. As with Okta, the fixes are
+        # UI-driven and the API appears only in `audit:` steps.
+        #
+        # Portainer publishes its spec as YAML only, so it is converted and
+        # checked in by upstream/dump/api_specs.py, pinned to the commit that
+        # produced it. Its servers[0].url is the relative "/api", which
+        # _server_prefix strips, so the policy's `/api/settings` matches the
+        # spec's `/settings`.
+        "policies": ["mondoo-portainer-security.mql.yaml"],
+        "host": "https://portainer.example.com",
+        "specs": [{"name": "portainer", "file": "portainer_openapi.json"}],
+    },
     "grafana": {
         # Grafana is self-hosted; the policy's examples use the
         # documentation placeholder host below.
