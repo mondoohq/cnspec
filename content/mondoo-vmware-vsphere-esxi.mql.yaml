@@ -463,13 +463,13 @@ queries:
           desc: |
             To remove the configuration for the dvfilter network API using the vSphere Client:
 
-            1. From the vSphere web client, select the host and select `Configure` then expand `System`
+            1. From the vSphere Client, select the host and select `Configure` then expand `System`.
             2. Select `Advanced System Settings` then `Edit`.
             3. Search for `Net.DVFilterBindIpAddress` in the filter.
-            4. Set `Net.DVFilterBindIpAddress` has an empty value.
-            5. If an appliance is being used, make sure the value of this parameter is set to the proper IP address.
-            6. Enter the proper IP address.
-            7. Select `OK`.
+            4. Clear the value so `Net.DVFilterBindIpAddress` is empty.
+            5. Select `OK`.
+
+            Where a dvfilter-based security appliance is deployed, this parameter is required. In that case set it to the appliance's IP address rather than clearing it, and exempt the host from this check.
 
             **Impact:**
 
@@ -637,6 +637,15 @@ queries:
             **Impact:**
 
             Some third-party tools may utilize the Managed Object Browser (MOB). Disabling MOB may cause those tools to malfunction.
+        - id: powershell
+          desc: |
+            To disable the Managed Object Browser on all hosts using PowerCLI:
+
+            ```powershell
+            Get-VMHost | Get-AdvancedSetting -Name Config.HostAgent.plugins.solo.enableMob | Set-AdvancedSetting -Value $false
+            ```
+
+            PowerCLI writes the setting through the same host API the vSphere Client uses, so it is a supported alternative to the client. A host already in lockdown mode rejects the change; take it out of lockdown mode, disable the MOB, then re-enable lockdown mode.
         # No Terraform remediation: the Managed Object Browser toggle is a runtime host advanced setting with no Terraform resource.
   # No Terraform variants: the vsphere Terraform provider does not manage ESXi host lockdown mode.
   - uid: mondoo-vmware-vsphere-esxi-security-baseline-ensure-normal-lockdown-mode-is-enabled
@@ -715,7 +724,22 @@ queries:
             **Impact:**
 
             With lockdown mode enabled the host will only be accessible through vCenter preventing 'local' access.
-        # No Terraform remediation: host lockdown mode is runtime host configuration with no Terraform resource.
+        - id: terraform
+          desc: |
+            To put a host into Normal lockdown mode with Terraform, set `lockdown` to `normal` on the `vsphere_host` resource:
+
+            ```hcl
+            resource "vsphere_host" "esxi" {
+              hostname   = "esxi-01.example.com"
+              username   = "root"
+              password   = var.esxi_password
+              datacenter = data.vsphere_datacenter.dc.id
+
+              lockdown = "normal"
+            }
+            ```
+
+            The argument accepts `disabled`, `normal`, and `strict`, and it defaults to `disabled`, so a host that never sets it stays out of lockdown mode.
   # No Terraform variants: the vsphere Terraform provider does not manage ESXi host services such as the ntpd time-synchronization daemon.
   - uid: mondoo-vmware-vsphere-esxi-security-baseline-ensure-ntp-time-synchronization-is-configured-properly
     filters: asset.platform == "vmware-esxi"
@@ -1304,7 +1328,22 @@ queries:
             **Impact:**
 
             Strict lockdown mode disables the DCUI. If the host loses connectivity to vCenter Server, recovery can require reinstalling ESXi, so confirm recovery procedures before applying this at scale.
-        # No Terraform remediation: host lockdown mode is runtime host configuration with no Terraform resource.
+        - id: terraform
+          desc: |
+            To put a host into Strict lockdown mode with Terraform, set `lockdown` to `strict` on the `vsphere_host` resource:
+
+            ```hcl
+            resource "vsphere_host" "esxi" {
+              hostname   = "esxi-01.example.com"
+              username   = "root"
+              password   = var.esxi_password
+              datacenter = data.vsphere_datacenter.dc.id
+
+              lockdown = "strict"
+            }
+            ```
+
+            The argument accepts `disabled`, `normal`, and `strict`, and it defaults to `disabled`, so a host that never sets it stays out of lockdown mode.
   # No Terraform variants: the vsphere Terraform provider does not manage ESXi host advanced settings such as UserVars.DcuiTimeOut.
   - uid: mondoo-vmware-vsphere-esxi-security-baseline-ensure-the-dcui-timeout-is-set-to-600-seconds-or-less
     filters: asset.platform == "vmware-esxi"
@@ -1523,6 +1562,32 @@ queries:
             **Impact:**
 
             Connections from IP addresses and ranges that are not explicitly set will be denied. Take care to ensure appropriate IPs/IP address ranges are allowed.
+        - id: cli
+          desc: |
+            To restrict a firewall ruleset to specific networks using the ESXi shell:
+
+            1. Connect to the ESXi host with SSH and list the rulesets that currently allow every address:
+
+               ```bash
+               esxcli network firewall ruleset list
+               ```
+
+            2. Add the networks that must reach the service, then turn off the allow-all setting. Adding the allowed networks first keeps the ruleset reachable at every point in the sequence:
+
+               ```bash
+               esxcli network firewall ruleset allowedip add --ruleset-id=sshServer --ip-address=192.0.2.0/24
+               esxcli network firewall ruleset set --ruleset-id=sshServer --allowed-all=false
+               ```
+
+            3. Confirm the result:
+
+               ```bash
+               esxcli network firewall ruleset allowedip list
+               ```
+
+            Repeat for each enabled ruleset, substituting its own ruleset ID and the networks that need access.
+
+            **Warning:** Restricting the `sshServer` ruleset from an SSH session can cut off the session you are using. Include the address you are connecting from, or run this from the host console.
         # No Terraform remediation: the host firewall ruleset configuration is runtime host state with no Terraform resource.
   # No Terraform variants: the vsphere Terraform provider does not manage the ESXi host SSL machine certificate or its validity period.
   - uid: mondoo-vmware-vsphere-esxi-security-baseline-ensure-the-esxi-host-ssl-certificate-is-not-expired-or-expiring-soon
@@ -2073,9 +2138,11 @@ queries:
             ```bash
             esxcli system snmp set --communities ""
             esxcli system snmp set --targets ""
-            esxcli system snmp set --v3targets monitor.example.com@161/poller/priv --authentication SHA1 --privacy AES128
+            esxcli system snmp set --v3targets monitor.example.com@162/snmpv3user/priv/trap --authentication SHA1 --privacy AES128
             esxcli system snmp set --enable true
             ```
+
+            A v3 target is written as `hostname@port/userid/secLevel/message-type`. The security level is `none`, `auth`, or `priv`, and the message type is `trap` or `inform`; a target that omits the message type is rejected. Port 162 is the default notification port.
 
             The check passes for hosts that keep SNMP enabled with an SNMPv3-only configuration.
         # No Terraform remediation: SNMP service state and startup policy are runtime host configuration with no Terraform resource.
