@@ -372,12 +372,12 @@ queries:
 
         ### Audit via server configuration
 
-        1. Inspect the `vllm serve` launch command for the `--enable-server-load-tracking` flag, which creates the `/load` endpoint.
+        1. Inspect the `vllm serve` launch command for the `--enable-server-load-tracking` flag. The flag decides whether the server counts in-flight requests, not whether the route exists, so its absence does not remove `/load`.
         2. Review the reverse proxy, API gateway, ingress, or firewall configuration for a rule that restricts `/load` to trusted monitoring or autoscaling components.
 
         A passing result shows `/load` blocked or limited to trusted infrastructure; a failing result shows it reachable by anonymous clients.
       remediation: |
-        Remove the `--enable-server-load-tracking` flag from the vLLM launch command when load data is not required; the `/load` endpoint only exists while that flag is set. Restarting the server to change launch flags cancels in-flight requests, so drain traffic at the load balancer or proxy first. If load data is required for autoscaling or monitoring, keep the flag but restrict `/load` to trusted infrastructure at the reverse proxy, API gateway, ingress, or firewall:
+        Block `/load` at the reverse proxy, API gateway, ingress, or firewall. vLLM registers the `/load` route on every server and serves it outside the scope of the built-in API key, so removing `--enable-server-load-tracking` does not take the endpoint away. Dropping that flag only stops the server from counting in-flight requests, leaving `/load` answering anonymous callers with a zero load figure. Restrict the route to the monitoring or autoscaling components that need it:
 
         ```nginx
         location = /load {
@@ -625,12 +625,22 @@ queries:
 
         ### Audit via server configuration
 
-        1. Inspect the `vllm serve` launch command and environment for settings that enable operational control endpoints.
+        1. Inspect the server environment for the `VLLM_SERVER_DEV_MODE` environment variable, which is what registers `/pause` and `/resume`. `/scale_elastic_ep` has no such switch and is registered on every server that supports generation.
         2. Review the reverse proxy, API gateway, ingress, or firewall configuration for an authentication or deny rule covering `/pause`, `/resume`, and `/scale_elastic_ep`.
 
         A passing result shows operational control routes blocked or limited to an authenticated administrative plane; a failing result shows them reachable by anonymous clients.
       remediation: |
-        Block operational control routes from untrusted networks. If operational routes are required, expose them only through an authenticated administrative plane and restrict access to trusted operators or automation.
+        Remove the `VLLM_SERVER_DEV_MODE` environment variable from the server environment. vLLM registers `/pause` and `/resume` only while it is set, so unsetting it removes both routes outright. Delete the `Environment=VLLM_SERVER_DEV_MODE=1` line from systemd units and the matching `environment:` or `env:` entry from Docker Compose and Kubernetes manifests, then restart the server. Restarting vLLM cancels in-flight requests, so drain traffic at the load balancer or proxy first.
+
+        `/scale_elastic_ep` is registered on every server that supports generation and sits outside the scope of the built-in API key, so it has to be blocked upstream at the reverse proxy, API gateway, ingress controller, or firewall:
+
+        ```nginx
+        location ~ ^/(pause|resume|scale_elastic_ep|is_scaling_elastic_ep)$ {
+            deny all;
+        }
+        ```
+
+        If operational routes are required, expose them only through an authenticated administrative plane and restrict access to trusted operators or automation.
     refs:
       - url: https://docs.vllm.ai/en/latest/serving/security.html
         title: vLLM Security
@@ -682,12 +692,12 @@ queries:
 
         ### Audit via server configuration
 
-        1. Inspect the `vllm serve` launch command and environment for whatever enables profiling in your release. Depending on the version this is the `VLLM_TORCH_PROFILER_DIR` environment variable, a `--profiler-config` flag, or another setting, so confirm the enablement mechanism for your version against `vllm serve --help` and the profiling documentation for that release.
+        1. Inspect the `vllm serve` launch command for the `--profiler-config` flag, which selects a profiler and is what registers the profiler routes. Releases before 0.13.0 used the `VLLM_TORCH_PROFILER_DIR` environment variable instead, so inspect the server environment as well when an older release is running.
         2. Review the reverse proxy, API gateway, ingress, or firewall rules for entries that block `/start_profile` and `/stop_profile`.
 
         A passing result shows profiler routes disabled or blocked from untrusted clients; a failing result shows them reachable anonymously.
       remediation: |
-        Remove profiler configuration from production launch commands. The `/start_profile` and `/stop_profile` routes only exist while profiling is enabled, so confirm that whatever enables profiling in your release is absent. Depending on the version this means unsetting the `VLLM_TORCH_PROFILER_DIR` environment variable, removing a `--profiler-config` flag, or both, so check the profiling enablement mechanism for your version against `vllm serve --help` and the profiling documentation for that release:
+        Remove profiler configuration from production launch commands. The `/start_profile` and `/stop_profile` routes are registered only when a profiler is selected. From vLLM 0.13.0 onward that selection is the `--profiler-config` flag, so drop the flag from the launch command. Releases before 0.13.0 read the `VLLM_TORCH_PROFILER_DIR` environment variable instead, and current releases no longer read it at all, so unset it as well when you are not certain which release is running:
 
         ```bash
         unset VLLM_TORCH_PROFILER_DIR

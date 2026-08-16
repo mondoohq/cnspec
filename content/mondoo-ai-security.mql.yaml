@@ -3185,8 +3185,8 @@ queries:
            cat ~/.cursor/mcp.json
            cat ~/.config/github-copilot/mcp.json ~/.config/github-copilot/intellij/mcp.json
            cat ~/.codeium/windsurf/mcp_config.json
-           cat ~/.gemini/settings.json
-           ls ~/.codex/.tmp/plugins/
+           cat ~/.gemini/antigravity/mcp_config.json
+           cat ~/.codex/.tmp/plugins/plugins/*/.mcp.json
            ```
 
         The endpoint passes when every configured MCP server name appears in the approved allow-list. Any server name outside the allow-list is a failing result.
@@ -3196,18 +3196,18 @@ queries:
             To remove unapproved MCP servers, delete the server entry from the location each agent actually reads:
 
             - Claude Code: run `claude mcp remove example-server` to delete the server from the user configuration in `~/.claude.json`, and remove any project-scoped entry from the repository's `.mcp.json`. Then delete the stale cache file `~/.claude/mcp-needs-auth-cache.json` so the removed server no longer appears in the inventory; Claude Code rebuilds it on next start.
-            - OpenAI Codex: MCP servers can be defined in `~/.codex/config.toml` under `[mcp_servers.<name>]` tables and bundled by installed plugins under `~/.codex/.tmp/plugins/`. Remove the TOML table for a directly configured server, and uninstall the plugin that ships an unapproved server.
+            - OpenAI Codex: Codex loads MCP servers from two places. Installed plugins declare them in a `.mcp.json` file under `~/.codex/.tmp/plugins/plugins/<plugin>/`, so uninstall the plugin that declares an unapproved server or delete its plugin directory. Servers configured directly live in `~/.codex/config.toml` under an `[mcp_servers.<name>]` table, so remove that table as well.
             - Cursor: edit `~/.cursor/mcp.json` (`%USERPROFILE%\.cursor\mcp.json` on Windows) and delete the entry under `mcpServers`.
             - GitHub Copilot: edit `~/.config/github-copilot/mcp.json` and, if present, `~/.config/github-copilot/intellij/mcp.json`, and delete the entry under `mcpServers`.
             - Windsurf: edit `~/.codeium/windsurf/mcp_config.json` (`%USERPROFILE%\.codeium\windsurf\` on Windows) and delete the entry under `mcpServers`.
-            - Gemini CLI: edit `~/.gemini/settings.json` (`%USERPROFILE%\.gemini\settings.json` on Windows) and delete the entry under `mcpServers`.
+            - Gemini CLI: edit `~/.gemini/antigravity/mcp_config.json` (`%USERPROFILE%\.gemini\antigravity\mcp_config.json` on Windows) and delete the entry under `mcpServers`.
         - id: ansible
           desc: |
             To surgically remove an unapproved MCP server entry from AI agent configuration files with Ansible:
 
-            This playbook deletes a single named MCP server from each agent's `mcpServers` object using a JSON patch, leaving the rest of the configuration file intact, and removes the Claude Code MCP cache file so the deleted server no longer appears in its inventory. Set `unapproved_mcp_server` to the server name to remove, and edit `mcp_config_files` to match your environment. Each patched file is backed up before modification.
+            This playbook deletes a single named MCP server from each agent's top-level `mcpServers` object, leaving the rest of the configuration file intact, and removes the Claude Code MCP cache file so the deleted server no longer appears in its inventory. Set `unapproved_mcp_server` to the server name to remove, and edit `mcp_config_files` to match your environment. Each rewritten file is backed up before modification.
 
-            The `mcpServers` path is not the same in every agent. Claude Code's `~/.claude.json` nests MCP servers per project rather than only at the top level, so a top-level `/mcpServers` patch can silently no-op and leave a project-scoped server in place; the `failed_when: false` guard hides that. For Claude Code, prefer running `claude mcp remove <name>` (covered by the command-line remediation) instead of patching the file, and confirm the project-scoped path for any agent whose configuration does not expose servers at top-level `mcpServers`.
+            The `mcpServers` path is not the same in every agent. Claude Code's `~/.claude.json` nests MCP servers per project rather than only at the top level, so a top-level rewrite leaves a project-scoped server in place. For Claude Code, prefer running `claude mcp remove <name>`, which the command-line remediation above covers, and confirm the project-scoped path for any agent whose configuration does not expose servers at top-level `mcpServers`. OpenAI Codex is absent from the list because its servers are declared in per-plugin `.mcp.json` files under `~/.codex/.tmp/plugins/plugins/`, which are removed by uninstalling the plugin rather than by editing a shared configuration file.
 
             ```yaml
             ---
@@ -3219,17 +3219,32 @@ queries:
                   - "{{ ansible_env.HOME }}/.claude.json"
                   - "{{ ansible_env.HOME }}/.cursor/mcp.json"
                   - "{{ ansible_env.HOME }}/.config/github-copilot/mcp.json"
-                  - "{{ ansible_env.HOME }}/.gemini/settings.json"
+                  - "{{ ansible_env.HOME }}/.config/github-copilot/intellij/mcp.json"
+                  - "{{ ansible_env.HOME }}/.codeium/windsurf/mcp_config.json"
+                  - "{{ ansible_env.HOME }}/.gemini/antigravity/mcp_config.json"
               tasks:
-                - name: Remove the unapproved server from each agent's mcpServers object
-                  community.general.json_patch:
+                - name: Read each agent's MCP configuration
+                  ansible.builtin.slurp:
                     src: "{{ item }}"
-                    operations:
-                      - op: remove
-                        path: "/mcpServers/{{ unapproved_mcp_server }}"
-                    backup: true
                   loop: "{{ mcp_config_files }}"
+                  register: mcp_configs
                   failed_when: false
+
+                - name: Remove the unapproved server from each agent's mcpServers object
+                  vars:
+                    config: "{{ item.content | b64decode | from_json }}"
+                  ansible.builtin.copy:
+                    dest: "{{ item.source }}"
+                    content: >-
+                      {{ config | combine({'mcpServers': config.mcpServers | dict2items
+                         | rejectattr('key', 'equalto', unapproved_mcp_server)
+                         | items2dict}) | to_nice_json }}
+                    backup: true
+                    mode: "0600"
+                  loop: "{{ mcp_configs.results }}"
+                  when:
+                    - item.content is defined
+                    - config.mcpServers is defined
 
                 - name: Remove the stale Claude Code MCP cache
                   ansible.builtin.file:
