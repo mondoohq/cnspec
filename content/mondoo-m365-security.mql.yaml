@@ -180,13 +180,14 @@ queries:
             Connect-MgGraph -Scopes "Policy.ReadWrite.ConditionalAccess", "Policy.Read.All", "Application.Read.All"
             ```
 
-            2. Create a new Conditional Access policy for sign-in risk. When the sign-in frequency interval is `everyTime`, the `value` and `type` properties must be omitted:
+            2. Create a new Conditional Access policy for sign-in risk. `clientAppTypes` is a required property of the conditions object, so the request fails without it. When the sign-in frequency interval is `everyTime`, `authenticationType` must be supplied and the `value` and `type` properties must be omitted:
 
             ```powershell
             $params = @{
                 displayName = "Sign-in risk policy - Require MFA for medium and high risk"
                 state = "enabled"
                 conditions = @{
+                    clientAppTypes = @("all")
                     users = @{
                         includeUsers = @("All")
                         excludeUsers = @("<breakglass-account-id>")  # Replace with your emergency access account
@@ -220,6 +221,7 @@ queries:
               state        = "enabled"
 
               conditions {
+                client_app_types = ["all"]
                 users {
                   included_users = ["All"]
                   excluded_users = [azuread_user.breakglass.object_id]
@@ -391,13 +393,14 @@ queries:
             Connect-MgGraph -Scopes "Policy.ReadWrite.ConditionalAccess", "Policy.Read.All"
             ```
 
-            2. Create a new Conditional Access policy for user risk:
+            2. Create a new Conditional Access policy for user risk. `clientAppTypes` is a required property of the conditions object, so the request fails without it. When the sign-in frequency interval is `everyTime`, `authenticationType` must be supplied and the `value` and `type` properties must be omitted:
 
             ```powershell
             $params = @{
                 displayName = "User risk policy - Require MFA and password change for high risk users"
                 state = "enabled"
                 conditions = @{
+                    clientAppTypes = @("all")
                     users = @{
                         includeUsers = @("All")
                         excludeUsers = @("<breakglass-account-id>")  # Replace with your emergency access account
@@ -415,6 +418,7 @@ queries:
                     signInFrequency = @{
                         isEnabled = $true
                         frequencyInterval = "everyTime"
+                        authenticationType = "primaryAndSecondaryAuthentication"
                     }
                 }
             }
@@ -430,6 +434,7 @@ queries:
               state        = "enabled"
 
               conditions {
+                client_app_types = ["all"]
                 users {
                   included_users = ["All"]
                   excluded_users = [azuread_user.breakglass.object_id]
@@ -831,13 +836,14 @@ queries:
             )
             ```
 
-            3. Create the Conditional Access policy. Exclude at least one emergency access account, and consider creating the policy with `state = "enabledForReportingButNotEnforced"` first to validate impact:
+            3. Create the Conditional Access policy. `clientAppTypes` is a required property of the conditions object, so the request fails without it. Exclude at least one emergency access account, and consider creating the policy with `state = "enabledForReportingButNotEnforced"` first to validate impact:
 
             ```powershell
             $params = @{
                 displayName = "Require MFA for administrative roles"
                 state = "enabled"
                 conditions = @{
+                    clientAppTypes = @("all")
                     users = @{
                         includeRoles = $adminRoles
                         excludeUsers = @("<breakglass-account-id>")  # Replace with your emergency access account
@@ -886,6 +892,7 @@ queries:
               state        = "enabled"
 
               conditions {
+                client_app_types = ["all"]
                 users {
                   included_roles = [for role in data.azuread_directory_roles.admin_roles.roles : role.template_id if contains(local.admin_role_names, role.display_name)]
                   excluded_users = [azuread_user.breakglass.object_id]
@@ -1048,13 +1055,14 @@ queries:
             Connect-MgGraph -Scopes "Policy.ReadWrite.ConditionalAccess", "Policy.Read.All"
             ```
 
-            2. Create a Conditional Access policy requiring MFA for all users. Exclude at least one emergency access account:
+            2. Create a Conditional Access policy requiring MFA for all users. `clientAppTypes` is a required property of the conditions object, so the request fails without it. Exclude at least one emergency access account:
 
             ```powershell
             $params = @{
                 displayName = "Require MFA for all users"
                 state = "enabled"
                 conditions = @{
+                    clientAppTypes = @("all")
                     users = @{
                         includeUsers = @("All")
                         excludeUsers = @("<breakglass-account-id>")  # Replace with your emergency access account
@@ -1080,6 +1088,7 @@ queries:
               state        = "enabled"
 
               conditions {
+                client_app_types = ["all"]
                 users {
                   included_users = ["All"]
                   excluded_users = [azuread_user.breakglass.object_id]
@@ -1357,18 +1366,20 @@ queries:
           desc: |
             **Using Terraform (azuread provider)**
 
-            Declare each Global Administrator assignment explicitly so the count is reviewable in source control:
+            Declare each Global Administrator assignment explicitly so the count is reviewable in source control. Key the `for_each` map by a static name rather than building a set from the user object IDs. Terraform rejects a `for_each` whose keys are only known after apply, so a set built from `object_id` values fails at plan time:
 
             ```hcl
             locals {
               global_admin_template_id = "62e90394-69f5-4237-9190-012177145e10"
+
+              global_admins = {
+                admin_one = azuread_user.admin_one.object_id
+                admin_two = azuread_user.admin_two.object_id
+              }
             }
 
             resource "azuread_directory_role_assignment" "global_admins" {
-              for_each = toset([
-                azuread_user.admin_one.object_id,
-                azuread_user.admin_two.object_id,
-              ])
+              for_each            = local.global_admins
               role_id             = local.global_admin_template_id
               principal_object_id = each.value
             }
@@ -1628,7 +1639,19 @@ queries:
             New-MgDeviceManagementDeviceConfiguration -BodyParameter $workProfileParams
             ```
 
-            3. Assign policies to appropriate device groups.
+            3. Update the profiles that already enforce a shorter length. Creating a new profile leaves existing ones untouched, and this check evaluates every profile, so a single remaining profile with a shorter minimum keeps it failing:
+
+            ```powershell
+            # Review the existing profiles and their minimum lengths
+            Get-MgDeviceManagementDeviceConfiguration |
+              Select-Object Id, DisplayName, @{n="Type";e={$_.AdditionalProperties."@odata.type"}}
+
+            # Raise the minimum on a profile that enforces fewer than 8 characters,
+            # passing the parameter set that matches that profile's type
+            Update-MgDeviceManagementDeviceConfiguration -DeviceConfigurationId <policy-id> -BodyParameter $windowsParams
+            ```
+
+            4. Assign policies to appropriate device groups.
         # No Terraform remediation: Intune device configuration has no resource in the azuread Terraform provider.
     refs:
       - url: https://learn.microsoft.com/en-us/entra/identity/authentication/concept-password-ban-bad
@@ -2370,6 +2393,7 @@ queries:
             New-AntiPhishPolicy -Name "Organization Anti-Phishing Policy" `
               -EnableMailboxIntelligence $true `
               -EnableMailboxIntelligenceProtection $true `
+              -MailboxIntelligenceProtectionAction Quarantine `
               -EnableSpoofIntelligence $true `
               -EnableFirstContactSafetyTips $true `
               -PhishThresholdLevel 2
@@ -2379,6 +2403,8 @@ queries:
               -AntiPhishPolicy "Organization Anti-Phishing Policy" `
               -RecipientDomainIs "example.com"
             ```
+
+            `MailboxIntelligenceProtectionAction` defaults to `NoAction`, which has the same effect as leaving mailbox intelligence protection off. Set it explicitly so detected impersonation attempts are acted on.
         # No Terraform remediation: Exchange Online anti-phishing policies have no Terraform provider.
     refs:
       - url: https://learn.microsoft.com/en-us/microsoft-365/security/office-365-security/anti-phishing-policies-about
