@@ -727,8 +727,15 @@ API_PROVIDERS = {
     "grafana": {
         # Grafana is self-hosted; the policy's examples use the
         # documentation placeholder host below.
+        #
+        # The policy documents its fixes as `curl` calls against the same API
+        # its audit steps read, so both are validated (remediation_ids + the
+        # default include_audit). Without the remediation_ids entry only the
+        # audit calls are seen, and the calls that actually change something
+        # ship unchecked.
         "policies": ["mondoo-grafana-security.mql.yaml"],
         "host": "https://grafana.example.com",
+        "remediation_ids": ("api",),
         "specs": [{
             "name": "grafana",
             "url": (

@@ -1,4 +1,7 @@
 resource "portainer_endpoint_settings" "prod" {
-  endpoint_id         = 1
-  allow_host_namespace = false
+  endpoint_id = 1
+
+  security_settings {
+    allow_host_namespace = false
+  }
 }
