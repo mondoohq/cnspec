@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-http-security
     name: Mondoo HTTP Security
-    version: 1.3.0
+    version: 1.3.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -79,17 +79,19 @@ queries:
     mql: http.get.header.xContentTypeOptions.downcase == "nosniff"
     docs:
       desc: |
-        This check ensures that the 'X-Content-Type-Options' HTTP header is set to 'nosniff'.
+        This check verifies that the server tells browsers not to guess the type of a response body.
+
+        The instrument is the `X-Content-Type-Options` response header. The server must send `X-Content-Type-Options: nosniff`, and the check accepts that value in any capitalization. Any other value fails, and so does a response that omits the header.
 
         **Why this matters**
 
-        The 'X-Content-Type-Options' header prevents browsers from MIME type sniffing a response away from the declared content type. This is important for security because:
+        Without `nosniff`, browsers fall back to content sniffing. When the declared `Content-Type` looks wrong or generic, the browser inspects the first bytes of the body and decides the type itself. An attacker exploits that by uploading a file the application considers harmless. A user avatar, a support attachment, or an exported document served as `text/plain` or `application/octet-stream` can begin with an HTML tag, and a sniffing browser renders it as `text/html` on the application's own origin. Script in that document then runs with access to the session cookie and to the DOM of a page the user trusts.
 
-        - **Prevents content-type confusion**: MIME sniffing can lead to browsers interpreting files as a different type than intended, potentially exposing vulnerabilities.
-        - **Mitigates XSS attacks**: Attackers may exploit MIME sniffing to execute malicious scripts by tricking the browser into treating a file as executable content.
-        - **Improves content integrity**: Ensures that files are processed as intended by the server, reducing the risk of unexpected behavior.
+        The same failure applies to code. A JSON endpoint or a user-controlled file served without `nosniff` can be pulled in through a `<script>` tag and executed if the browser decides the bytes look like JavaScript, which turns a data endpoint into an execution path for any page that can reach it.
 
-        By setting the 'X-Content-Type-Options' header to 'nosniff', the system enforces strict content type handling, enhancing security and reducing the attack surface.
+        `nosniff` also makes browsers refuse to execute a script whose response is not declared with a JavaScript MIME type, and refuse a stylesheet that is not `text/css`. That closes the sniffing path, but it also means a server that mislabels its own assets will start breaking pages, so confirm that static assets carry correct `Content-Type` values before rolling the header out.
+
+        Serving untrusted uploads from a separate origin is stronger than the header alone, because it keeps a sniffed document away from the origin that holds the session. Use both.
       audit: |
         Use `curl` to inspect the response headers returned by the site:
 
@@ -180,18 +182,19 @@ queries:
     mql: http.get.header.params.keys.any(downcase == "content-security-policy")
     docs:
       desc: |
-        This check ensures that the Content Security Policy (CSP) HTTP header is set to mitigate against Cross-Site Scripting (XSS) and data injection attacks.
+        This check verifies that the server sends a Content Security Policy telling the browser which sources a page may load code and content from.
+
+        The instrument is the `Content-Security-Policy` response header. The server must send it. The check confirms only that a header by that name is present and does not evaluate the directives inside it, so a policy that locks a page down to a single nonce and a policy consisting of nothing useful both pass.
 
         **Why this matters**
 
-        The Content Security Policy (CSP) header is a powerful tool to enhance the security of web applications by controlling the sources from which content can be loaded. This is important for several reasons:
+        A Content Security Policy does not prevent cross-site scripting, it caps what an injection can do. Without a policy, injected script runs with the full privileges of the page. It can read the DOM, read tokens held in `localStorage`, submit forms as the user, and post what it collects to any host the attacker chooses. A restrictive policy removes most of those options. A `script-src` directive built on nonces or hashes blocks the inline script the injection produced in the first place, and `connect-src` limits where a script that does run can send what it stole.
 
-        - **Mitigates XSS attacks**: CSP helps prevent attackers from injecting malicious scripts into web pages by restricting the sources of executable scripts.
-        - **Prevents data injection**: By defining allowed content sources, CSP reduces the risk of unauthorized data being loaded into the application.
-        - **Improves content integrity**: Ensures that only trusted resources are loaded, reducing the risk of compromised third-party content affecting the application.
-        - **Enhances security posture**: Implementing CSP demonstrates a proactive approach to securing web applications against common vulnerabilities.
+        The policy also constrains code you invited. Analytics tags, ad tags, chat widgets, and tag managers execute on your origin with your users' sessions, so a compromise of any of their delivery networks becomes a compromise of your site. Pinning `script-src` to the hosts you actually rely on turns that from a silent takeover into a blocked request.
 
-        By setting the CSP header, the system enforces strict content loading policies, reducing the attack surface and improving overall application security.
+        The `frame-ancestors` directive is also the modern replacement for `X-Frame-Options` and the only way to permit framing from a specific list of origins.
+
+        A policy that leans on `unsafe-inline` or a wildcard `script-src` passes this check while providing almost none of that protection. Treat a pass as a starting point. Deploy the policy first through `Content-Security-Policy-Report-Only` to find what it breaks, then tighten the directives.
       audit: |
         Use `curl` to inspect the response headers returned by the site:
 
@@ -316,18 +319,19 @@ queries:
     mql: http.get.header.params.keys.any(downcase == "strict-transport-security")
     docs:
       desc: |
-        This check ensures that the Strict-Transport-Security (HSTS) HTTP header is set to enforce secure connections.
+        This check verifies that the site instructs browsers to reach it only over HTTPS.
+
+        The instrument is the `Strict-Transport-Security` response header, which the server must send on its HTTPS responses. The check confirms the header is present and leaves the strength of its `max-age`, `includeSubDomains`, and `preload` directives to the checks that cover each of those.
 
         **Why this matters**
 
-        The Strict-Transport-Security (HSTS) header is a critical security feature that ensures all communication between the client and server is conducted over HTTPS. This is important for several reasons:
+        A user who types a bare hostname, follows an old `http://` bookmark, or clicks a link in a plain-text email makes a cleartext request first. On a shared or hostile network an attacker positioned on the path answers that request instead of the server. Rather than blocking it, the attacker proxies the session, speaking HTTPS to the real site and plain HTTP to the victim while rewriting every `https://` link in the response along the way. The browser never shows a certificate warning because no certificate is involved. This is SSL stripping, and the HTTP to HTTPS redirect that most sites rely on is exactly the request the attacker intercepts.
 
-        - **Eliminates HTTP to HTTPS redirects**: HSTS removes the need for HTTP to HTTPS redirects, reducing latency and improving performance.
-        - **Protects against man-in-the-middle attacks**: By enforcing HTTPS, HSTS prevents attackers from intercepting or tampering with data during transmission.
-        - **Mitigates protocol downgrade attacks**: HSTS ensures that browsers do not fall back to insecure HTTP connections, even if an attacker attempts to force a downgrade.
-        - **Improves user trust**: Enforcing HTTPS demonstrates a commitment to security, enhancing user confidence in the application.
+        Once the session is downgraded, session cookies without the `Secure` attribute travel in the clear on every request, submitted credentials are readable, and any response body can be modified before it reaches the browser.
 
-        By setting the HSTS header, the system enforces secure connections, reduces the attack surface, and strengthens the overall security posture.
+        Strict-Transport-Security closes that window after the first successful HTTPS response. The browser records the site for the lifetime of the header's `max-age` and refuses to make a cleartext request to it at all, rewriting `http://` to `https://` internally and turning a certificate error into a hard failure the user cannot click through.
+
+        The header takes effect only when delivered over HTTPS and only protects visits after the first one, so pair it with a `max-age` of at least one year, the `includeSubDomains` directive, and preload submission when the very first connection also needs to be covered.
       audit: |
         Use `curl` to inspect the response headers returned by the site over HTTPS:
 
@@ -437,17 +441,17 @@ queries:
     mql: http.get.header.server == empty || http.get.header.server.downcase != /nginx|microsoft|apache|litespeed|lsws|openresty/
     docs:
       desc: |
-        This check ensures that the Server header is removed or obfuscated to enhance security.
+        This check verifies that responses do not advertise which web server software is answering requests.
+
+        The instrument is the `Server` response header. The check passes when the server sends no `Server` header at all, and otherwise when the value it sends does not name the product. A value containing `nginx`, `microsoft`, `apache`, `litespeed`, `lsws`, or `openresty` in any capitalization fails.
 
         **Why this matters**
 
-        The Server header reveals information about the server software being used. This can lead to several security risks:
+        Attack tooling is organized by product. Mass scanners crawl the internet continuously, record the `Server` header alongside the hostname, and build a searchable index anyone can query for every host running a given server. When a remote code execution flaw lands in one of those products, exploitation begins with a ready-made target list, and hosts that named themselves are already on it. Sites that never advertised the product still get hit by untargeted scanning, but they get hit later and less often, which is frequently the difference between patching in time and not.
 
-        - **Increased attack surface**: Exposing server details can help attackers identify potential vulnerabilities specific to the software version.
-        - **Facilitates reconnaissance**: Attackers can use this information to tailor their attacks, increasing the likelihood of success.
-        - **Non-compliance with security best practices**: Security guidelines recommend minimizing information disclosure to reduce risks.
+        The header often gives away more than the product name. Default builds append a version string, and several distributions append the operating system, so one response can narrow a host to a specific package on a specific distribution. That is enough for an attacker to select an exploit rather than spray several, and spraying is what usually gets an attacker noticed.
 
-        By removing or obfuscating the Server header, the system reduces the attack surface, mitigates reconnaissance efforts, and aligns with security best practices.
+        Removing the header patches nothing, and a determined attacker can still fingerprint a server from error page wording, header ordering, and TLS behavior. Treat this as falling off the cheap target lists rather than as a defense. Note also that a reverse proxy or content delivery network in front of the origin sets its own `Server` value, so what this check observes may describe the edge rather than the application server behind it.
       audit: |
         Use `curl` to inspect the response headers returned by the site:
 
@@ -589,17 +593,19 @@ queries:
     mql: http.get.header.params.keys.none(downcase == "x-powered-by")
     docs:
       desc: |
-        This check ensures that the X-Powered-By header is removed to enhance security.
+        This check verifies that responses do not disclose the application framework or runtime behind the site.
+
+        The instrument is the `X-Powered-By` response header, and the passing condition is that the response carries no header by that name. Express, PHP, and ASP.NET each add it on their own initiative, so it is removed in the runtime configuration or stripped at a reverse proxy rather than in application code.
 
         **Why this matters**
 
-        The X-Powered-By header reveals information about the server software being used. This can lead to several security risks:
+        `X-Powered-By` is added automatically by several runtimes and frameworks, and its value names the technology and often the version. That single line tells an attacker which language the application is written in, which deserialization gadgets and template injection payloads are worth trying, and, when a version is present, whether a published exploit applies without any further probing.
 
-        - **Increased attack surface**: Exposing server details can help attackers identify potential vulnerabilities specific to the software version.
-        - **Facilitates reconnaissance**: Attackers can use this information to tailor their attacks, increasing the likelihood of success.
-        - **Non-compliance with security best practices**: Security guidelines recommend minimizing information disclosure to reduce risks.
+        Version disclosure is the sharper end of it. Public vulnerability databases are indexed by product and version, so a version string in a header lets an attacker match a host to known flaws in seconds. Internet-wide scanners record these headers, which means the matching happens continuously and at scale rather than only when someone decides to look at your site specifically.
 
-        By removing the X-Powered-By header, the system reduces the attack surface, mitigates reconnaissance efforts, and aligns with security best practices.
+        The header is on by default in several stacks, so it is usually present because nobody turned it off rather than because anyone decided to publish it. That makes it a reliable signal in its own right. A host that still sends it has probably not been through a hardening pass, and an attacker will reasonably assume other defaults are untouched as well.
+
+        Suppressing the header does not remove the vulnerability underneath it, and behavioral fingerprinting can still identify a runtime from response timing and error handling. Keep the framework patched and treat this as denying a free hint, not as protection.
       audit: |
         Use `curl` to inspect the response headers returned by the site:
 
@@ -687,17 +693,19 @@ queries:
     mql: http.get.header.params.keys.none(downcase == "x-aspnet-version")
     docs:
       desc: |
-        This check ensures that the X-AspNet-Version header is removed to enhance security.
+        This check verifies that responses do not disclose the version of the .NET runtime serving the application.
+
+        The instrument is the `X-AspNet-Version` response header, and the passing condition is that the response carries no header by that name. Its value is an exact framework build number such as `4.0.30319`.
 
         **Why this matters**
 
-        The X-AspNet-Version header reveals information about the server software being used. This can lead to several security risks:
+        `X-AspNet-Version` carries an exact framework build number, for example `4.0.30319`. Public vulnerability databases are indexed by product and version, so that string lets an attacker decide in a single lookup whether a published exploit or a known deserialization gadget applies to this host, with none of the probing traffic a defender might notice in the logs.
 
-        - **Increased attack surface**: Exposing server details can help attackers identify potential vulnerabilities specific to the software version.
-        - **Facilitates reconnaissance**: Attackers can use this information to tailor their attacks, increasing the likelihood of success.
-        - **Non-compliance with security best practices**: Security guidelines recommend minimizing information disclosure to reduce risks.
+        It also dates the host. A build that shipped years ago says the server has not been through a framework upgrade, which is a strong hint that the operating system, the web server, and the application dependencies are behind as well. Internet-wide scanners record this header alongside the hostname, so the host ends up in a searchable index of stale .NET deployments that attackers query the moment a new flaw is published.
 
-        By removing the X-AspNet-Version header, the system reduces the attack surface, mitigates reconnaissance efforts, and aligns with security best practices.
+        ASP.NET emits the header by default, so its presence usually means nobody removed it. An attacker reads that as a statement about how much hardening the deployment has had, and prioritizes accordingly.
+
+        Removing the header changes nothing about the runtime underneath. A host on an unsupported .NET version is exactly as exploitable once someone fingerprints it another way, so treat suppression as removing a shortcut and keep the runtime patched and in support.
       audit: |
         Use `curl` to inspect the response headers returned by the site:
 
@@ -790,17 +798,19 @@ queries:
     mql: http.get.header.params.keys.none(downcase == "x-aspnetmvc-version")
     docs:
       desc: |
-        This check ensures that the X-AspNetMvc-Version header is removed to enhance security.
+        This check verifies that responses do not disclose the version of ASP.NET MVC the application is built on.
+
+        The instrument is the `X-AspNetMvc-Version` response header, and the passing condition is that the response carries no header by that name. An ASP.NET MVC application on the .NET Framework sends this one alongside `X-AspNet-Version`, so a site that has suppressed the runtime header often still leaks the framework version through this one.
 
         **Why this matters**
 
-        The X-AspNetMvc-Version header reveals information about the server software being used. This can lead to several security risks:
+        `X-AspNetMvc-Version` names the MVC framework version, which is a different fact from the runtime build reported by `X-AspNet-Version`. It tells an attacker which model binding behavior, which anti-forgery token implementation, and which routing engine the application uses, and therefore which framework-specific attacks are worth attempting at all. Mass assignment through model binding and anti-forgery bypasses are both version dependent, so knowing the version narrows the work to the attempts likely to succeed.
 
-        - **Increased attack surface**: Exposing server details can help attackers identify potential vulnerabilities specific to the software version.
-        - **Facilitates reconnaissance**: Attackers can use this information to tailor their attacks, increasing the likelihood of success.
-        - **Non-compliance with security best practices**: Security guidelines recommend minimizing information disclosure to reduce risks.
+        Taken together with the runtime version, the pair pins an application to a specific point in the .NET release history. That is enough to choose one exploit rather than try several, and trying several is what usually raises an alert.
 
-        By removing the X-AspNetMvc-Version header, the system reduces the attack surface, mitigates reconnaissance efforts, and aligns with security best practices.
+        The framework adds the header unless it is explicitly suppressed, so a response carrying it indicates the deployment has not been hardened. Attackers reading internet-wide scan data use exactly that inference when deciding which hosts to look at first.
+
+        Suppressing the header does not upgrade anything. ASP.NET MVC on the .NET Framework has been superseded by ASP.NET Core, so a deployment still running it needs a migration plan regardless of what its headers say.
       audit: |
         Use `curl` to inspect the response headers returned by the site:
 
@@ -893,17 +903,17 @@ queries:
     mql: http.get.header.params.keys.none(downcase == "public-key-pins")
     docs:
       desc: |
-        This check ensures that the Public-Key-Pins (HPKP) header is not used, as it is deprecated.
+        This check verifies that the site does not deploy HTTP Public Key Pinning, a mechanism browsers have removed.
+
+        The instrument is the `Public-Key-Pins` response header, and the passing condition is that the response carries no header by that name. The reporting-only form of the header uses a different name and is not covered here.
 
         **Why this matters**
 
-        The Public-Key-Pins (HPKP) header was originally designed to prevent man-in-the-middle attacks by allowing websites to specify which public keys should be trusted for their certificates. However, it has been deprecated due to several issues:
+        Public key pinning let a site publish a set of public key hashes and instruct browsers to reject any certificate chain for that host that did not include one of them. It was aimed at mis-issued certificates from trusted certificate authorities. In practice the failure mode was catastrophic and self-inflicted. If the pinned keys were lost in a server rebuild, or a certificate was reissued on a new key without updating the pins, every browser that had cached the header refused to connect for the remaining lifetime of `max-age`. There was no way to reach the affected visitors and no way to serve them a warning page, because the connection failed before any content loaded.
 
-        - **Risk of misconfiguration**: Incorrectly pinning keys can lead to websites becoming inaccessible if the pinned key is lost or compromised.
-        - **Ease of abuse**: Attackers could maliciously pin keys to lock out legitimate site owners from their domains.
-        - **Better alternatives available**: Certificate Transparency is now enforced by browsers for all publicly trusted certificates, providing a safer way to achieve similar goals without any opt-in header. The Expect-CT header that once accompanied it is also deprecated and should not be deployed.
+        The header also created a hostile takeover path. An attacker with even brief control over a site's response headers could pin keys they held and set a long `max-age`, locking the real owner out of their own domain for months with nothing the owner could serve to undo it.
 
-        By avoiding the use of the HPKP header, the system reduces the risk of misconfiguration, mitigates potential abuse, and aligns with current best practices for secure web communication.
+        Chrome removed support in version 72 and Firefox followed, so the header is inert in current browsers and carries only the residual risk that some older client still honors it. Certificate Transparency now provides the detection that pinning was reaching for, with no opt-in header and nothing for the site operator to get wrong. The `Expect-CT` header that accompanied that transition is likewise obsolete and should not be deployed.
       audit: |
         Use `curl` to inspect the response headers returned by the site:
 
@@ -1312,17 +1322,19 @@ queries:
     mql: http.get.header.sts.includeSubDomains == true
     docs:
       desc: |
-        This check ensures that the Strict-Transport-Security (HSTS) header includes the `includeSubDomains` directive. Without this directive, subdomains are not protected by HSTS and may be vulnerable to protocol downgrade attacks.
+        This check verifies that the site's HTTPS-only instruction covers every subdomain and not just the hostname that sent it.
+
+        The instrument is the `includeSubDomains` directive of the `Strict-Transport-Security` response header. The server must send the directive alongside the lifetime, as in `Strict-Transport-Security: max-age=31536000; includeSubDomains`.
 
         **Why this matters**
 
-        Without the `includeSubDomains` directive, HSTS only applies to the exact domain that sets the header:
+        Without the directive, the browser's HTTPS-only rule applies to exactly the host that issued the header. Every other name under the domain is unprotected, and there are usually many: legacy hosts, marketing microsites, staging environments, status pages, and vendor-operated subdomains nobody has looked at in years. An attacker on the network path has no need to attack the hardened main site. They wait for any request to a cleartext subdomain, answer it themselves, and serve a page on a name the browser treats as part of your domain.
 
-        - **Subdomain attacks**: Attackers can target unprotected subdomains (e.g., `api.example.com`, `mail.example.com`) with SSL stripping or man-in-the-middle attacks.
-        - **Cookie scope exploitation**: Cookies set for the parent domain can be intercepted via unprotected subdomains, leading to session hijacking.
-        - **Preload requirement**: The `includeSubDomains` directive is required for HSTS preload list eligibility.
+        Cookies make that pivot valuable. A cookie scoped to the parent domain is sent to every subdomain, so one cleartext request to any unprotected name hands the attacker the session cookie unless it carries the `Secure` attribute. The attacker also gains script execution on an origin that is same-site with the real application, which relaxes any protection written in terms of the registrable domain.
 
-        Including subdomains ensures comprehensive HSTS protection across the entire domain hierarchy.
+        The directive is a precondition for the browser preload lists as well. A domain cannot be preloaded without it, so leaving it off forecloses the strongest form of this protection.
+
+        Applying it commits every current and future subdomain to HTTPS for the lifetime of `max-age`, including hosts that are not yours to fix and internal names that resolve only inside the network. Inventory those first, get certificates in place, and roll the directive out with a short `max-age` before extending it.
       audit: |
         Use `curl` to inspect the response headers returned by the site over HTTPS:
 
