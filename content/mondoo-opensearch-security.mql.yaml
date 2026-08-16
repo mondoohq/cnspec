@@ -1,0 +1,254 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-opensearch-security
+    name: Mondoo OpenSearch Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: opensearch
+    require:
+      - provider: opensearch
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Harden OpenSearch anonymous access, authentication realms, and audit logging
+    docs:
+      desc: |
+        The Mondoo OpenSearch Security policy connects to a running OpenSearch cluster and reads the security-plugin configuration APIs to assess how the cluster authenticates clients and records their activity. Because it reads the security plugin's live configuration rather than a file on disk, the checks reflect the settings the cluster is actually enforcing.
+
+        This policy provides security checks across three areas:
+        - Anonymous access to the cluster
+        - Authentication realms that verify client credentials
+        - Audit logging of authentication and access events
+
+        Learn more about scanning with cnspec in the [cnspec documentation](https://mondoo.com/docs/cnspec).
+    groups:
+      - title: Access Control
+        filters: asset.platform == "opensearch"
+        checks:
+          - uid: mondoo-opensearch-security-anonymous-access-disabled
+      - title: Authentication
+        filters: asset.platform == "opensearch"
+        checks:
+          - uid: mondoo-opensearch-security-authentication-realm-enabled
+      - title: Logging & Monitoring
+        filters: asset.platform == "opensearch"
+        checks:
+          - uid: mondoo-opensearch-security-audit-logging-enabled
+    scoring_system: highest impact
+queries:
+  - uid: mondoo-opensearch-security-anonymous-access-disabled
+    filters: asset.platform == "opensearch"
+    title: Ensure OpenSearch disables anonymous access
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      opensearch.cluster.security.anonymousAccessEnabled == false
+    docs:
+      desc: |-
+        This check ensures that anonymous authentication is disabled in the security plugin, so unauthenticated requests are rejected rather than served as the anonymous user. When anonymous access is enabled, any client that can reach the network endpoint is mapped to the anonymous backend role and can act without presenting credentials.
+
+        **Why this matters**
+
+        - **Data exposure:** Indices often hold logs, application data, and other sensitive records; anonymous read access leaks that data to anyone on the network.
+        - **Data tampering:** Without authentication, an attacker can index, modify, or delete documents that applications depend on.
+        - **Attribution:** Requests served as the anonymous user cannot be tied to a specific identity, undermining detection and investigation.
+
+        **Risk mitigation**
+
+        - **Authenticated access only:** Rejecting anonymous requests ensures every operation is tied to a known identity.
+        - **Reduced exposure:** Combined with tight network rules, this prevents unauthenticated clients from reaching cluster data.
+      audit: |-
+        ### Audit via cURL
+
+        1. Read the security configuration and inspect the anonymous authentication flag:
+
+           ```bash
+           curl -s -u admin:PASS -k https://HOST:9200/_plugins/_security/api/securityconfig | jq '.config.dynamic.http.anonymous_auth_enabled'
+           ```
+
+        If the value is `false`, anonymous access is disabled and the check passes. If it is `true`, anonymous access is enabled and the check fails.
+      remediation:
+        - id: config
+          desc: |-
+            To disable anonymous access, set the flag in the security plugin's dynamic configuration:
+
+            1. In `config.yml`, set:
+
+               ```yaml
+               config:
+                 dynamic:
+                   http:
+                     anonymous_auth_enabled: false
+               ```
+        - id: cli
+          desc: |-
+            To apply the updated configuration to the cluster, run `securityadmin.sh` with the edited file:
+
+            ```bash
+            ./securityadmin.sh -f config.yml -icl -nhnv -cacert root-ca.pem -cert admin.pem -key admin-key.pem
+            ```
+    refs:
+      - url: https://opensearch.org/docs/latest/security/access-control/anonymous-authentication/
+        title: OpenSearch anonymous authentication
+  - uid: mondoo-opensearch-security-authentication-realm-enabled
+    filters: asset.platform == "opensearch"
+    title: Ensure OpenSearch has an authentication realm enabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    mql: |
+      opensearch.cluster.security.enabledAuthRealms != empty
+    docs:
+      desc: |-
+        This check ensures that at least one authentication realm is enabled in the security plugin, so clients must present credentials that are actually verified against a backend rather than the cluster having no configured authenticator. An authentication domain (authc) ties an HTTP authenticator to a backend that validates the supplied credentials.
+
+        **Why this matters**
+
+        - **Verified identity:** An enabled realm forces clients to prove who they are against an internal user database, LDAP, or an identity provider.
+        - **No open cluster:** Without an enabled realm, credentials are never checked and the cluster effectively accepts any caller.
+        - **Foundation for authorization:** Roles and permissions can only be enforced once a client's identity has been established.
+
+        **Risk mitigation**
+
+        - **Credential enforcement:** Every request is authenticated against a backend before it is served.
+        - **Attribution:** Verified identities can be logged and tied to actions, supporting detection and investigation.
+      audit: |-
+        ### Audit via cURL
+
+        1. Read the security configuration and inspect the configured authentication domains:
+
+           ```bash
+           curl -s -u admin:PASS -k https://HOST:9200/_plugins/_security/api/securityconfig | jq '.config.dynamic.authc'
+           ```
+
+        If at least one domain has `http_enabled: true`, an authentication realm is enabled and the check passes. If no domain is enabled, the check fails.
+      remediation:
+        - id: config
+          desc: |-
+            To enable an authentication realm, define and enable an authc domain in the security plugin's dynamic configuration:
+
+            1. In `config.yml`, define and enable an authc domain, for example `basic_internal_auth_domain`:
+
+               ```yaml
+               config:
+                 dynamic:
+                   authc:
+                     basic_internal_auth_domain:
+                       http_enabled: true
+                       http_authenticator:
+                         type: basic
+                         challenge: true
+                       authentication_backend:
+                         type: internal
+               ```
+        - id: cli
+          desc: |-
+            To apply the updated configuration to the cluster, run `securityadmin.sh` with the edited file:
+
+            ```bash
+            ./securityadmin.sh -f config.yml -icl -nhnv -cacert root-ca.pem -cert admin.pem -key admin-key.pem
+            ```
+    refs:
+      - url: https://opensearch.org/docs/latest/security/configuration/configuration/
+        title: OpenSearch backend configuration
+  - uid: mondoo-opensearch-security-audit-logging-enabled
+    filters: asset.platform == "opensearch"
+    title: Ensure OpenSearch enables audit logging
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      opensearch.cluster.security.auditLoggingEnabled == true
+    docs:
+      desc: |-
+        This check ensures that the security plugin's audit logging is enabled, recording authentication and access events for detection and investigation. Audit logs capture who connected, what they requested, and whether the request was authorized, producing the trail needed to reconstruct activity after an incident.
+
+        **Why this matters**
+
+        - **Attributable access:** Audit records tie requests to identities and source addresses, which is essential for investigating misuse.
+        - **Detection:** Logged authentication failures and privileged actions support alerting on brute-force and anomalous activity.
+        - **Compliance evidence:** Audit frameworks require logging of access to systems that hold sensitive data.
+
+        **Risk mitigation**
+
+        - **Faster incident response:** A record of requests narrows down the source and timeline of suspicious activity.
+        - **Deterrence and accountability:** Logged access discourages misuse and supports after-the-fact review.
+      audit: |-
+        ### Audit via cURL
+
+        1. Read the audit configuration and inspect whether auditing is enabled:
+
+           ```bash
+           curl -s -u admin:PASS -k https://HOST:9200/_plugins/_security/api/audit | jq '.config.enabled'
+           ```
+
+        If the value is `true`, audit logging is enabled and the check passes. If it is `false`, the check fails.
+      remediation:
+        - id: config
+          desc: |-
+            To enable audit logging, configure the audit sink and turn on auditing in the security plugin's configuration:
+
+            1. In `opensearch.yml`, set the audit log type (for example, write audit events to an internal index):
+
+               ```yaml
+               plugins.security.audit.type: internal_opensearch
+               ```
+            2. In `audit.yml`, enable auditing and select the categories to record:
+
+               ```yaml
+               config:
+                 enabled: true
+               ```
+        - id: cli
+          desc: |-
+            To apply the audit configuration to the cluster, run `securityadmin.sh` with the edited file:
+
+            ```bash
+            ./securityadmin.sh -f audit.yml -icl -nhnv -cacert root-ca.pem -cert admin.pem -key admin-key.pem
+            ```
+    refs:
+      - url: https://opensearch.org/docs/latest/security/audit-logs/index/
+        title: OpenSearch audit logs

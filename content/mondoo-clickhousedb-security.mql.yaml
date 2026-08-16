@@ -1,0 +1,165 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-clickhousedb-security
+    name: Mondoo ClickHouse Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: clickhousedb
+    require:
+      - provider: clickhousedb
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Harden self-hosted ClickHouse account authentication and transport encryption
+    docs:
+      desc: |
+        The Mondoo ClickHouse Security policy connects to a self-hosted ClickHouse server and assesses its authentication and transport posture: whether every account requires a password and whether the secure native TCP port is enabled.
+
+        Settings are read from the server's `system` tables, so the checks reflect the server's effective configuration rather than a file on disk.
+
+        Learn more about scanning databases in the [cnspec documentation](https://mondoo.com/docs/cnspec).
+    groups:
+      - title: Authentication
+        filters: asset.platform == "clickhousedb"
+        checks:
+          - uid: mondoo-clickhousedb-security-users-have-passwords
+      - title: Transport Encryption
+        filters: asset.platform == "clickhousedb"
+        checks:
+          - uid: mondoo-clickhousedb-security-secure-tcp-port-enabled
+    scoring_system: highest impact
+queries:
+  - uid: mondoo-clickhousedb-security-users-have-passwords
+    filters: asset.platform == "clickhousedb"
+    title: Ensure every ClickHouse account requires a password
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    mql: |
+      clickhousedb.instance.users.all(hasPassword == true)
+    docs:
+      desc: |-
+        This check ensures that every ClickHouse account requires a password to authenticate. An account with no password can be reached with no credential at all, so anyone who can connect to the server is served as that account.
+
+        **Why this matters**
+
+        - **No unauthenticated access:** Requiring a password stops anonymous connections from acting as a real account.
+        - **Attributable activity:** Authenticated sessions tie queries to a known identity.
+        - **Defense against network exposure:** If the port is reachable, a password is the control that still stands.
+
+        **Risk mitigation**
+
+        - **Blocked anonymous use:** A client that reaches the port cannot operate without valid credentials.
+        - **Reduced blast radius:** Compromise requires a credential rather than mere network reachability.
+      audit: |-
+        ### Audit via clickhouse-client
+
+        1. List accounts and whether they require a password by querying the `system.users` table:
+
+           ```sql
+           SELECT name, auth_type FROM system.users;
+           ```
+
+        If no account reports `no_password`, the check passes. If any account allows password-less authentication, the check fails.
+      remediation:
+        - id: cli
+          desc: |-
+            To require a password for an account with SQL, set an authentication method:
+
+            ```sql
+            ALTER USER analyst IDENTIFIED WITH sha256_password BY '<strong-password>';
+            ```
+        - id: config
+          desc: |-
+            To require passwords through server configuration, define each account under `users.xml` (or a file in `users.d/`) with a `password_sha256_hex` (or `password`) element rather than an empty `<password></password>`, then reload:
+
+            ```xml
+            <users>
+              <analyst>
+                <password_sha256_hex>...</password_sha256_hex>
+              </analyst>
+            </users>
+            ```
+    refs:
+      - url: https://clickhouse.com/docs/en/operations/access-rights
+        title: ClickHouse access control and account management
+  - uid: mondoo-clickhousedb-security-secure-tcp-port-enabled
+    filters: asset.platform == "clickhousedb"
+    title: Ensure ClickHouse enables the secure native TCP port
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    mql: |
+      clickhousedb.instance.serverSettings.where(name == "tcp_port_secure").any(value != "0" && value != "")
+    docs:
+      desc: |-
+        This check ensures that the secure (TLS) native TCP port is configured, so native-protocol clients can connect over an encrypted channel. When `tcp_port_secure` is set, credentials and query data are protected in transit rather than crossing the network in cleartext on the plain `tcp_port`.
+
+        **Why this matters**
+
+        - **Confidentiality in transit:** TLS protects credentials and result sets from network eavesdropping.
+        - **Integrity:** An encrypted channel resists tampering and session hijacking.
+        - **Compliance:** Frameworks require sensitive database traffic to be encrypted in transit.
+
+        **Risk mitigation**
+
+        - **No cleartext credentials:** Login credentials are not exposed to anyone on the network path.
+        - **Man-in-the-middle resistance:** With a trusted certificate, TLS prevents interception and impersonation.
+      audit: |-
+        ### Audit via clickhouse-client
+
+        1. Read the configured secure TCP port from the `system.server_settings` table:
+
+           ```sql
+           SELECT name, value FROM system.server_settings WHERE name = 'tcp_port_secure';
+           ```
+
+        If `tcp_port_secure` is set to a non-zero port, the check passes. If it is `0` or unset, the check fails.
+      remediation:
+        - id: config
+          desc: |-
+            To enable the secure native TCP port, configure TLS and set `tcp_port_secure` in the server configuration (`config.xml` or a file in `config.d/`), then restart:
+
+            ```xml
+            <clickhouse>
+              <tcp_port_secure>9440</tcp_port_secure>
+              <openSSL>
+                <server>
+                  <certificateFile>/etc/clickhouse-server/server.crt</certificateFile>
+                  <privateKeyFile>/etc/clickhouse-server/server.key</privateKeyFile>
+                </server>
+              </openSSL>
+            </clickhouse>
+            ```
+    refs:
+      - url: https://clickhouse.com/docs/en/guides/sre/configuring-ssl
+        title: ClickHouse configuring SSL-TLS
