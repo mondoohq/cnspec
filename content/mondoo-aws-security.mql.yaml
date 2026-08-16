@@ -20818,6 +20818,12 @@ queries:
             ```hcl
             resource "aws_sqs_queue" "dlq" {
               name = "example-dlq"
+
+              # Marks this queue as a dead-letter target. A dead-letter queue does not
+              # need a dead-letter queue of its own.
+              redrive_allow_policy = jsonencode({
+                redrivePermission = "allowAll"
+              })
             }
 
             resource "aws_sqs_queue" "example" {
@@ -20839,6 +20845,10 @@ queries:
                 Type: AWS::SQS::Queue
                 Properties:
                   QueueName: example-dlq
+                  # Marks this queue as a dead-letter target. A dead-letter queue does
+                  # not need a dead-letter queue of its own.
+                  RedriveAllowPolicy:
+                    redrivePermission: allowAll
               MainQueue:
                 Type: AWS::SQS::Queue
                 Properties:
@@ -20856,26 +20866,39 @@ queries:
   - uid: mondoo-aws-security-sqs-queue-dead-letter-queue-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_sqs_queue")
     mql: |
+      # redrive_policy is idiomatically written as jsonencode({...}). When every
+      # value inside it is a literal, the argument surfaces as a one-element list and
+      # `!= empty` holds; the moment it references the dead-letter queue resource, as
+      # any real configuration does, the unresolvable expression collapses to an empty
+      # list and `!= empty` rejects a correctly configured queue. `!= null` accepts
+      # both spellings and still rejects an absent argument.
+      #
+      # A queue carrying redrive_allow_policy is itself a dead-letter target, and a
+      # dead-letter queue does not need a dead-letter queue of its own.
       terraform.resources("aws_sqs_queue").all(
-        arguments.redrive_policy != empty
+        arguments['redrive_policy'] != null ||
+        arguments['redrive_allow_policy'] != null
       )
   - uid: mondoo-aws-security-sqs-queue-dead-letter-queue-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_sqs_queue")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_sqs_queue").all(
-        change.after.redrive_policy != empty
+        change.after.redrive_policy != empty ||
+        change.after.redrive_allow_policy != empty
       )
   - uid: mondoo-aws-security-sqs-queue-dead-letter-queue-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_sqs_queue")
     mql: |
       terraform.state.resources.where(type == "aws_sqs_queue").all(
-        values.redrive_policy != empty
+        values.redrive_policy != empty ||
+        values.redrive_allow_policy != empty
       )
   - uid: mondoo-aws-security-sqs-queue-dead-letter-queue-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SQS::Queue")
     mql: |
       cloudformation.template.resources.where(type == "AWS::SQS::Queue").all(
-      properties['RedrivePolicy'] != empty
+      properties['RedrivePolicy'] != empty ||
+      properties['RedriveAllowPolicy'] != empty
       )
   - uid: mondoo-aws-security-elasticache-encryption-at-rest
     title: Ensure ElastiCache clusters have encryption at rest enabled
@@ -22479,10 +22502,6 @@ queries:
         tags:
           mondoo.com/filter-title: AWS RDS Snapshot
           mondoo.com/filter-icon: aws
-      - uid: mondoo-aws-security-rds-snapshot-encrypted-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
       - uid: mondoo-aws-security-rds-snapshot-encrypted-terraform-plan
         tags:
           mondoo.com/filter-title: Terraform Plan
@@ -22594,12 +22613,6 @@ queries:
     filters: asset.platform == "aws-rds-snapshot"
     mql: |
       aws.rds.snapshot.encrypted == true
-  - uid: mondoo-aws-security-rds-snapshot-encrypted-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_db_snapshot")
-    mql: |
-      terraform.resources("aws_db_snapshot").all(
-        arguments['encrypted'] == true
-      )
   - uid: mondoo-aws-security-rds-snapshot-encrypted-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_db_snapshot")
     mql: |
@@ -22612,6 +22625,11 @@ queries:
       terraform.state.resources.where(type == "aws_db_snapshot").all(
         values.encrypted == true
       )
+  # No Terraform HCL variant: `encrypted` on `aws_db_snapshot` is computed, so it cannot be
+  # written in HCL at all. `terraform validate` rejects it with "Can't configure a value for
+  # encrypted: its value will be decided automatically". A snapshot inherits encryption from
+  # its source database, which `rds-instance-encryption-at-rest` reads from the HCL. The plan
+  # and state variants stay because both see the resolved value.
   - uid: mondoo-aws-security-ec2-ami-public-sharing-prohibited
     title: Ensure AMIs owned by the account are not publicly shared
     impact: 90
@@ -22722,7 +22740,7 @@ queries:
             ```
         - id: terraform
           desc: |
-            To ensure AMIs owned by the account are not publicly shared in Terraform, ensure AMIs are not publicly shared:
+            To ensure AMIs owned by the account are not publicly shared in Terraform, remove every `aws_ami_launch_permission` resource that grants the AMI to `group = "all"` or to an outside account, and turn on account-level image block public access so a share cannot be re-added out of band:
 
             ```hcl
             resource "aws_ami" "example" {
@@ -22736,12 +22754,12 @@ queries:
               }
             }
 
-            # Do not add launch permissions with group = "all"
-            resource "aws_ami_launch_permission" "example" {
-              image_id   = aws_ami.example.id
-              account_id = "123456789012"  # Share with specific accounts only
+            resource "aws_ec2_image_block_public_access" "this" {
+              state = "block-new-sharing"
             }
             ```
+
+            Leaving the AMI with no `aws_ami_launch_permission` resource keeps it reachable only from the owning account. Where a specific account genuinely needs the image, grant it with `aws_ami_launch_permission` and exempt that check result rather than leaving the grant undocumented.
         - id: cloudformation
           desc: |
             To ensure AMIs owned by the account are not publicly shared in CloudFormation, AMI sharing is managed through the EC2 API rather than CloudFormation. Use the AWS CLI or Console to manage AMI permissions, or enable AMI Block Public Access at the account level.
@@ -22755,10 +22773,17 @@ queries:
     mql: |
       aws.ec2.images.all( sharedExternally == false )
   - uid: mondoo-aws-security-ec2-ami-public-sharing-prohibited-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ami_launch_permission")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ami_launch_permission" || nameLabel == "aws_ec2_image_block_public_access")
     mql: |
+      # The fix for a shared AMI is the removal of the grant, so a configuration that
+      # turns image sharing off at the account level and declares no launch permission
+      # has to be in scope too. Otherwise the only configuration this check can see is
+      # one that still carries a grant.
       terraform.resources("aws_ami_launch_permission").none(
         arguments.group == "all" || arguments.account_id != null && arguments.account_id != ""
+      )
+      terraform.resources("aws_ec2_image_block_public_access").all(
+        arguments['state'] != "unblocked"
       )
   - uid: mondoo-aws-security-ec2-ami-public-sharing-prohibited-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ami_launch_permission")
@@ -33542,10 +33567,6 @@ queries:
         tags:
           mondoo.com/filter-title: AWS DocumentDB Instance
           mondoo.com/filter-icon: aws
-      - uid: mondoo-aws-security-documentdb-instance-public-access-check-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
       - uid: mondoo-aws-security-documentdb-instance-public-access-check-terraform-plan
         tags:
           mondoo.com/filter-title: Terraform Plan
@@ -33554,10 +33575,6 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-documentdb-instance-public-access-check-cloudformation
-        tags:
-          mondoo.com/filter-title: CloudFormation
-          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that Amazon DocumentDB instances are not configured as publicly accessible. A publicly accessible DocumentDB instance is reachable from outside its VPC: AWS resolves its endpoint to a public IP address, and any client whose security group rules permit traffic on the cluster port can reach it from the internet.
@@ -33694,12 +33711,6 @@ queries:
   - uid: mondoo-aws-security-documentdb-instance-public-access-check-aws
     filters: asset.platform == "aws-documentdb-instance"
     mql: aws.documentdb.instance.publiclyAccessible == false
-  - uid: mondoo-aws-security-documentdb-instance-public-access-check-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_docdb_cluster_instance")
-    mql: |
-      terraform.resources("aws_docdb_cluster_instance").all(
-      arguments.publicly_accessible != true
-      )
   - uid: mondoo-aws-security-documentdb-instance-public-access-check-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_docdb_cluster_instance")
     mql: |
@@ -33712,12 +33723,11 @@ queries:
       terraform.state.resources.where(type == "aws_docdb_cluster_instance").all(
       values.publicly_accessible != true
       )
-  - uid: mondoo-aws-security-documentdb-instance-public-access-check-cloudformation
-    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::DocDB::DBInstance")
-    mql: |
-      cloudformation.template.resources.where(type == "AWS::DocDB::DBInstance").all(
-      properties['PubliclyAccessible'] != true
-      )
+  # No Terraform HCL or CloudFormation variant: DocumentDB instances expose no public-access
+  # setting to author. `publicly_accessible` on `aws_docdb_cluster_instance` is computed, and
+  # `AWS::DocDB::DBInstance` has no `PubliclyAccessible` property at all, which cfn-lint reports
+  # as "Additional properties are not allowed". Reachability comes from the cluster's subnet
+  # group. The plan and state variants stay because both see the resolved value.
   # Security-only check (compliance mapping intentionally omitted per maintainer).
   # No Terraform variants: internetReachable is a runtime-computed exposure signal with no static config analog.
   - uid: mondoo-aws-security-documentdb-instance-not-internet-reachable
@@ -44901,6 +44911,15 @@ queries:
             To ensure log metric filter exists for unauthorized API calls in Terraform, create a CloudWatch log metric filter and alarm for unauthorized API calls:
 
             ```hcl
+            resource "aws_cloudwatch_log_group" "cloudtrail" {
+              name              = "/aws/cloudtrail/main"
+              retention_in_days = 365
+            }
+
+            resource "aws_sns_topic" "alerts" {
+              name = "security-alerts"
+            }
+
             resource "aws_cloudwatch_log_metric_filter" "unauthorizedapicalls" {
               name           = "UnauthorizedAPICalls"
               log_group_name = aws_cloudwatch_log_group.cloudtrail.name
@@ -44967,7 +44986,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-unauthorized-api-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("UnauthorizedOperation") || arguments.pattern.contains("AccessDenied")
@@ -45114,6 +45133,15 @@ queries:
             To ensure log metric filter exists for console sign-in without MFA in Terraform, create a CloudWatch log metric filter and alarm for console sign-in without MFA:
 
             ```hcl
+            resource "aws_cloudwatch_log_group" "cloudtrail" {
+              name              = "/aws/cloudtrail/main"
+              retention_in_days = 365
+            }
+
+            resource "aws_sns_topic" "alerts" {
+              name = "security-alerts"
+            }
+
             resource "aws_cloudwatch_log_metric_filter" "consolesigninwithoutmfa" {
               name           = "ConsoleSigninWithoutMFA"
               log_group_name = aws_cloudwatch_log_group.cloudtrail.name
@@ -45180,7 +45208,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-no-mfa-login-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("ConsoleLogin") && arguments.pattern.contains("MFAUsed")
@@ -45328,6 +45356,15 @@ queries:
             To ensure log metric filter exists for root account usage in Terraform, create a CloudWatch log metric filter and alarm for root account usage:
 
             ```hcl
+            resource "aws_cloudwatch_log_group" "cloudtrail" {
+              name              = "/aws/cloudtrail/main"
+              retention_in_days = 365
+            }
+
+            resource "aws_sns_topic" "alerts" {
+              name = "security-alerts"
+            }
+
             resource "aws_cloudwatch_log_metric_filter" "rootaccountusage" {
               name           = "RootAccountUsage"
               log_group_name = aws_cloudwatch_log_group.cloudtrail.name
@@ -45394,7 +45431,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-root-usage-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("Root") && arguments.pattern.contains("userIdentity")
@@ -45543,6 +45580,15 @@ queries:
             To ensure log metric filter exists for IAM policy changes in Terraform, create a CloudWatch log metric filter and alarm for IAM policy changes:
 
             ```hcl
+            resource "aws_cloudwatch_log_group" "cloudtrail" {
+              name              = "/aws/cloudtrail/main"
+              retention_in_days = 365
+            }
+
+            resource "aws_sns_topic" "alerts" {
+              name = "security-alerts"
+            }
+
             resource "aws_cloudwatch_log_metric_filter" "iampolicychanges" {
               name           = "IAMPolicyChanges"
               log_group_name = aws_cloudwatch_log_group.cloudtrail.name
@@ -45609,7 +45655,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-iam-policy-change-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("CreatePolicy") || arguments.pattern.contains("DeletePolicy") || arguments.pattern.contains("AttachRolePolicy")
@@ -45757,6 +45803,15 @@ queries:
             To ensure log metric filter exists for CloudTrail config changes in Terraform, create a CloudWatch log metric filter and alarm for CloudTrail configuration changes:
 
             ```hcl
+            resource "aws_cloudwatch_log_group" "cloudtrail" {
+              name              = "/aws/cloudtrail/main"
+              retention_in_days = 365
+            }
+
+            resource "aws_sns_topic" "alerts" {
+              name = "security-alerts"
+            }
+
             resource "aws_cloudwatch_log_metric_filter" "cloudtrailconfigchanges" {
               name           = "CloudTrailConfigChanges"
               log_group_name = aws_cloudwatch_log_group.cloudtrail.name
@@ -45823,7 +45878,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-cloudtrail-config-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("CreateTrail") || arguments.pattern.contains("UpdateTrail") || arguments.pattern.contains("DeleteTrail") || arguments.pattern.contains("StartLogging") || arguments.pattern.contains("StopLogging")
@@ -45971,6 +46026,15 @@ queries:
             To ensure log metric filter exists for console auth failures in Terraform, create a CloudWatch log metric filter and alarm for console authentication failures:
 
             ```hcl
+            resource "aws_cloudwatch_log_group" "cloudtrail" {
+              name              = "/aws/cloudtrail/main"
+              retention_in_days = 365
+            }
+
+            resource "aws_sns_topic" "alerts" {
+              name = "security-alerts"
+            }
+
             resource "aws_cloudwatch_log_metric_filter" "consoleauthfailures" {
               name           = "ConsoleAuthFailures"
               log_group_name = aws_cloudwatch_log_group.cloudtrail.name
@@ -46037,7 +46101,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-console-auth-failure-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("ConsoleLogin") && arguments.pattern == /Failed|Failure/
@@ -46185,6 +46249,15 @@ queries:
             To ensure log metric filter exists for CMK disable or deletion in Terraform, create a CloudWatch log metric filter and alarm for CMK disable or scheduled deletion:
 
             ```hcl
+            resource "aws_cloudwatch_log_group" "cloudtrail" {
+              name              = "/aws/cloudtrail/main"
+              retention_in_days = 365
+            }
+
+            resource "aws_sns_topic" "alerts" {
+              name = "security-alerts"
+            }
+
             resource "aws_cloudwatch_log_metric_filter" "cmkdisableordelete" {
               name           = "CMKDisableOrDelete"
               log_group_name = aws_cloudwatch_log_group.cloudtrail.name
@@ -46251,7 +46324,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-cmk-disable-delete-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("DisableKey") || arguments.pattern.contains("ScheduleKeyDeletion")
@@ -46399,6 +46472,15 @@ queries:
             To ensure log metric filter exists for S3 bucket policy changes in Terraform, create a CloudWatch log metric filter and alarm for S3 bucket policy changes:
 
             ```hcl
+            resource "aws_cloudwatch_log_group" "cloudtrail" {
+              name              = "/aws/cloudtrail/main"
+              retention_in_days = 365
+            }
+
+            resource "aws_sns_topic" "alerts" {
+              name = "security-alerts"
+            }
+
             resource "aws_cloudwatch_log_metric_filter" "s3bucketpolicychanges" {
               name           = "S3BucketPolicyChanges"
               log_group_name = aws_cloudwatch_log_group.cloudtrail.name
@@ -46465,7 +46547,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-s3-policy-change-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("PutBucketPolicy") || arguments.pattern.contains("DeleteBucketPolicy")
@@ -46613,6 +46695,15 @@ queries:
             To ensure log metric filter exists for AWS Config changes in Terraform, create a CloudWatch log metric filter and alarm for AWS Config configuration changes:
 
             ```hcl
+            resource "aws_cloudwatch_log_group" "cloudtrail" {
+              name              = "/aws/cloudtrail/main"
+              retention_in_days = 365
+            }
+
+            resource "aws_sns_topic" "alerts" {
+              name = "security-alerts"
+            }
+
             resource "aws_cloudwatch_log_metric_filter" "awsconfigchanges" {
               name           = "AWSConfigChanges"
               log_group_name = aws_cloudwatch_log_group.cloudtrail.name
@@ -46679,7 +46770,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-config-change-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("StopConfigurationRecorder") || arguments.pattern.contains("DeleteDeliveryChannel")
@@ -46827,6 +46918,15 @@ queries:
             To ensure log metric filter exists for security group changes in Terraform, create a CloudWatch log metric filter and alarm for security group changes:
 
             ```hcl
+            resource "aws_cloudwatch_log_group" "cloudtrail" {
+              name              = "/aws/cloudtrail/main"
+              retention_in_days = 365
+            }
+
+            resource "aws_sns_topic" "alerts" {
+              name = "security-alerts"
+            }
+
             resource "aws_cloudwatch_log_metric_filter" "securitygroupchanges" {
               name           = "SecurityGroupChanges"
               log_group_name = aws_cloudwatch_log_group.cloudtrail.name
@@ -46893,7 +46993,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-security-group-change-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("AuthorizeSecurityGroupIngress") || arguments.pattern.contains("RevokeSecurityGroupIngress")
@@ -47041,6 +47141,15 @@ queries:
             To ensure log metric filter exists for NACL changes in Terraform, create a CloudWatch log metric filter and alarm for NACL changes:
 
             ```hcl
+            resource "aws_cloudwatch_log_group" "cloudtrail" {
+              name              = "/aws/cloudtrail/main"
+              retention_in_days = 365
+            }
+
+            resource "aws_sns_topic" "alerts" {
+              name = "security-alerts"
+            }
+
             resource "aws_cloudwatch_log_metric_filter" "networkaclchanges" {
               name           = "NetworkACLChanges"
               log_group_name = aws_cloudwatch_log_group.cloudtrail.name
@@ -47107,7 +47216,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-nacl-change-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("CreateNetworkAcl") || arguments.pattern.contains("DeleteNetworkAcl")
@@ -47255,6 +47364,15 @@ queries:
             To ensure log metric filter exists for network gateway changes in Terraform, create a CloudWatch log metric filter and alarm for network gateway changes:
 
             ```hcl
+            resource "aws_cloudwatch_log_group" "cloudtrail" {
+              name              = "/aws/cloudtrail/main"
+              retention_in_days = 365
+            }
+
+            resource "aws_sns_topic" "alerts" {
+              name = "security-alerts"
+            }
+
             resource "aws_cloudwatch_log_metric_filter" "networkgatewaychanges" {
               name           = "NetworkGatewayChanges"
               log_group_name = aws_cloudwatch_log_group.cloudtrail.name
@@ -47321,7 +47439,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-network-gw-change-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("CreateCustomerGateway") || arguments.pattern.contains("AttachInternetGateway")
@@ -47469,6 +47587,15 @@ queries:
             To ensure log metric filter exists for route table changes in Terraform, create a CloudWatch log metric filter and alarm for route table changes:
 
             ```hcl
+            resource "aws_cloudwatch_log_group" "cloudtrail" {
+              name              = "/aws/cloudtrail/main"
+              retention_in_days = 365
+            }
+
+            resource "aws_sns_topic" "alerts" {
+              name = "security-alerts"
+            }
+
             resource "aws_cloudwatch_log_metric_filter" "routetablechanges" {
               name           = "RouteTableChanges"
               log_group_name = aws_cloudwatch_log_group.cloudtrail.name
@@ -47535,7 +47662,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-route-table-change-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("CreateRoute") || arguments.pattern.contains("DeleteRoute")
@@ -47683,6 +47810,15 @@ queries:
             To ensure log metric filter exists for VPC changes in Terraform, create a CloudWatch log metric filter and alarm for VPC changes:
 
             ```hcl
+            resource "aws_cloudwatch_log_group" "cloudtrail" {
+              name              = "/aws/cloudtrail/main"
+              retention_in_days = 365
+            }
+
+            resource "aws_sns_topic" "alerts" {
+              name = "security-alerts"
+            }
+
             resource "aws_cloudwatch_log_metric_filter" "vpcchanges" {
               name           = "VPCChanges"
               log_group_name = aws_cloudwatch_log_group.cloudtrail.name
@@ -47749,7 +47885,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-vpc-change-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("CreateVpc") || arguments.pattern.contains("DeleteVpc")
@@ -47897,6 +48033,15 @@ queries:
             To ensure log metric filter exists for organization changes in Terraform, create a CloudWatch log metric filter and alarm for AWS Organizations changes:
 
             ```hcl
+            resource "aws_cloudwatch_log_group" "cloudtrail" {
+              name              = "/aws/cloudtrail/main"
+              retention_in_days = 365
+            }
+
+            resource "aws_sns_topic" "alerts" {
+              name = "security-alerts"
+            }
+
             resource "aws_cloudwatch_log_metric_filter" "awsorganizationschanges" {
               name           = "AWSOrganizationsChanges"
               log_group_name = aws_cloudwatch_log_group.cloudtrail.name
@@ -47963,7 +48108,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-org-change-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("organizations.amazonaws.com")
@@ -53715,21 +53860,27 @@ queries:
             To ensure ECR repositories do not allow public access in Terraform:
 
             ```hcl
+            data "aws_caller_identity" "current" {}
+
+            data "aws_iam_policy_document" "ecr" {
+              statement {
+                effect  = "Allow"
+                actions = ["ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage"]
+
+                principals {
+                  type        = "AWS"
+                  identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
+                }
+              }
+            }
+
             resource "aws_ecr_repository" "example" {
               name = "example-repo"
             }
 
             resource "aws_ecr_repository_policy" "example" {
               repository = aws_ecr_repository.example.name
-
-              policy = jsonencode({
-                Version = "2012-10-17"
-                Statement = [{
-                  Effect    = "Allow"
-                  Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
-                  Action    = ["ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage"]
-                }]
-              })
+              policy     = data.aws_iam_policy_document.ecr.json
             }
             ```
         - id: cloudformation
@@ -53770,9 +53921,29 @@ queries:
   - uid: mondoo-aws-security-ecr-no-public-access-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ecr_repository_policy")
     mql: |
+      # `policy` surfaces three different ways. A `jsonencode({...})` of literals
+      # becomes a one-element list and reads as a document. A
+      # `data.aws_iam_policy_document` reference becomes the traversal string, so
+      # `.first["Statement"]` is null and the inline analysis has nothing to read;
+      # that form is excused here and the statements are read from the data source
+      # below instead, correlated to this service by its action prefix. A
+      # `jsonencode({...})` holding any interpolation collapses to an empty list and
+      # is not excused, because nothing else can see inside it and passing it would
+      # hide a wildcard principal.
       terraform.resources("aws_ecr_repository_policy").all(
+        arguments.policy != empty && arguments.policy.first["Statement"] == null ||
         arguments.policy.first["Statement"].where(_["Condition"] == null).none(
           _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
+        )
+      )
+      terraform.datasources.where(labels[0] == "aws_iam_policy_document")
+      .map(blocks).flat.where(type == "statement")
+      .where(arguments['effect'] != "Deny")
+      .where(arguments['actions'].any(_ == /^ecr:/))
+      .where(blocks.where(type == 'condition') == empty)
+      .all(
+        blocks.where(type == "principals").none(
+          arguments['type'] == "*" || arguments['identifiers'].any(_ == "*")
         )
       )
   - uid: mondoo-aws-security-ecr-no-public-access-terraform-plan
@@ -54259,14 +54430,15 @@ queries:
             ```
         - id: terraform
           desc: |
-            To ensure EBS snapshots are not publicly shared in Terraform, manage snapshot sharing with the `aws_snapshot_create_volume_permission` resource and grant access only to specific account IDs, never to the `all` group:
+            To ensure EBS snapshots are not publicly shared in Terraform, remove every `aws_snapshot_create_volume_permission` resource that grants a snapshot outside the account, and turn on account-level snapshot block public access so a share cannot be re-added out of band:
 
             ```hcl
-            resource "aws_snapshot_create_volume_permission" "example" {
-              snapshot_id = aws_ebs_snapshot.example.id
-              account_id  = "123456789012"
+            resource "aws_ebs_snapshot_block_public_access" "this" {
+              state = "block-all-sharing"
             }
             ```
+
+            Where a specific account genuinely needs a snapshot, grant it with `aws_snapshot_create_volume_permission` and exempt that check result rather than leaving the grant undocumented. Note that `block-all-sharing` also blocks shares that are already in place; use `block-new-sharing` to keep those and stop new ones.
 
             Consider also using an AWS Config rule to detect public snapshots:
 
@@ -54304,10 +54476,17 @@ queries:
     mql: |
       aws.ec2.snapshot.sharedExternally == false
   - uid: mondoo-aws-security-ec2-snapshot-not-public-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_snapshot_create_volume_permission")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_snapshot_create_volume_permission" || nameLabel == "aws_ebs_snapshot_block_public_access")
     mql: |
+      # The fix for a shared snapshot is the removal of the grant, so a configuration that
+      # turns snapshot sharing off at the account level and declares no create-volume
+      # permission has to be in scope too. Otherwise the only configuration this check can
+      # see is one that still carries a grant.
       terraform.resources("aws_snapshot_create_volume_permission").none(
         arguments.group == "all" || arguments.account_id != null && arguments.account_id != ""
+      )
+      terraform.resources("aws_ebs_snapshot_block_public_access").all(
+        arguments['state'] != "unblocked"
       )
   - uid: mondoo-aws-security-ec2-snapshot-not-public-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_snapshot_create_volume_permission")
@@ -59776,7 +59955,7 @@ queries:
             ```hcl
             resource "aws_vpc_endpoint_service" "example" {
               acceptance_required        = true
-              network_load_balancer_arns = [aws_lb.example.arn]
+              network_load_balancer_arns = ["arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/net/example/50dc6c495c0c9188"]
             }
             ```
         - id: cloudformation
@@ -61275,7 +61454,7 @@ queries:
             ```hcl
             resource "aws_vpc_endpoint_service" "example" {
               acceptance_required        = true
-              network_load_balancer_arns = [aws_lb.example.arn]
+              network_load_balancer_arns = ["arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/net/example/50dc6c495c0c9188"]
             }
 
             resource "aws_vpc_endpoint_service_allowed_principal" "example" {
@@ -61315,9 +61494,21 @@ queries:
   - uid: mondoo-aws-security-vpc-endpoint-service-restrict-principals-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_vpc_endpoint_service")
     mql: |
+      # Principals attach either inline through `allowed_principals` or through
+      # separate `aws_vpc_endpoint_service_allowed_principal` resources, which is the
+      # form the AWS provider documents and the one that mirrors
+      # `modify-vpc-endpoint-service-permissions`. Both spellings have to count, so
+      # the wildcard test and the "principals were set at all" test are separate.
       terraform.resources("aws_vpc_endpoint_service").all(
-        arguments.allowed_principals != empty &&
-        arguments.allowed_principals.none(_ == "*")
+        arguments['allowed_principals'] == empty ||
+        arguments['allowed_principals'].none(_ == "*")
+      )
+      terraform.resources("aws_vpc_endpoint_service").all(
+        arguments['allowed_principals'] != empty ||
+        terraform.resources("aws_vpc_endpoint_service_allowed_principal") != empty
+      )
+      terraform.resources("aws_vpc_endpoint_service_allowed_principal").all(
+        arguments['principal_arn'] != "*"
       )
   - uid: mondoo-aws-security-sfn-logging-enabled
     title: Ensure Step Functions state machines have logging enabled
@@ -73934,10 +74125,30 @@ queries:
   - uid: mondoo-aws-security-eventbridge-bus-policy-no-public-access-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_event_bus_policy")
     mql: |
+      # `policy` surfaces three different ways. A `jsonencode({...})` of literals
+      # becomes a one-element list and reads as a document. A
+      # `data.aws_iam_policy_document` reference becomes the traversal string, so
+      # `.first["Statement"]` is null and the inline analysis has nothing to read;
+      # that form is excused here and the statements are read from the data source
+      # below instead, correlated to this service by its action prefix. A
+      # `jsonencode({...})` holding any interpolation collapses to an empty list and
+      # is not excused, because nothing else can see inside it and passing it would
+      # hide a wildcard principal.
       terraform.resources("aws_cloudwatch_event_bus_policy").all(
+        arguments.policy != empty && arguments.policy.first["Statement"] == null ||
         arguments.policy.first["Statement"].where(_["Effect"] == "Allow").all(
           _["Principal"] != "*" && _["Principal"]["AWS"] != "*" ||
           _["Condition"] != null
+        )
+      )
+      terraform.datasources.where(labels[0] == "aws_iam_policy_document")
+      .map(blocks).flat.where(type == "statement")
+      .where(arguments['effect'] != "Deny")
+      .where(arguments['actions'].any(_ == /^events:/))
+      .where(blocks.where(type == 'condition') == empty)
+      .all(
+        blocks.where(type == "principals").none(
+          arguments['type'] == "*" || arguments['identifiers'].any(_ == "*")
         )
       )
   - uid: mondoo-aws-security-eventbridge-bus-policy-no-public-access-terraform-plan
@@ -76252,12 +76463,29 @@ queries:
   - uid: mondoo-aws-security-sns-topic-policy-secure-transport-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_sns_topic_policy")
     mql: |
+      # `policy` is only readable as a document when every value in it is a literal.
+      # The idiomatic spelling builds it from a `data.aws_iam_policy_document`, which
+      # surfaces as the traversal string and leaves `.first["Statement"]` null, so the
+      # deny statement is looked for in the policy-document data source as well,
+      # correlated to SNS by its action prefix.
       terraform.resources("aws_sns_topic_policy").all(
+        arguments.policy.first["Statement"] != null &&
         arguments.policy.first["Statement"].any(
           _["Effect"] == "Deny" &&
           _["Condition"]["Bool"]["aws:SecureTransport"] == "false" ||
           _["Effect"] == "Deny" &&
           _["Condition"]["Bool"]["aws:SecureTransport"] == false
+        ) ||
+        terraform.datasources.where(labels[0] == "aws_iam_policy_document")
+        .map(blocks).flat.where(type == "statement")
+        .where(arguments['effect'] == "Deny")
+        .where(arguments['actions'].any(_ == /^sns:/))
+        .any(
+          _.blocks.where(type == "condition").any(
+            arguments['test'] == "Bool" &&
+            arguments['variable'] == "aws:SecureTransport" &&
+            arguments['values'].any(_ == "false")
+          )
         )
       )
   - uid: mondoo-aws-security-sns-topic-policy-secure-transport-terraform-plan
@@ -77813,9 +78041,28 @@ queries:
   - uid: mondoo-aws-security-backup-vault-no-public-access-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_backup_vault_policy")
     mql: |
+      # `policy` surfaces three different ways. A `jsonencode({...})` of literals
+      # becomes a one-element list and reads as a document. A
+      # `data.aws_iam_policy_document` reference becomes the traversal string, so
+      # `.first["Statement"]` is null and the inline analysis has nothing to read;
+      # that form is excused here and the statements are read from the data source
+      # below instead, correlated to this service by its action prefix. A
+      # `jsonencode({...})` holding any interpolation collapses to an empty list and
+      # is not excused, because nothing else can see inside it and passing it would
+      # hide a wildcard principal.
       terraform.resources("aws_backup_vault_policy").all(
+        arguments.policy != empty && arguments.policy.first["Statement"] == null ||
         arguments.policy.first["Statement"].where(_["Effect"] == "Allow").none(
           _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
+        )
+      )
+      terraform.datasources.where(labels[0] == "aws_iam_policy_document")
+      .map(blocks).flat.where(type == "statement")
+      .where(arguments['effect'] != "Deny")
+      .where(arguments['actions'].any(_ == /^backup:/))
+      .all(
+        blocks.where(type == "principals").none(
+          arguments['type'] == "*" || arguments['identifiers'].any(_ == "*")
         )
       )
   - uid: mondoo-aws-security-backup-vault-no-public-access-terraform-plan
@@ -77952,9 +78199,28 @@ queries:
   - uid: mondoo-aws-security-efs-filesystem-no-public-access-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_efs_file_system_policy")
     mql: |
+      # `policy` surfaces three different ways. A `jsonencode({...})` of literals
+      # becomes a one-element list and reads as a document. A
+      # `data.aws_iam_policy_document` reference becomes the traversal string, so
+      # `.first["Statement"]` is null and the inline analysis has nothing to read;
+      # that form is excused here and the statements are read from the data source
+      # below instead, correlated to this service by its action prefix. A
+      # `jsonencode({...})` holding any interpolation collapses to an empty list and
+      # is not excused, because nothing else can see inside it and passing it would
+      # hide a wildcard principal.
       terraform.resources("aws_efs_file_system_policy").all(
+        arguments.policy != empty && arguments.policy.first["Statement"] == null ||
         arguments.policy.first["Statement"].where(_["Effect"] == "Allow").none(
           _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
+        )
+      )
+      terraform.datasources.where(labels[0] == "aws_iam_policy_document")
+      .map(blocks).flat.where(type == "statement")
+      .where(arguments['effect'] != "Deny")
+      .where(arguments['actions'].any(_ == /^elasticfilesystem:/))
+      .all(
+        blocks.where(type == "principals").none(
+          arguments['type'] == "*" || arguments['identifiers'].any(_ == "*")
         )
       )
   - uid: mondoo-aws-security-efs-filesystem-no-public-access-terraform-plan
