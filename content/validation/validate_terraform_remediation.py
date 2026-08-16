@@ -71,7 +71,7 @@ PROVIDER_MAP = {
     "gitlab": ("gitlabhq/gitlab", "~> 17.0"),
     "okta": ("okta/okta", "~> 6.0"),
     "null": ("hashicorp/null", "~> 3.0"),
-    "time": ("hashicorp/time", "~> 0.12"),
+    "time": ("hashicorp/time", "~> 0.14"),
     # Providers for the policies added to TARGETS above. A prefix missing
     # from this map produces an empty `required_providers` block, which the
     # terraform preset's terraform_required_providers rule fails on every
