@@ -201,6 +201,36 @@ def _diag_code(diag: dict) -> str:
     return (diag.get("snippet") or {}).get("code", "")
 
 
+# Summaries this pass exists to surface. A diagnostic in this set is reported
+# even when its line carries a substituted value, because these describe the
+# shape of the configuration rather than the value in it, and suppressing one on
+# a line that merely happens to reference another resource would hide exactly
+# what the pass is for.
+TF_VALIDATE_NEVER_SUPPRESSED = (
+    "Unsupported argument",
+    "Unsupported block type",
+    "Missing required argument",
+    "Invalid resource type",
+    "Invalid data source",
+    "Can't configure a value for",
+    "Reference to undeclared provider",
+)
+
+
+def caused_by_substitution(diag: dict) -> bool:
+    """Whether a diagnostic is about a value this file substituted.
+
+    A provider validates its own attribute formats and reports in free text, so
+    `"key_management_service_arn" (placeholder) is an invalid ARN` cannot be
+    matched on its summary. The reliable evidence is the line: the placeholder
+    literal only ever gets there by way of neutralize_dangling_refs or
+    sanitize_snippet, never from the policy author.
+    """
+    if diag.get("summary", "").startswith(TF_VALIDATE_NEVER_SUPPRESSED):
+        return False
+    return "placeholder" in _diag_code(diag)
+
+
 def terraform_available() -> bool:
     """Whether the terraform binary is on PATH."""
     return shutil.which("terraform") is not None
@@ -376,9 +406,21 @@ def neutralize_dangling_refs(hcl_code: str) -> str:
         out_parts.append(sub(text[pos:]))
         return "".join(out_parts)
 
+    # A data traversal that survives the first pass has to be hidden from the
+    # second one. `data.azuread_directory_roles.admin_roles.roles` carries an
+    # underscore in the data source *name*, so the managed-resource pattern
+    # matches `admin_roles.roles` inside it and rewrites the middle of a
+    # reference that was deliberately kept. The lookbehind cannot see that far
+    # back, so the surviving text is parked under a sentinel instead.
+    preserved: list[str] = []
+
+    def park(text: str) -> str:
+        preserved.append(text)
+        return f"\x00TFREF{len(preserved) - 1}\x00"
+
     def replace_data(match: re.Match) -> str:
         key = f"{match.group(1)}.{match.group(2)}"
-        return match.group(0) if key in declared_data else '"placeholder"'
+        return park(match.group(0)) if key in declared_data else '"placeholder"'
 
     # `data.<type>.<name>.<attr>` first: the managed-resource pattern below
     # would otherwise match the `<type>.<name>.` inside it.
@@ -393,7 +435,7 @@ def neutralize_dangling_refs(hcl_code: str) -> str:
 
     def replace_resource(match: re.Match) -> str:
         key = f"{match.group(1)}.{match.group(2)}"
-        return match.group(0) if key in declared else '"placeholder"'
+        return park(match.group(0)) if key in declared else '"placeholder"'
 
     # A managed resource type always carries an underscore, which is what keeps
     # var.x, local.x, each.value, count.index and self.x out of this. The
@@ -401,13 +443,16 @@ def neutralize_dangling_refs(hcl_code: str) -> str:
     # above deliberately left alone: without it, a data source the snippet does
     # declare gets its type matched as if it were a managed resource, producing
     # `data."placeholder"`, which is not even parseable.
-    return apply_outside_strings(
+    out = apply_outside_strings(
         out,
         lambda s: re.sub(
             r"(?<!data\.)\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\.([a-zA-Z_][\w-]*)(?:\.[\w*-]+|\[[^\]]*\])*",
             replace_resource,
             s,
         ),
+    )
+    return re.sub(
+        r"\x00TFREF(\d+)\x00", lambda m: preserved[int(m.group(1))], out
     )
 
 
@@ -637,13 +682,31 @@ def _terraform_validate_locked(
         # defect in the snippet, so say so rather than blaming the snippet.
         return ["terraform init failed: " + first_error_line(init.stderr, init.stdout)]
 
-    try:
-        result = subprocess.run(
-            ["terraform", "validate", "-json"],
-            cwd=tmp_dir, capture_output=True, text=True, timeout=120, env=env,
-        )
-    except subprocess.TimeoutExpired:
-        return ["terraform validate timed out after 120s"]
+    # Forking a provider to read its schema fails intermittently when many are
+    # started at once, with "failed to instantiate provider ... to obtain
+    # schema". It roves between snippets run to run and the affected config is
+    # always fine on its own, so retry before reporting anything.
+    for attempt in range(3):
+        try:
+            result = subprocess.run(
+                ["terraform", "validate", "-json"],
+                cwd=tmp_dir, capture_output=True, text=True, timeout=120, env=env,
+            )
+        except subprocess.TimeoutExpired:
+            if attempt == 2:
+                return ["terraform validate timed out after 120s"]
+            continue
+        combined = result.stdout + result.stderr
+        if (
+            "to obtain schema" not in combined
+            and "plugin to start" not in combined
+        ):
+            break
+        if attempt == 2:
+            return [
+                "terraform validate could not start the provider plugin after "
+                "3 attempts; this is environmental, not a defect in the snippet"
+            ]
 
     try:
         data = json.loads(result.stdout)
@@ -663,6 +726,8 @@ def _terraform_validate_locked(
             continue
         conditional = TF_VALIDATE_CONDITIONAL_IGNORES.get(summary)
         if conditional is not None and conditional(diag):
+            continue
+        if caused_by_substitution(diag):
             continue
         detail = " ".join((diag.get("detail") or "").split())
         issues.append(f"terraform validate: {summary}: {detail}"[:300])
