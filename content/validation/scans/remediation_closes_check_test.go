@@ -6,7 +6,6 @@
 package scans
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -48,35 +47,6 @@ var remediationMethod = map[string]struct {
 	"-terraform-hcl":  {"terraform", []string{"hcl", "terraform", "tf"}, "main.tf"},
 	"-cloudformation": {"cloudformation", []string{"yaml", "yml"}, "template.yaml"},
 	"-bicep":          {"bicep", []string{"bicep"}, "main.bicep"},
-}
-
-// knownUnsatisfiedFile records the variants whose remediation does not yet
-// satisfy them. Each entry needs a reason, and the list may only shrink: an
-// entry that starts passing fails the test so the entry is removed with the fix,
-// the same contract as the KNOWN_BUG.md markers.
-const knownUnsatisfiedFile = "./remediation-budget.json"
-
-type unsatisfiedEntry struct {
-	Uid    string `json:"uid"`
-	Reason string `json:"reason"`
-}
-
-func loadKnownUnsatisfied(t *testing.T) map[string]string {
-	data, err := os.ReadFile(knownUnsatisfiedFile)
-	if os.IsNotExist(err) {
-		return map[string]string{}
-	}
-	require.NoError(t, err)
-
-	var entries []unsatisfiedEntry
-	require.NoError(t, json.Unmarshal(data, &entries), "%s is not valid JSON", knownUnsatisfiedFile)
-
-	out := make(map[string]string, len(entries))
-	for _, e := range entries {
-		require.NotEmpty(t, e.Reason, "%s: entry %q needs a reason", knownUnsatisfiedFile, e.Uid)
-		out[e.Uid] = e.Reason
-	}
-	return out
 }
 
 // fencePattern matches a fenced block and captures its language and body.
@@ -236,10 +206,12 @@ func scanSnippet(bundleFile, policyMrn string, asset *inventory.Asset) ([]*polic
 
 // TestRemediationSatisfiesCheck scans each IaC variant's own remediation snippet
 // and requires the check that recommends it to pass.
+//
+// Every variant in the corpus now satisfies its own remediation, so this is a
+// flat assertion rather than a shrink-only debt budget: a snippet that stops
+// closing its check fails here instead of being excused by an entry on a list.
 func TestRemediationSatisfiesCheck(t *testing.T) {
 	shardIndex, shardTotal := iacShard(t)
-	known := loadKnownUnsatisfied(t)
-	seen := map[string]bool{}
 
 	for _, pol := range tfVariantPolicies {
 		bundle, err := policy.DefaultBundleLoader().BundleFromPaths(bundlePath(pol.bundleFile))
@@ -269,10 +241,6 @@ func TestRemediationSatisfiesCheck(t *testing.T) {
 				// business, not this suite's.
 				continue
 			}
-			// Recorded before the shard filter: every shard needs the full set to
-			// judge whether a budget entry is stale, otherwise that check could
-			// only run unsharded — which is never, since CI shards this suite.
-			seen[uid] = true
 			if !inShard(uid, shardIndex, shardTotal) {
 				continue
 			}
@@ -287,16 +255,6 @@ func TestRemediationSatisfiesCheck(t *testing.T) {
 				outcome := outcomeSkipped
 				if err == nil {
 					outcome, _ = checkResultAcross(reports, queryMrnPrefix+uid)
-				}
-
-				reason, isKnown := known[uid]
-				if isKnown {
-					if outcome == outcomePassed {
-						t.Fatalf("this variant's remediation now satisfies it, so remove its entry "+
-							"from %s\nreason on file: %s\ncheck: %s",
-							knownUnsatisfiedFile, reason, uid)
-					}
-					return
 				}
 
 				if err != nil {
@@ -314,24 +272,6 @@ func TestRemediationSatisfiesCheck(t *testing.T) {
 						"a reader who applies the documented fix still fails the check\ncheck: %s", uid)
 				}
 			})
-		}
-	}
-
-	// An entry that no longer names a testable variant is stale: the variant or
-	// its remediation is gone, and the entry would silently excuse nothing.
-	// One shard reports it; every shard has the full set (see above).
-	if shardIndex == 0 {
-		var stale []string
-		for uid := range known {
-			if !seen[uid] {
-				stale = append(stale, uid)
-			}
-		}
-		sort.Strings(stale)
-		if len(stale) > 0 {
-			t.Errorf("%s lists %d variant(s) that no longer have a testable remediation "+
-				"snippet; remove them:\n%s",
-				knownUnsatisfiedFile, len(stale), strings.Join(indent(stale), "\n"))
 		}
 	}
 }

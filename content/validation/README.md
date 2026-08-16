@@ -31,7 +31,6 @@ content/validation/
 │   ├── iac_variants_test.go      per-check pass/fail fixtures  [tag: iac_variants]
 │   ├── coverage_test.go          every IaC variant has fixtures [tag: iac_variants]
 │   ├── remediation_closes_check_test.go   the fix satisfies its own check [tag: iac_variants]
-│   ├── remediation-budget.json   variants whose remediation does not satisfy them yet
 │   └── fixtures/
 │       ├── iac-variants/<policy>/<check-uid>/{pass,fail}/<scenario>/
 │       └── bundles/<policy>-{pass,fail}/
@@ -197,7 +196,11 @@ Three failures are reported differently, because they mean different things:
 - **the remediation does not satisfy the check** — a reader who applies the documented fix still fails
 - **scanning failed** — the snippet is not a scannable document of its kind on its own
 
-A variant whose remediation does not satisfy it yet is listed in `scans/remediation-budget.json` with a reason. The list may only shrink: an entry that starts passing fails the test, so the entry is removed together with the fix, the same contract as a `KNOWN_BUG.md` marker. An entry naming a variant that no longer has a testable snippet is reported as stale.
+Every variant in the corpus satisfies its own remediation, so this is a flat assertion rather than a shrink-only debt budget, the same shape the fixture-coverage gate took once it reached 100%. A snippet that stops closing its check fails here instead of being excused by an entry on a list.
+
+The first two failures usually share one cause: a snippet that documents only the fixing resource. A check's `filters:` select on the resource being protected, so a fix shown without its subject leaves the check unevaluated. Where the rest of the policy matches nothing else in the snippet either, no policy binds to the asset at all and the scan errors rather than reporting a skip, which surfaces as the third failure instead.
+
+The remaining cause is a value the HCL parser cannot resolve statically. A `jsonencode` body collapses to an empty list if any leaf inside it is a resource reference, and a policy supplied through an `aws_iam_policy_document` data source arrives as the reference string. Either reads as absent rather than as the value it becomes at apply time, so a snippet whose correctness lives inside one has to spell that part out literally.
 
 A failed scan is retried before it is believed. Under the suite's concurrency a provider subprocess occasionally dies mid-request (`rpc error: code = Unavailable`), which is contention rather than a property of the snippet; a deterministic error reproduces on every attempt and is reported after the last one.
 
