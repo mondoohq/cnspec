@@ -68,6 +68,7 @@ PROVIDER_MAP = {
     "azuread": ("hashicorp/azuread", "~> 3.0"),
     "azapi": ("azure/azapi", "~> 2.0"),
     "google": ("hashicorp/google", "~> 7.0"),
+    "google-beta": ("hashicorp/google-beta", "~> 7.0"),
     "oci": ("oracle/oci", "~> 8.0"),
     "github": ("integrations/github", "~> 6.0"),
     "gitlab": ("gitlabhq/gitlab", "~> 19.0"),
@@ -207,11 +208,20 @@ def extract_hcl_blocks(content: str, filepath: Path) -> list[HclBlock]:
 # ---------------------------------------------------------------------------
 
 def detect_providers(hcl_code: str) -> set[str]:
-    """Detect provider prefixes from resource/data block type names."""
+    """Detect provider local names a snippet needs.
+
+    Most come from the resource/data block type name, whose prefix is the
+    provider. A resource can also name a provider explicitly with
+    `provider = google-beta`, which is the only way to reach a beta-only
+    resource type; that local name has to be declared too, or the generated
+    configuration references a provider it never required.
+    """
     prefixes = set()
     for m in re.finditer(
         r'(?:resource|data)\s+"([a-z][a-z0-9]*)_', hcl_code
     ):
+        prefixes.add(m.group(1))
+    for m in re.finditer(r'^\s*provider\s*=\s*([a-z][a-z0-9-]*)\s*$', hcl_code, re.M):
         prefixes.add(m.group(1))
     return prefixes
 
