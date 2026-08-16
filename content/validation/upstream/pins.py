@@ -1,0 +1,597 @@
+#!/usr/bin/env python3
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+#
+# The registry of every upstream the remediation and IaC-variant validators are
+# pinned to, and the machinery to read a pin, ask upstream what is current, and
+# rewrite the pin in place.
+#
+# Two scripts consume this module and neither owns a pin list of its own:
+#
+#   upstream/check.py   reports which pins are behind
+#   upstream/bump.py    rewrites the ones that are
+#
+# The load-bearing rule is that a pin is always read from, and written back to,
+# *the file that declares it*. There is no second copy of a version anywhere in
+# here, so this module cannot drift out of sync with what CI actually installs.
+# The same rule is why the download URL used to re-checksum a CLI tarball is
+# extracted from the workflow's own `curl` line rather than restated below: a
+# restated URL would silently start checksumming a different artifact than the
+# one CI downloads.
+#
+# What is watched, and where it lives:
+#
+#   linter / cli  .github/workflows/validate-remediation.yaml
+#                 `pipx install x==1.2.3`, `gem install x -v 1.2.3`,
+#                 `tflint_version:`, and the `X_VERSION`/`X_SHA256` env pairs
+#   tflint-ruleset
+#   terraform-provider
+#                 content/validation/remediation/code/terraform.py
+#                 TFLINT_PLUGIN_MAP and PROVIDER_MAP
+#   spec          content/validation/remediation/commands/openapi.py
+#                 the `*_OPENAPI_SHA` commit pins
+#   grammar       content/validation/data/*.json
+#                 stamped in each file's `_meta`; refreshed by re-running the
+#                 dump script against the new tool, never by hand
+#
+# Dependabot covers gomod and github-actions. Nothing else watches any of these.
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # content/validation
+from paths import DATA_DIR, DUMP_DIR, REPO_ROOT, VALIDATION_DIR  # noqa: E402
+
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "validate-remediation.yaml"
+OPENAPI_MODULE = VALIDATION_DIR / "remediation" / "commands" / "openapi.py"
+TERRAFORM_VALIDATOR = VALIDATION_DIR / "remediation" / "code" / "terraform.py"
+CMD_DATA = DATA_DIR
+
+USER_AGENT = "cnspec-validation-drift-check"
+TIMEOUT = 30
+
+# Roughly 45 api.github.com calls per run once the terraform providers and
+# tflint rulesets are included. Unauthenticated that shares a 60/hour budget
+# with everything else on the runner's IP, so a rate-limited run would report
+# "could not reach upstream" for most pins and read as an all-clear. With a
+# token the limit is 5,000/hour. Both workflows pass the one Actions provides.
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
+
+
+# ---------------------------------------------------------------------------
+# HTTP helpers
+# ---------------------------------------------------------------------------
+
+# Every value these resolvers return is a version, a release tag, or a commit
+# SHA: one short token. Anything else is not something a pin can be compared
+# against, and a value carrying a newline would break both the markdown table
+# and the `key=value` lines the bump workflow appends to $GITHUB_OUTPUT --
+# where extra lines become extra outputs, which are interpolated straight into
+# a pull request title and branch. Rejecting a malformed value as "unknown" is
+# the fail-safe reading: an upstream we cannot parse stops the bump rather than
+# feeding an upstream-controlled string into a pull request.
+UPSTREAM_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,63}")
+
+
+def as_token(value: object) -> str:
+    text = str(value).strip()
+    return text if UPSTREAM_TOKEN.fullmatch(text) else "unknown"
+
+
+def fetch_json(url: str) -> dict | list | None:
+    headers = {"User-Agent": USER_AGENT}
+    # Compare the parsed hostname, never a substring of the URL: `"…" in url`
+    # also matches a host that merely mentions api.github.com in its path or
+    # query, which would hand the token to it. Every URL here is built from
+    # constants in this file, so this is hardening rather than a live hole --
+    # but a credential-scoping check should not depend on that staying true.
+    if GITHUB_TOKEN and urllib.parse.urlparse(url).hostname == "api.github.com":
+        headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            return json.load(resp)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        # Upstream metadata being unreachable is not a finding about our repo.
+        return None
+
+
+def fetch_bytes(url: str) -> bytes | None:
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT * 4) as resp:
+            return resp.read()
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return None
+
+
+def latest_github_release(repo: str) -> str:
+    data = fetch_json(f"https://api.github.com/repos/{repo}/releases/latest")
+    if not isinstance(data, dict) or not data.get("tag_name"):
+        return "unknown"
+    return as_token(str(data["tag_name"]).lstrip("v"))
+
+
+def latest_pypi(pkg: str) -> str:
+    data = fetch_json(f"https://pypi.org/pypi/{pkg}/json")
+    if not isinstance(data, dict):
+        return "unknown"
+    return as_token(data.get("info", {}).get("version", "unknown"))
+
+
+def latest_rubygem(gem: str) -> str:
+    data = fetch_json(f"https://rubygems.org/api/v1/gems/{gem}.json")
+    if not isinstance(data, dict):
+        return "unknown"
+    return as_token(data.get("version", "unknown"))
+
+
+def latest_gitlab_release(project: str) -> str:
+    """Latest release of a GitLab-hosted project. glab lives on gitlab.com and
+    the GitHub mirror publishes no releases, so `releases/latest` there 404s."""
+    data = fetch_json(f"https://gitlab.com/api/v4/projects/{project}/releases?per_page=1")
+    if not isinstance(data, list) or not data:
+        return "unknown"
+    return as_token(str(data[0].get("tag_name", "unknown")).lstrip("v"))
+
+
+def latest_npm(pkg: str) -> str:
+    data = fetch_json(f"https://registry.npmjs.org/{pkg}/latest")
+    if not isinstance(data, dict):
+        return "unknown"
+    return as_token(data.get("version", "unknown"))
+
+
+def latest_terraform_provider(source: str) -> str:
+    """Latest published version of a Terraform provider, e.g. `hashicorp/aws`."""
+    data = fetch_json(f"https://registry.terraform.io/v1/providers/{source}")
+    if not isinstance(data, dict):
+        return "unknown"
+    return as_token(data.get("version", "unknown"))
+
+
+def head_commit_for_path(repo: str, path: str) -> str:
+    quoted = urllib.parse.quote(path)
+    data = fetch_json(f"https://api.github.com/repos/{repo}/commits?path={quoted}&per_page=1")
+    if not isinstance(data, list) or not data:
+        return "unknown"
+    return as_token(data[0].get("sha", "unknown"))
+
+
+# ---------------------------------------------------------------------------
+# Pin
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Pin:
+    name: str
+    kind: str
+    pinned: str
+    latest: str
+    note: str = ""
+
+    # Set for a pin whose upstream publishes no machine-readable version, so an
+    # absent `latest` reads as "nothing to compare" rather than "network down".
+    manual: bool = False
+
+    # Rewrites this pin to `latest` in whichever file declares it and returns
+    # the paths it changed. None means the pin has no mechanical bump: a
+    # checked-in grammar, for instance, is refreshed by re-running its dump
+    # script against the new tool, which needs that tool installed.
+    apply: Callable[[str], list[Path]] | None = None
+
+    # Files a bump touches, for the PR body. Filled in by the discoverer.
+    files: list[Path] = field(default_factory=list)
+
+    @property
+    def state(self) -> str:
+        if self.manual:
+            return "manual"
+        if self.pinned == "unknown":
+            return "unstamped"
+        if self.latest == "unknown":
+            return "unchecked"
+        return "current" if self.pinned == self.latest else "behind"
+
+    @property
+    def slug(self) -> str:
+        """Branch- and matrix-safe identifier."""
+        return re.sub(r"[^a-z0-9]+", "-", self.name.lower()).strip("-")
+
+    @property
+    def automatable(self) -> bool:
+        return self.apply is not None
+
+
+def _sub_once(text: str, pattern: str, new_value: str, path: Path) -> str:
+    """Replace group 1 of the first `pattern` match with `new_value`.
+
+    Every rewrite in this module goes through here so that a pattern which
+    stopped matching (upstream reformatted the file, someone moved the pin)
+    raises instead of writing a file that looks bumped but is not.
+    """
+    m = re.search(pattern, text)
+    if not m:
+        raise ValueError(f"pin pattern no longer matches in {path}: {pattern}")
+    start, end = m.span(1)
+    return text[:start] + new_value + text[end:]
+
+
+# ---------------------------------------------------------------------------
+# Pins declared in the workflow's `run:` steps
+# ---------------------------------------------------------------------------
+
+# Tools installed at a bare version string, with nothing to checksum.
+# (display name, regex capturing the pinned version, resolver)
+WORKFLOW_TOOLS = [
+    ("cfn-lint", r"pipx install cfn-lint==([0-9][^\s]*)", lambda: latest_pypi("cfn-lint")),
+    ("ansible-lint", r"pipx install ansible-lint==([0-9][^\s]*)", lambda: latest_pypi("ansible-lint")),
+    ("cookstyle", r"gem install cookstyle -v ([0-9][^\s]*)", lambda: latest_rubygem("cookstyle")),
+    ("tflint", r"tflint_version:\s*v?([0-9][^\s]*)", lambda: latest_github_release("terraform-linters/tflint")),
+]
+
+# Tools downloaded as a release artifact and verified against a checksum. The
+# workflow declares each as an `X_VERSION` / `X_SHA256` env pair; the artifact
+# URL is read out of the same step, so bumping one of these re-downloads
+# exactly what CI will download and recomputes the digest from it.
+# (display name, env var prefix, resolver)
+WORKFLOW_CHECKSUMMED = [
+    ("bicep", "BICEP", lambda: latest_github_release("Azure/bicep")),
+    ("doctl", "DOCTL", lambda: latest_github_release("digitalocean/doctl")),
+    ("glab", "GLAB", lambda: latest_gitlab_release("gitlab-org%2Fcli")),
+    ("hcloud", "HCLOUD", lambda: latest_github_release("hetznercloud/cli")),
+    ("databricks", "DATABRICKS", lambda: latest_github_release("databricks/cli")),
+]
+
+
+def _workflow_url_for(text: str, version_var: str) -> str | None:
+    """The quoted download URL in the workflow that interpolates `version_var`.
+
+    Reading the URL back out of the workflow is what keeps the re-checksum
+    honest: the bytes hashed here are the bytes CI fetches, even if someone
+    later switches a tool to a different asset name or host.
+    """
+    for m in re.finditer(r'"(https://[^"\s]+)"', text):
+        url = m.group(1)
+        if "${" + version_var + "}" in url:
+            return url
+    return None
+
+
+def check_workflow_tools() -> list[Pin]:
+    if not WORKFLOW.exists():
+        return []
+    text = WORKFLOW.read_text()
+    out: list[Pin] = []
+
+    for name, pattern, resolver in WORKFLOW_TOOLS:
+        m = re.search(pattern, text)
+        if not m:
+            out.append(Pin(name, "linter", "unknown", "unknown",
+                           "no pin found in validate-remediation.yaml"))
+            continue
+
+        def make_apply(pat: str) -> Callable[[str], list[Path]]:
+            def apply(new_version: str) -> list[Path]:
+                WORKFLOW.write_text(_sub_once(WORKFLOW.read_text(), pat, new_version, WORKFLOW))
+                return [WORKFLOW]
+            return apply
+
+        out.append(Pin(name, "linter", m.group(1), resolver(),
+                       apply=make_apply(pattern), files=[WORKFLOW]))
+
+    for name, prefix, resolver in WORKFLOW_CHECKSUMMED:
+        version_var, sha_var = f"{prefix}_VERSION", f"{prefix}_SHA256"
+        version_pat = rf'{version_var}:\s*"?([0-9][^"\s]*)'
+        sha_pat = rf'{sha_var}:\s*"?([0-9a-f]{{64}})'
+        vm = re.search(version_pat, text)
+        if not vm:
+            out.append(Pin(name, "cli", "unknown", "unknown",
+                           f"{version_var} not found in validate-remediation.yaml"))
+            continue
+        url_template = _workflow_url_for(text, version_var)
+        note = "" if url_template else f"no download URL interpolating ${{{version_var}}}"
+
+        # Every loop variable the closure needs is passed in explicitly: bound
+        # by reference they would all resolve to the last tool in the list, and
+        # a bump would then hash the wrong artifact into the right pin.
+        def make_apply(vpat: str, spat: str, template: str, var: str) -> Callable[[str], list[Path]]:
+            def apply(new_version: str) -> list[Path]:
+                url = template.replace("${" + var + "}", new_version)
+                blob = fetch_bytes(url)
+                if not blob:
+                    raise ValueError(f"could not download {url} to re-checksum")
+                digest = hashlib.sha256(blob).hexdigest()
+                body = WORKFLOW.read_text()
+                body = _sub_once(body, vpat, new_version, WORKFLOW)
+                body = _sub_once(body, spat, digest, WORKFLOW)
+                WORKFLOW.write_text(body)
+                return [WORKFLOW]
+            return apply
+
+        out.append(Pin(
+            name, "cli", vm.group(1), resolver(), note,
+            apply=(make_apply(version_pat, sha_pat, url_template, version_var)
+                   if url_template else None),
+            files=[WORKFLOW],
+        ))
+
+    return out
+
+
+def verify_workflow_checksums() -> list[tuple[str, bool, str]]:
+    """Re-derive each checksummed CLI's digest at the version it is *already*
+    pinned to, and compare it against the digest in the workflow.
+
+    This is the one thing about the auto-bump that is not self-evident from a
+    diff: everything else rewrites a string that a reviewer can eyeball, but a
+    64-character digest is only meaningful if the bytes it came from are the
+    bytes CI will fetch. Running it against the current pins turns that into a
+    checkable claim -- a mismatch means either the URL shape moved or the pin
+    was wrong all along, and both need a person before any bump is trusted.
+
+    Returns (name, matches, detail) per tool.
+    """
+    if not WORKFLOW.exists():
+        return []
+    text = WORKFLOW.read_text()
+    out = []
+    for name, prefix, _ in WORKFLOW_CHECKSUMMED:
+        version_var = f"{prefix}_VERSION"
+        vm = re.search(rf'{version_var}:\s*"?([0-9][^"\s]*)', text)
+        sm = re.search(rf'{prefix}_SHA256:\s*"?([0-9a-f]{{64}})', text)
+        if not vm or not sm:
+            out.append((name, False, f"{version_var}/{prefix}_SHA256 not found"))
+            continue
+        template = _workflow_url_for(text, version_var)
+        if not template:
+            out.append((name, False, f"no download URL interpolating ${{{version_var}}}"))
+            continue
+        url = template.replace("${" + version_var + "}", vm.group(1))
+        blob = fetch_bytes(url)
+        if blob is None:
+            out.append((name, False, f"could not download {url}"))
+            continue
+        digest = hashlib.sha256(blob).hexdigest()
+        out.append((
+            name, digest == sm.group(1),
+            f"v{vm.group(1)} {url}" if digest == sm.group(1)
+            else f"v{vm.group(1)} computed {digest}, pinned {sm.group(1)}",
+        ))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Terraform tooling declared in remediation/code/terraform.py
+# ---------------------------------------------------------------------------
+
+def _parse_pair_map(text: str, map_name: str) -> dict[str, tuple[str, str]]:
+    """Parse a `NAME = { "key": ("source", "value"), ... }` literal out of source.
+
+    Parsed rather than imported: importing the validator would pull in its
+    module-level setup for no reason, and parsing keeps the "read the pin from
+    the file that declares it" property that makes this module unable to go
+    stale. Anything added to the map is watched automatically.
+    """
+    m = re.search(rf"^{map_name}\s*=\s*\{{(.*?)^\}}", text, re.DOTALL | re.MULTILINE)
+    if not m:
+        return {}
+    return {
+        key: (source, value)
+        for key, source, value in re.findall(
+            r'"([^"]+)":\s*\("([^"]+)",\s*"([^"]+)"\)', m.group(1)
+        )
+    }
+
+
+def _entry_pattern(key: str, source: str) -> str:
+    """Regex capturing the version of one `"key": ("source", "version")` entry."""
+    return rf'"{re.escape(key)}":\s*\(\s*"{re.escape(source)}"\s*,\s*"([^"]+)"'
+
+
+def constraint_for(version: str) -> str:
+    """The `~>` constraint this repo would write for a released provider version.
+
+    `~> 5.0` floats across every 5.x release, so a provider only outgrows its
+    constraint on a *major* bump. Below 1.0 the minor is the breaking axis and
+    `~> 0.111` floats only across 0.111.x, so a 0.x provider outgrows it on a
+    minor bump. This reproduces every constraint currently in PROVIDER_MAP.
+    """
+    parts = version.split(".")
+    if len(parts) < 2:
+        return f"~> {version}"
+    major, minor = parts[0], parts[1]
+    return f"~> 0.{minor}" if major == "0" else f"~> {major}.0"
+
+
+def check_terraform_pins() -> list[Pin]:
+    if not TERRAFORM_VALIDATOR.exists():
+        return []
+    text = TERRAFORM_VALIDATOR.read_text()
+    out: list[Pin] = []
+
+    def make_apply(pattern: str) -> Callable[[str], list[Path]]:
+        def apply(new_value: str) -> list[Path]:
+            TERRAFORM_VALIDATOR.write_text(
+                _sub_once(TERRAFORM_VALIDATOR.read_text(), pattern, new_value, TERRAFORM_VALIDATOR)
+            )
+            return [TERRAFORM_VALIDATOR]
+        return apply
+
+    # tflint ruleset plugins are pinned exactly, so pin and upstream compare
+    # directly. A ruleset bump is the one that most often turns up new findings
+    # in existing snippets: rulesets ship new rules enabled by default.
+    for key, (source, version) in _parse_pair_map(text, "TFLINT_PLUGIN_MAP").items():
+        repo = source.removeprefix("github.com/")
+        out.append(Pin(
+            f"tflint-ruleset-{key}", "tflint-ruleset", version,
+            latest_github_release(repo), source,
+            apply=make_apply(_entry_pattern(key, source)),
+            files=[TERRAFORM_VALIDATOR],
+        ))
+
+    # Provider entries hold a `~>` constraint, not a version, so the comparison
+    # is constraint-to-constraint: hashicorp/aws at 6.60.0 makes `~> 5.0` behind
+    # and `~> 6.0` current, while 6.61.0 leaves `~> 6.0` alone.
+    for key, (source, constraint) in _parse_pair_map(text, "PROVIDER_MAP").items():
+        version = latest_terraform_provider(source)
+        out.append(Pin(
+            f"terraform-provider-{key}", "terraform-provider", constraint,
+            constraint_for(version) if version != "unknown" else "unknown",
+            f"{source} {version}",
+            apply=make_apply(_entry_pattern(key, source)),
+            files=[TERRAFORM_VALIDATOR],
+        ))
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# OpenAPI specs pinned to a commit SHA in remediation/commands/openapi.py
+# ---------------------------------------------------------------------------
+
+SPEC_PINS = [
+    ("cloudflare spec", "CLOUDFLARE_OPENAPI_SHA", "cloudflare/api-schemas", "openapi.json"),
+    ("slack spec", "SLACK_OPENAPI_SHA", "slackapi/slack-api-specs", "web-api/slack_web_openapi_v2.json"),
+    ("grafana spec", "GRAFANA_OPENAPI_SHA", "grafana/grafana", "public/openapi3.json"),
+    ("mongodbatlas spec", "MONGODBATLAS_OPENAPI_SHA", "mongodb/openapi", "openapi/v2.json"),
+]
+
+
+def check_spec_pins() -> list[Pin]:
+    if not OPENAPI_MODULE.exists():
+        return []
+    text = OPENAPI_MODULE.read_text()
+    out: list[Pin] = []
+    for name, const, repo, path in SPEC_PINS:
+        pattern = rf'{const}\s*=\s*"([0-9a-f]{{7,40}})"'
+        m = re.search(pattern, text)
+        if not m:
+            out.append(Pin(name, "spec", "unknown", "unknown", f"{const} not found"))
+            continue
+        pinned = m.group(1)
+        head = head_commit_for_path(repo, path)
+        # A differing SHA is not by itself proof of drift: some of these specs
+        # live in repos whose default branch was rewritten, so the newest commit
+        # touching the path can predate the pin. Ask GitHub how many commits
+        # actually separate them and treat "none" as current.
+        if head != "unknown" and head != pinned:
+            cmp = fetch_json(f"https://api.github.com/repos/{repo}/compare/{pinned}...{head}")
+            if isinstance(cmp, dict) and cmp.get("total_commits") == 0:
+                head = pinned
+
+        def make_apply(pat: str, full_sha: str) -> Callable[[str], list[Path]]:
+            # The report abbreviates SHAs to 10 characters for the table; the
+            # file must get the full one it was pinned with.
+            def apply(_new: str) -> list[Path]:
+                OPENAPI_MODULE.write_text(
+                    _sub_once(OPENAPI_MODULE.read_text(), pat, full_sha, OPENAPI_MODULE)
+                )
+                return [OPENAPI_MODULE]
+            return apply
+
+        out.append(Pin(
+            name, "spec", pinned[:10],
+            head[:10] if head != "unknown" else "unknown",
+            f"{repo}/{path}",
+            apply=make_apply(pattern, head) if head not in ("unknown", pinned) else None,
+            files=[OPENAPI_MODULE],
+        ))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Checked-in grammars, versioned by their own `_meta`
+# ---------------------------------------------------------------------------
+
+def meta_of(filename: str) -> dict:
+    path = CMD_DATA / filename
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return {}
+    meta = data.get("_meta") if isinstance(data, dict) else None
+    return meta if isinstance(meta, dict) else {}
+
+
+def check_grammars() -> list[Pin]:
+    # No `apply` on any of these: the pin is a stamp describing which tool
+    # produced the checked-in JSON, so the only correct way to move it is to
+    # install that tool at the new version and re-run its dump script. That
+    # needs the tool itself, so it happens in a dedicated workflow job rather
+    # than in-process here. Never hand-edit the files in data/.
+    return [
+        Pin(
+            "azure CLI grammar", "grammar",
+            meta_of("azure_commands.json").get("azure_cli_version", "unknown"),
+            latest_pypi("azure-cli"),
+            "regenerate with upstream/dump/azure.py",
+            files=[CMD_DATA / "azure_commands.json"],
+        ),
+        Pin(
+            "vercel CLI grammar", "grammar",
+            meta_of("vercel_commands.json").get("vercel_version", "unknown"),
+            latest_npm("vercel"),
+            "regenerate with upstream/dump/vercel.py",
+            files=[CMD_DATA / "vercel_commands.json"],
+        ),
+        Pin(
+            "nutanix ncli grammar", "grammar",
+            meta_of("ncli_commands.json").get("book", "unknown"), "n/a",
+            "pinned to an AOS doc book; bump NCLI_BOOK in upstream/dump/ncli.py",
+            manual=True,
+            files=[CMD_DATA / "ncli_commands.json"],
+        ),
+    ]
+
+
+def sync_dump_script_pins() -> list[str]:
+    """Point a dump script's own version constant at the grammar it produced.
+
+    A dump script sometimes names the tool version it expects, so a human
+    running it locally gets told to install the right one. That constant is the
+    only place in this scheme where a version is written down twice -- the
+    other copy is the `_meta` stamp in the JSON the script emits -- so after an
+    automated regeneration it has to be pulled back into line, or the script
+    warns about a mismatch with itself forever.
+
+    Only vercel has one: `upstream/dump/azure.py` reads the installed CLI's
+    version at run time, and `NCLI_BOOK` is itself the source of truth.
+    """
+    changed = []
+    version = meta_of("vercel_commands.json").get("vercel_version")
+    script = DUMP_DIR / "vercel.py"
+    if version and script.exists():
+        text = script.read_text()
+        pattern = r'VERCEL_VERSION = "([^"]+)"'
+        if re.search(pattern, text) and not re.search(rf'VERCEL_VERSION = "{re.escape(version)}"', text):
+            script.write_text(_sub_once(text, pattern, version, script))
+            changed.append(f"upstream/dump/vercel.py VERCEL_VERSION -> {version}")
+    return changed
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def discover() -> list[Pin]:
+    """Every watched pin, with its current value and what upstream has."""
+    return (
+        check_workflow_tools()
+        + check_terraform_pins()
+        + check_spec_pins()
+        + check_grammars()
+    )
