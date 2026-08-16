@@ -89,7 +89,7 @@ PROVIDER_MAP = {
     "snowflake": ("snowflakedb/snowflake", "~> 2.0"),
     "stackit": ("stackitcloud/stackit", "~> 0.111"),
     "tailscale": ("tailscale/tailscale", "~> 0.29"),
-    "unifi": ("paultyng/unifi", "~> 0.41"),
+    "unifi": ("ubiquiti-community/unifi", "~> 0.55"),
     "vercel": ("vercel/vercel", "~> 5.0"),
     "vsphere": ("hashicorp/vsphere", "~> 2.0"),
 }
