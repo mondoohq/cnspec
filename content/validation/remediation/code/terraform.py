@@ -3,7 +3,14 @@
 # SPDX-License-Identifier: BUSL-1.1
 #
 # Validates Terraform HCL code blocks found in remediation sections of cnspec
-# policies by running tflint against each snippet.
+# policies by running tflint and `terraform validate` against each snippet.
+#
+# tflint checks style and the security rules its provider rulesets ship. It does
+# not resolve a snippet against the provider's own schema, so it cannot see an
+# argument the resource does not accept, a required argument left out, or a value
+# assigned to a computed attribute. Only aws, azurerm and google have rulesets at
+# all, which left the other seventeen providers checked for syntax alone.
+# `terraform validate` closes that gap for every provider in PROVIDER_MAP.
 #
 # Usage:
 #   python3 content/validation/remediation/code/terraform.py                # validate all
@@ -20,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -148,6 +156,50 @@ class TflintResult:
     issues: list[str] = field(default_factory=list)
 
 
+# `terraform validate` diagnostics that describe the documentation convention
+# rather than a defect. A remediation snippet shows the one setting its check is
+# about and is meant to be copied into a reader's own configuration, so it names
+# surrounding resources it does not declare. A single `- id: terraform` may also
+# offer two alternative configurations of the same resource in separate fences,
+# which extract_hcl_blocks concatenates, producing a duplicate that exists only
+# in the harness. Everything else terraform reports is a real defect in the
+# snippet: an argument the resource does not accept, a required argument left
+# out, a value assigned to a computed attribute, or a dependency cycle.
+TF_VALIDATE_IGNORED_SUMMARY_PREFIXES = (
+    "Reference to undeclared resource",
+    "Reference to undeclared input variable",
+    "Reference to undeclared module",
+    "Reference to undeclared local value",
+    "Duplicate resource ",
+    "Duplicate data ",
+)
+
+# Diagnostics that are only noise when the harness caused them. Blanket-ignoring
+# these summaries hides real defects: a type error on a value the snippet really
+# does get wrong reads identically to one on a value this file substituted, and
+# a missing required attribute inside a block surfaces as a type error too. Each
+# is therefore ignored only on evidence that the harness produced it.
+TF_VALIDATE_CONDITIONAL_IGNORES = {
+    # Raised where neutralize_dangling_refs put a string in place of a
+    # reference, so only the lines carrying that substitution are excused.
+    "Incorrect attribute value type": lambda d: "placeholder" in _diag_code(d),
+    "Invalid value for input variable": lambda d: "placeholder" in _diag_code(d),
+    # `file("./cert.pem")` and friends: the snippet names material the reader
+    # supplies, which is not shipped with the policy and never will be.
+    "Invalid function argument": lambda d: "no file exists at" in (d.get("detail") or ""),
+}
+
+
+def _diag_code(diag: dict) -> str:
+    """The source line a diagnostic points at, as terraform reports it."""
+    return (diag.get("snippet") or {}).get("code", "")
+
+
+def terraform_available() -> bool:
+    """Whether the terraform binary is on PATH."""
+    return shutil.which("terraform") is not None
+
+
 # ---------------------------------------------------------------------------
 # Extraction
 # ---------------------------------------------------------------------------
@@ -251,6 +303,108 @@ def extract_variables(hcl_code: str) -> set[str]:
     return set(re.findall(r"\bvar\.([a-zA-Z_][a-zA-Z0-9_]*)", hcl_code))
 
 
+def neutralize_dangling_refs(hcl_code: str) -> str:
+    """Replace references to resources the snippet does not declare.
+
+    Terraform abandons a resource body as soon as one of its references cannot
+    be resolved, so a snippet naming a surrounding resource it does not declare,
+    which is the documentation convention here, never reaches schema validation
+    and its arguments go unchecked. Declaring empty stubs does not help: the
+    stub's own missing-argument errors come from an earlier validation phase and
+    preempt the snippet's. Substituting a literal leaves the reference resolved
+    and the body checkable.
+
+    The substitute is always a string, so an attribute expecting a number or a
+    bool now reports a type error. That class is ignored rather than fixed with
+    a schema lookup, because the defects worth catching here are an argument the
+    resource does not accept, a required argument left out, and a value assigned
+    to a computed attribute, none of which depend on the substituted type.
+    """
+    # The traversal tail is matched as repeated `.attr` or `[index]` groups.
+    # A single character class spanning both would consume the closing bracket
+    # of the list the reference sits in, as in
+    # `droplet_ids = [digitalocean_droplet.example.id]`, leaving unbalanced HCL
+    # that fails to parse before any schema is ever consulted.
+    # `depends_on` takes resource references, not values, so a substituted
+    # string is itself an error there. It carries no schema surface, so the
+    # validate copy drops it rather than neutralizing inside it.
+    hcl_code = re.sub(
+        r"^\s*depends_on\s*=\s*\[[^\]]*\]\s*$", "", hcl_code, flags=re.M | re.S
+    )
+
+    declared = {
+        f"{rtype}.{name}"
+        for rtype, name in re.findall(
+            r'^\s*resource\s+"([^"]+)"\s+"([^"]+)"', hcl_code, re.M
+        )
+    }
+    declared_data = {
+        f"{dtype}.{name}"
+        for dtype, name in re.findall(
+            r'^\s*data\s+"([^"]+)"\s+"([^"]+)"', hcl_code, re.M
+        )
+    }
+
+    def apply_outside_strings(text: str, sub) -> str:
+        """Run a substitution everywhere except inside string literal text.
+
+        A path like `file("${path.module}/keys/etl_service.pub")` contains
+        `etl_service.pub`, which looks exactly like a resource reference and is
+        not one. Interpolations are still processed, because a reference inside
+        `${...}` is a real reference and has to resolve like any other.
+        """
+        out_parts = []
+        pos = 0
+        for sm in re.finditer(r'"(?:[^"\\]|\\.)*"', text):
+            out_parts.append(sub(text[pos : sm.start()]))
+            literal = sm.group(0)
+            # Only the `${...}` segments inside the literal are code.
+            out_parts.append(
+                re.sub(
+                    r"\$\{[^{}]*\}",
+                    lambda im: sub(im.group(0)),
+                    literal,
+                )
+            )
+            pos = sm.end()
+        out_parts.append(sub(text[pos:]))
+        return "".join(out_parts)
+
+    def replace_data(match: re.Match) -> str:
+        key = f"{match.group(1)}.{match.group(2)}"
+        return match.group(0) if key in declared_data else '"placeholder"'
+
+    # `data.<type>.<name>.<attr>` first: the managed-resource pattern below
+    # would otherwise match the `<type>.<name>.` inside it.
+    out = apply_outside_strings(
+        hcl_code,
+        lambda s: re.sub(
+            r"\bdata\.([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\.([a-zA-Z_][\w-]*)(?:\.[\w*-]+|\[[^\]]*\])*",
+            replace_data,
+            s,
+        ),
+    )
+
+    def replace_resource(match: re.Match) -> str:
+        key = f"{match.group(1)}.{match.group(2)}"
+        return match.group(0) if key in declared else '"placeholder"'
+
+    # A managed resource type always carries an underscore, which is what keeps
+    # var.x, local.x, each.value, count.index and self.x out of this. The
+    # lookbehind keeps it out of a `data.<type>.<name>` traversal that the pass
+    # above deliberately left alone: without it, a data source the snippet does
+    # declare gets its type matched as if it were a managed resource, producing
+    # `data."placeholder"`, which is not even parseable.
+    return apply_outside_strings(
+        out,
+        lambda s: re.sub(
+            r"(?<!data\.)\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\.([a-zA-Z_][\w-]*)(?:\.[\w*-]+|\[[^\]]*\])*",
+            replace_resource,
+            s,
+        ),
+    )
+
+
 def generate_wrapper(hcl_code: str, providers: set[str]) -> str:
     """Wrap an HCL snippet in a complete Terraform configuration."""
     parts = ['terraform {\n  required_version = ">= 1.0"\n  required_providers {\n']
@@ -263,10 +417,31 @@ def generate_wrapper(hcl_code: str, providers: set[str]) -> str:
             parts.append('    }\n')
     parts.append('  }\n}\n\n')
 
+    # A snippet may configure the provider itself, commonly to turn on a
+    # preview feature its resources need. Emitting a second default block then
+    # fails the whole run with "a default provider configuration was already
+    # given", and deleting the snippet's block would hand the reader a
+    # configuration that does not apply.
+    self_configured = set(
+        re.findall(r'^\s*provider\s+"([a-z][a-z0-9-]*)"\s*{', hcl_code, re.M)
+    )
     for p in sorted(providers):
-        if p in PROVIDER_MAP:
+        if p in PROVIDER_MAP and p not in self_configured:
             extra = PROVIDER_EXTRA_CONFIG.get(p, "")
             parts.append(f'provider "{p}" {{\n{extra}}}\n\n')
+
+    # A snippet may route a resource at an aliased provider configuration
+    # (`provider = databricks.mws`). Without the alias declared, terraform
+    # reports the missing configuration instead of checking the resource.
+    for prov, alias in sorted(set(re.findall(
+        r"^\s*provider\s*=\s*\"?([a-z][a-z0-9-]*)\.([a-zA-Z_][\w-]*)\"?\s*$",
+        hcl_code, re.M,
+    ))):
+        if prov in providers and prov in PROVIDER_MAP:
+            extra = PROVIDER_EXTRA_CONFIG.get(prov, "")
+            parts.append(
+                f'provider "{prov}" {{\n  alias = "{alias}"\n{extra}}}\n\n'
+            )
 
     variables = extract_variables(hcl_code)
     for v in sorted(variables):
@@ -390,6 +565,98 @@ def run_tflint(tmp_dir: Path, plugin_cache: Path) -> TflintResult:
     return TflintResult(success=False, issues=issues)
 
 
+# `terraform validate` forks the provider plugin to read its schema. Eight
+# workers each forking the AWS provider, several times over while other jobs run
+# on the same machine, exhausts the process/file-descriptor budget and the run
+# fails with "failed to instantiate provider ... to obtain schema" on snippets
+# that are perfectly fine. Capping the terraform invocations keeps tflint at
+# full width while making the schema pass deterministic.
+_TERRAFORM_SLOTS = threading.BoundedSemaphore(4)
+
+
+def first_error_line(stderr: str, stdout: str) -> str:
+    """Pull something readable out of terraform's boxed CLI output.
+
+    Terraform draws diagnostics inside a box, so the last line of stderr is a
+    box-drawing character and taking it reports nothing at all. Prefer the line
+    carrying the error text.
+    """
+    text = (stderr or stdout or "").replace("\x1b", "")
+    lines = [
+        re.sub(r"^[\s│╷╵|]*", "", ln).strip()
+        for ln in text.splitlines()
+    ]
+    lines = [ln for ln in lines if ln and not set(ln) <= set("─-_=")]
+    for ln in lines:
+        if ln.startswith("Error:"):
+            idx = lines.index(ln)
+            return " ".join(lines[idx : idx + 3])[:300]
+    return (lines[-1] if lines else "no diagnostic output")[:300]
+
+
+def run_terraform_validate(tmp_dir: Path, mirror_dir: Path) -> list[str]:
+    """Resolve a snippet against the real provider schemas.
+
+    Returns the diagnostics worth reporting, empty when the snippet is clean.
+    """
+    if not mirror_dir.exists() or not any(mirror_dir.iterdir()):
+        return []
+
+    env = {**dict(os.environ), "TF_IN_AUTOMATION": "1", "TF_INPUT": "0"}
+    with _TERRAFORM_SLOTS:
+        return _terraform_validate_locked(tmp_dir, mirror_dir, env)
+
+
+def _terraform_validate_locked(
+    tmp_dir: Path, mirror_dir: Path, env: dict[str, str]
+) -> list[str]:
+    try:
+        init = subprocess.run(
+            [
+                "terraform", "init", "-backend=false", "-input=false",
+                f"-plugin-dir={mirror_dir}",
+            ],
+            cwd=tmp_dir, capture_output=True, text=True, timeout=300, env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return ["terraform init timed out after 300s"]
+    if init.returncode != 0:
+        # A provider missing from the mirror is an environment problem, not a
+        # defect in the snippet, so say so rather than blaming the snippet.
+        return ["terraform init failed: " + first_error_line(init.stderr, init.stdout)]
+
+    try:
+        result = subprocess.run(
+            ["terraform", "validate", "-json"],
+            cwd=tmp_dir, capture_output=True, text=True, timeout=120, env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return ["terraform validate timed out after 120s"]
+
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        stderr = result.stderr.strip()
+        return [f"terraform validate: {stderr[:200]}"] if stderr else []
+
+    if data.get("valid"):
+        return []
+
+    issues = []
+    for diag in data.get("diagnostics", []):
+        if diag.get("severity") != "error":
+            continue
+        summary = diag.get("summary", "")
+        if summary.startswith(TF_VALIDATE_IGNORED_SUMMARY_PREFIXES):
+            continue
+        conditional = TF_VALIDATE_CONDITIONAL_IGNORES.get(summary)
+        if conditional is not None and conditional(diag):
+            continue
+        detail = " ".join((diag.get("detail") or "").split())
+        issues.append(f"terraform validate: {summary}: {detail}"[:300])
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # Validation orchestration
 # ---------------------------------------------------------------------------
@@ -420,7 +687,26 @@ def validate_block(
         (tmp_path / "main.tf").write_text(wrapper)
         write_tflint_config(tmp_path, providers)
         result = run_tflint(tmp_path, plugin_cache)
-        return block, result.success, result.issues
+        issues = list(result.issues)
+
+        # tflint runs first because it is the cheaper of the two and its
+        # findings are the more specific. terraform validate runs regardless of
+        # the tflint verdict so a snippet with a style warning still gets its
+        # schema checked.
+        # tflint has already seen the snippet as written. terraform validate
+        # gets a copy with dangling references neutralized, in its own
+        # directory so the tflint run is not affected by the substitution.
+        if terraform_available():
+            tf_dir = tmp_path / "tfvalidate"
+            tf_dir.mkdir()
+            (tf_dir / "main.tf").write_text(
+                generate_wrapper(neutralize_dangling_refs(sanitized), providers)
+            )
+            issues.extend(
+                run_terraform_validate(tf_dir, mirror_path(plugin_cache))
+            )
+
+        return block, not issues, issues
 
 
 def plugins_for(providers: frozenset[str] | set[str]) -> frozenset[str]:
@@ -469,6 +755,106 @@ def init_plugins_for_providers(
     return failed
 
 
+def mirror_path(plugin_cache: Path) -> Path:
+    """Where the provider mirror lives.
+
+    CI and a local full run both benefit from keeping the mirror across
+    invocations: building it is the single most expensive step and its contents
+    depend only on PROVIDER_MAP. Point CNSPEC_TF_MIRROR at a directory to reuse
+    one, otherwise it is built inside the run's own scratch space and discarded.
+    """
+    override = os.environ.get("CNSPEC_TF_MIRROR")
+    return Path(override) if override else plugin_cache / "tf-mirror"
+
+
+def build_provider_mirror(
+    provider_sets: set[frozenset[str]], mirror_dir: Path
+) -> None:
+    """Populate a read-only filesystem mirror of every provider we need.
+
+    Terraform's plugin cache is not safe for concurrent use: two workers running
+    `terraform init` against the same TF_PLUGIN_CACHE_DIR race on the same path
+    and leave a half-written binary, which surfaces as "exec format error" or a
+    checksum that does not match the lock file. `terraform providers mirror`
+    builds the layout once, serially, and the workers then init with
+    `-plugin-dir`, which only ever reads. That also keeps every worker off the
+    network.
+    """
+    if not terraform_available():
+        return
+    mirror_dir.mkdir(parents=True, exist_ok=True)
+    env = {**dict(os.environ), "TF_IN_AUTOMATION": "1", "TF_INPUT": "0"}
+
+    wanted = frozenset(
+        p for providers in provider_sets for p in providers if p in PROVIDER_MAP
+    )
+    if not wanted:
+        return
+
+    # A mirror handed to us by CNSPEC_TF_MIRROR is already complete for every
+    # provider in PROVIDER_MAP, so rebuilding it per target, or per agent
+    # sharing a checkout, is pure cost.
+    if all(
+        (mirror_dir / "registry.terraform.io" / PROVIDER_MAP[p][0]).exists()
+        for p in wanted
+    ):
+        return
+
+    with tempfile.TemporaryDirectory(prefix="tfmirror_") as tmp:
+        tmp_path = Path(tmp)
+        (tmp_path / "main.tf").write_text(generate_wrapper("", set(wanted)))
+        try:
+            result = subprocess.run(
+                ["terraform", "providers", "mirror", str(mirror_dir)],
+                cwd=tmp_path, capture_output=True, text=True,
+                timeout=1800, env=env,
+            )
+        except subprocess.TimeoutExpired:
+            print(
+                "Warning: terraform providers mirror timed out; "
+                "schema validation will be skipped",
+                file=sys.stderr,
+            )
+            return
+        if result.returncode != 0:
+            print(
+                "Warning: terraform providers mirror failed; schema validation "
+                "will be skipped: "
+                + first_error_line(result.stderr, result.stdout),
+                file=sys.stderr,
+            )
+            return
+
+    # Exec every provider binary once, serially, before the workers start. The
+    # first launch of a freshly written binary is slow enough to exceed
+    # terraform's plugin-start timeout, on macOS because Gatekeeper assesses it,
+    # and a worker that hits that reports "failed to instantiate provider ... to
+    # obtain schema" against a snippet that is perfectly fine. Paying it once
+    # here makes the pass deterministic.
+    with tempfile.TemporaryDirectory(prefix="tfwarm_") as tmp:
+        tmp_path = Path(tmp)
+        (tmp_path / "main.tf").write_text(generate_wrapper("", set(wanted)))
+        env = {**dict(os.environ), "TF_IN_AUTOMATION": "1", "TF_INPUT": "0"}
+        try:
+            subprocess.run(
+                [
+                    "terraform", "init", "-backend=false", "-input=false",
+                    f"-plugin-dir={mirror_dir}",
+                ],
+                cwd=tmp_path, capture_output=True, text=True, timeout=600, env=env,
+            )
+            subprocess.run(
+                ["terraform", "providers", "schema", "-json"],
+                cwd=tmp_path, capture_output=True, text=True, timeout=900, env=env,
+            )
+        except subprocess.TimeoutExpired:
+            print(
+                "Warning: provider warm-up timed out; the schema pass may report "
+                "spurious plugin-start failures",
+                file=sys.stderr,
+            )
+
+
 def validate_policy_file(
     filepath: Path, plugin_cache: Path, workers: int
 ) -> tuple[int, int]:
@@ -490,6 +876,7 @@ def validate_policy_file(
         if providers:
             provider_sets.add(frozenset(providers))
     failed_plugins = init_plugins_for_providers(provider_sets, plugin_cache)
+    build_provider_mirror(provider_sets, mirror_path(plugin_cache))
 
     resolved = filepath.resolve()
     try:
