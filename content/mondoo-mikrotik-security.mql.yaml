@@ -376,12 +376,15 @@ queries:
           desc: |
             To restrict management services to trusted source addresses using the RouterOS CLI:
 
-            Set the `address` field on each enabled service to your administrative network(s). For example, to limit SSH and WinBox to a management subnet:
+            Set the `address` field on every service that `/ip service print` reports as enabled. The field takes a comma-separated list of IPv4 and IPv6 prefixes, so several administrative networks can be permitted at once:
 
             ```text
-            /ip service set ssh address=192.168.88.0/24
-            /ip service set winbox address=192.168.88.0/24
+            /ip service set ssh address=192.168.88.0/24,10.10.0.0/24
+            /ip service set winbox address=192.168.88.0/24,10.10.0.0/24
+            /ip service set www-ssl address=192.168.88.0/24,10.10.0.0/24
             ```
+
+            A service left with an empty `address` still accepts connections from any host, so repeat the command for each remaining enabled service.
     refs:
       - url: https://help.mikrotik.com/docs/display/ROS/Services
         title: MikroTik RouterOS Services
@@ -499,9 +502,9 @@ queries:
       remediation:
         - id: cli
           desc: |
-            To remove the default admin account using the RouterOS CLI:
+            To disable the default admin account using the RouterOS CLI:
 
-            First create a replacement administrator account and confirm you can log in with it:
+            First create a replacement administrator account and confirm you can log in with it, so disabling `admin` does not leave the device without an administrator:
 
             ```text
             /user add name=netadmin group=full password=<strong-password>
@@ -630,7 +633,17 @@ queries:
           desc: |
             To set a non-default SNMP trap community using the RouterOS CLI:
 
+            The `trap-community` setting selects one of the communities defined under `/snmp community`, so the community has to exist before it can be selected. Create it first, scoped to the hosts allowed to reach the agent:
+
             ```text
+            /snmp community add name=<unique-community-string> address=<management-subnet> read-access=yes write-access=no
+            /snmp set trap-community=<unique-community-string>
+            ```
+
+            RouterOS ships with a community named `public`. If you would rather not add a second entry, rename the shipped one and select that instead. This also changes the string existing pollers must present, so update them at the same time:
+
+            ```text
+            /snmp community set [find name=public] name=<unique-community-string> address=<management-subnet> write-access=no
             /snmp set trap-community=<unique-community-string>
             ```
 
@@ -820,7 +833,9 @@ queries:
           desc: |
             To add a default-deny rule to the input chain using the RouterOS CLI:
 
-            Add accept rules for the traffic the router must handle (for example established/related connections and management access from trusted sources) **before** adding the final drop, then append the drop:
+            **Warning**: the drop rule takes effect the moment it is added and ends any management session whose source address is not covered by an accept rule above it. Enter Safe Mode first by pressing `[CTRL]+[X]` in the terminal or clicking **Safe Mode** in WinBox. RouterOS undoes every change made during a Safe Mode session if that session ends abnormally, so a rule that locks you out is rolled back once the connection drops.
+
+            Add the accept rules **before** the drop. The router has to accept established and related connections so replies to its own traffic are not discarded, and management access from your trusted sources so administration keeps working. Append the drop last:
 
             ```text
             /ip firewall filter add chain=input connection-state=established,related action=accept
