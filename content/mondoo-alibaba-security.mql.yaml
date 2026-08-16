@@ -43,6 +43,21 @@ policies:
           - uid: mondoo-alibaba-security-ram-password-policy-max-login-attempts
           - uid: mondoo-alibaba-security-ram-policy-no-full-admin
           - uid: mondoo-alibaba-security-ram-user-inactive-credentials
+      - title: Cloud SSO
+        checks:
+          - uid: mondoo-alibaba-security-cloudsso-mfa-required
+          - uid: mondoo-alibaba-security-cloudsso-password-policy-strong
+          - uid: mondoo-alibaba-security-cloudsso-no-self-service-credentials
+      - title: Container Registry (ACR)
+        checks:
+          - uid: mondoo-alibaba-security-acr-repository-not-public
+          - uid: mondoo-alibaba-security-acr-repository-tag-immutability
+          - uid: mondoo-alibaba-security-acr-instance-image-scanning
+      - title: Elasticsearch
+        checks:
+          - uid: mondoo-alibaba-security-es-instance-disk-encrypted
+          - uid: mondoo-alibaba-security-es-instance-no-public-network
+          - uid: mondoo-alibaba-security-es-instance-public-whitelist-restricted
       - title: Object Storage Service (OSS)
         checks:
           - uid: mondoo-alibaba-security-oss-bucket-encryption-enabled
@@ -4923,3 +4938,1031 @@ queries:
     filters: asset.platform == "alicloud-waf-instance"
     mql: |
       alicloud.waf.instance.domains.where(httpsEnabled == true).all(tlsVersion != "tlsv1" && tlsVersion != "tlsv1.1")
+
+  # ===========================================================================
+  # Cloud SSO
+  # ===========================================================================
+  - uid: mondoo-alibaba-security-cloudsso-mfa-required
+    title: Ensure Cloud SSO directories require multi-factor authentication
+    impact: 85
+    docs:
+      desc: |
+        This check ensures that every Cloud SSO directory demands a second factor on every sign-in. The setting has three states: `Enabled` requires a second factor from everyone, `Byp` requires one only for sign-ins the service judges risky, and `Disabled` never requires one. Only `Enabled` protects every session.
+
+        **Why this matters**
+
+        - **Cloud SSO fronts every member account:** A directory user signs in once and assumes roles across the resource directory, so one compromised sign-in reaches far beyond a single account.
+        - **Risk-based prompting has gaps:** `Byp` leaves the service to decide which sign-ins look risky, and an attacker operating from a familiar network or device is exactly the case it does not flag.
+        - **Passwords alone are routinely defeated:** Phishing, credential stuffing, and reuse remain the most common initial-access techniques.
+
+        **Risk mitigation**
+
+        - **Blocks credential-only takeover:** A stolen password on its own no longer produces a session.
+        - **Covers every user uniformly:** Enforcing at the directory level removes per-user gaps that opt-in enrollment leaves behind.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Cloud SSO console](https://cloudsso.console.aliyun.com/).
+        2. Go to **Settings** > **Multi-Factor Authentication**.
+        3. Review the MFA setting for each directory.
+
+        A passing directory shows MFA enabled for all users. A failing directory shows it disabled, or enabled only for sign-ins judged risky.
+
+        ### Audit via CLI
+
+        1. Read the MFA setting of each directory:
+
+        ```bash
+        aliyun cloudsso GetMFAAuthenticationSettings --DirectoryId <directory-id>
+        ```
+
+        A passing directory returns `Enabled`. A failing directory returns `Byp` or `Disabled`.
+      remediation:
+        - id: console
+          desc: |
+            To require MFA for every Cloud SSO sign-in in the console:
+
+            1. Sign in to the [Cloud SSO console](https://cloudsso.console.aliyun.com/).
+            2. Go to **Settings** > **Multi-Factor Authentication**.
+            3. Set the MFA policy to require a second factor for all users, and save.
+        - id: cli
+          desc: |
+            To require MFA for every sign-in with the `aliyun` CLI:
+
+            ```bash
+            aliyun cloudsso SetMFAAuthenticationStatus --DirectoryId <directory-id> \
+              --MFAAuthenticationStatus Enabled
+            ```
+        - id: terraform
+          desc: |
+            To require MFA in Terraform, set `mfa_authentication_status` to `Enabled`:
+
+            ```hcl
+            resource "alicloud_cloud_sso_directory" "example" {
+              directory_name            = "example-directory"
+              mfa_authentication_status = "Enabled"
+            }
+            ```
+    variants:
+      - uid: mondoo-alibaba-security-cloudsso-mfa-required-alicloud
+      - uid: mondoo-alibaba-security-cloudsso-mfa-required-terraform-hcl
+      - uid: mondoo-alibaba-security-cloudsso-mfa-required-terraform-plan
+      - uid: mondoo-alibaba-security-cloudsso-mfa-required-terraform-state
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: false
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-j
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+  - uid: mondoo-alibaba-security-cloudsso-mfa-required-alicloud
+    filters: asset.platform == "alicloud-account"
+    mql: |
+      alicloud.cloudsso.directories.all(mfaAuthenticationStatus == "Enabled")
+  - uid: mondoo-alibaba-security-cloudsso-mfa-required-terraform-hcl
+    filters: |
+      asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_cloud_sso_directory")
+    mql: |
+      terraform.resources("alicloud_cloud_sso_directory").all(
+        arguments["mfa_authentication_status"] == "Enabled"
+      )
+  - uid: mondoo-alibaba-security-cloudsso-mfa-required-terraform-plan
+    filters: |
+      asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_cloud_sso_directory")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "alicloud_cloud_sso_directory").all(
+        change.after["mfa_authentication_status"] == "Enabled"
+      )
+  - uid: mondoo-alibaba-security-cloudsso-mfa-required-terraform-state
+    filters: |
+      asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_cloud_sso_directory")
+    mql: |
+      terraform.state.resources.where(type == "alicloud_cloud_sso_directory").all(
+        values["mfa_authentication_status"] == "Enabled"
+      )
+
+  - uid: mondoo-alibaba-security-cloudsso-password-policy-strong
+    title: Ensure the Cloud SSO password policy enforces length and complexity
+    impact: 60
+    docs:
+      desc: |
+        This check ensures that every Cloud SSO directory requires passwords of at least 14 characters drawn from all four character classes: uppercase letters, lowercase letters, digits, and symbols. Cloud SSO keeps its own password policy, separate from the Resource Access Management policy, so a hardened RAM account says nothing about the directory its workforce actually signs in to.
+
+        **Why this matters**
+
+        - **Length defeats offline cracking:** Each additional character multiplies the work an attacker must do against a captured hash.
+        - **Character classes widen the keyspace:** Requiring all four classes removes the predictable all-lowercase passwords that dictionary attacks find first.
+        - **The directory policy is easy to miss:** Teams that harden RAM often leave the Cloud SSO directory at its defaults, where the workforce identities actually live.
+
+        **Risk mitigation**
+
+        - **Raises the cost of guessing:** Brute-force and credential-stuffing campaigns become impractical against the whole directory at once.
+        - **Applies uniformly:** A directory-level policy removes the per-user variation that guidance alone leaves behind.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Cloud SSO console](https://cloudsso.console.aliyun.com/).
+        2. Go to **Settings** > **Password Policy**.
+        3. Review the minimum length and the required character types.
+
+        A passing directory requires at least 14 characters and all four character types. A failing directory requires fewer characters or omits a character type.
+
+        ### Audit via CLI
+
+        1. Read the password policy of each directory:
+
+        ```bash
+        aliyun cloudsso GetPasswordPolicy --DirectoryId <directory-id>
+        ```
+
+        A passing directory returns `MinimumPasswordLength` of 14 or more with every `Require...` field set to `true`. A failing directory returns a shorter length or a `Require...` field set to `false`.
+      remediation:
+        - id: console
+          desc: |
+            To harden the Cloud SSO password policy in the console:
+
+            1. Sign in to the [Cloud SSO console](https://cloudsso.console.aliyun.com/).
+            2. Go to **Settings** > **Password Policy**.
+            3. Set the minimum length to 14 or more, require uppercase, lowercase, digits, and symbols, and save.
+        - id: cli
+          desc: |
+            To set a strong password policy with the `aliyun` CLI:
+
+            ```bash
+            aliyun cloudsso SetPasswordPolicy --DirectoryId <directory-id> \
+              --MinimumPasswordLength 14 --RequireUpperCaseChars true \
+              --RequireLowerCaseChars true --RequireNumbers true --RequireSymbols true
+            ```
+        - id: terraform
+          desc: |
+            To declare a strong password policy in Terraform, set every requirement in the `password_policy` block:
+
+            ```hcl
+            resource "alicloud_cloud_sso_directory" "example" {
+              directory_name = "example-directory"
+
+              password_policy {
+                min_password_length     = 14
+                require_upper_case_chars = true
+                require_lower_case_chars = true
+                require_numbers          = true
+                require_symbols          = true
+              }
+            }
+            ```
+    variants:
+      - uid: mondoo-alibaba-security-cloudsso-password-policy-strong-alicloud
+      - uid: mondoo-alibaba-security-cloudsso-password-policy-strong-terraform-hcl
+      - uid: mondoo-alibaba-security-cloudsso-password-policy-strong-terraform-plan
+      - uid: mondoo-alibaba-security-cloudsso-password-policy-strong-terraform-state
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: false
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+  - uid: mondoo-alibaba-security-cloudsso-password-policy-strong-alicloud
+    filters: asset.platform == "alicloud-account"
+    mql: |
+      alicloud.cloudsso.directories.all(passwordPolicy.minPasswordLength >= 14)
+      alicloud.cloudsso.directories.all(passwordPolicy.requireUpperCaseChars == true)
+      alicloud.cloudsso.directories.all(passwordPolicy.requireLowerCaseChars == true)
+      alicloud.cloudsso.directories.all(passwordPolicy.requireNumbers == true)
+      alicloud.cloudsso.directories.all(passwordPolicy.requireSymbols == true)
+  - uid: mondoo-alibaba-security-cloudsso-password-policy-strong-terraform-hcl
+    filters: |
+      asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_cloud_sso_directory")
+    mql: |
+      terraform.resources("alicloud_cloud_sso_directory").all(
+        blocks.where(type == "password_policy") != empty &&
+        blocks.where(type == "password_policy").all(
+          arguments["min_password_length"] != empty &&
+          arguments["min_password_length"] >= 14 &&
+          arguments["require_upper_case_chars"] == true &&
+          arguments["require_lower_case_chars"] == true &&
+          arguments["require_numbers"] == true &&
+          arguments["require_symbols"] == true
+        )
+      )
+  - uid: mondoo-alibaba-security-cloudsso-password-policy-strong-terraform-plan
+    filters: |
+      asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_cloud_sso_directory")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "alicloud_cloud_sso_directory").all(
+        change.after["password_policy"] != empty &&
+        change.after["password_policy"].all(
+          _["min_password_length"] != empty &&
+          _["min_password_length"] >= 14 &&
+          _["require_upper_case_chars"] == true &&
+          _["require_lower_case_chars"] == true &&
+          _["require_numbers"] == true &&
+          _["require_symbols"] == true
+        )
+      )
+  - uid: mondoo-alibaba-security-cloudsso-password-policy-strong-terraform-state
+    filters: |
+      asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_cloud_sso_directory")
+    mql: |
+      terraform.state.resources.where(type == "alicloud_cloud_sso_directory").all(
+        values["password_policy"] != empty &&
+        values["password_policy"].all(
+          _["min_password_length"] != empty &&
+          _["min_password_length"] >= 14 &&
+          _["require_upper_case_chars"] == true &&
+          _["require_lower_case_chars"] == true &&
+          _["require_numbers"] == true &&
+          _["require_symbols"] == true
+        )
+      )
+
+  - uid: mondoo-alibaba-security-cloudsso-no-self-service-credentials
+    title: Ensure Cloud SSO users cannot mint their own long-lived credentials
+    impact: 70
+    docs:
+      desc: |
+        This check ensures that no Cloud SSO directory lets a signed-in user retrieve long-lived access credentials for themselves. When the setting is on, a user who has completed a sign-in can mint credentials that keep working after the session that produced them has ended, which converts a short-lived interactive session into standing programmatic access.
+
+        **Why this matters**
+
+        - **It defeats session lifetime:** Cloud SSO bounds how long a session lasts; a self-issued credential outlives that bound and keeps working after sign-out.
+        - **It widens the value of one compromise:** An attacker who lands a single session can leave with credentials that survive password resets and MFA re-enrollment.
+        - **The credentials are invisible to sign-in monitoring:** Later use looks like ordinary API traffic rather than a new sign-in, so alerting on unusual logins never fires.
+
+        **Risk mitigation**
+
+        - **Keeps access tied to the session:** Every request traces back to a live, re-authenticated sign-in.
+        - **Shrinks the compromise window:** Ending the session ends the access, with no separate credential to find and revoke.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Cloud SSO console](https://cloudsso.console.aliyun.com/).
+        2. Go to **Settings** > **Login Preference**.
+        3. Review whether users may obtain access credentials for themselves.
+
+        A passing directory has the option turned off. A failing directory allows users to retrieve their own credentials.
+
+        ### Audit via CLI
+
+        1. Read the login preference of each directory:
+
+        ```bash
+        aliyun cloudsso GetLoginPreference --DirectoryId <directory-id>
+        ```
+
+        A passing directory returns `AllowUserToGetCredentials` of `false`. A failing directory returns `true`.
+      remediation:
+        - id: console
+          desc: |
+            To stop users minting their own credentials in the console:
+
+            1. Sign in to the [Cloud SSO console](https://cloudsso.console.aliyun.com/).
+            2. Go to **Settings** > **Login Preference**.
+            3. Turn off the option that lets users obtain access credentials, and save.
+        - id: cli
+          desc: |
+            To turn off self-service credentials with the `aliyun` CLI:
+
+            ```bash
+            aliyun cloudsso SetLoginPreference --DirectoryId <directory-id> \
+              --AllowUserToGetCredentials false
+            ```
+        - id: terraform
+          desc: |
+            To turn off self-service credentials in Terraform, set `allow_user_to_get_credentials` to `false` in the `login_preference` block:
+
+            ```hcl
+            resource "alicloud_cloud_sso_directory" "example" {
+              directory_name = "example-directory"
+
+              login_preference {
+                allow_user_to_get_credentials = false
+              }
+            }
+            ```
+    variants:
+      - uid: mondoo-alibaba-security-cloudsso-no-self-service-credentials-alicloud
+      - uid: mondoo-alibaba-security-cloudsso-no-self-service-credentials-terraform-hcl
+      - uid: mondoo-alibaba-security-cloudsso-no-self-service-credentials-terraform-plan
+      - uid: mondoo-alibaba-security-cloudsso-no-self-service-credentials-terraform-state
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-15
+      compliance/dora: false
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-171: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+  - uid: mondoo-alibaba-security-cloudsso-no-self-service-credentials-alicloud
+    filters: asset.platform == "alicloud-account"
+    mql: |
+      alicloud.cloudsso.directories.all(allowUserToGetCredentials == false)
+  - uid: mondoo-alibaba-security-cloudsso-no-self-service-credentials-terraform-hcl
+    filters: |
+      asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_cloud_sso_directory")
+    mql: |
+      terraform.resources("alicloud_cloud_sso_directory").all(
+        blocks.where(type == "login_preference") != empty &&
+        blocks.where(type == "login_preference").all(
+          arguments["allow_user_to_get_credentials"] == false
+        )
+      )
+  - uid: mondoo-alibaba-security-cloudsso-no-self-service-credentials-terraform-plan
+    filters: |
+      asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_cloud_sso_directory")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "alicloud_cloud_sso_directory").all(
+        change.after["login_preference"] != empty &&
+        change.after["login_preference"].all(_["allow_user_to_get_credentials"] == false)
+      )
+  - uid: mondoo-alibaba-security-cloudsso-no-self-service-credentials-terraform-state
+    filters: |
+      asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_cloud_sso_directory")
+    mql: |
+      terraform.state.resources.where(type == "alicloud_cloud_sso_directory").all(
+        values["login_preference"] != empty &&
+        values["login_preference"].all(_["allow_user_to_get_credentials"] == false)
+      )
+
+  # ===========================================================================
+  # Container Registry (ACR)
+  # ===========================================================================
+  - uid: mondoo-alibaba-security-acr-repository-not-public
+    title: Ensure Container Registry repositories are not pullable anonymously
+    impact: 90
+    docs:
+      desc: |
+        This check ensures that no Container Registry repository can be pulled without credentials. A repository is anonymously pullable when its visibility is `PUBLIC` and the registry instance answers on an internet endpoint, at which point anyone who learns or guesses the repository path can download every image in it.
+
+        **Why this matters**
+
+        - **Images carry more than application code:** Layers routinely include configuration files, private dependencies, and credentials baked in at build time, none of which are recoverable once downloaded.
+        - **Repository paths are guessable:** Registry namespaces follow organizational naming, so a public repository is discoverable without any prior access.
+        - **Pulls leave no attribution:** An anonymous pull identifies no principal, so exfiltration through a public repository is invisible in access logs.
+
+        **Risk mitigation**
+
+        - **Forces authenticated pulls:** Every download presents credentials that can be authorized, logged, and revoked.
+        - **Contains build-time leakage:** A secret accidentally baked into a layer stays inside the trust boundary instead of reaching the internet.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Container Registry console](https://cr.console.aliyun.com/).
+        2. Open the instance and go to **Repositories**.
+        3. Review the repository type of each repository.
+
+        A passing repository is **Private**. A failing repository is **Public**.
+
+        ### Audit via CLI
+
+        1. List the repositories in an instance and review each repository type:
+
+        ```bash
+        aliyun cr ListRepository --InstanceId <instance-id>
+        ```
+
+        A passing repository returns a `RepoType` of `PRIVATE`. A failing repository returns `PUBLIC`.
+      remediation:
+        - id: console
+          desc: |
+            To make a repository private in the console:
+
+            1. Sign in to the [Container Registry console](https://cr.console.aliyun.com/).
+            2. Open the instance, go to **Repositories**, and select the repository.
+            3. In **Repository Information**, change the repository type to **Private**, and save.
+        - id: cli
+          desc: |
+            To make a repository private with the `aliyun` CLI:
+
+            ```bash
+            aliyun cr UpdateRepository --InstanceId <instance-id> \
+              --RepoId <repo-id> --RepoType PRIVATE
+            ```
+        - id: terraform
+          desc: |
+            To declare a private repository in Terraform, set `repo_type` to `PRIVATE`:
+
+            ```hcl
+            resource "alicloud_cr_ee_repo" "example" {
+              instance_id = "cri-example"
+              namespace   = "example-namespace"
+              name        = "example-repo"
+              summary     = "example repository"
+              repo_type   = "PRIVATE"
+            }
+            ```
+    variants:
+      - uid: mondoo-alibaba-security-acr-repository-not-public-alicloud
+      - uid: mondoo-alibaba-security-acr-repository-not-public-terraform-hcl
+      - uid: mondoo-alibaba-security-acr-repository-not-public-terraform-plan
+      - uid: mondoo-alibaba-security-acr-repository-not-public-terraform-state
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: false
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-22
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-22
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7
+      compliance/soc2-2017: soc2-control-cc6-1-7
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+  - uid: mondoo-alibaba-security-acr-repository-not-public-alicloud
+    filters: asset.platform == "alicloud-acr-instance"
+    mql: |
+      alicloud.acr.instance.repositories.all(isPublic == false)
+  - uid: mondoo-alibaba-security-acr-repository-not-public-terraform-hcl
+    filters: |
+      asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_cr_ee_repo")
+    mql: |
+      terraform.resources("alicloud_cr_ee_repo").all(arguments["repo_type"] == "PRIVATE")
+  - uid: mondoo-alibaba-security-acr-repository-not-public-terraform-plan
+    filters: |
+      asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_cr_ee_repo")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "alicloud_cr_ee_repo").all(
+        change.after["repo_type"] == "PRIVATE"
+      )
+  - uid: mondoo-alibaba-security-acr-repository-not-public-terraform-state
+    filters: |
+      asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_cr_ee_repo")
+    mql: |
+      terraform.state.resources.where(type == "alicloud_cr_ee_repo").all(
+        values["repo_type"] == "PRIVATE"
+      )
+
+  - uid: mondoo-alibaba-security-acr-repository-tag-immutability
+    title: Ensure Container Registry repositories have tag immutability enabled
+    impact: 70
+    docs:
+      desc: |
+        This check ensures that every Container Registry repository forbids overwriting an existing tag. Without tag immutability a tag is a movable pointer, so `app:1.4.2` can be repointed at different content after it was reviewed, signed off, and deployed, and every later pull of that tag silently gets the new image.
+
+        **Why this matters**
+
+        - **The reviewed artifact stops being the deployed artifact:** Scanning, signing, and approval all attach to content that a later push can replace under the same name.
+        - **Rollback becomes unreliable:** Redeploying a known-good tag no longer reproduces the known-good image, so incident recovery can reintroduce the problem.
+        - **It is a quiet supply-chain foothold:** Anyone with push access can change what production runs without touching any deployment manifest.
+
+        **Risk mitigation**
+
+        - **Binds a name to fixed content:** A tag that cannot be moved means what was approved is what runs.
+        - **Makes changes explicit:** Shipping different content requires a new tag, which shows up in the deployment diff.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Container Registry console](https://cr.console.aliyun.com/).
+        2. Open the instance, go to **Repositories**, and select a repository.
+        3. In **Repository Information**, review the tag immutability setting.
+
+        A passing repository has tag immutability enabled. A failing repository has it disabled.
+
+        ### Audit via CLI
+
+        1. Read the repository configuration and review the immutability flag:
+
+        ```bash
+        aliyun cr GetRepository --InstanceId <instance-id> --RepoId <repo-id>
+        ```
+
+        A passing repository returns `TagImmutability` of `true`. A failing repository returns `false`.
+      remediation:
+        - id: console
+          desc: |
+            To enable tag immutability in the console:
+
+            1. Sign in to the [Container Registry console](https://cr.console.aliyun.com/).
+            2. Open the instance, go to **Repositories**, and select the repository.
+            3. In **Repository Information**, turn on tag immutability, and save.
+        - id: cli
+          desc: |
+            To enable tag immutability with the `aliyun` CLI:
+
+            ```bash
+            aliyun cr UpdateRepository --InstanceId <instance-id> \
+              --RepoId <repo-id> --TagImmutability true
+            ```
+        - id: terraform
+          desc: |
+            To enable tag immutability in Terraform, set `tag_immutability` to `true`:
+
+            ```hcl
+            resource "alicloud_cr_ee_repo" "example" {
+              instance_id      = "cri-example"
+              namespace        = "example-namespace"
+              name             = "example-repo"
+              summary          = "example repository"
+              repo_type        = "PRIVATE"
+              tag_immutability = true
+            }
+            ```
+    variants:
+      - uid: mondoo-alibaba-security-acr-repository-tag-immutability-alicloud
+      - uid: mondoo-alibaba-security-acr-repository-tag-immutability-terraform-hcl
+      - uid: mondoo-alibaba-security-acr-repository-tag-immutability-terraform-plan
+      - uid: mondoo-alibaba-security-acr-repository-tag-immutability-terraform-state
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ais-06
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-21
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: nist-csf-1-pr-ds-6
+      compliance/nist-csf-2: nist-csf-2-id-ra-09
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-7
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a08
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-8-5
+      compliance/vda-isa-5: false
+  - uid: mondoo-alibaba-security-acr-repository-tag-immutability-alicloud
+    filters: asset.platform == "alicloud-acr-instance"
+    mql: |
+      alicloud.acr.instance.repositories.all(tagImmutability == true)
+  - uid: mondoo-alibaba-security-acr-repository-tag-immutability-terraform-hcl
+    filters: |
+      asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_cr_ee_repo")
+    mql: |
+      terraform.resources("alicloud_cr_ee_repo").all(arguments["tag_immutability"] == true)
+  - uid: mondoo-alibaba-security-acr-repository-tag-immutability-terraform-plan
+    filters: |
+      asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_cr_ee_repo")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "alicloud_cr_ee_repo").all(
+        change.after["tag_immutability"] == true
+      )
+  - uid: mondoo-alibaba-security-acr-repository-tag-immutability-terraform-state
+    filters: |
+      asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_cr_ee_repo")
+    mql: |
+      terraform.state.resources.where(type == "alicloud_cr_ee_repo").all(
+        values["tag_immutability"] == true
+      )
+
+  # No Terraform variants: the alicloud provider exposes no resource for Container Registry
+  # scan rules, so which repositories are scanned and on what trigger cannot be declared in
+  # Terraform. Revisit if aliyun/alicloud gains an alicloud_cr_ee_scan_rule resource.
+  - uid: mondoo-alibaba-security-acr-instance-image-scanning
+    title: Ensure Container Registry instances have image scan rules configured
+    impact: 70
+    docs:
+      desc: |
+        This check ensures that every Container Registry instance has at least one image scan rule. A scan rule is what makes vulnerability scanning happen on its own: it names the repositories and tag patterns to scan and the trigger that starts a scan. With no rule the registry still offers scanning, but only if somebody remembers to start one by hand, which means images are pushed and deployed unexamined.
+
+        **Why this matters**
+
+        - **Container images accumulate known vulnerabilities:** Base images and system packages age between rebuilds, so an image that was clean at build time is not clean months later.
+        - **Manual scanning does not scale:** A registry with dozens of repositories and continuous pushes has no realistic manual path to full coverage.
+        - **Scanning on push catches problems before deployment:** Finding a vulnerable layer at push time is far cheaper than finding it running in production.
+
+        **Risk mitigation**
+
+        - **Gives continuous coverage:** Every push matching the rule is examined without human involvement.
+        - **Produces an inventory of exposure:** Scan results turn "we might have vulnerable images" into a concrete, prioritizable list.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Container Registry console](https://cr.console.aliyun.com/).
+        2. Open the instance and go to **Security** > **Image Scan**.
+        3. Review the configured scan rules.
+
+        A passing instance has at least one scan rule. A failing instance has none.
+
+        ### Audit via CLI
+
+        1. List the scan rules of the instance:
+
+        ```bash
+        aliyun cr ListScanRule --InstanceId <instance-id>
+        ```
+
+        A passing instance returns one or more rules. A failing instance returns an empty list.
+      remediation:
+        - id: console
+          desc: |
+            To add an image scan rule in the console:
+
+            1. Sign in to the [Container Registry console](https://cr.console.aliyun.com/).
+            2. Open the instance and go to **Security** > **Image Scan**.
+            3. Create a scan rule, set its scope to the repositories you want covered, and choose the on-push trigger.
+        - id: cli
+          desc: |
+            To create a scan rule that runs on every push with the `aliyun` CLI:
+
+            ```bash
+            aliyun cr CreateScanRule --InstanceId <instance-id> \
+              --RuleName scan-on-push --ScanType VUL --ScanScope NAMESPACE \
+              --Namespaces '["<namespace>"]' --RepoTagFilterPattern '.*' --TriggerType AUTO
+            ```
+        # No Terraform remediation: the alicloud provider exposes no resource for Container
+        # Registry scan rules, so this cannot be declared in Terraform.
+    variants:
+      - uid: mondoo-alibaba-security-acr-instance-image-scanning-alicloud
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-07
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: nist-csf-1-id-ra-1
+      compliance/nist-csf-2: nist-csf-2-id-ra-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-11-2
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ra-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a03
+      compliance/pci-dss-4: pcidss-requirement-11
+      compliance/soc2-2017: soc2-control-cc7-1-2
+      compliance/vda-isa-5: vda-isa-5-5-2-5
+  - uid: mondoo-alibaba-security-acr-instance-image-scanning-alicloud
+    filters: asset.platform == "alicloud-acr-instance"
+    mql: |
+      alicloud.acr.instance.scanRules != empty
+
+  # ===========================================================================
+  # Elasticsearch
+  # ===========================================================================
+  - uid: mondoo-alibaba-security-es-instance-disk-encrypted
+    title: Ensure Elasticsearch cluster data node disks are encrypted at rest
+    impact: 80
+    docs:
+      desc: |
+        This check ensures that every Elasticsearch cluster stores its indexed data on encrypted data node disks. Disk encryption is chosen when the cluster is created and cannot be turned on afterwards, so a cluster built without it stays unencrypted for its whole life.
+
+        **Why this matters**
+
+        - **Search clusters concentrate sensitive data:** Indexes are built from logs, documents, and application records, often holding personal data drawn from many systems at once.
+        - **Encryption at rest covers the storage layer:** It protects data on the underlying disks and in the snapshots taken from them, where access controls of the search API no longer apply.
+        - **The decision is permanent:** Because the setting cannot be changed later, an unencrypted cluster requires a rebuild and reindex to fix.
+
+        **Risk mitigation**
+
+        - **Removes plaintext at rest:** Media, backups, and detached volumes yield ciphertext instead of readable index data.
+        - **Supports data-protection obligations:** Encryption at rest is an explicit expectation of most regulatory regimes covering personal data.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Elasticsearch console](https://elasticsearch.console.aliyun.com/).
+        2. Open each cluster and go to **Basic Information**.
+        3. Review the disk encryption setting of the data nodes.
+
+        A passing cluster shows disk encryption enabled. A failing cluster shows it disabled.
+
+        ### Audit via CLI
+
+        1. Describe each cluster and review the data node configuration:
+
+        ```bash
+        aliyun elasticsearch DescribeInstance --InstanceId <instance-id>
+        ```
+
+        A passing cluster returns `diskEncryption` of `true` on the data node spec. A failing cluster returns `false`.
+      remediation:
+        - id: console
+          desc: |
+            Disk encryption cannot be enabled on an existing Elasticsearch cluster. To move to an encrypted cluster in the console:
+
+            1. Sign in to the [Elasticsearch console](https://elasticsearch.console.aliyun.com/).
+            2. Create a new cluster and turn on disk encryption for the data nodes.
+            3. Reindex or restore a snapshot into the new cluster, cut clients over, and release the old cluster.
+        - id: cli
+          desc: |
+            To create a replacement cluster with encrypted data node disks using the `aliyun` CLI:
+
+            ```bash
+            aliyun elasticsearch CreateInstance --body '{"nodeSpec":{"diskEncryption":true}}'
+            ```
+        - id: terraform
+          desc: |
+            To declare an encrypted cluster in Terraform, set `data_node_disk_encrypted` to `true`:
+
+            ```hcl
+            resource "alicloud_elasticsearch_instance" "example" {
+              instance_charge_type     = "PostPaid"
+              data_node_amount         = 2
+              data_node_spec           = "elasticsearch.sn2ne.large"
+              data_node_disk_size      = 20
+              data_node_disk_type      = "cloud_ssd"
+              data_node_disk_encrypted = true
+              version                  = "7.10_with_X-Pack"
+              vswitch_id               = "vsw-example"
+              password                 = var.elasticsearch_password
+            }
+            ```
+    variants:
+      - uid: mondoo-alibaba-security-es-instance-disk-encrypted-alicloud
+      - uid: mondoo-alibaba-security-es-instance-disk-encrypted-terraform-hcl
+      - uid: mondoo-alibaba-security-es-instance-disk-encrypted-terraform-plan
+      - uid: mondoo-alibaba-security-es-instance-disk-encrypted-terraform-state
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-3
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+  - uid: mondoo-alibaba-security-es-instance-disk-encrypted-alicloud
+    filters: asset.platform == "alicloud-elasticsearch-instance"
+    mql: |
+      alicloud.es.instance.diskEncrypted == true
+  - uid: mondoo-alibaba-security-es-instance-disk-encrypted-terraform-hcl
+    filters: |
+      asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_elasticsearch_instance")
+    mql: |
+      terraform.resources("alicloud_elasticsearch_instance").all(
+        arguments["data_node_disk_encrypted"] == true
+      )
+  - uid: mondoo-alibaba-security-es-instance-disk-encrypted-terraform-plan
+    filters: |
+      asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_elasticsearch_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "alicloud_elasticsearch_instance").all(
+        change.after["data_node_disk_encrypted"] == true
+      )
+  - uid: mondoo-alibaba-security-es-instance-disk-encrypted-terraform-state
+    filters: |
+      asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_elasticsearch_instance")
+    mql: |
+      terraform.state.resources.where(type == "alicloud_elasticsearch_instance").all(
+        values["data_node_disk_encrypted"] == true
+      )
+
+  - uid: mondoo-alibaba-security-es-instance-no-public-network
+    title: Ensure Elasticsearch clusters do not answer on a public endpoint
+    impact: 85
+    docs:
+      desc: |
+        This check ensures that no Elasticsearch cluster exposes a public network endpoint. With the public endpoint switched off a cluster is reachable only from inside its VPC; with it on, the cluster answers on an internet address and the public IP allowlist becomes the only thing between the index and the internet.
+
+        **Why this matters**
+
+        - **Search endpoints are directly queryable:** The Elasticsearch API returns documents, so reaching the endpoint with valid credentials is equivalent to reading the data.
+        - **Allowlists drift:** A public endpoint gated only by an address list degrades quietly as ranges are widened for convenience or troubleshooting.
+        - **Internet-facing search clusters are actively hunted:** Exposed Elasticsearch endpoints are a long-standing source of large-scale data disclosure.
+
+        **Risk mitigation**
+
+        - **Removes the internet path entirely:** Traffic must originate inside the VPC or arrive through a controlled network connection.
+        - **Makes the network boundary the primary control:** Access no longer depends on an allowlist staying correct over time.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Elasticsearch console](https://elasticsearch.console.aliyun.com/).
+        2. Open each cluster and go to **Security**.
+        3. Review whether the public network endpoint is enabled.
+
+        A passing cluster has the public endpoint disabled. A failing cluster has it enabled.
+
+        ### Audit via CLI
+
+        1. Describe each cluster and review its network configuration:
+
+        ```bash
+        aliyun elasticsearch DescribeInstance --InstanceId <instance-id>
+        ```
+
+        A passing cluster returns `enablePublic` of `false`. A failing cluster returns `true`.
+      remediation:
+        - id: console
+          desc: |
+            To turn off the public endpoint in the console:
+
+            1. Sign in to the [Elasticsearch console](https://elasticsearch.console.aliyun.com/).
+            2. Open the cluster and go to **Security**.
+            3. Disable the public network access, and save.
+        - id: cli
+          desc: |
+            To turn off the public endpoint with the `aliyun` CLI:
+
+            ```bash
+            aliyun elasticsearch UpdatePublicNetwork --InstanceId <instance-id> \
+              --body '{"enablePublic":false}'
+            ```
+        - id: terraform
+          desc: |
+            To keep the cluster private in Terraform, set `enable_public` to `false`:
+
+            ```hcl
+            resource "alicloud_elasticsearch_instance" "example" {
+              instance_charge_type = "PostPaid"
+              data_node_amount     = 2
+              data_node_spec       = "elasticsearch.sn2ne.large"
+              data_node_disk_size  = 20
+              data_node_disk_type  = "cloud_ssd"
+              version              = "7.10_with_X-Pack"
+              vswitch_id           = "vsw-example"
+              password             = var.elasticsearch_password
+              enable_public        = false
+            }
+            ```
+    variants:
+      - uid: mondoo-alibaba-security-es-instance-no-public-network-alicloud
+      - uid: mondoo-alibaba-security-es-instance-no-public-network-terraform-hcl
+      - uid: mondoo-alibaba-security-es-instance-no-public-network-terraform-plan
+      - uid: mondoo-alibaba-security-es-instance-no-public-network-terraform-state
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: false
+  - uid: mondoo-alibaba-security-es-instance-no-public-network-alicloud
+    filters: asset.platform == "alicloud-elasticsearch-instance"
+    mql: |
+      alicloud.es.instance.publicNetworkEnabled == false
+  - uid: mondoo-alibaba-security-es-instance-no-public-network-terraform-hcl
+    filters: |
+      asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_elasticsearch_instance")
+    mql: |
+      terraform.resources("alicloud_elasticsearch_instance").all(
+        arguments["enable_public"] != true
+      )
+  - uid: mondoo-alibaba-security-es-instance-no-public-network-terraform-plan
+    filters: |
+      asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_elasticsearch_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "alicloud_elasticsearch_instance").all(
+        change.after["enable_public"] != true
+      )
+  - uid: mondoo-alibaba-security-es-instance-no-public-network-terraform-state
+    filters: |
+      asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_elasticsearch_instance")
+    mql: |
+      terraform.state.resources.where(type == "alicloud_elasticsearch_instance").all(
+        values["enable_public"] != true
+      )
+
+  - uid: mondoo-alibaba-security-es-instance-public-whitelist-restricted
+    title: Ensure Elasticsearch public allowlists are not open to the internet
+    impact: 85
+    docs:
+      desc: |
+        This check ensures that no Elasticsearch cluster with a public endpoint allows every source address. When the public network is switched on, the public IP allowlist is the whole of the access control at the network layer, and an entry of `0.0.0.0/0` removes it, leaving the cluster credentials as the only barrier between the index and the internet.
+
+        **Why this matters**
+
+        - **A wide-open allowlist is the same as no allowlist:** Every host on the internet can open a connection and begin authenticating.
+        - **Credential attacks become continuous:** With the endpoint reachable from anywhere, brute-force and credential-stuffing traffic never stops.
+        - **It is often a leftover:** `0.0.0.0/0` is added during a migration or a debugging session and rarely removed once the work is finished.
+
+        **Risk mitigation**
+
+        - **Restores a network barrier:** Only named ranges can reach the endpoint at all, so authentication is a second layer rather than the only one.
+        - **Shrinks the reachable surface:** Scanning and exploitation traffic from unrelated networks never arrives.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Elasticsearch console](https://elasticsearch.console.aliyun.com/).
+        2. Open each cluster with a public endpoint and go to **Security** > **Public Network Whitelist**.
+        3. Review the entries.
+
+        A passing cluster lists only specific ranges, or has no public endpoint at all. A failing cluster lists `0.0.0.0/0`.
+
+        ### Audit via CLI
+
+        1. Describe each cluster and review the public allowlist:
+
+        ```bash
+        aliyun elasticsearch DescribeInstance --InstanceId <instance-id>
+        ```
+
+        A passing cluster returns a `publicIpWhitelist` without `0.0.0.0/0`. A failing cluster includes it.
+      remediation:
+        - id: console
+          desc: |
+            To narrow the public allowlist in the console:
+
+            1. Sign in to the [Elasticsearch console](https://elasticsearch.console.aliyun.com/).
+            2. Open the cluster and go to **Security** > **Public Network Whitelist**.
+            3. Replace `0.0.0.0/0` with the specific ranges that need access, and save.
+        - id: cli
+          desc: |
+            To replace the public allowlist with specific ranges using the `aliyun` CLI:
+
+            ```bash
+            aliyun elasticsearch UpdatePublicWhiteIps --InstanceId <instance-id> \
+              --body '{"publicIpWhitelist":["203.0.113.0/24"]}'
+            ```
+        - id: terraform
+          desc: |
+            To scope the public allowlist in Terraform, list only the ranges that need access:
+
+            ```hcl
+            resource "alicloud_elasticsearch_instance" "example" {
+              instance_charge_type = "PostPaid"
+              data_node_amount     = 2
+              data_node_spec       = "elasticsearch.sn2ne.large"
+              data_node_disk_size  = 20
+              data_node_disk_type  = "cloud_ssd"
+              version              = "7.10_with_X-Pack"
+              vswitch_id           = "vsw-example"
+              password             = var.elasticsearch_password
+              enable_public        = true
+              public_whitelist     = ["203.0.113.0/24"]
+            }
+            ```
+    variants:
+      - uid: mondoo-alibaba-security-es-instance-public-whitelist-restricted-alicloud
+      - uid: mondoo-alibaba-security-es-instance-public-whitelist-restricted-terraform-hcl
+      - uid: mondoo-alibaba-security-es-instance-public-whitelist-restricted-terraform-plan
+      - uid: mondoo-alibaba-security-es-instance-public-whitelist-restricted-terraform-state
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: false
+  - uid: mondoo-alibaba-security-es-instance-public-whitelist-restricted-alicloud
+    filters: asset.platform == "alicloud-elasticsearch-instance"
+    mql: |
+      alicloud.es.instance.publicNetworkEnabled == false ||
+      alicloud.es.instance.publicIpWhitelist.none(_ == "0.0.0.0/0")
+  - uid: mondoo-alibaba-security-es-instance-public-whitelist-restricted-terraform-hcl
+    filters: |
+      asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_elasticsearch_instance")
+    mql: |
+      terraform.resources("alicloud_elasticsearch_instance").all(
+        arguments["enable_public"] != true ||
+        arguments["public_whitelist"] == empty ||
+        arguments["public_whitelist"].none(_ == "0.0.0.0/0")
+      )
+  - uid: mondoo-alibaba-security-es-instance-public-whitelist-restricted-terraform-plan
+    filters: |
+      asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_elasticsearch_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "alicloud_elasticsearch_instance").map(change.after).all(
+        _["enable_public"] != true ||
+        _["public_whitelist"] == empty ||
+        _["public_whitelist"].none(_ == "0.0.0.0/0")
+      )
+  - uid: mondoo-alibaba-security-es-instance-public-whitelist-restricted-terraform-state
+    filters: |
+      asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_elasticsearch_instance")
+    mql: |
+      terraform.state.resources.where(type == "alicloud_elasticsearch_instance").map(values).all(
+        _["enable_public"] != true ||
+        _["public_whitelist"] == empty ||
+        _["public_whitelist"].none(_ == "0.0.0.0/0")
+      )
