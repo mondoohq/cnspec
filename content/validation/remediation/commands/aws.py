@@ -86,32 +86,47 @@ def _xform_name(name: str, sep: str = "_") -> str:
     return _XFORM_END_CAP.sub(r"\1" + sep + r"\2", s).lower()
 
 
-def _load_aws_service_ops(service_dir: Path) -> tuple[list[str], dict[str, list[str]]]:
+def _load_aws_service_ops(
+    service_dir: Path,
+) -> tuple[list[str], dict[str, list[str]], dict[str, list[str]]]:
     """Parse `<service>/<api-version>/service-2.json` and return
-    (subcommands, {subcommand: flags}) exactly as the AWS CLI exposes them.
+    (subcommands, {subcommand: flags}, {subcommand: required flags}) exactly as
+    the AWS CLI exposes them.
+
+    A member listed in the input shape's `required` array is one the CLI refuses
+    to run without, so a snippet that omits it fails argument parsing before it
+    ever reaches AWS. Members carrying `idempotencyToken` are excluded: botocore
+    generates a value for those when the caller leaves them out, so requiring
+    them here would flag working commands.
     """
     candidates = sorted(service_dir.glob("*/service-2.json"))
     if not candidates:
-        return [], {}
+        return [], {}, {}
     data = json.loads(candidates[-1].read_text())
     shapes = data.get("shapes", {})
     subcommands: list[str] = []
     flag_map: dict[str, list[str]] = {}
+    required_map: dict[str, list[str]] = {}
     for op_name, op in data.get("operations", {}).items():
         subcmd = _xform_name(op_name).replace("_", "-")
         subcommands.append(subcmd)
         flags: list[str] = []
+        required: list[str] = []
         input_ref = op.get("input")
         if input_ref:
             input_shape = shapes.get(input_ref.get("shape", ""), {})
+            required_members = set(input_shape.get("required", []))
             for m_name, m_ref in input_shape.get("members", {}).items():
                 kebab = _xform_name(m_name).replace("_", "-")
                 flags.append(f"--{kebab}")
                 m_shape = shapes.get(m_ref.get("shape", ""), {})
                 if m_shape.get("type") == "boolean":
                     flags.append(f"--no-{kebab}")
+                if m_name in required_members and not m_ref.get("idempotencyToken"):
+                    required.append(f"--{kebab}")
         flag_map[subcmd] = sorted(set(flags))
-    return sorted(subcommands), flag_map
+        required_map[subcmd] = sorted(set(required))
+    return sorted(subcommands), flag_map, required_map
 
 
 def detect_aws_services_from_policy() -> list[str]:
@@ -162,17 +177,19 @@ def find_aws_botocore_data_dir() -> Path | None:
     return None
 
 
-def build_aws_commands_db() -> dict[str, list[str]]:
+def build_aws_commands_db() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     """Build an in-memory AWS commands database by parsing the botocore
     service-2.json files bundled with AWS CLI v2, scoped to services used
     in the AWS policy.
 
-    Returns an empty dict if the policy file has no aws commands. Exits with
-    a helpful error if the AWS CLI v2 is not installed.
+    Returns ({"<service>": [subcommands], "<service> <subcommand>": [flags]},
+    {"<service> <subcommand>": [required flags]}). Both are empty if the policy
+    file has no aws commands. Exits with a helpful error if the AWS CLI v2 is
+    not installed.
     """
     services = detect_aws_services_from_policy()
     if not services:
-        return {}
+        return {}, {}
 
     data_dir = find_aws_botocore_data_dir()
     if not data_dir:
@@ -200,6 +217,7 @@ def build_aws_commands_db() -> dict[str, list[str]]:
         sys.exit(1)
 
     commands: dict[str, list[str]] = {}
+    required: dict[str, list[str]] = {}
     for cli_name in services:
         botocore_name = AWS_CLI_TO_BOTOCORE.get(cli_name, cli_name)
         service_dir = data_dir / botocore_name
@@ -209,11 +227,13 @@ def build_aws_commands_db() -> dict[str, list[str]]:
                 file=sys.stderr,
             )
             continue
-        subcommands, flag_map = _load_aws_service_ops(service_dir)
+        subcommands, flag_map, required_map = _load_aws_service_ops(service_dir)
         commands[cli_name] = subcommands
         for subcmd, flags in flag_map.items():
             commands[f"{cli_name} {subcmd}"] = sorted(set(flags + AWS_GLOBAL_FLAGS))
-    return commands
+        for subcmd, req in required_map.items():
+            required[f"{cli_name} {subcmd}"] = req
+    return commands, required
 
 
 def parse_aws_command(cmd: str) -> tuple[str, str, list[str]]:
@@ -294,15 +314,61 @@ AWS_CLI_CUSTOM_FLAGS = {
     "emr list-clusters": ["--active", "--terminated", "--failed"],
 }
 
+# Parameters the botocore model marks required but the AWS CLI supplies a value
+# for, so a snippet that omits them still runs. Only add an entry after
+# confirming the command parses without the parameter — argument validation
+# happens client-side, so dummy credentials are enough to check:
+#
+#   AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE AWS_SECRET_ACCESS_KEY=dummy \
+#     aws ec2 run-instances --image-id ami-123 --instance-type t3.micro
+#
+# A ParamValidation error names a parameter that genuinely has to be there; any
+# other error means the command parsed and the entry belongs here.
+AWS_CLI_DEFAULTED_PARAMS = {
+    # The ec2 customization defaults both counts to 1 when neither is given.
+    "ec2 run-instances": ["--min-count", "--max-count"],
+}
+
+# Supplying either of these replaces the whole argument list, so no individual
+# parameter is required alongside them.
+AWS_CLI_WHOLE_INPUT_FLAGS = {"--cli-input-json", "--cli-input-yaml", "--generate-cli-skeleton"}
+
+
+def _missing_required_flags(
+    key: str, flags: list[str], required_db: dict[str, list[str]]
+) -> list[str]:
+    """Return the required parameters `key` needs that `flags` does not supply.
+
+    A required boolean is satisfied by either form, so `--no-publicly-accessible`
+    counts as supplying `--publicly-accessible`.
+    """
+    required = required_db.get(key)
+    if not required:
+        return []
+    if AWS_CLI_WHOLE_INPUT_FLAGS.intersection(flags):
+        return []
+    defaulted = set(AWS_CLI_DEFAULTED_PARAMS.get(key, []))
+    supplied = set(flags)
+    missing = []
+    for flag in required:
+        if flag in defaulted or flag in supplied:
+            continue
+        if "--no-" + flag[2:] in supplied:
+            continue
+        missing.append(flag)
+    return missing
+
 
 def validate_aws_command(
     service: str,
     subcommand: str,
     flags: list[str],
     commands_db: dict[str, list[str]],
+    required_db: dict[str, list[str]] | None = None,
 ) -> tuple[bool, list[str]]:
     """Validate a parsed AWS command against the commands database."""
     errors = []
+    required_db = required_db or {}
 
     if service not in commands_db:
         errors.append(f"unknown service '{service}'")
@@ -343,6 +409,9 @@ def validate_aws_command(
             if flag not in valid_flags:
                 errors.append(f"unknown flag '{flag}' for '{service} {subcommand}'")
 
+    for flag in _missing_required_flags(key, flags, required_db):
+        errors.append(f"missing required parameter '{flag}' for '{service} {subcommand}'")
+
     return len(errors) == 0, errors
 
 
@@ -352,7 +421,7 @@ def validate_aws() -> tuple[int, int]:
         print(f"Error: Policy file not found: {AWS_POLICY_FILE}", file=sys.stderr)
         sys.exit(1)
 
-    commands_db = build_aws_commands_db()
+    commands_db, required_db = build_aws_commands_db()
     if not commands_db:
         return 0, 0
 
@@ -373,7 +442,7 @@ def validate_aws() -> tuple[int, int]:
                 continue
 
             is_valid, errors = validate_aws_command(
-                service, subcommand, flags, commands_db
+                service, subcommand, flags, commands_db, required_db
             )
 
             if is_valid:

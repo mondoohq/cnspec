@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 12.11.7
+    version: 12.12.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -202,7 +202,6 @@ policies:
           - uid: mondoo-aws-security-rds-instance-public-access-check
           - uid: mondoo-aws-security-rds-instance-encryption-at-rest
           - uid: mondoo-aws-security-rds-instance-no-pending-os-upgrades
-          - uid: mondoo-aws-security-rds-instance-no-active-security-recommendations
           - uid: mondoo-aws-security-rds-snapshot-encrypted
           - uid: mondoo-aws-security-rds-instance-iam-auth
           - uid: mondoo-aws-security-rds-backup-retention
@@ -2787,23 +2786,13 @@ queries:
 
             If the output is 0, MFA is not enabled.
 
-            To enable a virtual MFA device for the root user with the AWS CLI, sign in with root user credentials. First create a virtual MFA device:
+            Enrolling the device must be done in the console. `iam enable-mfa-device` requires `--user-name`, and the root user has no IAM user name to supply, so there is no CLI path to attaching an MFA device to the root user. Follow the console steps above, then confirm the result:
 
             ```bash
-            aws iam create-virtual-mfa-device \
-              --virtual-mfa-device-name root-account-mfa-device \
-              --outfile QRCode.png \
-              --bootstrap-method QRCodePNG
+            aws iam get-account-summary --query "SummaryMap.AccountMFAEnabled"
             ```
 
-            Register the device in your authenticator app using the generated QR code, then enable it. Do not pass a user name; the call applies to the root user making the request:
-
-            ```bash
-            aws iam enable-mfa-device \
-              --serial-number arn:aws:iam::<account-id>:mfa/root-account-mfa-device \
-              --authentication-code1 123456 \
-              --authentication-code2 654321
-            ```
+            A remediated account returns `1`.
         - id: cloudformation
           desc: |
             To ensure MFA is enabled for the "root user" account in CloudFormation:
@@ -6276,56 +6265,6 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.html
         title: Amazon RDS Security
-  - uid: mondoo-aws-security-rds-instance-no-active-security-recommendations
-    title: Ensure RDS instances have no active security recommendations
-    impact: 90
-    filters: asset.platform == "aws-rds-dbinstance"
-    mql: aws.rds.dbinstance.recommendations.where(category == "security" && status == "active") == empty
-    docs:
-      desc: |
-        This check ensures that an Amazon RDS database instance has no active recommendations in the AWS `security` category. RDS recommendations identify conditions such as an instance running an older minor database engine version whose replacement includes current security and functionality fixes.
-
-        **Why this matters**
-
-        - **AWS-managed security analysis:** The recommendation is generated from the instance's current engine and configuration rather than from a static version rule.
-        - **Prioritized remediation:** Recommendation severity, impact, and recommended actions provide the context needed to schedule the most important work first.
-        - **Continuous coverage:** Active recommendations reveal security work that can exist independently of a currently scheduled maintenance action.
-
-        Resolve or dismiss a recommendation only after verifying that its risk has been remediated or formally accepted. A dismissed recommendation no longer has `active` status and is therefore outside the scope of this check.
-      audit: |
-        ### Audit via Console
-
-        1. Open the Amazon RDS console and select **Databases**.
-        2. Select the DB instance and open its **Recommendations** tab.
-        3. Review recommendations whose category is **Security** and status is **Active**.
-
-        The instance passes when no active security recommendations remain.
-
-        ### Audit via CLI
-
-        1. Obtain the instance's immutable resource ID from `DbiResourceId` in `describe-db-instances`.
-        2. List its active recommendations and select the security category:
-
-        ```bash
-        aws rds describe-db-recommendations \
-          --filters Name=status,Values=active Name=dbi-resource-id,Values=<dbi-resource-id> \
-          --query "DBRecommendations[?Category=='security'].{Severity:Severity,Detection:Detection,Recommendation:Recommendation,Actions:RecommendedActions}" \
-          --output table
-        ```
-
-        An empty result passes. Any returned recommendation requires review.
-      remediation:
-        - id: console
-          desc: |
-            Open the active security recommendation in the RDS console, review its impact and recommended actions, and apply the appropriate action. AWS may offer immediate, next-maintenance-window, or manual apply modes depending on the recommendation.
-        - id: cli
-          desc: |
-            Inspect `RecommendedActions` from `describe-db-recommendations`. Use the returned operation, parameters, and supported apply mode to remediate the finding, then confirm that the recommendation transitions out of `active` status.
-    refs:
-      - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UserRecommendationsView.html
-        title: Viewing Amazon RDS recommendations
-      - url: https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBRecommendations.html
-        title: DescribeDBRecommendations API
   - uid: mondoo-aws-security-rds-instance-encryption-at-rest
     title: Ensure all RDS instances are enabled for encryption-at-rest
     impact: 90
@@ -11931,27 +11870,27 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
-        fromPort <= 5900 && toPort >= 5903 && toPort != 0).none(
+        fromPort <= 5903 && toPort >= 5900 && toPort != 0).none(
           ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-vnc-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule" || nameLabel == "aws_security_group_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
-        blocks.where(type == "ingress" && arguments.from_port <= 5900 && arguments.to_port >= 5903).none(
+        blocks.where(type == "ingress" && arguments.from_port <= 5903 && arguments.to_port >= 5900).none(
           arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
         )
       ) &&
       terraform.resources("aws_security_group").all(
         arguments["ingress"] == empty ||
-        arguments["ingress"].where(_["from_port"] <= 5900 && _["to_port"] >= 5903).none(
+        arguments["ingress"].where(_["from_port"] <= 5903 && _["to_port"] >= 5900).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
-      terraform.resources("aws_vpc_security_group_ingress_rule").where(arguments.from_port <= 5900 && arguments.to_port >= 5903).all(
+      terraform.resources("aws_vpc_security_group_ingress_rule").where(arguments.from_port <= 5903 && arguments.to_port >= 5900).all(
         arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
       ) &&
-      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["from_port"] <= 5900 && arguments["to_port"] >= 5903).none(
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["from_port"] <= 5903 && arguments["to_port"] >= 5900).none(
         arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-vnc-terraform-plan
@@ -11959,27 +11898,27 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(
         type == "aws_security_group" && change.after.ingress.contains(
-          from_port <= 5900 && to_port >= 5903 && to_port != 0
+          from_port <= 5903 && to_port >= 5900 && to_port != 0
         )
       ).none(
-        change.after.ingress.where(from_port <= 5900 && to_port >= 5903 && to_port != 0).any(cidr_blocks.contains("0.0.0.0/0") || cidr_blocks.contains("::/0"))
+        change.after.ingress.where(from_port <= 5903 && to_port >= 5900 && to_port != 0).any(cidr_blocks.contains("0.0.0.0/0") || cidr_blocks.contains("::/0"))
       )
   - uid: mondoo-aws-security-secgroup-restricted-vnc-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_security_group")
     mql: |
       terraform.state.resources.where(
         type == "aws_security_group" && values.ingress.contains(
-          from_port <= 5900 && to_port >= 5903 && to_port != 0
+          from_port <= 5903 && to_port >= 5900 && to_port != 0
         )
       ).none(
-        values.ingress.where(from_port <= 5900 && to_port >= 5903 && to_port != 0).any(cidr_blocks.contains("0.0.0.0/0") || cidr_blocks.contains("::/0"))
+        values.ingress.where(from_port <= 5903 && to_port >= 5900 && to_port != 0).any(cidr_blocks.contains("0.0.0.0/0") || cidr_blocks.contains("::/0"))
       )
   - uid: mondoo-aws-security-secgroup-restricted-vnc-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
     mql: |
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
         properties['SecurityGroupIngress'] == empty ||
-        properties['SecurityGroupIngress'].where(_['FromPort'] <= 5900 && _['ToPort'] >= 5903).none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
+        properties['SecurityGroupIngress'].where(_['FromPort'] <= 5903 && _['ToPort'] >= 5900).none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-rdp
     title: Ensure security groups restrict incoming RDP traffic
@@ -14840,7 +14779,10 @@ queries:
             If the output shows "allow-all", update the distribution:
 
             ```bash
-            aws cloudfront get-distribution-config --id <distribution-id> > dist-config.json
+            aws cloudfront get-distribution-config --id <distribution-id> \
+              --query 'DistributionConfig' > dist-config.json
+            aws cloudfront get-distribution-config --id <distribution-id> \
+              --query 'ETag' --output text
             # Edit dist-config.json to set ViewerProtocolPolicy to "redirect-to-https"
             aws cloudfront update-distribution --id <distribution-id> \
               --if-match <etag> \
@@ -26272,7 +26214,9 @@ queries:
             aws timestream-influxdb create-db-instance \
               --name <name> \
               --db-instance-type db.influx.medium \
-              --vpc-subnet-ids <private-subnet-ids> \
+              --vpc-subnet-ids <private-subnet-id-1> <private-subnet-id-2> \
+              --vpc-security-group-ids <security-group-id> \
+              --password <admin-password> \
               --no-publicly-accessible \
               --allocated-storage 20
             ```
@@ -27634,18 +27578,18 @@ queries:
             4. Provide the subnets the control plane should use for egress, and confirm their route tables and security controls permit the required destinations such as webhook and OIDC endpoints.
         - id: cli
           desc: |
-            To route EKS control-plane egress through your VPC using the AWS CLI, update the cluster's VPC configuration so the control plane uses customer-routed egress:
+            To route EKS control-plane egress through your VPC using the AWS CLI, set the egress mode on the cluster's VPC configuration. Supplying subnets alone leaves the mode at `AWS_MANAGED`:
 
             ```bash
             aws eks update-cluster-config \
               --name <cluster-name> \
-              --resources-vpc-config subnetIds=<subnet-1>,<subnet-2>
+              --resources-vpc-config controlPlaneEgressMode=CUSTOMER_ROUTED,subnetIds=<subnet-1>,<subnet-2>
             ```
 
             Confirm that the supplied subnets' route tables and network controls allow the control plane to reach required endpoints such as webhook servers and OIDC providers.
         - id: terraform
           desc: |
-            To route EKS control-plane egress through your VPC in Terraform, provide the cluster's subnets so the control plane egresses through customer-owned networking:
+            To route EKS control-plane egress through your VPC in Terraform, set the egress mode to `CUSTOMER_ROUTED` and provide the subnets the control plane should egress through:
 
             ```hcl
             resource "aws_eks_cluster" "example" {
@@ -27653,13 +27597,14 @@ queries:
               role_arn = aws_iam_role.eks.arn
 
               vpc_config {
-                subnet_ids = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+                control_plane_egress_mode = "CUSTOMER_ROUTED"
+                subnet_ids                = [aws_subnet.private_a.id, aws_subnet.private_b.id]
               }
             }
             ```
         - id: cloudformation
           desc: |
-            To route EKS control-plane egress through your VPC in CloudFormation, provide the cluster's subnets so the control plane egresses through customer-owned networking:
+            To route EKS control-plane egress through your VPC in CloudFormation, set the egress mode to `CUSTOMER_ROUTED` and provide the subnets the control plane should egress through:
 
             ```yaml
             Resources:
@@ -27669,6 +27614,7 @@ queries:
                   Name: example
                   RoleArn: !GetAtt EksClusterRole.Arn
                   ResourcesVpcConfig:
+                    ControlPlaneEgressMode: CUSTOMER_ROUTED
                     SubnetIds:
                       - !Ref PrivateSubnetA
                       - !Ref PrivateSubnetB
@@ -30832,6 +30778,7 @@ queries:
 
             ```bash
             aws route53 create-key-signing-key \
+              --caller-reference <unique-string> \
               --hosted-zone-id <zone-id> \
               --name example-ksk \
               --key-management-service-arn arn:aws:kms:us-east-1:account-id:key/key-id \
@@ -31466,7 +31413,7 @@ queries:
         title: Logging DNS queries in Amazon Route 53
   - uid: mondoo-aws-security-route53-query-logging-enabled-aws
     filters: |
-      asset.platform == "aws-route53-hostedzone"
+      asset.platform == "aws-route53-hostedzone" &&
       aws.route53.hostedZone.isPrivate == false
     mql: |
       aws.route53.hostedZone.queryLoggingConfig != null
@@ -34550,10 +34497,11 @@ queries:
             aws cognito-identity update-identity-pool \
               --identity-pool-id <identity-pool-id> \
               --identity-pool-name <pool-name> \
+              --no-allow-unauthenticated-identities \
               --no-allow-classic-flow
             ```
 
-            Note: The `update-identity-pool` command requires specifying all identity pool settings. Include `--no-allow-unauthenticated-identities` or `--allow-unauthenticated-identities` to match your current configuration.
+            Note: `update-identity-pool` replaces the whole pool configuration and requires `--allow-unauthenticated-identities` or `--no-allow-unauthenticated-identities`. Set it to match your current configuration, and repeat any other settings the pool already has.
 
             Verify the setting:
 
@@ -39819,7 +39767,11 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.elasticbeanstalk.environments.all(
-        health != ""
+        optionSettings.where(
+          _['namespace'] == "aws:elasticbeanstalk:healthreporting:system" &&
+          _['optionName'] == "SystemType" &&
+          _['value'] == "enhanced"
+        ) != empty
       )
   - uid: mondoo-aws-security-elasticbeanstalk-enhanced-health-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_elastic_beanstalk_environment")
@@ -43214,7 +43166,7 @@ queries:
         title: Amazon MQ - Logging and Monitoring
   - uid: mondoo-aws-security-mq-audit-logging-aws
     filters: |
-      asset.platform == "aws-mq-broker"
+      asset.platform == "aws-mq-broker" &&
       aws.mq.broker.engineType == "ACTIVEMQ"
     mql: |
       aws.mq.broker.auditLogsEnabled == true
@@ -48048,12 +48000,20 @@ queries:
               --ip-permissions IpProtocol=-1,Ipv6Ranges='[{CidrIpv6=::/0}]'
             ```
 
-            Add a specific outbound rule to allow only required traffic:
+            Add outbound rules that name the destinations the workload actually needs. Any egress rule whose destination is `0.0.0.0/0` or `::/0` still counts as unrestricted, whatever protocol or port it narrows to, so scope the replacement by destination rather than by port. Use a specific CIDR:
 
             ```bash
             aws ec2 authorize-security-group-egress \
               --group-id <sg-id> \
-              --ip-permissions IpProtocol=tcp,FromPort=443,ToPort=443,IpRanges='[{CidrIp=0.0.0.0/0}]'
+              --ip-permissions IpProtocol=tcp,FromPort=443,ToPort=443,IpRanges='[{CidrIp=10.0.0.0/16}]'
+            ```
+
+            Where the destination is an AWS service, a managed prefix list keeps the rule accurate as the service's ranges change:
+
+            ```bash
+            aws ec2 authorize-security-group-egress \
+              --group-id <sg-id> \
+              --ip-permissions IpProtocol=tcp,FromPort=443,ToPort=443,PrefixListIds='[{PrefixListId=<pl-id>}]'
             ```
         - id: terraform
           desc: |
@@ -56518,10 +56478,13 @@ queries:
               --query "Distribution.DistributionConfig.ViewerCertificate.SSLSupportMethod"
             ```
 
-            Retrieve the current distribution configuration and note the `ETag` value:
+            Retrieve the current distribution configuration and note the `ETag` value. `update-distribution` takes the inner `DistributionConfig` object, so extract it rather than saving the whole response:
 
             ```bash
-            aws cloudfront get-distribution-config --id <distribution-id> > config.json
+            aws cloudfront get-distribution-config --id <distribution-id> \
+              --query 'DistributionConfig' > config.json
+            aws cloudfront get-distribution-config --id <distribution-id> \
+              --query 'ETag' --output text
             ```
 
             Edit the config to set `ViewerCertificate.SSLSupportMethod` to `sni-only`, then update:
@@ -56695,8 +56658,13 @@ queries:
           desc: |
             To ensure CloudFront distributions have access logging enabled using the AWS CLI, enable access logging on a distribution:
 
+            `update-distribution` takes the inner `DistributionConfig` object, so extract it rather than saving the whole response, and read the `ETag` separately:
+
             ```bash
-            aws cloudfront get-distribution-config --id <distribution-id> > config.json
+            aws cloudfront get-distribution-config --id <distribution-id> \
+              --query 'DistributionConfig' > config.json
+            aws cloudfront get-distribution-config --id <distribution-id> \
+              --query 'ETag' --output text
             ```
 
             Edit the config to set `Logging.Enabled` to `true`, specify `Logging.Bucket` and `Logging.Prefix`, then update:
@@ -63252,15 +63220,21 @@ queries:
 
         ### Audit via CLI
 
-        1. Retrieve the Identity Center instance ARN and list account assignments across all accounts:
+        1. Retrieve the Identity Center instance ARN, then list the assignments each permission set has in the account. `list-account-assignments` reports one account and permission set at a time, so repeat it for every account you manage:
 
         ```bash
         INSTANCE_ARN=$(aws sso-admin list-instances \
           --query 'Instances[0].InstanceArn' --output text)
 
-        aws sso-admin list-account-assignments-for-principal \
+        aws sso-admin list-permission-sets-provisioned-to-account \
           --instance-arn "$INSTANCE_ARN" \
-          --principal-type USER \
+          --account-id <account-id> \
+          --query 'PermissionSets'
+
+        aws sso-admin list-account-assignments \
+          --instance-arn "$INSTANCE_ARN" \
+          --account-id <account-id> \
+          --permission-set-arn <permission-set-arn> \
           --query 'AccountAssignments[*].{AccountId:AccountId,PrincipalType:PrincipalType,PrincipalId:PrincipalId}'
         ```
 
@@ -69409,7 +69383,14 @@ queries:
             aws cloudfront get-trust-store --identifier <id>
             ```
 
-            Use `aws cloudfront update-trust-store --id <id> --if-match <etag> --ca-certificates-bundle-source <source>` to replace the CA bundle. The `--ca-certificates-bundle-source` value is the JSON shape described in the CloudFront API reference (S3 location of the bundle).
+            Replace the CA bundle so the trust store holds at least one certificate. The `--ca-certificates-bundle-source` value is the JSON shape described in the CloudFront API reference, an S3 location of the bundle:
+
+            ```bash
+            aws cloudfront update-trust-store \
+              --id <id> \
+              --if-match <etag> \
+              --ca-certificates-bundle-source '{"S3":{"BucketName":"<bucket>","Key":"<bundle.pem>"}}'
+            ```
         - id: terraform
           desc: |
             To create a CloudFront trust store populated with CA certificates in Terraform, use `aws_cloudfront_trust_store` and supply a CA bundle from S3:
@@ -69529,12 +69510,21 @@ queries:
           desc: |
             To enable origin mTLS using the AWS CLI:
 
+            `update-distribution` takes the inner `DistributionConfig` object, so extract it rather than saving the whole response, and read the `ETag` separately:
+
             ```bash
-            aws cloudfront get-distribution-config --id <dist-id> > config.json
-            aws cloudfront update-distribution --id <dist-id> --distribution-config file://updated-config.json --if-match <etag>
+            aws cloudfront get-distribution-config --id <dist-id> \
+              --query 'DistributionConfig' > config.json
+            aws cloudfront get-distribution-config --id <dist-id> \
+              --query 'ETag' --output text
             ```
 
-            Edit `config.json` to set `Origins.Items[N].CustomOriginConfig.OriginMtlsConfig` before calling `update-distribution`.
+            Edit `config.json` to set `Origins.Items[N].CustomOriginConfig.OriginMtlsConfig`, then apply it:
+
+            ```bash
+            aws cloudfront update-distribution --id <dist-id> \
+              --distribution-config file://config.json --if-match <etag>
+            ```
         # No Terraform remediation: Origin mTLS (`CustomOriginConfig.OriginMtlsConfig`) is not exposed as an argument in the `aws_cloudfront_distribution` origin block in the hashicorp/aws provider; configure origin mTLS through the console or CLI.
     refs:
       - url: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/origin-mtls.html
@@ -74083,6 +74073,7 @@ queries:
             aws cloud9 create-environment-ec2 \
               --name <name> \
               --instance-type t3.small \
+              --image-id amazonlinux-2023-x86_64 \
               --connection-type CONNECT_SSM \
               --subnet-id <private-subnet-id>
             ```
@@ -78479,9 +78470,13 @@ queries:
             ```bash
             aws bedrock-agentcore-control update-gateway \
               --gateway-identifier <gateway-id> \
+              --name <gateway-name> \
+              --role-arn <gateway-role-arn> \
               --authorizer-type CUSTOM_JWT \
               --authorizer-configuration file://jwt-authorizer.json
             ```
+
+            `update-gateway` replaces the gateway configuration, so `--name` and `--role-arn` are required even when only the authorizer changes. Read the current values from `get-gateway` first.
         # No Terraform variants: Bedrock AgentCore gateways have no stable Terraform resource; the runtime check
         # reads the resolved inbound authorizer type.
         # No CloudFormation remediation: there is no CloudFormation resource for AgentCore gateways; use the
@@ -79515,8 +79510,12 @@ queries:
             ```bash
             aws bedrock-agentcore-control update-agent-runtime \
               --agent-runtime-id <runtime-id> \
+              --agent-runtime-artifact containerConfiguration={containerUri=<container-uri>} \
+              --role-arn <runtime-role-arn> \
               --environment-variables '{}'
             ```
+
+            `update-agent-runtime` replaces the runtime configuration, so `--agent-runtime-artifact` and `--role-arn` are required even when only the environment changes. Read the current values from `get-agent-runtime` first.
         # No Terraform variants: Bedrock AgentCore runtimes have no stable Terraform resource; the runtime check
         # inspects the resolved environment-variable names.
         # No CloudFormation remediation: there is no CloudFormation resource for AgentCore runtimes; use the

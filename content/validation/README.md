@@ -243,6 +243,8 @@ The Bicep job takes several minutes: the CLI reloads the ARM type index on every
 
 Verifies that every CLI command and REST call in a remediation section names a real subcommand, a real flag, and a real endpoint. It reads `id: cli` and `id: api` blocks **and `audit:` blocks** — a wrong audit command misleads an auditor exactly as a wrong remediation misleads an operator.
 
+For `aws` it also checks that the command supplies every parameter the operation **requires**. Naming only real flags is not enough: a snippet missing a required one is rejected by argument parsing before it reaches AWS, so the documented fix cannot run at all. Members carrying `idempotencyToken` are excluded, because botocore fills those in, and `AWS_CLI_DEFAULTED_PARAMS` in `commands/aws.py` lists the few the CLI itself defaults. Confirm a command really is rejected before adding an entry there — argument validation is client-side, so dummy credentials are enough to tell a `ParamValidation` error from one that means the command parsed.
+
 ```bash
 python3 content/validation/remediation/commands/validate.py            # everything
 python3 content/validation/remediation/commands/validate.py aws        # one target
@@ -256,6 +258,7 @@ Two parsing details follow from reading audit blocks, which are shaped different
 
 - A `$(...)` command substitution is pulled out and validated as a command in its own right, then blanked out of the surrounding text. Left inline, its flags read as flags of the outer command.
 - A subcommand held in a shell variable (`for cmd in list-a list-b; do aws sagemaker $cmd …`) has no literal name to check and is accepted rather than reported as unknown.
+- Pipelines are split at the shell operator, and the split is quote-aware. A CloudWatch metric filter pattern such as `'{ ($.eventName = A) || ($.eventName = B) }'` contains a `||` that is data, not a pipeline; splitting on it would truncate the command and leave every later flag unchecked.
 
 **Where the command data comes from** decides what you need installed and how it goes stale:
 
