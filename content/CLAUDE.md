@@ -180,50 +180,25 @@ Reference patterns in this repo:
 
 ### Fixtures for new IaC variants
 
-Every `-terraform-hcl`, `-cloudformation`, and `-bicep` variant is expected to ship with pass/fail fixtures under `content/iac-variant-testdata/<policy>/<variant-uid>/{pass,fail}/<scenario>/`, exercised by the suites in `content/iac_variants_test.go`.
+Every `-terraform-hcl`, `-cloudformation`, and `-bicep` variant ships with pass **and** fail fixtures under `content/validation/scans/fixtures/iac-variants/<policy>/<variant-uid>/{pass,fail}/<scenario>/`.
 
-**Coverage is 100% and `TestTerraformVariantCoverage` holds it there.** Every IaC variant must have both a pass and a fail fixture; adding a variant without them fails CI (the `coverage` job in `.github/workflows/content-iac-tests.yaml`). There is no debt budget to grow — a new variant ships with fixtures or it does not ship.
+**Coverage is 100% and the coverage gate holds it there** — a variant added without fixtures fails CI. There is no debt budget to grow. Where a variant asserts exactly what its own `filters:` require, no failing input exists; record that with a `fail/IMPOSSIBLE.md` marker explaining why, and it counts as covered. That marker is the only sanctioned way to ship a variant without a real fail fixture.
 
 ```bash
-make test/go/content-iac/coverage    # check coverage
+make test/content/iac/coverage
 ```
-
-Where a variant asserts exactly what its own `filters:` require, no failing input exists; record that with a `fail/IMPOSSIBLE.md` marker explaining why, instead of a fail fixture, and it counts as covered. That marker is the only sanctioned way to ship a variant without a real fail fixture.
 
 ### The remediation has to satisfy the check
 
-`TestRemediationSatisfiesCheck` (in `content/remediation_closes_check_test.go`, behind the
-`iac_variants` tag) scans each IaC variant's **own remediation snippet** and requires the
-check that recommends it to pass:
+The closed-loop suite scans each IaC variant's **own remediation snippet** and requires the check that recommends it to pass. This is the question the linters cannot answer: cfn-lint, tflint and `bicep build` prove a snippet is well-formed, not that it is right. A snippet can name every property correctly and still demonstrate the exact misconfiguration the check forbids.
 
 ```bash
-make test/go/content-iac/remediation
+make test/content/iac/remediation
 ```
 
-This is the question the linters cannot answer. cfn-lint, tflint and `bicep build` prove a
-snippet is well-formed; they cannot prove it is right. A snippet can name every property
-correctly and still demonstrate the exact misconfiguration the check forbids, target a
-resource type the check does not match, or set a neighbouring property instead of the
-asserted one.
+A variant whose remediation does not satisfy it yet is listed in `content/validation/scans/remediation-budget.json` with a reason. The list may only shrink: an entry that starts passing fails the test, so it is removed together with the fix, the same contract as a `KNOWN_BUG.md` marker.
 
-The snippet is generated per run from the policy rather than checked in as a fixture — it
-is a copy of content that already lives in the bundle, and a checked-in copy would drift
-from it silently. Only what the snippet needs to be a scannable document is added: a
-`provider "x" {}` stub for HCL (so a filter reading `terraform.providers` does not skip the
-check), and the `AWSTemplateFormatVersion` preamble for a CloudFormation fragment.
-
-A variant whose remediation does not satisfy it yet is listed in
-`content/remediation-closes-check-budget.json` with a reason. The list may only shrink: an
-entry that starts passing fails the test, so the entry is removed together with the fix —
-the same contract as a `KNOWN_BUG.md` marker.
-
-Three distinct failures are reported differently, because they mean different things:
-
-- **the check did not run** — the snippet declares no resource the check's filter matches,
-  so applying it as shown leaves the check unevaluated
-- **the remediation does not satisfy the check** — a reader who applies the documented fix
-  still fails
-- **scanning failed** — the snippet is not a scannable document of its kind on its own
+See [validation/README.md](validation/README.md) for how the snippet is materialized and what each of the three failure modes means.
 
 ### Terraform remediation
 
@@ -280,200 +255,42 @@ files("/etc").where(name == /\.conf$/)
 
 For MQL resources available per provider, see [MQL resources documentation](https://mondoo.com/docs/mql/resources).
 
-## Linting and testing
+## Validation and testing
+
+**[`validation/README.md`](validation/README.md) is the definitive reference** for every check that runs against this directory: what each one proves, when CI runs it, and how to run it yourself. What follows is the short version.
 
 ```bash
-# Lint a single policy
+make test/content              # lint + bundle scans + compliance mappings
+make test/content/lint         # cnspec policy lint (run this first, and fix it first)
+make test/content/iac          # the IaC fixture suites — slow, run when you touch a variant
+make test/content/remediation  # the remediation code-block linters
+make test/content/commands     # the remediation CLI and API validators
+```
+
+`cnspec policy lint` must pass before committing any policy change. To lint or scan one policy:
+
+```bash
 cnspec policy lint content/mondoo-aws-security.mql.yaml
-
-# Lint everything in this directory
-cnspec policy lint ./content
-
-# Test locally against a target
 cnspec scan local -f content/your-policy.mql.yaml
 ```
 
-`cnspec policy lint` must pass before committing any policy changes.
+Five things gate a content change, and each fails differently:
 
-## Validating remediation code blocks
+| What | Target | Fails when |
+|---|---|---|
+| Lint | `make test/content/lint` | a check does not compile against the provider schema |
+| IaC fixtures | `make test/content/iac/<type>` | a check reaches the wrong verdict, or is silently **skipped** |
+| Fixture coverage | `make test/content/iac/coverage` | a variant ships without pass+fail fixtures |
+| Closed loop | `make test/content/iac/remediation` | the documented fix does not make the check pass |
+| Remediation lint | `make test/content/remediation`, `make test/content/commands` | a snippet is malformed, or names a CLI flag or API endpoint that does not exist |
 
-Remediation snippets that are *code* rather than CLI invocations get linted with the tool their ecosystem already uses. Each validator extracts the fenced blocks from one `- id:` and runs the linter on each snippet in isolation, so a snippet has to stand on its own.
+Three traps worth knowing before you hit them:
 
-```bash
-python3 content/validation/validate_bash_remediation.py     # `id: bash`/`script`/`sh` via shellcheck
-python3 content/validation/validate_ansible_remediation.py  # `id: ansible` via ansible-lint
-python3 content/validation/validate_chef_remediation.py     # `id: chef` via cookstyle
-python3 content/validation/validate_cloudformation_remediation.py  # `id: cloudformation` via cfn-lint
-python3 content/validation/validate_bicep_remediation.py    # `id: bicep` via the Bicep CLI
-python3 content/validation/validate_powershell_remediation.py      # ```powershell fences via the PowerShell parser
-python3 content/validation/validate_terraform_remediation.py
-```
+- **A validator only sees the policies in its `TARGETS`.** When a policy gains its first `terraform`/`ansible`/`bash`/`chef` remediation, add it to that validator's `TARGETS` in the same change — otherwise it ships unlinted and CI stays green. Terraform needs a `PROVIDER_MAP` entry too.
+- **A skipped check is a fixture bug, not a pass.** A variant whose filter never matches anything looks identical to one that passes, in every report, forever.
+- **A stale `KNOWN_BUG.md` marker fails the build.** Adding a check means deleting its markers in the same change.
 
-`bash`, `script` and `sh` are three names for the same method, so the shell validator reads all three. The **fence language** decides the dialect, which is what keeps a `script` entry holding PowerShell (the Windows convention above) out of shellcheck: only ```` ```bash ```` and ```` ```sh ```` fences are linted.
-
-**A validator only sees the policies in its `TARGETS`.** Adding a remediation method to a policy that is not listed there means it ships unlinted and CI stays green — so when a policy gains its first `terraform`/`ansible`/`bash` remediation, add it to that validator's `TARGETS` in the same change. For Terraform there is a second step: the resource prefix needs an entry in `PROVIDER_MAP` too. Without one the generated `required_providers` block comes out empty and the `terraform` preset's `terraform_required_providers` rule fails *every* resource in that policy, which looks like 20 content bugs rather than one missing line.
-
-cfn-lint checks resource types and property names against the AWS resource specification, so it catches a property CloudFormation does not actually support as readily as a typo. Each ```` ```yaml ```` fence is linted as its own template — a second fence in a CloudFormation block is an alternative example, not the rest of the first one, unlike HCL where two fences can form a single configuration. A remediation snippet is a fragment, though, so two things happen before it is linted: the `AWSTemplateFormatVersion` preamble is supplied, and any logical id the snippet references through `!Ref`/`!Sub` but never declares is generated as a stub `Parameters:` entry — the same trick `validate_terraform_remediation.py` uses for undeclared `var.` references. `!GetAtt` targets cannot be stubbed that way (the attribute's type depends on a resource type the snippet never names), so `E1010` is disabled and a snippet that needs a `!GetAtt` target should declare it.
-
-Deprecation warnings are split by what the fix is. A deprecated Lambda runtime or RDS engine version (`W2531`, `W3690`) **fails** — the fix is to bump a version string. A whole service being retired (`W3696`, `W3697`) prints as `[INFO]` and does not fail, because the fix is to migrate the check to a different service, which is a content decision rather than a typo.
-
-Each takes an optional target (`linux`, `windows`, `macos`, `kubernetes`, `chef`, …) and `--github-actions`. They run per-PR from `.github/workflows/validate-remediation.yaml`.
-
-`bicep build` resolves each resource type and apiVersion against the ARM type index, so it rejects a property the type does not define and a resource declared at the wrong deployment scope — the Bicep equivalent of what tflint's provider rulesets give us on Terraform. Snippets are dedented out of the `desc: |` block scalar first, because Bicep, unlike HCL, is indentation-sensitive at the token level once a nested object is involved.
-
-`BCP057` ("the name X does not exist in the current context") is ignored. A remediation example wires itself to a key vault or subnet it does not declare, and there is no type-safe stand-in: declaring the name as `param x object` merely trades `BCP057` for `BCP036`/`BCP240`, because Bicep requires a genuine resource reference in the positions those names occupy. This mirrors the CloudFormation validator ignoring `E1010` for `!GetAtt` targets.
-
-Two diagnostics print as `[INFO]` rather than failing: `BCP081` (no types available for that resource type or apiVersion) and the `no-hardcoded-env-urls` linter rule, since a remediation example names a specific cloud on purpose.
-
-CI installs a pinned `bicep-linux-x64` release binary rather than running `az bicep install`, which places the binary under the Azure CLI's config directory (`AZURE_CONFIG_DIR`, not reliably `~/.azure` on a runner) and offers nothing to checksum. The pinned version decides which resource types and apiVersions are known, so bumping it can surface newly deprecated apiVersions in snippets that used to pass.
-
-The job takes several minutes: the Bicep CLI reloads the ARM type index on every invocation, so ~330 snippets cost roughly a second and a half each.
-
-`validate_powershell_remediation.py` reads every ```` ```powershell ```` fence — in any
-remediation method and in `audit:` blocks — because the PowerShell convention differs per
-policy: Windows puts it under `- id: script`, M365 under `- id: powershell`, vSphere uses
-both. It checks three things, in descending order of certainty. The snippet must **parse**
-(the real PowerShell parser builds the AST, so a parse error is unambiguous). Commands that
-**resolve on the runner** get their parameter names checked against the cmdlet's real
-parameters — the PowerShell analogue of the `az`/`aws` grammar validators, covering the
-built-in cmdlets that are the largest single group of invocations here. Commands from a
-module the runner does not have (Az, Microsoft.Graph, VMware.PowerCLI,
-ExchangeOnlineManagement, or a Windows-only module) cannot have their parameters checked,
-so the **name shape** is checked instead: PowerShell requires Verb-Noun with an approved
-verb, and a wrong verb is the usual way to misremember a cmdlet.
-
-No modules are installed in CI. Az and Microsoft.Graph are large and slow, and the job
-stays fast without them; a checked-in cmdlet grammar, on the model of
-`dump_azure_commands.py`, is the way to add parameter checking for those later.
-
-Two things the validator has to know about. `<placeholder>` tokens are substituted first,
-because PowerShell has no `<x>` syntax and an unsubstituted placeholder is a parse error
-that says nothing about the snippet. And a handful of parameters are *dynamic* — supplied
-by a PowerShell provider rather than declared on the cmdlet — so `Get-Command` cannot see
-them where the provider is absent: `Set-ItemProperty -Type` is real on Windows and
-invisible on Linux, which is where CI runs. Those live in `DYNAMIC_PARAMETERS`.
-
-cookstyle is Chef's RuboCop distribution, so `validate_chef_remediation.py` catches Ruby syntax errors *and* Chef-specific problems: `Chef/Modernize/ExecuteSysctl` pushes sysctl settings onto the `sysctl` resource instead of a template plus `execute`, `Chef/Style/FileMode` rejects integer file modes, and `Chef/Style/UsePlatformHelpers` requires `platform_family?` over raw node attribute comparisons. Snippets are linted inside a temporary `recipes/` directory with `--force-default-config`, which is what makes cookstyle apply the recipe-scoped cops.
-
-## Validating remediation CLI commands
-
-The `content/validation/` directory contains tooling to verify that CLI commands in remediation sections use valid subcommands and flags.
-
-```bash
-# Validate all clouds
-python3 content/validation/validate_remediation_commands.py
-
-# Validate a specific cloud CLI
-python3 content/validation/validate_remediation_commands.py aws
-python3 content/validation/validate_remediation_commands.py azure
-python3 content/validation/validate_remediation_commands.py oci
-python3 content/validation/validate_remediation_commands.py gcp
-python3 content/validation/validate_remediation_commands.py digitalocean
-python3 content/validation/validate_remediation_commands.py nutanix
-
-# Validate Vercel (runs BOTH the `vercel` CLI and the REST API checks)
-python3 content/validation/validate_remediation_commands.py vercel
-
-# Validate a Cobra-based CLI (kubectl / gh / glab / hcloud / databricks)
-python3 content/validation/validate_remediation_commands.py kubernetes
-python3 content/validation/validate_remediation_commands.py github
-python3 content/validation/validate_remediation_commands.py gitlab
-python3 content/validation/validate_remediation_commands.py hetzner
-python3 content/validation/validate_remediation_commands.py databricks
-
-# Validate a specific REST API (curl commands against a vendor API)
-python3 content/validation/validate_remediation_commands.py cloudflare
-python3 content/validation/validate_remediation_commands.py tailscale
-python3 content/validation/validate_remediation_commands.py slack
-python3 content/validation/validate_remediation_commands.py atlassian
-python3 content/validation/validate_remediation_commands.py grafana
-python3 content/validation/validate_remediation_commands.py mongodbatlas
-```
-
-The validator scans each `aws`/`az`/`oci`/`gcloud`/`doctl`/`ncli`/`vercel`/`kubectl`/`gh`/`glab`/`hcloud`/`databricks` CLI command — and `curl` calls against the registered vendor API hosts — in ```` ```bash ```` code blocks within `id: cli` remediation sections, **and in `audit:` sections**. A wrong audit command misleads an auditor exactly like a wrong remediation misleads an operator, so both are checked. Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
-
-Two parsing details follow from validating audit blocks, which are read-only and shaped differently from remediation blocks:
-
-- A `$(...)` command substitution is pulled out and validated as a command in its own right, then removed from the text around it. Left inline, its flags read as flags of the outer command — `aws elasticbeanstalk describe-configuration-settings --application-name "$(aws elasticbeanstalk describe-environments --environment-names …)"` would otherwise report `--environment-names` as invalid on the outer command.
-- A subcommand held in a shell variable (`for cmd in list-a list-b; do aws sagemaker $cmd …`) has no literal name to check and is accepted rather than reported as unknown.
-
-The `vercel` target is the only one that runs a **CLI validator and a REST API validator together** (both keyed `vercel`): the Vercel policy fixes some settings with the `vercel` CLI (`- id: cli`) and others with `curl` against the Vercel REST API (`- id: api`). Both remediation ids and the `audit:` blocks are validated.
-
-The code lives in the `content/validation/validators/` package — one module per validator family (`aws.py`, `azure.py`, …, `openapi.py` for all REST APIs), shared helpers in `common.py` — with `validate_remediation_commands.py` as the entry-point shim.
-
-The `azure` target validates **both** `mondoo-azure-security.mql.yaml` and `mondoo-m365-security.mql.yaml`, because the M365 policy's `id: cli` remediations also use the Azure CLI (`az`).
-
-**How the validator sources command data:**
-
-For `aws`, `oci`, `gcp`, and `digitalocean`, the database is built **in-memory** at validation time by introspecting the locally-installed CLI. The relevant CLI must be on PATH:
-
-- **aws**: introspects botocore service models bundled with the AWS CLI v2
-- **oci**: walks the Click command tree from the `oci_cli` Python package
-- **gcp**: reads the Google Cloud SDK's static completion tree
-- **digitalocean**: walks the `doctl --help` Cobra tree breadth-first (parallelized; ~1s for the full ~475-command tree)
-- **kubernetes / github / gitlab / hetzner / databricks**: walk the CLI's hidden Cobra `__complete` command (`kubectl`/`gh`/`glab`/`hcloud`/`databricks` must be on PATH), which returns machine-readable subcommand and flag candidates regardless of each CLI's custom help layout. Valid flags are the union of flag completions and flag lines parsed from `--help` (hcloud filters its flag completions to required-only). The walk runs with cloud credentials stripped (`KUBECONFIG=/dev/null`, tokens unset, `DATABRICKS_CONFIG_FILE=/dev/null` so the databricks CLI loads no profile) so positional-value completions stay empty, and only tab-described candidates count as subcommands (kubectl's `rollout restart` statically completes resource types as bare names). Each CLI is an entry in the `COBRA_CLIS` registry in `validators/cobra.py`.
-
-The REST API targets (**cloudflare**, **tailscale**, **slack**, **atlassian**, **grafana**, **vercel**, **mongodbatlas**) need no CLI: each provider is an entry in the `API_PROVIDERS` registry in `validators/openapi.py` that maps an API host to the vendor's OpenAPI (or Swagger 2.0) spec. The validator verifies each curl call's path + HTTP method, plus the `--data` JSON payload against the operation's `requestBody` schema: field names, types, enums, and required properties. Angle-bracket (`<account-name>`) and environment-variable (`$ORG_ID`) placeholders act as wildcards. Known spec-vs-docs divergences are listed per provider under `body_exemptions`; Cloudflare additionally narrows the generic `/zones/{zone_id}/settings/{setting_id}` schema to the per-setting component via its `path_hook`. Two more per-provider options exist for API-first products: `strip_api_version` normalizes a leading `/vN` URL segment on both the curl path and the spec (Vercel versions every path and keeps several versions live, but the spec documents one version per operation), and `path_exemptions` allowlists endpoints the API serves but omits from its published spec.
-
-API specs are sourced two ways:
-
-- **Pinned download** (cloudflare, slack, grafana, mongodbatlas): the spec lives in a git repo, so it's downloaded at validation time from a raw URL pinned to a commit SHA (cached under `~/.cache/cnspec-validation/`). Bump the `*_OPENAPI_SHA` constant in `validators/openapi.py` to refresh.
-- **Checked-in dump** (tailscale, atlassian, vercel): the vendor serves the spec from a live, unversioned endpoint, so it's checked into `cmd_data/` and refreshed with `python3 content/validation/dump_api_specs.py`. The Vercel spec is stored minified (~2.9 MiB vs. ~9.5 MiB pretty-printed).
-
-If a required CLI is missing, the validator prints actionable install hints and exits non-zero.
-
-**azure** and **vercel** are the exceptions among the CLI targets: they use a checked-in command grammar (`cmd_data/azure_commands.json`, `cmd_data/vercel_commands.json`) rather than live introspection. Azure CLI metadata is too slow to refresh every run; `vercel` is a Node.js CLI with no completion surface (not Cobra, no botocore/Click tree), so `dump_vercel_commands.py` parses its `--help` tree once — scoped to the command groups the policy uses — and checks the result in.
-
-`dump_azure_commands.py` runs in two phases, and the split matters. Phase 1 loads the whole command table from the Azure CLI's Python internals, which is the only practical way to enumerate ~7,000 commands — but its flag names are argparse *destination* names for every argument whose user-facing alias is registered globally. `resource_group_name` is exposed as `--resource-group`/`-g`, never as `--resource-group-name`. Phase 2 therefore re-reads `az <cmd> --help` and **replaces** the phase-1 flags for every command the validator will actually check; unioning the two would keep accepting the invented spelling. That scope is computed by `detect_policy_commands()` from the same blocks the validator reads, `audit:` included — a command missed there keeps phase-1's names and then either accepts a flag that does not exist or rejects one that does.
-
-About a seventh of the Azure grammar comes from **CLI extensions**, not from the CLI itself, and `az` installs none of them by default. `AZURE_EXTENSIONS` in `dump_azure_commands.py` declares the ones the policies use (`ml`, `kusto`, `datafactory`, `azure-firewall`, `cdn` — which is what provides `az afd` — and ten more); the script installs any that are missing before it loads the command table, and refuses to write a grammar if one contributed nothing. Commands from any *undeclared* extension are dropped, so whatever else happens to be installed cannot change the output — GitHub runners preinstall `azure-devops`, and without that filter its ~200 commands land in the grammar on a CI regeneration but not on a laptop one. `_meta` records the resolved extension versions alongside the CLI version, because the CLI version alone does not identify the grammar.
-
-**Regenerate checked-in command/spec data**:
-
-```bash
-python3 content/validation/dump_azure_commands.py   # when the Azure CLI version changes
-python3 content/validation/dump_ncli_commands.py    # when bumping the pinned AOS release
-python3 content/validation/dump_vercel_commands.py  # when bumping the pinned vercel CLI version
-python3 content/validation/dump_api_specs.py        # Tailscale + Atlassian + Vercel API specs
-```
-
-**Never hand-edit** the files in `cmd_data/`.
-
-## Keeping the pinned upstreams current
-
-Every one of these validators is only as good as the thing it checks against, and each of those is pinned somewhere:
-
-| Pin | Declared in |
-|-----|-------------|
-| linter releases (`cfn-lint`, `ansible-lint`, `cookstyle`, `tflint`) | `.github/workflows/validate-remediation.yaml` |
-| CLI release artifacts (`bicep`, `doctl`, `glab`, `hcloud`, `databricks`) — version **and** SHA-256 | `.github/workflows/validate-remediation.yaml` |
-| tflint ruleset plugins, Terraform provider `~>` constraints | `content/validation/validate_terraform_remediation.py` (`TFLINT_PLUGIN_MAP`, `PROVIDER_MAP`) |
-| OpenAPI specs pinned to a commit | `content/validation/validators/openapi.py` (`*_OPENAPI_SHA`) |
-| checked-in CLI grammars | the `_meta` block of each `cmd_data/*.json` |
-
-Dependabot watches `gomod` and `github-actions`. It does **not** watch any of the above. `content/validation/upstream_pins.py` is the single registry of them — it reads each pin out of the file that declares it, so there is no second copy to go stale. Adding an entry to `PROVIDER_MAP` or `TFLINT_PLUGIN_MAP` puts it under watch automatically; a new linter or CLI needs a line in `WORKFLOW_TOOLS` or `WORKFLOW_CHECKSUMMED`.
-
-```bash
-python3 content/validation/check_upstream_versions.py                  # what has moved
-python3 content/validation/check_upstream_versions.py --format json    # same, for tooling
-python3 content/validation/bump_upstream_versions.py --list            # which pins can be bumped mechanically
-python3 content/validation/bump_upstream_versions.py --all --dry-run
-python3 content/validation/bump_upstream_versions.py --only cfn-lint   # rewrite one pin in place
-python3 content/validation/bump_upstream_versions.py --only terraform-provider  # every behind pin of one kind
-python3 content/validation/bump_upstream_versions.py --verify-checksums
-```
-
-Two workflows run weekly off this. `validation-upstream-drift.yaml` reports the whole table into one long-lived issue. `validation-dependency-updates.yaml` opens one pull request per **kind** of pin that moved, on a stable branch named for the kind (`deps/validation/<kind>`, e.g. `deps/validation/terraform-provider`) and **not** for a version or a single pin — so next week's run updates the open pull request instead of opening a second one.
-
-Per kind and not per pin, because a kind is declared in one dense block of one file: 24 Terraform providers on 24 consecutive lines of `PROVIDER_MAP`, three rulesets on three lines of `TFLINT_PLUGIN_MAP`, four spec SHAs on four lines of `openapi.py`. Git merges with three lines of context, so a pull request per pin meant every bump of a kind conflicted with every other one the moment the first was merged. The trade is that a red bump now blocks its group-mates; if one row needs work the rest should not wait on, drop that line from the branch and merge the rest — the next run offers it again.
-
-Things to know when touching this:
-
-- **A bump is never applied without review.** The tooling does the mechanical half; whether a red CI run means the pin is wrong or the content is remains a judgement call. Closing a bump pull request is a valid answer; the branch reopens when upstream moves again.
-- **A CLI's version and its checksum can never move apart.** The bumper re-downloads the artifact using the URL read back out of the workflow's own `curl` line and recomputes the digest, so it hashes exactly what CI fetches. `--verify-checksums` re-derives all five at their *current* pins and is the way to prove that still holds after editing an install step.
-- **Terraform provider entries hold a constraint, not a version.** `~> 5.0` floats across all of 5.x, so a provider only outgrows it on a major; below 1.0 the minor is the breaking axis, so `~> 0.111` outgrows on a minor. `constraint_for()` encodes that. A provider major bump is a content migration, not a dependency bump — expect real work.
-- **Grammars are not string bumps.** The pin records which tool produced the checked-in JSON, so it moves by installing that tool and re-running the dump script; the workflow has a dedicated job per grammar that does exactly that. `--all` reports them as skipped rather than pretending.
-- **`dump_vercel_commands.py` is the one place a version is written twice** (its `VERCEL_VERSION` constant and the JSON's `_meta`). `bump_upstream_versions.py --sync-dump-pins` pulls the constant back into line after a regeneration.
+**Never hand-edit** the checked-in CLI grammars and OpenAPI specs in `validation/data/`; re-run the relevant script in `validation/upstream/dump/` instead.
 
 ## Resources
 
