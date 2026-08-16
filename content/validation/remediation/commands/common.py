@@ -22,6 +22,32 @@ FAILURES: list[dict] = []
 # loops to unwrap nested ones.
 COMMAND_SUBSTITUTION = re.compile(r"\$\(([^()]*)\)")
 
+# Shell operators that end one command and start the next. Deliberately the
+# same pipe and semicolon boundaries the splitter has always recognized, so
+# this change is about *where* they are found rather than which ones count.
+# `&&` is lexed as its own token but left inline, as it was before.
+SHELL_OPERATORS = {"|", "||", ";"}
+
+
+def lex_shell(text: str) -> list[str]:
+    """Tokenize a shell command, keeping unquoted `|` and `;` as their own
+    tokens and leaving quoted ones inside the token they belong to.
+
+    `shlex.split` cannot make that distinction: it discards quoting, so a
+    filter expression such as `'{ ($.eventName = A) || ($.eventName = B) }'`
+    comes back indistinguishable from a real pipeline, and splitting the
+    result truncates the command at the first `||`. Every flag after that
+    point then goes unvalidated. `punctuation_chars` keeps the operators
+    separate at lex time, while quoted text stays in one piece.
+
+    Raises ValueError on an unterminated quote, like `shlex.split`.
+    """
+    lexer = shlex.shlex(text, posix=True, punctuation_chars="|;")
+    lexer.whitespace_split = True
+    # `shlex.split` clears this; without it an inline `#` truncates the command.
+    lexer.commenters = ""
+    return list(lexer)
+
 
 def extract_substitutions(text: str) -> tuple[list[str], str]:
     """Pull every `$(...)` command out of `text`.
@@ -173,10 +199,21 @@ def split_commands(block: str, prefix: str, block_start_line: int) -> list[tuple
             # reports as an unclosed-quote ValueError; keep appending
             # lines until the quote closes (or the block ends, in which
             # case fall back to a naive split of what we have).
+            segments: list[str] = []
             while True:
                 try:
-                    tokens = shlex.split(stripped)
-                    rejoined = " ".join(tokens)
+                    tokens = lex_shell(stripped)
+                    # Break the token stream at the unquoted operators; an
+                    # operator inside a quoted value stayed inside its token.
+                    current: list[str] = []
+                    segments = []
+                    for token in tokens:
+                        if token in SHELL_OPERATORS:
+                            segments.append(" ".join(current))
+                            current = []
+                        else:
+                            current.append(token)
+                    segments.append(" ".join(current))
                     break
                 except ValueError:
                     if i + cont_lines + 1 >= len(lines):
@@ -185,21 +222,22 @@ def split_commands(block: str, prefix: str, block_start_line: int) -> list[tuple
                         # splitting it, which would mangle any JSON
                         # payload structure; downstream parsing will
                         # surface the malformation.
-                        rejoined = stripped
+                        segments = [stripped]
                         break
                     cont_lines += 1
                     stripped = stripped + "\n" + lines[i + cont_lines]
-            # A `$(...)` substitution holds a command in its own right, and
-            # audit blocks use them to feed one query into the next. Pull each
-            # one out as a separate command and drop it from the text around
-            # it — left inline, its flags read as flags of the outer command.
-            inner_commands, rejoined = extract_substitutions(rejoined)
-            for inner in inner_commands:
-                if inner.startswith(f"{prefix} "):
-                    commands.append((inner, raw_line_num))
 
-            # Split on pipe/semicolon boundaries
-            for segment in re.split(r"\s*[|;]\s*", rejoined):
+            for segment in segments:
+                # A `$(...)` substitution holds a command in its own right, and
+                # audit blocks use them to feed one query into the next. Pull
+                # each one out as a separate command and drop it from the text
+                # around it — left inline, its flags read as flags of the outer
+                # command.
+                inner_commands, segment = extract_substitutions(segment)
+                for inner in inner_commands:
+                    if inner.startswith(f"{prefix} "):
+                        commands.append((inner, raw_line_num))
+
                 segment = segment.strip()
                 if segment.startswith(f"{prefix} "):
                     commands.append((segment, raw_line_num))
