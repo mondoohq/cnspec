@@ -1876,18 +1876,9 @@ queries:
         values.redirect_http_to_https == true
       )
 
-  # No Terraform variants: tlsCipherPolicy reflects the minimum TLS cipher policy resolved by
-  # the DigitalOcean load balancer service. The digitalocean_loadbalancer Terraform resource
-  # has no argument that selects between the DEFAULT and STRONG cipher policies, so the setting
-  # cannot be asserted in HCL, plan, or state.
   - uid: mondoo-digitalocean-security-lb-strong-tls-cipher-policy
     title: Ensure TLS load balancers enforce the strong TLS cipher policy
     impact: 70
-    filters: asset.platform == "digitalocean-loadbalancer"
-    mql: |
-      digitalocean.loadBalancer {
-        listeners.none(entryProtocol == "https" || entryProtocol == "tls") || tlsCipherPolicy == "STRONG"
-      }
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
@@ -1903,6 +1894,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-digitalocean-security-lb-strong-tls-cipher-policy-digitalocean
+        tags:
+          mondoo.com/filter-title: DigitalOcean
+          mondoo.com/filter-icon: digitalocean
+      - uid: mondoo-digitalocean-security-lb-strong-tls-cipher-policy-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-lb-strong-tls-cipher-policy-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-lb-strong-tls-cipher-policy-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that any load balancer terminating TLS uses the `STRONG` minimum TLS cipher policy rather than the `DEFAULT` policy. The `STRONG` policy negotiates only TLS 1.2 and later with a restricted set of modern, forward-secret cipher suites, whereas the default policy permits a broader, weaker set for backward compatibility.
@@ -1955,13 +1963,60 @@ queries:
               --region "<region>" \
               --forwarding-rules "<current-forwarding-rules>" \
               --droplet-ids "<droplet-ids>" \
-              --tls-cipher-policy strong
+              --tls-cipher-policy STRONG
             ```
-        # No Terraform remediation: the digitalocean_loadbalancer resource has no argument for the
-        # minimum TLS cipher policy, so the STRONG policy cannot be set through Terraform.
+        - id: terraform
+          desc: |
+            To enforce the strong cipher policy in Terraform, set `tls_cipher_policy = "STRONG"` on the `digitalocean_loadbalancer` resource that terminates TLS:
+
+            ```hcl
+            resource "digitalocean_loadbalancer" "example" {
+              name              = "example-lb"
+              region            = "nyc3"
+              tls_cipher_policy = "STRONG"
+
+              forwarding_rule {
+                entry_port       = 443
+                entry_protocol   = "https"
+                target_port      = 80
+                target_protocol  = "http"
+                certificate_name = digitalocean_certificate.example.name
+              }
+            }
+            ```
     refs:
       - url: https://docs.digitalocean.com/products/networking/load-balancers/how-to/ssl-termination/
         title: Load balancer SSL termination
+
+  - uid: mondoo-digitalocean-security-lb-strong-tls-cipher-policy-digitalocean
+    filters: asset.platform == "digitalocean-loadbalancer"
+    mql: |
+      digitalocean.loadBalancer {
+        listeners.none(entryProtocol == "https" || entryProtocol == "tls") || tlsCipherPolicy == "STRONG"
+      }
+  - uid: mondoo-digitalocean-security-lb-strong-tls-cipher-policy-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_loadbalancer")
+    mql: |
+      terraform.resources("digitalocean_loadbalancer").all(
+        blocks.where(type == "forwarding_rule").none(arguments["entry_protocol"] == "https" || arguments["entry_protocol"] == "tls") ||
+        arguments["tls_cipher_policy"] == "STRONG"
+      )
+  - uid: mondoo-digitalocean-security-lb-strong-tls-cipher-policy-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_loadbalancer")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "digitalocean_loadbalancer").all(
+        change.after["forwarding_rule"] == empty ||
+        change.after["forwarding_rule"].none(_["entry_protocol"] == "https" || _["entry_protocol"] == "tls") ||
+        change.after.tls_cipher_policy == "STRONG"
+      )
+  - uid: mondoo-digitalocean-security-lb-strong-tls-cipher-policy-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_loadbalancer")
+    mql: |
+      terraform.state.resources.where(type == "digitalocean_loadbalancer").all(
+        values["forwarding_rule"] == empty ||
+        values["forwarding_rule"].none(_["entry_protocol"] == "https" || _["entry_protocol"] == "tls") ||
+        values.tls_cipher_policy == "STRONG"
+      )
 
   - uid: mondoo-digitalocean-security-lb-in-vpc
     title: Ensure load balancers are deployed inside a VPC
@@ -2336,7 +2391,12 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_kubernetes_cluster")
     mql: |
       terraform.resources("digitalocean_kubernetes_cluster").all(
-        arguments["version"] == /^1\.(3[0-9]|[4-9][0-9]|[1-9][0-9]{2})\./
+        arguments["version"] == /^1\.(3[0-9]|[4-9][0-9]|[1-9][0-9]{2})\./ ||
+        arguments["version"] == /^data\.digitalocean_kubernetes_versions\./
+      )
+      terraform.datasources.where(nameLabel == "digitalocean_kubernetes_versions").all(
+        arguments["version_prefix"] == empty ||
+        arguments["version_prefix"] == /^1\.(3[0-9]|[4-9][0-9]|[1-9][0-9]{2})\./
       )
   - uid: mondoo-digitalocean-security-doks-supported-version-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_kubernetes_cluster")
@@ -4836,14 +4896,20 @@ queries:
             3. Add the specific source ranges that need access, or remove the allowlist entirely if the load balancer is meant to be public.
         - id: cli
           desc: |
-            To replace an any-address allowlist with specific source ranges using the `doctl` CLI:
+            The `doctl compute load-balancer update` command replaces the full load balancer configuration, so any attribute you do not pass is reset to its default. Read the current configuration first, then re-apply it together with the scoped allowlist:
 
             ```bash
-            doctl compute load-balancer update <load-balancer-id> \
+            doctl compute load-balancer get "<load-balancer-id>" \
+              --format Name,Region,ForwardingRules,DropletIDs --no-header
+            doctl compute load-balancer update "<load-balancer-id>" \
+              --name "<name>" \
+              --region "<region>" \
+              --forwarding-rules "<current-forwarding-rules>" \
+              --droplet-ids "<droplet-ids>" \
               --allow-list cidr:203.0.113.0/24,ip:198.51.100.10
             ```
 
-            Provide the trusted source ranges that need access. Omit the allowlist entirely if the load balancer is intentionally public.
+            Provide the trusted source ranges that need access. Omit `--allow-list` from the update if the load balancer is intentionally public.
         # No Terraform remediation: the load balancer firewall is a nested block on
         # digitalocean_loadbalancer using cidr:/ip: encoded entries; fix it by editing
         # the firewall.allow list in that block to remove any-address entries.
