@@ -3143,7 +3143,7 @@ queries:
         title: OCI - Managing User Credentials
   # No Terraform variants: counting members of an admin-named group requires aggregating across all `oci_identity_user_group_membership` resources that reference each group, which has no clean equivalent in HCL/plan/state without cross-resource graph traversal.
   - uid: mondoo-oci-security-iam-admin-group-membership-limited
-    title: Ensure IAM groups with admin-style names have a limited number of members
+    title: Ensure groups with tenancy-wide admin access have limited membership
     impact: 70
     filters: asset.platform == 'oci'
     tags:
@@ -3162,12 +3162,21 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-3-3
       compliance/vda-isa-5: vda-isa-5-4-2-1
     mql: |
+      # A group is administrative because of the grant it holds, not because of what it is
+      # called. parsedStatements makes the grant readable, so a group named for a team can
+      # no longer hold `manage all-resources in tenancy` unnoticed. The name patterns stay
+      # for groups that are called administrative but hold their access some other way.
       oci.identity.groups.where(
-        name.downcase == /^admins?$|^administrators?$|^tenancy[-_]?admins?$|^root[-_]?admins?$|^super[-_]?users?$/
+        name.downcase == /^admins?$|^administrators?$|^tenancy[-_]?admins?$|^root[-_]?admins?$|^super[-_]?users?$/ ||
+        name.downcase.in(
+          oci.identity.policies.map(parsedStatements).flat
+            .where(effect == "allow" && verb == "manage" && resourceType == "all-resources" && scopeType == "tenancy")
+            .map(subjectNames).flat.map(_.downcase)
+        )
       ).all(members.length <= 5)
     docs:
       desc: |
-        This check ensures that OCI IAM groups whose names indicate tenancy-wide administrative privilege contain no more than five members. OCI's built-in `Administrators` group and any custom group modeled after it can attach policies, manage keys, and access every resource in the tenancy, making excessive membership a high-impact risk.
+        This check ensures that no OCI IAM group holding tenancy-wide administrative privilege contains more than five members. A group counts as administrative when a policy grants it `manage all-resources in tenancy`, and also when its name follows the usual administrative naming. OCI's built-in `Administrators` group and any custom group modeled after it can attach policies, manage keys, and access every resource in the tenancy, making excessive membership a high-impact risk.
 
         **Why this matters**
 
@@ -3175,6 +3184,7 @@ queries:
         - **Privilege creep:** Admin access granted temporarily for a project or emergency is rarely revoked, so group membership grows over time with no corresponding increase in business justification.
         - **Offboarding gaps:** Large admin groups accumulate former-employee memberships that persist long after the individuals have left the organization.
         - **Attribution difficulty:** When many accounts share the highest privilege level, audit logs become harder to interpret because any of the oversized group's members could have made a given change.
+        - **Naming does not track privilege:** A group called after a team can hold the same tenancy-wide grant as one called `Administrators`, so reviewing by name alone leaves the largest privileges unexamined.
 
         **Risk mitigation**
 
@@ -3437,7 +3447,7 @@ queries:
           )
         )
   - uid: mondoo-oci-security-public-vnic-has-nsg
-    title: Ensure compute VNICs with a public IP have at least one NSG attached
+    title: Ensure public compute VNICs are gated by a network security group
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
@@ -3473,7 +3483,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every OCI compute VNIC assigned a public IP address is configured with at least one Network Security Group attached. A public-IP VNIC with no NSG has no VNIC-level ingress filter; it relies entirely on the subnet's security lists, which are often shared across many instances and may carry permissive default rules.
+        This check ensures that no OCI compute instance with a public IP address sits behind a network security group that admits traffic from any address. OCI treats an absent NSG the same way it treats a wide-open one: with no group attached, the VNIC has no VNIC-level ingress filter at all and relies entirely on the subnet's security lists, which are often shared across many instances and may carry permissive default rules.
 
         **Why this matters**
 
@@ -3551,10 +3561,11 @@ queries:
   - uid: mondoo-oci-security-public-vnic-has-nsg-oci
     filters: asset.platform == 'oci'
     mql: |
-      oci.compute.instances.all(
-        vnics.where(publicIp != "" && publicIp != null).all(
-          securityGroups.length > 0
-        )
+      # exposure.securityGroupAllowsIngress is true both when an attached network security
+      # group admits any address and when no group is attached at all, which is OCI's
+      # default-open posture. Counting attached groups misses the first case entirely.
+      oci.compute.instances.where(exposure.hasPublicIp == true).all(
+        exposure.securityGroupAllowsIngress == false
       )
   - uid: mondoo-oci-security-public-vnic-has-nsg-terraform-hcl
     filters: |
@@ -5311,7 +5322,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every OCI Autonomous Database is provisioned in private-endpoint mode so that no management web URLs are exposed to the public internet. When an Autonomous Database is not placed in a private subnet, Oracle publishes a set of management interfaces including APEX, SQL Developer Web, ORDS, GraphStudio, and Machine Learning Notebooks that are reachable from any IP address, even when an IP allowlist or NSG is in place.
+        This check ensures that no OCI Autonomous Database serves its management web URLs on a public endpoint. When an Autonomous Database is not placed in a private subnet, Oracle publishes a set of management interfaces including APEX, SQL Developer Web, ORDS, GraphStudio, and Machine Learning Notebooks that are reachable from any IP address, even when an IP allowlist or NSG is in place.
 
         **Why this matters**
 
@@ -5392,8 +5403,10 @@ queries:
   - uid: mondoo-oci-security-adb-no-public-management-urls-oci
     filters: asset.platform == 'oci'
     mql: |
-      # The OCI provider populates `connectionUrls` only when the underlying ADB has a non-nil ConnectionUrls struct, which Oracle returns when public or NSG-allowed access is enabled. Private-endpoint ADBs return a nil ConnectionUrls and therefore a null `connectionUrls` in MQL — see https://github.com/mondoohq/mql/pull/7337.
-      oci.database.autonomousDatabases.all(connectionUrls == null)
+      # publicConnectionUrls carries the copies of the management interfaces served on the
+      # database's public endpoint, so it is populated only when one exists. connectionUrls
+      # is also populated for an NSG-allowed private endpoint, which is not what this asks.
+      oci.database.autonomousDatabases.all(publicConnectionUrls == null)
   - uid: mondoo-oci-security-adb-no-public-management-urls-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_database_autonomous_database')
@@ -9957,7 +9970,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the OCI tenancy password policy requires passwords to be at least 14 characters long, to mix uppercase, lowercase, numeric, and special characters, and to disallow passwords that contain the username. The OCI default policy enforces only a 12-character minimum with a single character from three of four character classes, which permits weaker passwords than most security frameworks require.
+        This check ensures that the OCI password policy requires passwords to be at least 14 characters long, to mix uppercase, lowercase, numeric, and special characters, and to disallow passwords that contain the username. Both policies are checked: the legacy tenancy-wide authentication policy, and the separate password policy each identity domain keeps for the users who actually sign in to it. The OCI default enforces only a 12-character minimum with a single character from three of four character classes, which permits weaker passwords than most security frameworks require.
 
         **Why this matters**
 
@@ -10036,6 +10049,15 @@ queries:
       oci.identity.authenticationPolicy.passwordRequiresNumeric == true
       oci.identity.authenticationPolicy.passwordRequiresSpecial == true
       oci.identity.authenticationPolicy.passwordUsernameContainmentAllowed == false
+      # authenticationPolicy is the legacy tenancy-wide policy. A tenancy on identity
+      # domains keeps a separate password policy per domain, and that is the one its
+      # users actually authenticate against. Vacuously true on a tenancy with no domains.
+      oci.identity.domains.all(passwordPolicy.minLength >= 14)
+      oci.identity.domains.all(passwordPolicy.minUpperCase >= 1)
+      oci.identity.domains.all(passwordPolicy.minLowerCase >= 1)
+      oci.identity.domains.all(passwordPolicy.minNumerals >= 1)
+      oci.identity.domains.all(passwordPolicy.minSpecialChars >= 1)
+      oci.identity.domains.all(passwordPolicy.userNameDisallowed == true)
   - uid: mondoo-oci-security-iam-password-policy-strong-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_identity_authentication_policy')
@@ -11100,12 +11122,16 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     mql: |
+      # A VCN-level flow log covers every subnet in the VCN; otherwise each subnet needs its
+      # own. Asserting only the VCN level failed a VCN that is fully covered subnet by
+      # subnet, and passed nothing it should have. Checking both catches partial coverage.
       oci.network.vcns.all(
-        flowLogs.where(isEnabled == true) != empty
+        flowLogs.where(isEnabled == true) != empty ||
+        subnets.all(flowLogs.where(isEnabled == true) != empty)
       )
     docs:
       desc: |
-        This check ensures that every OCI Virtual Cloud Network has at least one enabled flow log capturing network traffic. Flow logs record accepted and rejected connections traversing the VCN's subnets, providing the network-level visibility needed for intrusion detection, incident response, and forensic analysis. OCI does not enable flow logs by default.
+        This check ensures that every OCI Virtual Cloud Network is covered by enabled flow logs, either by one log attached to the VCN itself or by a log on each of its subnets. Flow logs record accepted and rejected connections traversing the VCN's subnets, providing the network-level visibility needed for intrusion detection, incident response, and forensic analysis. OCI does not enable flow logs by default.
 
         **Why this matters**
 
