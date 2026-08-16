@@ -1754,7 +1754,6 @@ func (m *ReportingJob) CloneVT() *ReportingJob {
 		return (*ReportingJob)(nil)
 	}
 	r := new(ReportingJob)
-	r.DeprecatedV8IsData = m.DeprecatedV8IsData
 	r.Checksum = m.Checksum
 	r.QrId = m.QrId
 	r.Uuid = m.Uuid
@@ -8044,16 +8043,6 @@ func (m *ReportingJob) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 			dAtA[i] = 0x4a
 		}
 	}
-	if m.DeprecatedV8IsData {
-		i--
-		if m.DeprecatedV8IsData {
-			dAtA[i] = 1
-		} else {
-			dAtA[i] = 0
-		}
-		i--
-		dAtA[i] = 0x40
-	}
 	if len(m.Datapoints) > 0 {
 		for k := range m.Datapoints {
 			v := m.Datapoints[k]
@@ -13670,9 +13659,6 @@ func (m *ReportingJob) SizeVT() (n int) {
 			mapEntrySize := 1 + len(k) + protohelpers.SizeOfVarint(uint64(len(k))) + 1 + 1
 			n += mapEntrySize + 1 + protohelpers.SizeOfVarint(uint64(mapEntrySize))
 		}
-	}
-	if m.DeprecatedV8IsData {
-		n += 2
 	}
 	if len(m.ChildJobs) > 0 {
 		for k, v := range m.ChildJobs {
@@ -29546,26 +29532,6 @@ func (m *ReportingJob) UnmarshalVT(dAtA []byte) error {
 			}
 			m.Datapoints[mapkey] = mapvalue
 			iNdEx = postIndex
-		case 8:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field DeprecatedV8IsData", wireType)
-			}
-			var v int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protohelpers.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				v |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			m.DeprecatedV8IsData = bool(v != 0)
 		case 9:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field ChildJobs", wireType)
