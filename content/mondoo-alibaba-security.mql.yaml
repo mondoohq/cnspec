@@ -271,9 +271,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-10
       compliance/vda-isa-5: vda-isa-5-5-1-1
   - uid: mondoo-alibaba-security-oss-bucket-encryption-enabled-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-oss-bucket"
     mql: |
-      alicloud.oss.buckets.all(sseAlgorithm != empty)
+      alicloud.oss.bucket.sseAlgorithm != empty
+
   - uid: mondoo-alibaba-security-oss-bucket-encryption-enabled-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_oss_bucket")
@@ -969,9 +970,11 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-7
       compliance/vda-isa-5: vda-isa-5-4-1-2
   - uid: mondoo-alibaba-security-oss-bucket-no-public-acl-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-oss-bucket"
     mql: |
-      alicloud.oss.buckets.all(blockPublicAccess || acl != "public-read" && acl != "public-read-write")
+      alicloud.oss.bucket.blockPublicAccess ||
+      alicloud.oss.bucket.acl != "public-read" && alicloud.oss.bucket.acl != "public-read-write"
+
   - uid: mondoo-alibaba-security-oss-bucket-no-public-acl-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_oss_bucket")
@@ -1060,9 +1063,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-7
       compliance/vda-isa-5: vda-isa-5-4-1-2
   - uid: mondoo-alibaba-security-oss-bucket-block-public-access-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-oss-bucket"
     mql: |
-      alicloud.oss.buckets.all(blockPublicAccess == true)
+      alicloud.oss.bucket.blockPublicAccess == true
+
   - uid: mondoo-alibaba-security-oss-bucket-block-public-access-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_oss_bucket_public_access_block")
@@ -1156,15 +1160,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-7
       compliance/vda-isa-5: vda-isa-5-4-1-2
   - uid: mondoo-alibaba-security-oss-bucket-policy-no-anonymous-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-oss-bucket"
     mql: |
-      alicloud.oss.buckets.all(
-        blockPublicAccess ||
-        policy == empty ||
-        parse.json(content: policy).params["Statement"].where(_["Effect"] == "Allow").all(
-          _["Principal"] == empty || _["Principal"].contains("*") == false
-        )
-      )
+      alicloud.oss.bucket.blockPublicAccess ||
+      alicloud.oss.bucket.policyAllowsPublicAccess == false
 
   - uid: mondoo-alibaba-security-oss-bucket-kms-encryption
     title: Ensure OSS bucket encryption uses a KMS customer master key
@@ -1252,9 +1251,11 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-11
       compliance/vda-isa-5: vda-isa-5-5-1-1
   - uid: mondoo-alibaba-security-oss-bucket-kms-encryption-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-oss-bucket"
     mql: |
-      alicloud.oss.buckets.all(sseAlgorithm == "KMS" && kmsKey != empty)
+      alicloud.oss.bucket.sseAlgorithm == "KMS"
+      alicloud.oss.bucket.kmsKey != empty
+
   - uid: mondoo-alibaba-security-oss-bucket-kms-encryption-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_oss_bucket")
@@ -1366,9 +1367,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: false
   - uid: mondoo-alibaba-security-oss-bucket-logging-enabled-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-oss-bucket"
     mql: |
-      alicloud.oss.buckets.all(logging != empty)
+      alicloud.oss.bucket.logging != empty
+
   - uid: mondoo-alibaba-security-oss-bucket-logging-enabled-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_oss_bucket")
@@ -1476,9 +1478,10 @@ queries:
       compliance/soc2-2017: false
       compliance/vda-isa-5: false
   - uid: mondoo-alibaba-security-oss-bucket-versioning-enabled-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-oss-bucket"
     mql: |
-      alicloud.oss.buckets.all(versioning == "Enabled")
+      alicloud.oss.bucket.versioning == "Enabled"
+
   - uid: mondoo-alibaba-security-oss-bucket-versioning-enabled-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_oss_bucket")
@@ -1506,16 +1509,18 @@ queries:
 
   # ---------------------------------------------------------------------------
   # Security groups
-  # Port matching uses exact single-port and all-port ranges rather than numeric
-  # range containment, because parse.int does not compile inside variant queries
-  # in this engine. Broad custom ranges that include an admin port are not flagged.
+  # MQL has no string-to-int conversion, so a "from/to" port range cannot be
+  # compared arithmetically. Range containment is encoded as a regex instead:
+  # one alternation for "lower bound <= port" and one for "upper bound >= port".
+  # Each half is verified exhaustively over 0-65535 before it lands here. The
+  # upper half over-matches above 65535, which the service rejects on input.
   # ---------------------------------------------------------------------------
   - uid: mondoo-alibaba-security-ecs-security-group-no-public-ssh
     title: Ensure security groups do not allow public ingress to SSH (port 22)
     impact: 85
     docs:
       desc: |
-        This check ensures that no security group permits inbound SSH (TCP port 22) from the entire internet (`0.0.0.0/0`). SSH exposed to the world invites brute-force and credential-stuffing attacks against every instance the group protects.
+        This check ensures that no security group permits inbound SSH (TCP port 22) from the entire internet (`0.0.0.0/0`). A rule counts as open whether it names `0.0.0.0/0` directly or references a prefix list that contains it, and whether it names the port exactly or a wider range that spans it. SSH exposed to the world invites brute-force and credential-stuffing attacks against every instance the group protects.
 
         **Why this matters**
 
@@ -1598,29 +1603,43 @@ queries:
   - uid: mondoo-alibaba-security-ecs-security-group-no-public-ssh-alicloud
     filters: asset.platform == "alicloud-account"
     mql: |
-      alicloud.ecs.securityGroups.all(permissions.where(direction.downcase == "ingress").where(policy.downcase == "accept").where(sourceCidrIp == "0.0.0.0/0").none(ipProtocol.downcase == "all" || ipProtocol.downcase == "tcp" && portRange == "22/22" || ipProtocol.downcase == "tcp" && portRange == "-1/-1" || ipProtocol.downcase == "tcp" && portRange == "1/65535"))
+      # A rule opens the port whenever its range spans it, not only when the range is written
+      # exactly as the port. The regex encodes "lower bound <= port <= upper bound" as two
+      # alternations; it over-matches above 65535, which the service rejects on the way in.
+      alicloud.ecs.securityGroups.all(
+        permissions
+          .where(direction.downcase == "ingress")
+          .where(policy.downcase == "accept")
+          .where(sourceCidrIp == "0.0.0.0/0" || sourcePrefixList != empty && sourcePrefixList.cidrBlocks.any(_ == "0.0.0.0/0"))
+          .none(
+            ipProtocol.downcase == "all" ||
+            ipProtocol.downcase == "tcp" && portRange == "-1/-1" ||
+            ipProtocol.downcase == "tcp" && portRange == /^(\d|1\d|2[0-2])\/(2[2-9]|[3-9]\d|\d{3,5})$/
+          )
+      )
+
   - uid: mondoo-alibaba-security-ecs-security-group-no-public-ssh-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_security_group_rule")
     mql: |
-      terraform.resources("alicloud_security_group_rule").where(arguments["type"] == "ingress").where(arguments["cidr_ip"] == "0.0.0.0/0").where(arguments["policy"] == empty || arguments["policy"].downcase == "accept").none(arguments["ip_protocol"].downcase == "all" || arguments["ip_protocol"].downcase == "tcp" && arguments["port_range"] == "22/22" || arguments["ip_protocol"].downcase == "tcp" && arguments["port_range"] == "-1/-1" || arguments["ip_protocol"].downcase == "tcp" && arguments["port_range"] == "1/65535")
+      terraform.resources("alicloud_security_group_rule").where(arguments["type"] == "ingress").where(arguments["cidr_ip"] == "0.0.0.0/0").where(arguments["policy"] == empty || arguments["policy"].downcase == "accept").none(arguments["ip_protocol"].downcase == "all" || arguments["ip_protocol"].downcase == "tcp" && arguments["port_range"] == /^(\d|1\d|2[0-2])\/(2[2-9]|[3-9]\d|\d{3,5})$/ || arguments["ip_protocol"].downcase == "tcp" && arguments["port_range"] == "-1/-1")
   - uid: mondoo-alibaba-security-ecs-security-group-no-public-ssh-terraform-plan
     filters: |
       asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_security_group_rule")
     mql: |
-      terraform.plan.resourceChanges.where(type == "alicloud_security_group_rule").map(change.after).where(_["type"] == "ingress").where(_["cidr_ip"] == "0.0.0.0/0").where(_["policy"] == empty || _["policy"].downcase == "accept").none(_["ip_protocol"].downcase == "all" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "22/22" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "-1/-1" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "1/65535")
+      terraform.plan.resourceChanges.where(type == "alicloud_security_group_rule").map(change.after).where(_["type"] == "ingress").where(_["cidr_ip"] == "0.0.0.0/0").where(_["policy"] == empty || _["policy"].downcase == "accept").none(_["ip_protocol"].downcase == "all" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == /^(\d|1\d|2[0-2])\/(2[2-9]|[3-9]\d|\d{3,5})$/ || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "-1/-1")
   - uid: mondoo-alibaba-security-ecs-security-group-no-public-ssh-terraform-state
     filters: |
       asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_security_group_rule")
     mql: |
-      terraform.state.resources.where(type == "alicloud_security_group_rule").map(values).where(_["type"] == "ingress").where(_["cidr_ip"] == "0.0.0.0/0").where(_["policy"] == empty || _["policy"].downcase == "accept").none(_["ip_protocol"].downcase == "all" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "22/22" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "-1/-1" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "1/65535")
+      terraform.state.resources.where(type == "alicloud_security_group_rule").map(values).where(_["type"] == "ingress").where(_["cidr_ip"] == "0.0.0.0/0").where(_["policy"] == empty || _["policy"].downcase == "accept").none(_["ip_protocol"].downcase == "all" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == /^(\d|1\d|2[0-2])\/(2[2-9]|[3-9]\d|\d{3,5})$/ || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "-1/-1")
 
   - uid: mondoo-alibaba-security-ecs-security-group-no-public-rdp
     title: Ensure security groups do not allow public ingress to RDP (port 3389)
     impact: 85
     docs:
       desc: |
-        This check ensures that no security group permits inbound RDP (TCP port 3389) from the entire internet (`0.0.0.0/0`). World-open RDP is a primary vector for ransomware and unauthorized remote desktop access.
+        This check ensures that no security group permits inbound RDP (TCP port 3389) from the entire internet (`0.0.0.0/0`). A rule counts as open whether it names `0.0.0.0/0` directly or references a prefix list that contains it, and whether it names the port exactly or a wider range that spans it. World-open RDP is a primary vector for ransomware and unauthorized remote desktop access.
 
         **Why this matters**
 
@@ -1703,29 +1722,43 @@ queries:
   - uid: mondoo-alibaba-security-ecs-security-group-no-public-rdp-alicloud
     filters: asset.platform == "alicloud-account"
     mql: |
-      alicloud.ecs.securityGroups.all(permissions.where(direction.downcase == "ingress").where(policy.downcase == "accept").where(sourceCidrIp == "0.0.0.0/0").none(ipProtocol.downcase == "all" || ipProtocol.downcase == "tcp" && portRange == "3389/3389" || ipProtocol.downcase == "tcp" && portRange == "-1/-1" || ipProtocol.downcase == "tcp" && portRange == "1/65535"))
+      # A rule opens the port whenever its range spans it, not only when the range is written
+      # exactly as the port. The regex encodes "lower bound <= port <= upper bound" as two
+      # alternations; it over-matches above 65535, which the service rejects on the way in.
+      alicloud.ecs.securityGroups.all(
+        permissions
+          .where(direction.downcase == "ingress")
+          .where(policy.downcase == "accept")
+          .where(sourceCidrIp == "0.0.0.0/0" || sourcePrefixList != empty && sourcePrefixList.cidrBlocks.any(_ == "0.0.0.0/0"))
+          .none(
+            ipProtocol.downcase == "all" ||
+            ipProtocol.downcase == "tcp" && portRange == "-1/-1" ||
+            ipProtocol.downcase == "tcp" && portRange == /^(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)\/(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})$/
+          )
+      )
+
   - uid: mondoo-alibaba-security-ecs-security-group-no-public-rdp-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_security_group_rule")
     mql: |
-      terraform.resources("alicloud_security_group_rule").where(arguments["type"] == "ingress").where(arguments["cidr_ip"] == "0.0.0.0/0").where(arguments["policy"] == empty || arguments["policy"].downcase == "accept").none(arguments["ip_protocol"].downcase == "all" || arguments["ip_protocol"].downcase == "tcp" && arguments["port_range"] == "3389/3389" || arguments["ip_protocol"].downcase == "tcp" && arguments["port_range"] == "-1/-1" || arguments["ip_protocol"].downcase == "tcp" && arguments["port_range"] == "1/65535")
+      terraform.resources("alicloud_security_group_rule").where(arguments["type"] == "ingress").where(arguments["cidr_ip"] == "0.0.0.0/0").where(arguments["policy"] == empty || arguments["policy"].downcase == "accept").none(arguments["ip_protocol"].downcase == "all" || arguments["ip_protocol"].downcase == "tcp" && arguments["port_range"] == /^(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)\/(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})$/ || arguments["ip_protocol"].downcase == "tcp" && arguments["port_range"] == "-1/-1")
   - uid: mondoo-alibaba-security-ecs-security-group-no-public-rdp-terraform-plan
     filters: |
       asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_security_group_rule")
     mql: |
-      terraform.plan.resourceChanges.where(type == "alicloud_security_group_rule").map(change.after).where(_["type"] == "ingress").where(_["cidr_ip"] == "0.0.0.0/0").where(_["policy"] == empty || _["policy"].downcase == "accept").none(_["ip_protocol"].downcase == "all" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "3389/3389" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "-1/-1" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "1/65535")
+      terraform.plan.resourceChanges.where(type == "alicloud_security_group_rule").map(change.after).where(_["type"] == "ingress").where(_["cidr_ip"] == "0.0.0.0/0").where(_["policy"] == empty || _["policy"].downcase == "accept").none(_["ip_protocol"].downcase == "all" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == /^(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)\/(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})$/ || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "-1/-1")
   - uid: mondoo-alibaba-security-ecs-security-group-no-public-rdp-terraform-state
     filters: |
       asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_security_group_rule")
     mql: |
-      terraform.state.resources.where(type == "alicloud_security_group_rule").map(values).where(_["type"] == "ingress").where(_["cidr_ip"] == "0.0.0.0/0").where(_["policy"] == empty || _["policy"].downcase == "accept").none(_["ip_protocol"].downcase == "all" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "3389/3389" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "-1/-1" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "1/65535")
+      terraform.state.resources.where(type == "alicloud_security_group_rule").map(values).where(_["type"] == "ingress").where(_["cidr_ip"] == "0.0.0.0/0").where(_["policy"] == empty || _["policy"].downcase == "accept").none(_["ip_protocol"].downcase == "all" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == /^(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)\/(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})$/ || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "-1/-1")
 
   - uid: mondoo-alibaba-security-ecs-security-group-no-public-all-ports
     title: Ensure security groups do not allow unrestricted public ingress
     impact: 90
     docs:
       desc: |
-        This check ensures that no security group allows inbound access to all ports or all protocols from the entire internet (`0.0.0.0/0`). A fully open ingress rule exposes every service on every attached instance.
+        This check ensures that no security group allows inbound access to all ports or all protocols from the entire internet (`0.0.0.0/0`). A rule counts as open whether it names `0.0.0.0/0` directly or references a prefix list that contains it. A fully open ingress rule exposes every service on every attached instance.
 
         **Why this matters**
 
@@ -1808,7 +1841,18 @@ queries:
   - uid: mondoo-alibaba-security-ecs-security-group-no-public-all-ports-alicloud
     filters: asset.platform == "alicloud-account"
     mql: |
-      alicloud.ecs.securityGroups.all(permissions.where(direction.downcase == "ingress").where(policy.downcase == "accept").where(sourceCidrIp == "0.0.0.0/0").none(ipProtocol.downcase == "all" || portRange == "-1/-1" || portRange == "1/65535"))
+      alicloud.ecs.securityGroups.all(
+        permissions
+          .where(direction.downcase == "ingress")
+          .where(policy.downcase == "accept")
+          .where(sourceCidrIp == "0.0.0.0/0" || sourcePrefixList != empty && sourcePrefixList.cidrBlocks.any(_ == "0.0.0.0/0"))
+          .none(
+            ipProtocol.downcase == "all" ||
+            portRange == "-1/-1" ||
+            portRange == "1/65535"
+          )
+      )
+
   - uid: mondoo-alibaba-security-ecs-security-group-no-public-all-ports-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_security_group_rule")
@@ -1830,7 +1874,7 @@ queries:
     impact: 80
     docs:
       desc: |
-        This check ensures that no security group permits inbound SSH (22) or RDP (3389) from the entire IPv6 internet (`::/0`). IPv6 exposure is easy to overlook when only IPv4 rules are reviewed, yet it grants the same reachability.
+        This check ensures that no security group permits inbound SSH (22) or RDP (3389) from the entire IPv6 internet (`::/0`). A rule counts as open whether it names `::/0` directly or references a prefix list that contains it, and whether it names the port exactly or a wider range that spans it. IPv6 exposure is easy to overlook when only IPv4 rules are reviewed, yet it grants the same reachability.
 
         **Why this matters**
 
@@ -1913,22 +1957,37 @@ queries:
   - uid: mondoo-alibaba-security-ecs-security-group-no-public-ipv6-admin-alicloud
     filters: asset.platform == "alicloud-account"
     mql: |
-      alicloud.ecs.securityGroups.all(permissions.where(direction.downcase == "ingress").where(policy.downcase == "accept").where(ipv6SourceCidrIp == "::/0").none(ipProtocol.downcase == "all" || ipProtocol.downcase == "tcp" && portRange == "22/22" || ipProtocol.downcase == "tcp" && portRange == "3389/3389" || ipProtocol.downcase == "tcp" && portRange == "-1/-1" || ipProtocol.downcase == "tcp" && portRange == "1/65535"))
+      # A rule opens the port whenever its range spans it, not only when the range is written
+      # exactly as the port. The regex encodes "lower bound <= port <= upper bound" as two
+      # alternations; it over-matches above 65535, which the service rejects on the way in.
+      alicloud.ecs.securityGroups.all(
+        permissions
+          .where(direction.downcase == "ingress")
+          .where(policy.downcase == "accept")
+          .where(ipv6SourceCidrIp == "::/0" || sourcePrefixList != empty && sourcePrefixList.cidrBlocks.any(_ == "::/0"))
+          .none(
+            ipProtocol.downcase == "all" ||
+            ipProtocol.downcase == "tcp" && portRange == "-1/-1" ||
+            ipProtocol.downcase == "tcp" && portRange == /^(\d|1\d|2[0-2])\/(2[2-9]|[3-9]\d|\d{3,5})$/ ||
+            ipProtocol.downcase == "tcp" && portRange == /^(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)\/(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})$/
+          )
+      )
+
   - uid: mondoo-alibaba-security-ecs-security-group-no-public-ipv6-admin-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_security_group_rule")
     mql: |
-      terraform.resources("alicloud_security_group_rule").where(arguments["type"] == "ingress").where(arguments["ipv6_cidr_ip"] == "::/0").where(arguments["policy"] == empty || arguments["policy"].downcase == "accept").none(arguments["ip_protocol"].downcase == "all" || arguments["ip_protocol"].downcase == "tcp" && arguments["port_range"] == "22/22" || arguments["ip_protocol"].downcase == "tcp" && arguments["port_range"] == "3389/3389" || arguments["ip_protocol"].downcase == "tcp" && arguments["port_range"] == "-1/-1" || arguments["ip_protocol"].downcase == "tcp" && arguments["port_range"] == "1/65535")
+      terraform.resources("alicloud_security_group_rule").where(arguments["type"] == "ingress").where(arguments["ipv6_cidr_ip"] == "::/0").where(arguments["policy"] == empty || arguments["policy"].downcase == "accept").none(arguments["ip_protocol"].downcase == "all" || arguments["ip_protocol"].downcase == "tcp" && arguments["port_range"] == /^(\d|1\d|2[0-2])\/(2[2-9]|[3-9]\d|\d{3,5})$/ || arguments["ip_protocol"].downcase == "tcp" && arguments["port_range"] == /^(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)\/(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})$/ || arguments["ip_protocol"].downcase == "tcp" && arguments["port_range"] == "-1/-1")
   - uid: mondoo-alibaba-security-ecs-security-group-no-public-ipv6-admin-terraform-plan
     filters: |
       asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_security_group_rule")
     mql: |
-      terraform.plan.resourceChanges.where(type == "alicloud_security_group_rule").map(change.after).where(_["type"] == "ingress").where(_["ipv6_cidr_ip"] == "::/0").where(_["policy"] == empty || _["policy"].downcase == "accept").none(_["ip_protocol"].downcase == "all" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "22/22" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "3389/3389" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "-1/-1" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "1/65535")
+      terraform.plan.resourceChanges.where(type == "alicloud_security_group_rule").map(change.after).where(_["type"] == "ingress").where(_["ipv6_cidr_ip"] == "::/0").where(_["policy"] == empty || _["policy"].downcase == "accept").none(_["ip_protocol"].downcase == "all" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == /^(\d|1\d|2[0-2])\/(2[2-9]|[3-9]\d|\d{3,5})$/ || _["ip_protocol"].downcase == "tcp" && _["port_range"] == /^(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)\/(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})$/ || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "-1/-1")
   - uid: mondoo-alibaba-security-ecs-security-group-no-public-ipv6-admin-terraform-state
     filters: |
       asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_security_group_rule")
     mql: |
-      terraform.state.resources.where(type == "alicloud_security_group_rule").map(values).where(_["type"] == "ingress").where(_["ipv6_cidr_ip"] == "::/0").where(_["policy"] == empty || _["policy"].downcase == "accept").none(_["ip_protocol"].downcase == "all" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "22/22" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "3389/3389" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "-1/-1" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "1/65535")
+      terraform.state.resources.where(type == "alicloud_security_group_rule").map(values).where(_["type"] == "ingress").where(_["ipv6_cidr_ip"] == "::/0").where(_["policy"] == empty || _["policy"].downcase == "accept").none(_["ip_protocol"].downcase == "all" || _["ip_protocol"].downcase == "tcp" && _["port_range"] == /^(\d|1\d|2[0-2])\/(2[2-9]|[3-9]\d|\d{3,5})$/ || _["ip_protocol"].downcase == "tcp" && _["port_range"] == /^(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)\/(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})$/ || _["ip_protocol"].downcase == "tcp" && _["port_range"] == "-1/-1")
 
   # ---------------------------------------------------------------------------
   # Instances
@@ -2368,11 +2427,11 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: false
   - uid: mondoo-alibaba-security-rds-instance-no-public-network-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-rds-instance"
     mql: |
-      alicloud.rds.instances.all(dbInstanceNetType != empty && dbInstanceNetType != "Internet")
+      alicloud.rds.instance.dbInstanceNetType != empty
+      alicloud.rds.instance.dbInstanceNetType != "Internet"
 
-  # No Terraform variants: SSL/TLS on alicloud_db_instance is driven by the imperative ssl_action attribute (Open/Close/Update) rather than a declarative state, and enforcement is managed through separate connection resources; no attribute asserts that SSL is enabled.
   - uid: mondoo-alibaba-security-rds-instance-ssl-enabled
     title: Ensure RDS instances enforce SSL/TLS connections
     impact: 75
@@ -2447,9 +2506,9 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-1
       compliance/vda-isa-5: vda-isa-5-5-1-1
   - uid: mondoo-alibaba-security-rds-instance-ssl-enabled-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-rds-instance"
     mql: |
-      alicloud.rds.instances.all(sslEnabled == true)
+      alicloud.rds.instance.sslEnabled == true
 
   - uid: mondoo-alibaba-security-rds-instance-tde-enabled
     title: Ensure RDS instances have Transparent Data Encryption enabled
@@ -2539,9 +2598,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-10
       compliance/vda-isa-5: vda-isa-5-5-1-1
   - uid: mondoo-alibaba-security-rds-instance-tde-enabled-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-rds-instance"
     mql: |
-      alicloud.rds.instances.all(tdeEnabled == true)
+      alicloud.rds.instance.tdeEnabled == true
+
   - uid: mondoo-alibaba-security-rds-instance-tde-enabled-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_db_instance")
@@ -2650,11 +2710,11 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: false
   - uid: mondoo-alibaba-security-rds-instance-restrict-security-ip-list-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-rds-instance"
     mql: |
-      alicloud.rds.instances.all(
-        securityIPList == empty || securityIPList.none(_.contains("/0"))
-      )
+      alicloud.rds.instance.securityIPList == empty ||
+      alicloud.rds.instance.securityIPList.none(_ == "0.0.0.0" || _.contains("/0"))
+
   - uid: mondoo-alibaba-security-rds-instance-restrict-security-ip-list-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_db_instance")
@@ -2766,9 +2826,10 @@ queries:
       compliance/soc2-2017: false
       compliance/vda-isa-5: false
   - uid: mondoo-alibaba-security-rds-instance-deletion-protection-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-rds-instance"
     mql: |
-      alicloud.rds.instances.all(deletionProtection == true)
+      alicloud.rds.instance.deletionProtection == true
+
   - uid: mondoo-alibaba-security-rds-instance-deletion-protection-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_db_instance")
@@ -2881,9 +2942,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-10
       compliance/vda-isa-5: vda-isa-5-5-1-1
   - uid: mondoo-alibaba-security-polardb-cluster-tde-enabled-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-polardb-cluster"
     mql: |
-      alicloud.polardb.clusters.all(tdeEnabled == true)
+      alicloud.polardb.cluster.tdeEnabled == true
+
   - uid: mondoo-alibaba-security-polardb-cluster-tde-enabled-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_polardb_cluster")
@@ -2998,11 +3060,11 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: false
   - uid: mondoo-alibaba-security-polardb-cluster-restrict-access-whitelist-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-polardb-cluster"
     mql: |
-      alicloud.polardb.clusters.all(
-        accessWhitelist == empty || accessWhitelist.none(_.contains("/0"))
-      )
+      alicloud.polardb.cluster.accessWhitelist == empty ||
+      alicloud.polardb.cluster.accessWhitelist.none(_ == "0.0.0.0" || _.contains("/0"))
+
   - uid: mondoo-alibaba-security-polardb-cluster-restrict-access-whitelist-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_polardb_cluster")
@@ -3122,9 +3184,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
   - uid: mondoo-alibaba-security-redis-instance-auth-enabled-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-redis-instance"
     mql: |
-      alicloud.redis.instances.all(authEnabled == true)
+      alicloud.redis.instance.authEnabled == true
+
   - uid: mondoo-alibaba-security-redis-instance-auth-enabled-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_kvstore_instance")
@@ -3238,10 +3301,11 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-1
       compliance/vda-isa-5: vda-isa-5-5-1-1
   - uid: mondoo-alibaba-security-redis-instance-ssl-and-private-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-redis-instance"
     mql: |
-      alicloud.redis.instances.all(sslEnabled == true)
-      alicloud.redis.instances.all(networkType == "VPC")
+      alicloud.redis.instance.sslEnabled == true
+      alicloud.redis.instance.networkType == "VPC"
+
   - uid: mondoo-alibaba-security-redis-instance-ssl-and-private-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_kvstore_instance")
@@ -3348,9 +3412,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-10
       compliance/vda-isa-5: vda-isa-5-5-1-1
   - uid: mondoo-alibaba-security-redis-instance-tde-enabled-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-redis-instance"
     mql: |
-      alicloud.redis.instances.all(tdeEnabled == true)
+      alicloud.redis.instance.tdeEnabled == true
+
   - uid: mondoo-alibaba-security-redis-instance-tde-enabled-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_kvstore_instance")
@@ -3460,9 +3525,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-10
       compliance/vda-isa-5: vda-isa-5-5-1-1
   - uid: mondoo-alibaba-security-mongodb-instance-tde-enabled-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-mongodb-instance"
     mql: |
-      alicloud.mongodb.instances.all(tdeEnabled == true)
+      alicloud.mongodb.instance.tdeEnabled == true
+
   - uid: mondoo-alibaba-security-mongodb-instance-tde-enabled-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_mongodb_instance")
@@ -3579,10 +3645,11 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-1
       compliance/vda-isa-5: vda-isa-5-5-1-1
   - uid: mondoo-alibaba-security-mongodb-instance-ssl-and-audit-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-mongodb-instance"
     mql: |
-      alicloud.mongodb.instances.all(sslEnabled == true)
-      alicloud.mongodb.instances.all(auditPolicyEnabled == true)
+      alicloud.mongodb.instance.sslEnabled == true
+      alicloud.mongodb.instance.auditPolicyEnabled == true
+
   - uid: mondoo-alibaba-security-mongodb-instance-ssl-and-audit-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_mongodb_instance")
@@ -3690,11 +3757,11 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: false
   - uid: mondoo-alibaba-security-mongodb-instance-restrict-security-ip-list-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-mongodb-instance"
     mql: |
-      alicloud.mongodb.instances.all(
-        securityIPList == empty || securityIPList.none(_ == "0.0.0.0/0")
-      )
+      alicloud.mongodb.instance.securityIPList == empty ||
+      alicloud.mongodb.instance.securityIPList.none(_ == "0.0.0.0" || _.contains("/0"))
+
   - uid: mondoo-alibaba-security-mongodb-instance-restrict-security-ip-list-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_mongodb_instance")
@@ -3826,7 +3893,7 @@ queries:
     impact: 70
     docs:
       desc: |
-        This check ensures that KMS customer master keys with automatic rotation enabled are scheduled to rotate at least once every 365 days, by verifying the next scheduled rotation falls within a year. A rotation interval longer than a year leaves key material in service well beyond common cryptographic-hygiene guidance.
+        This check ensures that KMS customer master keys with automatic rotation enabled carry a configured rotation interval of 365 days (`31536000s`) or less. A rotation interval longer than a year leaves key material in service well beyond common cryptographic-hygiene guidance.
 
         **Why this matters**
 
@@ -3903,21 +3970,27 @@ queries:
   - uid: mondoo-alibaba-security-kms-key-rotation-interval-alicloud
     filters: asset.platform == "alicloud-account"
     mql: |
-      alicloud.kms.keys.where(automaticRotation == "Enabled").all(nextRotationDate != empty && nextRotationDate <= time.now + 365 * time.day)
+      # rotationInterval is a duration string ("31536000s"), and MQL cannot convert a string to
+      # a number, so the "<= 365 days" bound is encoded as a regex over the digits. Verified
+      # exhaustively: it matches exactly the values 0s through 31536000s.
+      alicloud.kms.keys.where(automaticRotation == "Enabled").all(
+        rotationInterval == /^(\d{1,7}|[12]\d{7}|30\d{6}|31[0-4]\d{5}|315[0-2]\d{4}|3153[0-5]\d{3}|31536000)s$/
+      )
 
   # ===========================================================================
   # ActionTrail
   # ===========================================================================
   - uid: mondoo-alibaba-security-actiontrail-trail-enabled
-    title: Ensure at least one ActionTrail trail is enabled and logging
+    title: Ensure an ActionTrail trail is logging all read and write events
     impact: 90
     docs:
       desc: |
-        This check ensures that the Alibaba Cloud account has at least one ActionTrail trail that is enabled and actively delivering logs. ActionTrail records management events across the account, so a disabled trail, or an account with no trail at all, leaves administrative and API activity unrecorded.
+        This check ensures that the Alibaba Cloud account has at least one ActionTrail trail that is enabled, actively delivering logs, and configured to capture both read and write events (`EventRW` of `All`). ActionTrail records management events across the account, so a disabled trail, an account with no trail at all, or a trail scoped to only one event direction leaves administrative and API activity unrecorded.
 
         **Why this matters**
 
         - **Audit logging is the record of who did what:** ActionTrail captures console and API operations across services; without it there is no authoritative trail of resource changes, sign-ins, or configuration edits.
+        - **Read events matter too:** A write-only trail records the change but not the reconnaissance that preceded it, so data-access and enumeration activity goes unrecorded.
         - **Detection depends on logs:** Threat detection, alerting, and post-incident forensics all rely on a continuous event record; a stopped or missing trail creates a blind spot an attacker can operate within undetected.
         - **Compliance requires retained audit records:** Regulatory regimes expect account activity to be logged and retained, and an unenabled trail fails that expectation outright.
 
@@ -3930,9 +4003,9 @@ queries:
 
         1. Sign in to the [ActionTrail console](https://actiontrail.console.aliyun.com/).
         2. Navigate to **Trails**.
-        3. Confirm that at least one trail exists, its status is **Enabled**, and it is actively delivering logs.
+        3. Confirm that at least one trail exists, its status is **Enabled**, it is actively delivering logs, and its **Event Type** is **All**.
 
-        A passing account has an enabled trail that is logging. A failing account has no trail, or every trail is disabled or stopped.
+        A passing account has an enabled trail that is logging all event types. A failing account has no trail, has only disabled or stopped trails, or logs only read or only write events.
 
         ### Audit via CLI
 
@@ -3943,7 +4016,7 @@ queries:
         aliyun actiontrail GetTrailStatus --Name <trail-name>
         ```
 
-        A passing account returns a trail whose `Status` is `Enable` and whose `IsLogging` is `true`. A failing account returns no trail, or trails that are disabled or not logging.
+        A passing account returns a trail whose `Status` is `Enable`, whose `IsLogging` is `true`, and whose `EventRW` is `All`. A failing account returns no trail, trails that are disabled or not logging, or trails whose `EventRW` is `Read` or `Write`.
       remediation:
         - id: console
           desc: |
@@ -3951,7 +4024,7 @@ queries:
 
             1. Sign in to the [ActionTrail console](https://actiontrail.console.aliyun.com/).
             2. Navigate to **Trails** and choose **Create Trail**.
-            3. Select a delivery destination (an OSS bucket and/or a Simple Log Service project) and complete the wizard.
+            3. Select a delivery destination (an OSS bucket and/or a Simple Log Service project), set **Event Type** to **All**, and complete the wizard.
             4. Confirm the new trail's status is **Enabled** and that it is logging.
         - id: cli
           desc: |
@@ -3964,7 +4037,7 @@ queries:
             ```
         - id: terraform
           desc: |
-            To declare an enabled ActionTrail trail in Terraform, set `status` to `Enable`:
+            To declare an enabled ActionTrail trail in Terraform, set `status` to `Enable` and `event_rw` to `All`:
 
             ```hcl
             resource "alicloud_actiontrail_trail" "example" {
@@ -3998,40 +4071,43 @@ queries:
   - uid: mondoo-alibaba-security-actiontrail-trail-enabled-alicloud
     filters: asset.platform == "alicloud-account"
     mql: |
-      alicloud.actiontrail.trails.any(status == "Enable" && isLogging == true)
+      alicloud.actiontrail.trails.any(status == "Enable" && isLogging == true && eventRW == "All")
   - uid: mondoo-alibaba-security-actiontrail-trail-enabled-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_actiontrail_trail")
     mql: |
-      terraform.resources("alicloud_actiontrail_trail").all(arguments["status"] != "Disable")
+      terraform.resources("alicloud_actiontrail_trail").all(
+        arguments["status"] != "Disable" && arguments["event_rw"] == "All"
+      )
   - uid: mondoo-alibaba-security-actiontrail-trail-enabled-terraform-plan
     filters: |
       asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_actiontrail_trail")
     mql: |
       terraform.plan.resourceChanges.where(type == "alicloud_actiontrail_trail").all(
-        change.after["status"] != "Disable"
+        change.after["status"] != "Disable" && change.after["event_rw"] == "All"
       )
   - uid: mondoo-alibaba-security-actiontrail-trail-enabled-terraform-state
     filters: |
       asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_actiontrail_trail")
     mql: |
       terraform.state.resources.where(type == "alicloud_actiontrail_trail").all(
-        values["status"] != "Disable"
+        values["status"] != "Disable" && values["event_rw"] == "All"
       )
 
   # ===========================================================================
   # VPC flow logs
   # ===========================================================================
   - uid: mondoo-alibaba-security-vpc-flow-logs-enabled
-    title: Ensure VPC flow logs are enabled and active
+    title: Ensure VPC flow logs are active and capture all traffic
     impact: 70
     docs:
       desc: |
-        This check ensures that the account has at least one VPC flow log that is in the active state. Flow logs capture information about the traffic flowing through elastic network interfaces, VSwitches, and VPCs, providing the network-level visibility needed to detect anomalous connections and investigate incidents.
+        This check ensures that the account has at least one VPC flow log that is in the active state and captures all traffic (`TrafficType` of `All`). Flow logs capture information about the traffic flowing through elastic network interfaces, VSwitches, and VPCs, providing the network-level visibility needed to detect anomalous connections and investigate incidents. A flow log scoped to only `Allow` or only `Drop` records half the picture.
 
         **Why this matters**
 
         - **Network activity is otherwise invisible:** Without flow logs there is no record of accepted or rejected connections, making it impossible to reconstruct lateral movement, data exfiltration, or reconnaissance after the fact.
+        - **Partial capture hides half the evidence:** Recording only accepted traffic loses the scanning and probing that rejected rules blocked; recording only rejected traffic loses the connections that succeeded.
         - **Detection and forensics need traffic records:** Flow logs feed monitoring and threat-detection pipelines; an inactive or absent flow log removes a primary signal for identifying malicious network behavior.
         - **Misconfigured exposure goes unnoticed:** Overly permissive security groups or unexpected egress are far easier to spot when the traffic that traverses them is being logged.
 
@@ -4044,9 +4120,9 @@ queries:
 
         1. Sign in to the [VPC console](https://vpc.console.aliyun.com/).
         2. Navigate to **Flow Log**.
-        3. Confirm at least one flow log exists and its status is **Active**.
+        3. Confirm at least one flow log exists, its status is **Active**, and its traffic type is **All**.
 
-        A passing account has an active flow log. A failing account has no flow log, or every flow log is inactive.
+        A passing account has an active flow log capturing all traffic. A failing account has no flow log, has only inactive flow logs, or captures only accepted or only rejected traffic.
 
         ### Audit via CLI
 
@@ -4056,7 +4132,7 @@ queries:
         aliyun vpc DescribeFlowLogs
         ```
 
-        A passing account returns a flow log whose `Status` is `Active`. A failing account returns no flow log, or flow logs whose status is `Inactive`.
+        A passing account returns a flow log whose `Status` is `Active` and whose `TrafficType` is `All`. A failing account returns no flow log, flow logs whose status is `Inactive`, or flow logs whose `TrafficType` is `Allow` or `Drop`.
       remediation:
         - id: console
           desc: |
@@ -4077,7 +4153,7 @@ queries:
             ```
         - id: terraform
           desc: |
-            To declare an active VPC flow log in Terraform, set `status` to `Active`:
+            To declare an active VPC flow log in Terraform, set `status` to `Active` and `traffic_type` to `All`:
 
             ```hcl
             resource "alicloud_vpc_flow_log" "example" {
@@ -4114,25 +4190,27 @@ queries:
   - uid: mondoo-alibaba-security-vpc-flow-logs-enabled-alicloud
     filters: asset.platform == "alicloud-vpc"
     mql: |
-      alicloud.vpc.network.flowLogs.any(status == "Active")
+      alicloud.vpc.network.flowLogs.any(status == "Active" && trafficType == "All")
   - uid: mondoo-alibaba-security-vpc-flow-logs-enabled-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_vpc_flow_log")
     mql: |
-      terraform.resources("alicloud_vpc_flow_log").all(arguments["status"] != "Inactive")
+      terraform.resources("alicloud_vpc_flow_log").all(
+        arguments["status"] != "Inactive" && arguments["traffic_type"] == "All"
+      )
   - uid: mondoo-alibaba-security-vpc-flow-logs-enabled-terraform-plan
     filters: |
       asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_vpc_flow_log")
     mql: |
       terraform.plan.resourceChanges.where(type == "alicloud_vpc_flow_log").all(
-        change.after["status"] != "Inactive"
+        change.after["status"] != "Inactive" && change.after["traffic_type"] == "All"
       )
   - uid: mondoo-alibaba-security-vpc-flow-logs-enabled-terraform-state
     filters: |
       asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_vpc_flow_log")
     mql: |
       terraform.state.resources.where(type == "alicloud_vpc_flow_log").all(
-        values["status"] != "Inactive"
+        values["status"] != "Inactive" && values["traffic_type"] == "All"
       )
 
   # ===========================================================================
@@ -4777,16 +4855,11 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-1
       compliance/vda-isa-5: vda-isa-5-5-1-1
   - uid: mondoo-alibaba-security-slb-listener-not-plaintext-alicloud
-    filters: asset.platform == "alicloud-account"
+    filters: asset.platform == "alicloud-slb-loadbalancer"
     mql: |
-      alicloud.slb.loadBalancers.where(internetFacing == true).all(
-        listeners.where(protocol == "http") == empty
-      )
+      alicloud.slb.loadBalancer.internetFacing == false ||
+      alicloud.slb.loadBalancer.listeners.where(protocol == "http") == empty
 
-  # ===========================================================================
-  # WAF
-  # ===========================================================================
-  # No Terraform variants: the negotiated TLS version served for a WAF-protected domain is a runtime property of the domain's listen configuration reported by the WAF API; the alicloud_waf_domain resource does not expose a stable attribute that pins the minimum TLS version served.
   - uid: mondoo-alibaba-security-waf-domain-tls-hardened
     title: Ensure WAF-protected domains enforce a modern TLS version
     impact: 70
