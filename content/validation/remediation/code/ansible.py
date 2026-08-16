@@ -44,6 +44,7 @@ TARGETS = {
     "freebsd": [CONTENT_DIR / "mondoo-freebsd-security.mql.yaml"],
     "mariadb": [CONTENT_DIR / "mondoo-mariadb-security.mql.yaml"],
     "mysql": [CONTENT_DIR / "mondoo-mysql-security.mql.yaml"],
+    "postgresql": [CONTENT_DIR / "mondoo-postgresql-security.mql.yaml"],
     "proxmox": [CONTENT_DIR / "mondoo-proxmox-security.mql.yaml"],
 }
 
