@@ -221,7 +221,9 @@ def detect_providers(hcl_code: str) -> set[str]:
         r'(?:resource|data)\s+"([a-z][a-z0-9]*)_', hcl_code
     ):
         prefixes.add(m.group(1))
-    for m in re.finditer(r'^\s*provider\s*=\s*([a-z][a-z0-9-]*)\s*$', hcl_code, re.M):
+    # Both spellings occur: the modern unquoted reference and the legacy quoted
+    # string form, which Terraform still parses.
+    for m in re.finditer(r'^\s*provider\s*=\s*"?([a-z][a-z0-9-]*)"?\s*$', hcl_code, re.M):
         prefixes.add(m.group(1))
     return prefixes
 
