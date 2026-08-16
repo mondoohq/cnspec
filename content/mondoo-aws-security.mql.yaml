@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 12.12.1
+    version: 12.13.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -60606,13 +60606,19 @@ queries:
             ```
         - id: terraform
           desc: |
-            To restrict SSM document sharing in Terraform, ensure `aws_ssm_document_permission` resources do not share with all accounts:
+            To restrict SSM document sharing in Terraform, set the document's `permissions` map to name the accounts it is shared with. `account_ids` is a comma-separated string; the literal `All` shares the document publicly:
 
             ```hcl
-            resource "aws_ssm_document_permission" "example" {
-              document_name = aws_ssm_document.example.name
-              permission    = "Share"
-              account_ids   = ["123456789012"]
+            resource "aws_ssm_document" "example" {
+              name            = "example-document"
+              document_type   = "Command"
+              document_format = "YAML"
+              content         = file("${path.module}/example-document.yaml")
+
+              permissions = {
+                type        = "Share"
+                account_ids = "123456789012,123456789013"
+              }
             }
             ```
     refs:
@@ -60625,22 +60631,28 @@ queries:
         permissions.none(_['accountIds'].any(_ == "All" || _ == "all"))
       )
   - uid: mondoo-aws-security-ssm-document-not-public-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ssm_document_permission")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ssm_document")
     mql: |
-      terraform.resources("aws_ssm_document_permission").all(
-        arguments.account_ids.none(_ == "All" || _ == "all")
+      terraform.resources("aws_ssm_document").all(
+        arguments['permissions'] == null ||
+        arguments['permissions']['account_ids'] == null ||
+        arguments['permissions']['account_ids'] != /(?i)(^|,)\s*all\s*($|,)/
       )
   - uid: mondoo-aws-security-ssm-document-not-public-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ssm_document_permission")
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ssm_document")
     mql: |
-      terraform.plan.resourceChanges.where(type == "aws_ssm_document_permission").all(
-        change.after.account_ids.none(_ == "All" || _ == "all")
+      terraform.plan.resourceChanges.where(type == "aws_ssm_document").all(
+        change.after['permissions'] == null ||
+        change.after['permissions']['account_ids'] == null ||
+        change.after['permissions']['account_ids'] != /(?i)(^|,)\s*all\s*($|,)/
       )
   - uid: mondoo-aws-security-ssm-document-not-public-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_ssm_document_permission")
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_ssm_document")
     mql: |
-      terraform.state.resources.where(type == "aws_ssm_document_permission").all(
-        values.account_ids.none(_ == "All" || _ == "all")
+      terraform.state.resources.where(type == "aws_ssm_document").all(
+        values['permissions'] == null ||
+        values['permissions']['account_ids'] == null ||
+        values['permissions']['account_ids'] != /(?i)(^|,)\s*all\s*($|,)/
       )
   - uid: mondoo-aws-security-ssm-patch-baseline-reject-action
     title: Ensure SSM patch baselines block rejected patches
