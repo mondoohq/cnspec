@@ -286,6 +286,49 @@ Most of these do not fail lint and do not error at scan time. They return a **ve
 
 Rely on `&&` binding tighter than `||`, so `a || b && c` already parses as `a || (b && c)`, or split the assertion into separate `.any()` / `.all()` calls. Never add parentheses "for clarity" — and decline review suggestions that ask for them.
 
+### A guard chain is not a skipped check
+
+The dominant shape in this directory is a **guard chain**: some `||`-joined guards that exempt an asset, then the assertion as the final `&&` conjunct.
+
+```coffee
+aws.batch.jobDefinition.status != "ACTIVE" ||            # guard: not in scope
+aws.batch.jobDefinition.container == null ||             # guard: nothing to check
+aws.batch.jobDefinition.container.jobRole == null ||     # guard: no role attached
+aws.batch.jobDefinition.container.jobRole.inlinePolicyDetails.length == 0 &&
+aws.batch.jobDefinition.container.jobRole.attachedPolicies.all(…)
+```
+
+Because `&&` binds tighter, that parses as `guard || guard || guard || (D && E)`, which is the intended semantics. Reviewers — human and automated — repeatedly misread the `D && E` tail as "E only runs when D is true, so the check is skipped and silently passes." **That inference is wrong, and it is the single most-filed false positive on this repo.**
+
+Short-circuit evaluation decides *what gets evaluated*, never *what the verdict is*. In a disjunction, a false conjunct makes the whole expression false, so the check **fails**:
+
+| `jobRole` present | inline policies exist (`D`) | attached clean (`E`) | verdict |
+|---|---|---|---|
+| yes | **yes** (`D` false) | yes | **`[failed]`** — the inline policy *is* the violation |
+| yes | no | no (`E` false) | `[failed]` |
+| yes | no | yes | `[ok]` |
+| no | — | — | `[ok]` via the guard |
+
+There is no input for which the guard-chain form passes and a "fully parenthesized" form would fail. Before claiming a precedence bug, build that table and name the row that differs. If no row differs, there is no bug.
+
+Two corollaries:
+
+- The suggested fix is usually **not expressible** — MQL rejects `(`, so the grouping has to come from precedence (see the section above).
+- A guard chain and a pure `&&` chain differ in what an **absent** field means, not in precedence. `role == null ||` *passes* an asset with no role; a pure `&&` chain *fails* it. That is a deliberate authoring decision about absent data, so do not "unify" the two shapes.
+
+### Do not verify a literal by eye in a rendered diff
+
+Character-level claims about string literals — a colon count in an ARN, a missing path segment, a truncated prefix — are not reliable from diff output, where proportional rendering and syntax highlighting distort spacing. One PR collected five findings against `arn:aws:iam::aws:policy/ReadOnlyAccess`, each proposing a different "correct" form and three retracting themselves mid-comment. The ARN was canonical throughout.
+
+Resolve the literal against the system that owns it, and quote the result:
+
+```bash
+aws iam get-policy --policy-arn arn:aws:iam::aws:policy/ReadOnlyAccess --query 'Policy.Arn' --output text
+# arn:aws:iam::aws:policy/ReadOnlyAccess
+```
+
+AWS-managed policy ARNs have an **empty account field**, so `iam` is followed by exactly two colons. Same rule for any literal with an authoritative oracle: `cfn-lint` for CloudFormation resource types and property names, `az`/`gcloud`/`aws` for CLI grammar, the provider schema for field paths.
+
 ### Comparison against an unresolved field is asymmetric
 
 A field the provider never populated is `null`, and null does not compare like a value. Against a missing map key (`m = {"a": 1}`):
