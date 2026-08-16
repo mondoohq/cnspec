@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -61,7 +62,7 @@ TARGETS = {
 
 # Map resource prefix -> (provider source, version constraint)
 PROVIDER_MAP = {
-    "aws": ("hashicorp/aws", "~> 5.0"),
+    "aws": ("hashicorp/aws", "~> 6.0"),
     "azurerm": ("hashicorp/azurerm", "~> 5.0"),
     "azuread": ("hashicorp/azuread", "~> 3.0"),
     "azapi": ("azure/azapi", "~> 2.0"),
@@ -117,6 +118,12 @@ DISABLED_RULES = {
 PROVIDER_EXTRA_CONFIG = {
     "azurerm": "  features {}\n",
 }
+
+# `tflint --init` reaches GitHub for every ruleset plugin. Retry before calling
+# a plugin set unusable, with a growing pause so a rate-limited or briefly
+# unreachable release download recovers instead of failing the whole run.
+INIT_ATTEMPTS = 3
+INIT_RETRY_DELAY = 3  # seconds, multiplied by the attempt number
 
 FAILURES: list[dict] = []
 
@@ -292,18 +299,38 @@ def write_tflint_config(tmp_dir: Path, providers: set[str]) -> None:
 # tflint execution
 # ---------------------------------------------------------------------------
 
-def init_tflint(tmp_dir: Path, plugin_cache: Path) -> bool:
-    """Run tflint --init to download plugins. Returns True on success."""
+def init_tflint(tmp_dir: Path, plugin_cache: Path) -> tuple[bool, str]:
+    """Run tflint --init to download plugins.
+
+    Returns (success, diagnostics). Ruleset plugins are downloaded from GitHub
+    releases, so this is the one step in the validator that depends on the
+    network: it fails transiently on a dropped connection or a GitHub API hiccup
+    even when every pin is correct. Each attempt is retried before the plugin
+    set is declared unusable, and the last attempt's output is returned so a
+    genuine failure (a version that no longer exists, a bad checksum) is
+    diagnosable from the log rather than being reported as bare "init failed".
+    """
     env = {**dict(os.environ), "TFLINT_PLUGIN_DIR": str(plugin_cache)}
-    result = subprocess.run(
-        ["tflint", "--init"],
-        cwd=tmp_dir,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
-    )
-    return result.returncode == 0
+    diagnostics = ""
+    for attempt in range(INIT_ATTEMPTS):
+        if attempt:
+            time.sleep(INIT_RETRY_DELAY * attempt)
+        try:
+            result = subprocess.run(
+                ["tflint", "--init"],
+                cwd=tmp_dir,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=env,
+            )
+        except subprocess.TimeoutExpired:
+            diagnostics = "tflint --init timed out after 120s"
+            continue
+        if result.returncode == 0:
+            return True, ""
+        diagnostics = (result.stderr or result.stdout).strip()
+    return False, diagnostics
 
 
 def run_tflint(tmp_dir: Path, plugin_cache: Path) -> TflintResult:
@@ -383,33 +410,49 @@ def validate_block(
         return block, result.success, result.issues
 
 
+def plugins_for(providers: frozenset[str] | set[str]) -> frozenset[str]:
+    """The ruleset plugins a provider set needs. Most providers have none."""
+    return frozenset(p for p in providers if p in TFLINT_PLUGIN_MAP)
+
+
 def init_plugins_for_providers(
     provider_sets: set[frozenset[str]], plugin_cache: Path
 ) -> set[frozenset[str]]:
     """Pre-initialize tflint plugins for all needed provider combinations.
 
-    Returns the set of provider combinations that failed initialization.
+    Returns the plugin sets that failed initialization. Both the "already done"
+    and the "gave up" bookkeeping are keyed by the *plugin* set, not the
+    provider set that asked for it: only providers with a ruleset reach the
+    generated config, so `{azurerm}` and `{azurerm, azapi}` install exactly the
+    same plugin and must share a verdict. Keyed by provider set instead, one
+    combination's transient failure would blame whichever snippets happened to
+    use it while the identical install succeeded for the rest.
     """
-    initialized: set[str] = set()
+    initialized: set[frozenset[str]] = set()
     failed: set[frozenset[str]] = set()
     for providers in provider_sets:
-        # Only need to init for providers that have tflint plugins
-        plugins_needed = frozenset(p for p in providers if p in TFLINT_PLUGIN_MAP)
-        key = ",".join(sorted(plugins_needed))
-        if key in initialized or not plugins_needed:
+        plugins_needed = plugins_for(providers)
+        if not plugins_needed or plugins_needed in initialized:
+            continue
+        if plugins_needed in failed:
             continue
 
         with tempfile.TemporaryDirectory(prefix="tflint_init_") as tmp:
             tmp_path = Path(tmp)
             write_tflint_config(tmp_path, providers)
-            if init_tflint(tmp_path, plugin_cache):
-                initialized.add(key)
+            ok, diagnostics = init_tflint(tmp_path, plugin_cache)
+            if ok:
+                initialized.add(plugins_needed)
             else:
+                key = ",".join(sorted(plugins_needed))
                 print(
-                    f"Warning: tflint --init failed for plugins: {key}",
+                    f"Warning: tflint --init failed for plugins: {key} "
+                    f"(after {INIT_ATTEMPTS} attempts)",
                     file=sys.stderr,
                 )
-                failed.add(providers)
+                if diagnostics:
+                    print(diagnostics, file=sys.stderr)
+                failed.add(plugins_needed)
     return failed
 
 
@@ -433,7 +476,7 @@ def validate_policy_file(
         providers = detect_providers(b.code)
         if providers:
             provider_sets.add(frozenset(providers))
-    failed_inits = init_plugins_for_providers(provider_sets, plugin_cache)
+    failed_plugins = init_plugins_for_providers(provider_sets, plugin_cache)
 
     resolved = filepath.resolve()
     try:
@@ -445,9 +488,12 @@ def validate_policy_file(
     fail_count = 0
 
     def process(block: HclBlock):
-        providers = frozenset(detect_providers(block.code))
-        if providers in failed_inits:
-            return block, False, ["tflint plugin init failed for required providers"]
+        plugins = plugins_for(detect_providers(block.code))
+        if plugins in failed_plugins:
+            key = ",".join(sorted(plugins))
+            return block, False, [
+                f"tflint plugin init failed for required ruleset: {key}"
+            ]
         return validate_block(block, plugin_cache)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
