@@ -66,7 +66,7 @@ PROVIDER_MAP = {
     "azuread": ("hashicorp/azuread", "~> 3.0"),
     "azapi": ("azure/azapi", "~> 2.0"),
     "google": ("hashicorp/google", "~> 7.0"),
-    "oci": ("oracle/oci", "~> 6.0"),
+    "oci": ("oracle/oci", "~> 8.0"),
     "github": ("integrations/github", "~> 6.0"),
     "gitlab": ("gitlabhq/gitlab", "~> 17.0"),
     "okta": ("okta/okta", "~> 6.0"),
