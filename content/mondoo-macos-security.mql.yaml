@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-macos-security
     name: Mondoo macOS Security
-    version: 1.4.3
+    version: 1.4.4
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -124,20 +124,21 @@ queries:
       files.find(from: "/var/audit/", type: "file,dir", xdev: false).all(user.name == "root" && group.name == "wheel" && permissions.other_readable == false && permissions.other_writeable == false && permissions.other_executable == false)
     docs:
       desc: |
-        This check ensures that the audit system on macOS is properly configured to protect critical operational and security information. The audit logs and configuration files should be owned by the root user and the wheel group, with strict read-only permissions to prevent unauthorized access or tampering.
+        This check verifies that the macOS audit trail and its configuration are readable only by the system.
+
+        The audit records in `/var/audit` and the `/etc/security/audit_control` file that governs what gets recorded should be owned by `root` and the `wheel` group. The check reads their ownership and mode, which must grant no access to other users.
 
         **Why this matters**
 
-        The macOS audit system records important security and operational events, which can be valuable for detecting anomalies, investigating incidents, and maintaining system integrity. However, these logs can also be a target for attackers seeking to obfuscate their actions or gain unauthorized access.
+        The audit trail is the record of who authenticated, when privilege was used, and what administrative changes were made. Its value depends entirely on it being trustworthy, and a file that the subject of an investigation can modify is not evidence.
 
-        By ensuring that the `/etc/security/audit_control` configuration file and the files in `/var/audit` are owned by root and the wheel group, with no access granted to other users, the risk of unauthorized access or tampering is minimized. This configuration supports a defense-in-depth strategy by safeguarding critical audit records.
+        Write access is the direct problem. An attacker who has escalated on the Mac and can edit the trail removes the records of how they arrived and what they did, and nothing about the resulting file indicates that anything was taken out.
 
-        Properly securing audit logs contributes to:
-          - Enhanced system integrity and trustworthiness
-          - Improved incident response and forensic capabilities
-          - Compliance with security best practices and standards
+        Write access to `audit_control` is worse, because it acts prospectively. Narrowing what the system records means the events never enter the trail at all, which leaves no gap to notice: the file is intact, the service is running, and the activity was simply never captured.
 
-        Without these protections, audit logs may be vulnerable to unauthorized changes, undermining their reliability and the overall security posture of the system.
+        Read access matters too. The trail describes which accounts exist, when they are used, and what administrators do, which is a map of the machine's activity that no ordinary account needs.
+
+        Local permissions protect the copy on disk. Forward the trail off the machine so a record survives anyone who obtains administrative access to it.
       audit: |
         Verify the ownership and permissions of the audit configuration file and audit logs from the macOS shell.
 
@@ -234,15 +235,19 @@ queries:
     mql: macos.sharing.bluetoothSharing == false
     docs:
       desc: |-
-        This check ensures that Bluetooth Sharing is disabled on macOS systems. Bluetooth Sharing allows files to be exchanged with Bluetooth-enabled devices, which can pose a security risk if not properly managed.
+        This check verifies that Bluetooth Sharing is turned off.
+
+        Bluetooth Sharing lets nearby Bluetooth devices push files to this Mac and browse a designated folder on it, making the machine a file transfer endpoint for whoever is in radio range. The check reads `macos.sharing.bluetoothSharing`, which must be `false`.
 
         **Why this matters**
 
-        Bluetooth Sharing enables file transfers between macOS devices and other Bluetooth-enabled devices. While this feature can be convenient, it also introduces potential vulnerabilities, such as unauthorized access to shared files or exploitation of Bluetooth-related security flaws.
+        Bluetooth range is a physical boundary, not an authenticated one. Anyone within roughly ten meters, which includes an adjacent office, a café table, or a seat on the same train, can attempt to reach the service. There is no network to traverse, so none of the organization's firewalls, proxies, or network monitoring sees any of it.
 
-        Disabling Bluetooth Sharing reduces the attack surface of the system by preventing unauthorized file exchanges and mitigating risks associated with Bluetooth-based exploits. This is particularly important in environments where sensitive data is handled or where devices are exposed to untrusted networks.
+        The service accepts inbound files into a folder on the Mac. That gives an attacker in range a way to place content on the machine without any prior access, which is the first step for a payload that a user is then persuaded to open. It also exposes the sharing folder for browsing, so material a user placed there for a colleague is readable by anyone who pairs.
 
-        By ensuring Bluetooth Sharing is disabled, organizations can enhance the security posture of macOS systems and align with best practices for minimizing unnecessary services and features that could be exploited by attackers.
+        The Bluetooth stack itself is a second concern. It parses attacker-controlled input from unpaired devices, and vulnerabilities in that parsing have been found across every major implementation.
+
+        Turn Bluetooth Sharing off and use AirDrop with a restricted receiving mode, or an approved file transfer service, when files need to move between machines.
       audit: |
         ### Audit via System Settings
 
@@ -356,20 +361,17 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that the Bonjour advertising service is disabled on macOS systems to reduce unnecessary network traffic and potential exposure.
+        This check verifies that the Mac does not advertise itself over Bonjour.
+
+        Bonjour is Apple's zero-configuration networking service. It resolves names on the local network and it announces this Mac's own presence and services to everyone on the subnet, and the announcing half can be turned off independently. The check reads the managed preference `NoMulticastAdvertisements` for each non-system user account, which must be set.
 
         **Why this matters**
 
-        Bonjour is an auto-discovery mechanism for TCP/IP devices that enumerates devices and services within a local subnet. While DNS on macOS is integrated with Bonjour and should not be turned off, the Bonjour advertising service can be disabled to minimize risks.
+        Advertising broadcasts the machine's hostname, addresses, and the services it offers to every device on the segment, continuously and without being asked. On a corporate network that is an inventory an attacker does not have to work for. On an untrusted network such as a hotel, airport, or conference Wi-Fi it is worse, because the hostname of a company laptop frequently identifies both the user and the employer.
 
-        Bonjour advertising allows macOS devices to broadcast their presence and services on a local network. While this can be useful in certain environments, it may also expose the system to unnecessary risks, such as unauthorized access or network enumeration by malicious actors.
+        That information shapes what happens next. An attacker on the same segment learns which machines are present and which are worth targeting without sending a probe that any monitoring would register as a scan, because they only had to listen.
 
-        By disabling Bonjour advertising, organizations can:
-          - Reduce the attack surface of the system
-          - Limit the visibility of services to other devices on the network
-          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
-
-        Without these protections, Bonjour advertising may inadvertently expose the system to potential threats, undermining its overall security posture.
+        Disabling advertising does not break DNS or the ability to find printers and other devices. macOS still resolves Bonjour names and still discovers services offered by others. What stops is this Mac announcing itself.
       audit: |
         Verify that multicast advertising is disabled from the macOS shell.
 
@@ -449,20 +451,19 @@ queries:
     mql: macos.sharing.contentCaching == false
     docs:
       desc: |
-        This check ensures that Content Caching is disabled on macOS systems to prevent unnecessary resource usage and potential security risks associated with local content distribution.
+        This check verifies that Content Caching is turned off.
+
+        Content Caching turns a Mac into a local distribution point for Apple software updates and iCloud data, serving them to other Apple devices on the same network. The check reads `macos.sharing.contentCaching`, which must be `false`.
 
         **Why this matters**
 
-        Content Caching is a service introduced in macOS High Sierra (10.13) to reduce bandwidth usage by caching software updates and other Apple-provided content on local networks. While this feature can be beneficial in specific scenarios, it may introduce unnecessary complexity and resource usage in environments where such caching is not required.
+        Content Caching makes the Mac a server. It opens a listening port, advertises itself to peers, and hands content to any device on the network that asks, which is a role a user workstation should not be taking on.
 
-        By disabling Content Caching, organizations can ensure that macOS devices do not act as local content distribution nodes unless explicitly required. This reduces the attack surface, minimizes resource overhead, and aligns with best practices for securing macOS systems.
+        The exposure follows the machine. A laptop with the service enabled continues to offer it on whatever network it joins, so it starts serving content on hotel, airport, and home networks where the peers are strangers. Devices there will accept cached content from it, and it will accept requests from them.
 
-        Properly managing Content Caching contributes to:
-          - Reduced network complexity and resource usage
-          - Prevention of unauthorized content distribution
-          - Compliance with security best practices and organizational policies
+        It also consumes substantial disk space and network bandwidth without the user being aware, and the cache holds copies of content associated with the iCloud accounts of devices that used it.
 
-        Without these protections, Content Caching may inadvertently expose sensitive data or consume unnecessary resources, undermining the overall security and efficiency of the system.
+        Content Caching is a legitimate feature on a managed, stationary Mac deployed deliberately as a caching server on a controlled network. Turn it off on user workstations and laptops.
       audit: |
         ### Audit via System Settings
 
@@ -555,20 +556,19 @@ queries:
     mql: macos.sharing.fileSharing == false
     docs:
       desc: |
-        This check ensures that SMB file sharing is disabled on macOS systems to reduce the attack surface and enhance security.
+        This check verifies that File Sharing is turned off.
+
+        File Sharing exports folders over SMB so that other machines on the network can mount and read them. The check reads `macos.sharing.fileSharing`, which must be `false`.
 
         **Why this matters**
 
-        SMB (Server Message Block) is a protocol used for file sharing, commonly utilized by Windows and Linux systems to access shared files on a Mac. While SMB can be convenient, it stores passwords in a less secure manner compared to AFP, potentially exposing sensitive information.
+        SMB is the most heavily targeted protocol on any network. It is what an attacker scans for first after gaining a foothold, because a reachable share frequently leads straight to data or to credentials.
 
-        By disabling SMB file sharing, the system minimizes the risk of unauthorized access and mitigates potential vulnerabilities associated with the protocol. This aligns with best practices for reducing unnecessary services and features that could be exploited by attackers.
+        Two paths matter on a Mac. Shares are easy to create casually, for a one-time handoff to a colleague, and then stay exported indefinitely with permissions nobody revisits. And SMB authentication can be relayed: a machine that speaks SMB can be coerced into authenticating to an attacker who forwards those credentials elsewhere and acts as the user. Neither requires a software vulnerability.
 
-        Disabling SMB file sharing contributes to:
-          - Enhanced system security by reducing the attack surface
-          - Prevention of unauthorized access to shared files
-          - Compliance with security best practices and organizational policies
+        The mobility of the machine compounds this. A laptop with File Sharing enabled offers those same shares on every network it joins, including networks where every other device is a stranger.
 
-        Without these protections, SMB file sharing could expose sensitive data and increase the risk of exploitation, undermining the overall security posture of the system.
+        Where files need to move between people, use a managed file service that authenticates and logs access. Turn File Sharing off on workstations.
       audit: |
         ### Audit via System Settings
 
@@ -669,18 +669,19 @@ queries:
     mql: macos.sharing.internetSharing == false
     docs:
       desc: |
-        This check ensures that Internet Sharing is disabled on macOS systems to prevent unauthorized devices from accessing the network through the Mac. Internet Sharing allows the Mac to function as a router, sharing its internet connection with other devices, which can pose security risks.
+        This check verifies that Internet Sharing is turned off.
+
+        Internet Sharing turns a Mac into a router and wireless access point, forwarding traffic from devices that connect to it out through one of its own network interfaces. The check reads `macos.sharing.internetSharing`, which must be `false`.
 
         **Why this matters**
 
-        Internet Sharing uses the open source `natd` process to share an internet connection with other computers and devices on a local network. While this feature can be convenient in certain scenarios, it introduces potential vulnerabilities by exposing the Mac and its connected networks to unauthorized access.
+        A machine sharing its connection is bridging two networks, and on a corporate laptop one of those networks is the corporate one. Any device that associates with the Mac reaches whatever the Mac can reach, without passing through the network access control, firewalls, or monitoring that every other device on that network had to satisfy.
 
-        By disabling Internet Sharing, organizations can:
-          - Reduce the attack surface of the system
-          - Prevent unauthorized devices from accessing the network
-          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+        That is an unmanaged entry point into the internal network, created by a user, invisible to the network team, and moving around the building. The devices connecting through it are by definition ones that could not or did not join the network normally.
 
-        Without these protections, Internet Sharing may inadvertently expose the system and its networks to potential threats, undermining their overall security posture.
+        The access point it creates is also a target in its own right. It is configured by the user rather than by the network team, so its encryption and passphrase are whatever the sharing dialog defaulted to.
+
+        Where a device genuinely needs connectivity, put it on a guest network. Internet Sharing should stay off on managed machines.
       audit: |
         ### Audit via System Settings
 
@@ -771,18 +772,19 @@ queries:
     mql: macos.sharing.mediaSharing == false
     docs:
       desc: |
-        This check ensures that Media Sharing is disabled on macOS systems to prevent unauthorized access to shared media content. Media Sharing allows a Mac to share downloaded content, such as movies, music, or TV shows, with other Apple devices signed in with the same Apple ID or on the same network.
+        This check verifies that Media Sharing is turned off.
+
+        Media Sharing publishes this Mac's music, video, and photo libraries to other devices and users on the local network and advertises them through Bonjour. The check reads `macos.sharing.mediaSharing`, which must be `false`.
 
         **Why this matters**
 
-        Media Sharing enables a Mac to act as a server for Apple-downloaded content, allowing other devices to access pre-downloaded media. While this feature can be convenient, it introduces potential vulnerabilities by exposing media content to unauthorized devices on the same network.
+        The service opens a listening port and announces the library to the network. The direct content exposure is usually modest, since a corporate Mac rarely holds sensitive media, but two effects are not.
 
-        By disabling Media Sharing, organizations can:
-          - Reduce the attack surface of the system
-          - Prevent unauthorized access to shared media
-          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+        The advertisement identifies the machine and its owner. Shared libraries are announced with a human-readable name derived from the account, so the service broadcasts who is using the laptop to everyone on the segment, including on public networks.
 
-        Without these protections, Media Sharing may inadvertently expose sensitive content or allow unauthorized devices to access shared media, undermining the overall security posture of the system.
+        The listener is the more durable concern. It is a network-facing daemon on a workstation, receiving requests from any device on the segment, doing work that nobody deployed intentionally and that nobody is monitoring. It is patched on the operating system's schedule rather than a server's, and it will keep listening on every network the laptop joins.
+
+        Nothing on a managed workstation requires Media Sharing. Turn it off.
       audit: |
         ### Audit via System Settings
 
@@ -878,18 +880,19 @@ queries:
     mql: macos.sharing.printerSharing == false
     docs:
       desc: |
-        This check ensures that Printer Sharing is disabled on macOS systems to prevent the computer from being used as a print server. Printer Sharing allows other computers to send print jobs to the Mac, which can pose security risks and increase the attack surface.
+        This check verifies that Printer Sharing is turned off.
+
+        Printer Sharing re-exports printers attached to this Mac so that other machines on the network can print through it, using the CUPS printing system. The check reads `macos.sharing.printerSharing`, which must be `false`.
 
         **Why this matters**
 
-        By enabling Printer Sharing, the computer is set up as a print server to accept print jobs from other computers. While this feature can be useful in certain scenarios, it introduces potential vulnerabilities by exposing the system to unauthorized access or misuse.
+        Enabling the feature starts a CUPS server on the Mac and opens it to the network. CUPS is a considerably larger piece of software than the task suggests, with its own network protocol, its own web administration interface, and a history of remotely reachable vulnerabilities, including a 2024 chain in which an attacker who could reach the printing service could get commands to run when a print job was subsequently sent.
 
-        Disabling Printer Sharing ensures that:
-          - The system is not unnecessarily exposed to network-based attacks
-          - Print jobs are handled by dedicated print servers or direct IP printing
-          - The overall security posture of the system is enhanced
+        That server then follows the laptop onto every network it joins, including untrusted ones, where the peers who can reach it are strangers.
 
-        Without these protections, Printer Sharing may inadvertently expose the system to potential threats, undermining its overall security posture.
+        Print jobs themselves carry content. A shared printer means documents from other users transit and are spooled on this machine, so material belonging to other people ends up in temporary files on a workstation that was not chosen to hold it.
+
+        Print to network printers directly or through a managed print server. Turn Printer Sharing off.
       audit: |
         ### Audit via System Settings
 
@@ -980,18 +983,17 @@ queries:
     mql: macos.systemsetup.remoteAppleEvents == "Off"
     docs:
       desc: |
-        This check ensures that Remote Apple Events are disabled on macOS systems to prevent unauthorized programs from interacting with the local computer. Remote Apple Events allow a program on one computer to communicate with a program on another computer, which can pose security risks.
+        This check verifies that Remote Apple Events is turned off.
+
+        Remote Apple Events lets applications on other machines send AppleScript commands to applications on this Mac, driving them as though a local script were doing it. The check reads `macos.systemsetup.remoteAppleEvents`, which must be `Off`.
 
         **Why this matters**
 
-        Remote Apple Events enable AppleScript programs running on one Mac to interact with another Mac. While this feature can be useful in certain scenarios, it introduces potential vulnerabilities by exposing the system to unauthorized access or misuse.
+        AppleScript is an automation language with reach across the whole desktop. It can read and send mail, open and modify documents, drive the browser, take screenshots, and in many applications execute arbitrary shell commands through a scripting interface. Remote Apple Events exposes that capability to the network.
 
-        By disabling Remote Apple Events, organizations can:
-          - Reduce the attack surface of the system
-          - Prevent unauthorized programs from interacting with the local computer
-          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+        The result is a remote control channel that does not look like one. Commands arrive as application events rather than as a login, so there is no shell session, no SSH connection, and nothing in the places an investigator would normally look for remote access. The actions appear to have been performed by the user, in their own applications, with their own permissions and their own access to whatever those applications hold.
 
-        Without these protections, Remote Apple Events may inadvertently expose the system to potential threats, undermining its overall security posture.
+        Almost no modern workflow uses this. Where cross-machine automation is required, use a mechanism with its own authentication and logging rather than one that grants scripting access to every application on the desktop.
       audit: |
         ### Audit via System Settings
 
@@ -1084,18 +1086,19 @@ queries:
     mql: macos.systemsetup.remoteLogin == "Off"
     docs:
       desc: |
-        This check ensures that Remote Login is disabled on macOS systems to prevent unauthorized access to the system via SSH.
+        This check verifies that Remote Login, the macOS control for the SSH server, is turned off.
+
+        When Remote Login is on, `sshd` listens on the network and accounts on the Mac can be used to open a remote shell. The check reads `macos.systemsetup.remoteLogin`, which must be `Off`.
 
         **Why this matters**
 
-        Remote Login enables the SSH server built into macOS, allowing remote terminal connections to the computer. While this feature can be useful for administrative purposes, it introduces potential vulnerabilities by exposing the system to unauthorized access or brute force attacks.
+        Turning this on gives a workstation a network-facing interactive login path, which is the single most valuable thing an attacker can find on a machine. It accepts password authentication by default, so every account on the Mac becomes a guessing target, and the accounts on a Mac are usually protected by a password a person chose rather than by a key.
 
-        By disabling Remote Login, organizations can:
-          - Reduce the attack surface of the system
-          - Prevent unauthorized remote access
-          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+        The exposure travels with the machine. A laptop with Remote Login enabled listens on every network it joins, and on a café or hotel network the other occupants of that network are strangers. Internet-wide scanning finds exposed SSH within minutes of it becoming reachable.
 
-        Without these protections, Remote Login may inadvertently expose the system to potential threats, undermining its overall security posture.
+        Workstations are also not managed like servers. The SSH configuration on a Mac is whatever Apple shipped, without the hardening applied elsewhere in an estate.
+
+        Where remote access to a workstation is genuinely required, enable it deliberately, restrict it to specific accounts, require key authentication, and confine it to a management network rather than leaving it listening everywhere.
       audit: |
         ### Audit via System Settings
 
@@ -1196,18 +1199,19 @@ queries:
     mql: macos.sharing.remoteManagement == false
     docs:
       desc: |
-        This check ensures that Remote Management is disabled on macOS systems to prevent unauthorized access and potential misuse of the Apple Remote Desktop (ARD) client.
+        This check verifies that Remote Management is turned off.
+
+        Remote Management is the Apple Remote Desktop agent. It gives an operator on the network screen viewing and control, file copy in both directions, command execution, and the ability to observe the user. The check reads `macos.sharing.remoteManagement`, which must be `false`.
 
         **Why this matters**
 
-        Remote Management allows administrators to remotely view the current screen, install software, and manage client Macs. While this feature can be useful in managed environments, it introduces potential vulnerabilities by exposing the system to unauthorized access or untrusted hosts, especially on mobile systems.
+        This is the most capable remote access service macOS offers, and the capability list is the risk. An attacker who reaches it does not need to escalate or move laterally to accomplish anything: they already have the screen, the keyboard, the filesystem, and command execution as the logged-in user.
 
-        By disabling Remote Management, organizations can:
-          - Reduce the attack surface of the system
-          - Prevent unauthorized remote access
-          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+        The observation mode deserves particular attention, because it can be configured to watch without displaying any indicator to the person using the machine. Someone whose Mac is being viewed has no way to tell.
 
-        Without these protections, Remote Management may inadvertently expose the system to potential threats, undermining its overall security posture.
+        The agent has also had authentication vulnerabilities allowing access without valid credentials, and it listens on well-known ports that scanning tools check for by default.
+
+        Where an organization uses Apple Remote Desktop for legitimate management, that deployment should be scoped to a management network, restricted to named administrator accounts rather than allowing all users, and configured so the user is informed when their screen is observed. On machines outside that program, the agent should be off.
       audit: |
         ### Audit via System Settings
 
@@ -1298,18 +1302,19 @@ queries:
     mql: macos.sharing.screenSharing == false
     docs:
       desc: |
-        This check ensures that Screen Sharing is disabled on macOS systems to prevent unauthorized access and control of the system.
+        This check verifies that Screen Sharing is turned off.
+
+        Screen Sharing is the macOS VNC server. It lets a remote user see the display and control the keyboard and mouse. The check reads `macos.sharing.screenSharing`, which must be `false`.
 
         **Why this matters**
 
-        Screen Sharing allows a computer to connect to another computer on a network and display the computer's screen. While this feature can be useful for remote support or collaboration, it introduces potential vulnerabilities by exposing the system to unauthorized access or misuse.
+        Screen control is equivalent to sitting at the machine. Anyone who reaches the service and authenticates has the user's session, their applications, their unlocked password manager and browser sessions, and their access to everything the organization has granted them. Nothing further has to be exploited.
 
-        By disabling Screen Sharing, organizations can:
-          - Reduce the attack surface of the system
-          - Prevent unauthorized remote control of the computer
-          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+        The service is protected by a password, which makes it a guessing target, and VNC on the standard port is one of the things internet-wide scanners look for continuously. On a laptop the listener follows the machine onto every network it joins.
 
-        Without these protections, Screen Sharing may inadvertently expose the system to potential threats, undermining its overall security posture.
+        Screen sharing also exposes whatever is on the display at the time, which on a workstation is frequently more sensitive than what is on disk: an open mail client, a customer record, an authenticated administrative console.
+
+        Where screen sharing is needed for support, use a tool that requires the user to approve each session and that records it, rather than a service that listens continuously.
       audit: |
         ### Audit via System Settings
 
@@ -1411,18 +1416,19 @@ queries:
       command("dscl . -read /Users/root AuthenticationAuthority").stderr.contains("No such key: AuthenticationAuthority")
     docs:
       desc: |
-        This check ensures that the root account is disabled on macOS systems to prevent unauthorized access and misuse of superuser privileges.
+        This check verifies that the `root` account is disabled.
+
+        macOS ships with `root` disabled, and administrative work is done through `sudo` from an administrator account. Running `dsenableroot` restores a directly usable superuser login. The check reads the account's authentication authority through `dscl`, which must report no such key.
 
         **Why this matters**
 
-        The root account is a superuser account with unrestricted access to all files and system functions. While it can be useful for administrative tasks, enabling the root account introduces significant security risks, such as unauthorized access, privilege escalation, and potential misuse.
+        An enabled `root` account is a credential shared by everyone who knows it, and shared credentials cannot be attributed. Once several administrators know the password, an action taken as `root` cannot be traced to a person, so neither an investigation nor a routine review can establish who did what.
 
-        By disabling the root account, organizations can:
-          - Reduce the attack surface of the system
-          - Prevent unauthorized access to sensitive system functions
-          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+        It is also a credential that is never rotated. Unlike a user account it is not tied to anyone's employment, so it survives people leaving and outlives the reason it was enabled in the first place.
 
-        Without these protections, an enabled root account may inadvertently expose the system to potential threats, undermining its overall security posture.
+        The account name is the one an attacker never has to discover, which makes it the default target for guessing, and a successful guess yields complete control with no escalation step.
+
+        `sudo` provides the same capability while authenticating each administrator with their own password, logging the specific command, and allowing access to be revoked per person. Keep `root` disabled.
       audit: |
         Verify that the root account is disabled from the macOS shell.
 
@@ -1522,18 +1528,19 @@ queries:
       }
     docs:
       desc: |-
-        This check ensures that FileVault is enabled on macOS systems to secure the system's data by encrypting its boot volume and requiring a password or recovery key to access it.
+        This check verifies that FileVault full-disk encryption is enabled.
+
+        FileVault encrypts the contents of the internal drive at rest, so they are readable only after someone authenticates at startup. The check reads `macos.filevault.enabled`, which must be `true`, and confirms that the managed preference enforcing it is applied for each non-system user account.
 
         **Why this matters**
 
-        FileVault provides full-disk encryption to protect sensitive data on macOS systems. By encrypting the boot volume, FileVault ensures that unauthorized users cannot access the system's data, even if the physical device is compromised. This is particularly important for devices that are frequently used in untrusted environments or contain sensitive information.
+        Without FileVault, the account password protects nothing about the data. An attacker with the machine in hand removes the drive, or boots the Mac from an external volume or into recovery mode, and reads the entire filesystem without ever encountering a login prompt. Nothing about the operating system's access controls applies when the operating system is not the one running.
 
-        Enabling FileVault contributes to:
-          - Enhanced data security and privacy
-          - Protection against unauthorized access in case of device theft or loss
-          - Compliance with security best practices and organizational policies
+        Laptops are lost and stolen routinely, and the value on them is not the hardware. A workstation drive holds cached mail, documents, saved credentials, source code, browser session tokens, and SSH and cloud keys that are live and will keep working after the machine is gone.
 
-        Without FileVault, the system's data is vulnerable to unauthorized access, undermining its overall security posture.
+        The consequences also extend past the device. Most data breach notification regimes treat the loss of an encrypted device very differently from an unencrypted one, so encryption changes an incident that must be disclosed into one that generally does not.
+
+        Escrow the recovery key through your management platform when enabling FileVault. Encryption without a recoverable key turns a forgotten password into permanent data loss.
       audit: |
         ### Audit via System Settings
 
@@ -1662,16 +1669,19 @@ queries:
     mql: macos.firewall.enabled == true
     docs:
       desc: |
-        This check ensures that the firewall is enabled on macOS systems to block unwanted incoming connections and enhance system security.
+        This check verifies that the macOS application firewall is enabled.
+
+        The application firewall controls which programs may accept incoming network connections, deciding per application rather than per port. It is off by default on macOS. The check reads `macos.firewall.enabled`, which must be `true`.
 
         **Why this matters**
 
-        A firewall acts as a barrier between the system and external networks, preventing unauthorized access and mitigating potential threats. By enabling the firewall, organizations can:
-          - Reduce the attack surface of the system
-          - Block unwanted or malicious incoming connections
-          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+        The firewall is off by default on macOS, so an unmanaged Mac accepts inbound connections to anything that listens. Workstations listen for more than their users realize: sharing services, collaboration and conferencing tools, development servers started for a local test and never stopped, and helper daemons installed alongside ordinary applications.
 
-        Without these protections, the system may be vulnerable to unauthorized access, compromising its overall security posture.
+        None of that is a problem on a trusted network with a perimeter. It becomes one the moment the laptop joins a network where the other devices are strangers, which for a mobile workstation is most of them. A development server bound to all interfaces and left running is directly reachable by everyone in the café.
+
+        The per-application model is what makes the control practical. Rather than requiring the user to know which ports their software needs, the firewall prompts when a new program first tries to accept connections and remembers the answer.
+
+        Enable the firewall, and pair it with stealth mode and a block-all-incoming policy where the machine's role allows.
       audit: |
         ### Audit via System Settings
 
@@ -1762,18 +1772,19 @@ queries:
     mql: macos.firewall.stealthEnabled == true
     docs:
       desc: |-
-        This check ensures that Firewall Stealth Mode is enabled on macOS systems to prevent the computer from responding to unsolicited network probes, enhancing security in untrusted environments.
+        This check verifies that firewall stealth mode is enabled.
+
+        Stealth mode makes the Mac ignore probes it would otherwise answer, including ICMP echo requests and connection attempts to ports where nothing is listening, so the machine stops confirming its own existence to unsolicited traffic. The check reads `macos.firewall.stealthEnabled`, which must be `true`.
 
         **Why this matters**
 
-        Stealth Mode prevents the system from responding to ping requests and other unsolicited network traffic, effectively hiding it from network scans and reducing its visibility to potential attackers. This is particularly important for devices frequently connected to untrusted networks, such as public Wi-Fi.
+        Without stealth mode, a Mac answers a ping and returns a reset for closed ports. Both replies confirm that a host is at that address, which is exactly what a scanner is looking for.
 
-        By enabling Stealth Mode, organizations can:
-          - Reduce the attack surface of the system
-          - Prevent unauthorized network discovery
-          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+        That confirmation is the first step of every attack against the machine. On a shared network an attacker enumerates what is present before deciding what to attempt, and a host that responds moves onto the list while a host that stays silent is frequently skipped, because scanning tools have a whole subnet to work through and no reason to spend time on an address that appears empty.
 
-        Without these protections, the system may inadvertently expose itself to potential threats, undermining its overall security posture.
+        Stealth mode does not make the machine invisible. Services that are deliberately listening still answer, and a determined attacker who already knows the address can establish that something is there. What it removes is the cheap, passive discovery that decides who gets targeted in the first place.
+
+        Some network monitoring relies on hosts answering pings. Where that applies, allow the monitoring source explicitly rather than turning stealth mode off.
       audit: |
         ### Audit via System Settings
 
@@ -1880,16 +1891,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that Gatekeeper is enabled on macOS systems to restrict downloaded applications from launching unless they are from verified sources.
+        This check verifies that Gatekeeper is enforcing.
+
+        Gatekeeper checks an application's signature and notarization status before allowing it to run for the first time, blocking software that is unsigned or that Apple has not scanned. The check reads `macos.gatekeeper.enabled`, which must be `true`, and confirms that the managed preference enforcing it is applied for each non-system user account.
 
         **Why this matters**
 
-        Gatekeeper is Apple's application allow-listing control that limits applications from unverified sources from running without authorization. By enabling Gatekeeper, organizations can:
-          - Reduce the risk of running malicious or unauthorized applications
-          - Enhance security posture by enforcing application verification
-          - Prevent accidental execution of potentially harmful software
+        Gatekeeper is the main barrier between a user downloading something and that thing running. It verifies the application was signed by an identified developer and that Apple's notarization service scanned it for known malware, and it refuses to launch what fails either test.
 
-        Without these protections, macOS systems may inadvertently run unverified applications, increasing the risk of malware infections and unauthorized access.
+        Turning it off removes that check for everything, permanently, on the basis of one decision made once. macOS malware is overwhelmingly delivered as an application the user was persuaded to download, frequently a cracked commercial tool or a fake installer or update, and Gatekeeper is what stops the majority of it at the point of launch.
+
+        Notarization also provides revocation. If a signing certificate is later found to have been used for malware, Apple can revoke it and machines with Gatekeeper enabled stop running software signed with it, including copies already downloaded.
+
+        Where a specific unsigned internal tool must run, approve that application individually rather than disabling Gatekeeper for the system.
       audit: |
         ### Audit via System Settings
 
@@ -1988,18 +2002,19 @@ queries:
       service('com.apple.auditd').enabled == true
     docs:
       desc: |
-        This check ensures that the macOS audit facility, `auditd`, is enabled to capture and log critical system events for security and operational purposes.
+        This check verifies that macOS security auditing is running.
+
+        The auditing subsystem records security-relevant events at the system level, including authentication, privilege use, and administrative actions, writing them to the audit trail in `/var/audit`. The check reads the `com.apple.auditd` service, which must be enabled.
 
         **Why this matters**
 
-        The `auditd` service receives notifications from the kernel for specific system calls, such as `open`, `fork`, and `exit`, and writes these events to an audit log. Enabling `auditd` ensures that important security and operational events are recorded, which can be valuable for detecting anomalies, investigating incidents, and maintaining system integrity.
+        The unified log records what applications chose to report and rolls over quickly. The audit trail is the separate, structured record of security events, and it is the one that answers who authenticated, when privilege was used, and what administrative changes were made.
 
-        By enabling `auditd`, organizations can:
-          - Enhance system monitoring and accountability
-          - Support forensic investigations and incident response
-          - Comply with security best practices and standards
+        Without it those questions have no answer. An investigation into a compromised Mac can describe the state the machine is in but not how it got there, which is the part that determines whether credentials need rotating, whether other machines are affected, and whether the way in is still open.
 
-        Without these protections, critical system events may go unrecorded, reducing visibility into potential security incidents and undermining the overall security posture of the system.
+        Auditing has to be running before the event, not after. There is no way to reconstruct activity that was never recorded, so a service that is disabled at the moment it matters is equivalent to never having had it.
+
+        Forward the audit trail off the machine where the environment allows. Records held only on the Mac are editable by anyone who obtains administrative access to it.
       audit: |
         Verify that the audit daemon is enabled from the macOS shell.
 
@@ -2112,18 +2127,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that the Wi-Fi status is displayed in the menu bar on macOS systems, providing users with a quick and visible indication of their wireless network status.
+        This check verifies that the Wi-Fi status item is shown in the menu bar.
+
+        The menu bar item displays which network the Mac is joined to and gives one-click access to switch or disconnect. The check reads the Control Center preference for each non-system user account.
 
         **Why this matters**
 
-        Displaying the Wi-Fi status in the menu bar allows users to easily monitor their wireless network connectivity. This is particularly important for systems with wireless network capabilities, as it provides a convenient way to check the status of the connection and troubleshoot any issues.
+        This is a visibility control rather than a technical one, and it is worth being direct about that: it prevents nothing on its own. What it does is put the current network name permanently in the user's field of view.
 
-        By enabling the Wi-Fi status in the menu bar, organizations can:
-          - Improve user awareness of network connectivity
-          - Facilitate quick troubleshooting of wireless network issues
-          - Enhance usability for systems with wireless network interfaces
+        That matters because the attacks users are expected to notice are network attacks. A Mac that silently associates with an attacker's access point impersonating a known network, or that falls back to an open network when the expected one is unavailable, behaves normally in every visible way. The connection works, pages load, and nothing prompts. The network name in the menu bar is frequently the only signal available.
 
-        Without this feature enabled, users may have to navigate through system settings to check their Wi-Fi status, which can be less efficient and inconvenient.
+        It also gives the user a way to act on that signal immediately, disconnecting without hunting through settings, which matters when the correct response is to get off the network quickly.
+
+        Treat this as support for user awareness alongside the technical controls, not as a substitute for them.
       audit: |
         ### Audit via System Settings
 
@@ -2238,18 +2254,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that AirDrop is disabled on macOS systems to prevent unauthorized file sharing and mitigate privacy concerns.
+        This check verifies that AirDrop is disabled.
+
+        AirDrop transfers files directly between Apple devices using Bluetooth for discovery and a peer-to-peer Wi-Fi link for the transfer, without either device joining a common network. The check reads `DisableAirDrop` for each non-system user account, which must be `true`.
 
         **Why this matters**
 
-        AirDrop is Apple's built-in ad hoc file exchange system that uses Bluetooth LE for discovery and TLS encryption for file transfers. While it offers secure and convenient file sharing, it also introduces potential privacy risks by exposing personal information and allowing file sharing with nearby devices.
+        AirDrop creates a transfer path that leaves no trace anywhere the organization can see. The link is established directly between the two devices, so nothing traverses a corporate network, no proxy inspects it, and no data loss prevention system evaluates it. A file moved this way has simply left, and there is no record that it did.
 
-        By disabling AirDrop, organizations can:
-          - Reduce the attack surface of the system
-          - Prevent unauthorized file sharing
-          - Enhance privacy and security posture in environments handling sensitive data or exposed to untrusted networks
+        The inbound direction is the more immediate risk. With receiving set to everyone, anyone within Wi-Fi range can send unsolicited files, which is used both for harassment and to deliver a payload that a curious user opens.
 
-        Without these protections, AirDrop may inadvertently expose the system to potential threats, undermining its overall security posture.
+        Discovery is a third issue. Establishing whether a nearby device will accept a transfer involves exchanging identifiers derived from the user's contact details, and weaknesses in that exchange have allowed nearby devices to recover the phone number or email address associated with a target.
+
+        Where AirDrop is needed, restrict receiving to contacts only rather than everyone, and provide a managed transfer service for moving files off a machine deliberately.
       audit: |
         Verify that AirDrop is turned off from the macOS shell. The **Allow me to be discovered by** control in Finder and the **AirDrop** control in **System Settings** set discoverability only, so neither answers this question.
 
@@ -2344,18 +2361,19 @@ queries:
     mql: macos.firewall.loggingEnabled == true
     docs:
       desc: |
-        This check ensures that the firewall is configured to log activity on macOS systems, providing visibility into allowed and denied network connections.
+        This check verifies that the macOS firewall writes a log.
+
+        Firewall logging records the connection attempts the application firewall handles, including which applications requested access and which inbound connections were blocked. The check reads `macos.firewall.loggingEnabled`, which must be `true`.
 
         **Why this matters**
 
-        The socketfilter firewall is used when the firewall is enabled in the Security Preference Pane. Enabling logging ensures that all access attempts, both allowed and denied, are recorded. This information is critical for monitoring network activity, detecting potential threats, and troubleshooting connectivity issues.
+        A firewall without logging enforces policy and tells nobody what it enforced. The blocks still happen, so the machine is protected, but the information that would explain why is discarded as it is generated.
 
-        By enabling firewall logging, organizations can:
-          - Gain visibility into network access attempts
-          - Detect unauthorized or suspicious activity
-          - Enhance security posture by monitoring and analyzing firewall logs
+        That information has two uses. After an incident, the log shows what tried to reach the machine and when, which is how an investigator establishes whether the Mac was targeted specifically or swept up in something broad, and which network it was on at the time. Before an incident, the same records show an application on the machine repeatedly attempting to accept connections that nobody configured, which is how unexpected listeners are noticed.
 
-        Without logging enabled, critical information about network activity may be lost, reducing the ability to detect and respond to potential threats.
+        Logging is also what makes the firewall diagnosable. When an application does not work as expected, the log distinguishes a firewall block from a network fault, and without it that question is answered by turning the firewall off to see whether the problem goes away.
+
+        Collect the log centrally where the environment allows, so that the record survives the machine.
       audit: |
         ### Audit via System Settings
 
@@ -2449,18 +2467,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that the HTTP server is disabled on macOS systems to prevent unauthorized access and misuse of the embedded Apache web server.
+        This check verifies that the Apache web server included with macOS is not running.
+
+        macOS ships Apache but does not start it by default. When it is enabled, the Mac serves HTTP to the network. The check reads the `org.apache.httpd` service, which must be neither running nor enabled.
 
         **Why this matters**
 
-        macOS includes an embedded Apache web server that can be easily enabled to share files or provide remote connectivity. While this feature can be useful in specific scenarios, enabling the HTTP server introduces potential vulnerabilities by exposing the system to unauthorized access or misuse. Apple has removed the graphical front-end for enabling this feature, but the underlying service remains accessible.
+        A web server on a workstation is almost always there by accident. It was enabled during development work, or turned on to share a file once, and then left running because nothing about a listening daemon is visible in daily use.
 
-        By disabling the HTTP server, organizations can:
-          - Reduce the attack surface of the system
-          - Prevent unauthorized file sharing or remote access
-          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+        That listener has no owner, which is what makes it dangerous. It is not in the inventory that drives patching, its configuration was never reviewed, and its logs are not going anywhere anyone reads. The version macOS ships is frequently behind current Apache, since it updates only with the operating system.
 
-        Without these protections, the HTTP server may inadvertently expose the system to potential threats, undermining its overall security posture.
+        The default configuration serves the contents of a document root, and a directory listing of a developer's working files can expose source code, configuration, and credentials. On a laptop the server follows the machine onto untrusted networks, offering the same content to whoever is there.
+
+        Development work needs a server bound to the loopback interface rather than to all interfaces. On a workstation the system Apache should stay stopped and disabled.
       audit: |
         Verify that the Apache HTTP server is not running from the macOS shell.
 
@@ -2546,18 +2565,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that the NFS server is disabled on macOS systems to prevent unauthorized file sharing and mitigate security risks.
+        This check verifies that the NFS server included with macOS is not running.
+
+        When `nfsd` runs, directories listed in `/etc/exports` become available to other machines over NFS. The check reads the `com.apple.nfsd` service, which must be neither running nor enabled.
 
         **Why this matters**
 
-        macOS can act as an NFS file server, allowing other computers to mount shares and access information from the user's system. While this feature can be useful in specific scenarios, enabling NFS sharing introduces potential vulnerabilities by exposing the system to unauthorized access or misuse. Apple has removed the GUI capability for enabling NFS sharing, but the underlying service remains accessible.
+        NFS decides who you are by trusting the user and group IDs the client sends. There is no authentication in the protocol beyond a check that the connection came from a permitted address, so anyone with administrative access on a permitted client, or the ability to appear as one, can present any identity they choose and read the corresponding files.
 
-        By disabling the NFS server, organizations can:
-          - Reduce the attack surface of the system
-          - Prevent unauthorized file transfers
-          - Enhance security posture in environments handling sensitive data or exposed to untrusted networks
+        That trust model was designed for a controlled server network. On a workstation, and particularly a mobile one, the set of machines that can reach the service is whoever happens to be on the current network.
 
-        Without these protections, the NFS server may inadvertently expose the system to potential threats, undermining its overall security posture.
+        The export configuration is also easy to get wrong in a way that is invisible afterward. An export written for a one-time transfer, without a host restriction, stays in place and stays available.
+
+        Workstations should not export filesystems. Use a managed file service with real authentication, and leave `nfsd` stopped and disabled.
       audit: |
         Verify that the NFS server is not running from the macOS shell.
 
@@ -2647,18 +2667,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that the macOS audit capability retains sufficient records to investigate security or operational issues effectively.
+        This check verifies that macOS keeps audit records long enough to be useful in an investigation.
+
+        Retention is configured in `/etc/security/audit_control` by the `expire-after` setting, which can be expressed as an age, a total size, or both. The check reads that setting, which must be at least `60d` or at least `1G`.
 
         **Why this matters**
 
-        The macOS audit capability contains critical information for identifying the root cause of anomalies and investigating security or operational issues. Retaining audit records for an adequate duration ensures that technical staff can access the necessary data for analysis.
+        Audit records are only useful for as long as they still exist, and the default retention on macOS expires them well before most intrusions are discovered. Compromises are typically found weeks or months after the initial access, by which time a short window has already discarded the records describing how the attacker arrived.
 
-        By setting appropriate retention policies, organizations can:
-          - Ensure sufficient audit records are available for troubleshooting and forensic analysis
-          - Support compliance with security best practices and standards
-          - Enhance system monitoring and accountability
+        What survives is the recent activity, which shows the current state of a compromise but not its origin. That is the part an investigation most needs, because it determines whether other machines are affected and whether the entry point is still open.
 
-        Without these protections, critical audit records may be lost, reducing visibility into potential security incidents and undermining the overall security posture of the system.
+        The expiry is also drivable by an attacker. Generating a large volume of ordinary auditable activity pushes older records out of a size-bounded trail without touching a file or producing anything that looks like tampering.
+
+        Retention on the machine is a floor, not the plan. Forward the audit trail to a central collector where it is beyond the reach of anyone with administrative access to this Mac.
       audit: |
         Verify the audit retention policy from the macOS shell.
 
@@ -2782,18 +2803,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that passwords are set to expire after a maximum of 365 days on macOS systems to mitigate the risks associated with password reuse and prolonged exposure.
+        This check verifies that a maximum password age is enforced for user accounts.
+
+        A maximum age requires each account's password to be changed after a set period. The check reads the `maxPINAgeInDays` policy from the managed preferences applied to each non-system user account.
 
         **Why this matters**
 
-        Over time, passwords can be compromised through phishing attacks, third-party breaches, or brute force attacks. Regularly expiring passwords reduces the risk of exposure and encourages users to create new, unique passwords. This check uses 365 days as the acceptable maximum value, though organizations may choose to be more or less restrictive based on their security policies.
+        The value of a rotation policy is bounded and worth stating honestly. Current guidance from NIST advises against routine expiry for its own sake, because it drives users toward predictable variations of one password and toward writing them down, and modern guidance favors length, screening against known-breached passwords, and multi-factor authentication instead.
 
-        By enforcing password expiration, organizations can:
-          - Reduce the risk of password reuse across multiple systems
-          - Mitigate the impact of compromised credentials
-          - Enhance overall security posture by ensuring periodic password updates
+        Where expiry still earns its place is as a backstop for exposure nobody detected. Credentials leak through reuse on a breached third-party site, through a phishing page, or through a machine that was compromised and cleaned without anyone realizing a password was taken. In each case the credential stays valid indefinitely unless something forces a change, and a maximum age puts an upper bound on how long a quietly stolen password keeps working.
 
-        Without these protections, attackers may exploit exposed or reused passwords, increasing the likelihood of unauthorized access and compromising the system's security.
+        Several compliance regimes also require it as a discrete control regardless of the current research.
+
+        Choose a period long enough not to push users toward weak patterns, and treat it as one layer beneath multi-factor authentication and breached-password screening rather than as the primary defense.
       audit: |
         Verify the maximum password age from the macOS shell.
 
@@ -2900,18 +2922,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that password history is enforced on macOS systems to prevent the reuse of previous passwords, enhancing security by requiring unique passwords for each change.
+        This check verifies that password history is enforced for user accounts.
+
+        A history policy records previously used passwords and prevents them from being set again. The check reads the `pinHistory` policy from the managed preferences applied to each non-system user account.
 
         **Why this matters**
 
-        Over time, passwords can be compromised through phishing attacks, third-party breaches, or brute force attacks. Enforcing password history ensures that users cannot reuse recently used passwords, reducing the risk of predictable password patterns and enhancing overall security.
+        Without history, a maximum password age accomplishes nothing. A user prompted to change their password sets it to something new, and then either immediately or at the next prompt sets it back to what it was before. The rotation requirement is satisfied on paper and the credential never actually changes.
 
-        By enforcing password history, organizations can:
-          - Mitigate the risk of password reuse across multiple systems
-          - Reduce the likelihood of attackers exploiting predictable password changes
-          - Enhance security posture by ensuring unique passwords for each change
+        That matters most in exactly the case rotation exists for. When a password has been exposed without anyone knowing, the forced change is the only thing that invalidates it, and reuse of the old value hands the attacker their access back.
 
-        Without these protections, users may reuse old passwords, increasing the risk of unauthorized access and compromising the system's security.
+        History also blocks the shortest cycle of the pattern users adopt under rotation pressure, where a small number of passwords are alternated indefinitely.
+
+        Set the history depth deep enough that returning to an old password is impractical rather than merely delayed. A depth of five or more is typical, and it should be paired with the maximum age policy, since neither control does much without the other.
       audit: |
         Verify the password history depth from the macOS shell.
 
@@ -3005,18 +3028,19 @@ queries:
       sudoers.defaults.where(parameter == "timestamp_timeout").all(value == "0")
     docs:
       desc: |
-        This check ensures that the sudo timeout period is reduced to zero on macOS systems to minimize the risk of unauthorized access during the sudo grace period.
+        This check verifies that `sudo` requires a password every time rather than caching the authentication.
+
+        After a successful `sudo`, macOS normally caches the authorization for five minutes, during which further `sudo` commands run without prompting. The check reads the `timestamp_timeout` default in the sudoers configuration, which must be present and set to `0`.
 
         **Why this matters**
 
-        The sudo command allows users to execute commands with elevated privileges. By default, sudo retains the user's authentication for a grace period, during which no password is required for subsequent sudo commands. While this feature is convenient, it introduces potential security risks, as an attacker or unauthorized process could exploit the grace period to execute commands with elevated privileges.
+        The cached authorization is not attached to the person, it is attached to the terminal session. For as long as it lasts, anything that can write to that session runs privileged commands without a password.
 
-        By reducing the sudo timeout period to zero, organizations can:
-          - Minimize the window of opportunity for unauthorized access
-          - Enhance security posture by requiring re-authentication for each sudo command
-          - Prevent misuse of elevated privileges in environments handling sensitive data
+        That is the exposure in both the physical and the software case. A user who authenticates and then steps away leaves a terminal from which anyone at the keyboard has administrative access with no credential. And malicious code already running as the user can watch for the cached timestamp and issue its own privileged commands during the window, escalating without ever needing to capture the password or present a prompt the user might find suspicious.
 
-        Without these protections, the sudo grace period may inadvertently expose the system to potential threats, undermining its overall security posture.
+        macOS defaults to a five minute window, which is ample time for either.
+
+        Setting the timeout to `0` means one password prompt per privileged command. That is a real friction cost for administrators doing sustained work, and it is the trade this control makes deliberately: privilege escalation should require an explicit act each time rather than being inherited from something that happened minutes ago.
       audit: |
         Verify the sudo authentication timeout from the macOS shell.
 
@@ -3101,18 +3125,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that the install logs are retained for at least 365 days on macOS systems to support system maintenance and security forensics.
+        This check verifies that macOS keeps a year of software installation history.
+
+        `install.log` records software installation and removal, including operating system updates, applications, and packages installed by administrators or by installers a user ran. The check reads `/etc/asl/com.apple.install`, which must set `ttl` to `365` or higher and must not impose a maximum size.
 
         **Why this matters**
 
-        macOS writes system-related event information to `/var/log/install.log` and uses a configurable retention policy for this file. The default logging settings limit the file size and maximum size for all logs, which may not enforce sufficient log retention. Without proper retention, critical log data may be lost, hindering the ability to investigate incidents or perform audits.
+        This log answers what was installed on the machine and when, which after a compromise is often the single most useful question. Malicious software on macOS usually arrives through an installer, so the record of that installation is the pivot from noticing a problem to knowing when it started and what else arrived alongside it.
 
-        By ensuring that install logs are retained for at least 365 days, organizations can:
-          - Maintain sufficient historical data for troubleshooting and forensic analysis
-          - Support compliance with security best practices and standards
-          - Enhance system monitoring and accountability
+        The default retention is far shorter than the interval at which compromises are discovered. By the time an investigation begins, a short window has already discarded the entry describing the installation, and what remains shows a machine with something on it and no account of how it got there.
 
-        Without these protections, critical log data may be lost, reducing visibility into potential security incidents and undermining the overall security posture of the system.
+        Removing the size cap matters as much as the age. A size-bounded log discards on volume rather than on time, so a busy period of legitimate installation activity silently pushes out older entries, and an attacker can produce that volume deliberately.
+
+        A year of installation history is a small amount of disk for a record that is frequently the starting point of an investigation.
       audit: |
         Verify the install log retention policy from the macOS shell.
 
@@ -3206,16 +3231,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that a minimum password length is enforced on macOS systems to enhance security by requiring sufficiently complex passwords.
+        This check verifies that a minimum password length is enforced for user accounts.
+
+        The minimum length is the shortest password macOS will accept when one is set or changed. The check reads the `minLength` policy from the managed preferences applied to each non-system user account.
 
         **Why this matters**
 
-        A minimum password length reduces the risk of weak passwords that can be easily guessed or brute-forced. Longer passwords provide greater entropy, making them more resistant to attacks. By enforcing a minimum password length of 15 characters, organizations can:
-          - Enhance the security of user accounts
-          - Mitigate the risk of unauthorized access
-          - Align with best practices for password policies
+        Length is the property that determines how long a password survives an offline attack, and it dominates every other rule. Each additional character multiplies the search space, while complexity requirements mostly change which predictable substitutions users make.
 
-        Without these protections, short passwords may expose the system to potential threats, undermining its overall security posture.
+        The attack this defends against is offline. An attacker who obtains the password hashes from a Mac, whether by taking the machine or by escalating on it, attacks them at whatever rate their hardware allows, with no lockout, no rate limiting, and no record of the attempts. Modern graphics hardware works through the entire space of short passwords in a time measured in hours. Length is what moves the answer from hours to something impractical.
+
+        Short passwords are also what make credential stuffing work. A password short enough to be cracked quickly on one machine is a password that will be tried against every other system the person uses.
+
+        Set the minimum to at least fifteen characters and encourage passphrases, which reach that length without becoming unmemorable, rather than layering complexity rules onto a short password.
       audit: |
         Verify the minimum password length from the macOS shell.
 
@@ -3294,18 +3322,19 @@ queries:
     mql: macos.softwareupdate.autoCheckEnabled == true
     docs:
       desc: |
-        This check ensures that automatic checking for software updates is enabled on macOS systems to keep the system up to date with the latest patches and security updates.
+        This check verifies that the Mac checks for software updates automatically.
+
+        Automatic checking makes the machine contact Apple's update service on a schedule to learn whether updates are available, rather than waiting for someone to look. The check reads `macos.softwareupdate.autoCheckEnabled`, which must be `true`.
 
         **Why this matters**
 
-        Enabling automatic checking for software updates ensures that the system regularly checks for available updates, reducing the risk of vulnerabilities caused by outdated software. This is critical for maintaining system security and stability.
+        Every other part of the update process depends on this one. A Mac that does not check does not know an update exists, so it will not download it, will not install it, and will not tell the user or the management platform that anything is outstanding. The machine reports nothing wrong while falling further behind.
 
-        By enabling automatic update checks, organizations can:
-          - Ensure timely awareness of available updates
-          - Reduce the risk of exploitation of known vulnerabilities
-          - Enhance overall system security and compliance with best practices
+        That silence is what makes the setting matter more than it appears. An unpatched machine that is visibly unpatched gets attention. One that has stopped checking looks the same as one that is fully current, and the gap can run for months before anything reveals it.
 
-        Without these protections, the system may remain vulnerable to known threats, undermining its overall security posture.
+        The exposure that accumulates in that time is not theoretical. Apple's security updates address vulnerabilities that are already being exploited often enough that the company ships out-of-band fixes for them, and the details become public when the update does, which is the point at which unpatched machines become straightforward targets.
+
+        Enable checking, and pair it with automatic download and automatic installation of critical updates so that discovery leads to action.
       audit: |
         ### Audit via System Settings
 
@@ -3397,18 +3426,19 @@ queries:
     mql: macos.softwareupdate.autoDownloadEnabled == true
     docs:
       desc: |
-        This check ensures that automatic downloads of software updates are enabled on macOS systems to keep the system up to date with the latest patches and security updates.
+        This check verifies that the Mac downloads available software updates automatically.
+
+        Automatic download retrieves updates in the background once they are found, so the files are already present when the update is installed. The check reads `macos.softwareupdate.autoDownloadEnabled`, which must be `true`.
 
         **Why this matters**
 
-        Enabling automatic downloads of software updates ensures that the system regularly downloads available updates, reducing the risk of vulnerabilities caused by outdated software. This is critical for maintaining system security and stability.
+        Downloading is where update processes stall in practice. When the download only begins after the user agrees to install, the prompt arrives carrying a wait of tens of minutes, and it arrives while they are working. The reliable outcome is that the update is deferred, and then deferred again, and the machine stays vulnerable not because anyone decided against patching but because the moment was never convenient.
 
-        By enabling automatic update downloads, organizations can:
-          - Ensure timely availability of updates for installation
-          - Reduce the risk of exploitation of known vulnerabilities
-          - Enhance overall system security and compliance with best practices
+        Pre-downloading removes that. The transfer happens in the background over whatever time it needs, and when the user is asked to install, the cost of saying yes is a restart rather than a restart plus a download.
 
-        Without these protections, the system may remain vulnerable to known threats, undermining its overall security posture.
+        It also removes a dependency on the network at the moment of installation. A laptop that has already fetched an update can apply it on a slow hotel connection or a tethered phone, which is frequently exactly when the user finally has time to restart.
+
+        Enable automatic download alongside automatic checking. Checking without downloading produces a machine that knows it is out of date and stays that way.
       audit: |
         ### Audit via System Settings
 
@@ -3502,18 +3532,19 @@ queries:
       macos.softwareupdate.installSecurityResponses == true
     docs:
       desc: |
-        This check ensures that critical software updates are installed automatically on macOS systems to maintain system security and stability.
+        This check verifies that the Mac installs Apple's urgent security content automatically.
+
+        Two channels deliver protection without a full software update: system data files carry the XProtect malware definitions, and Security Responses ship urgent fixes between releases. The check reads `macos.softwareupdate.installSystemDataFiles` and `macos.softwareupdate.installSecurityResponses`, both of which must be `true`.
 
         **Why this matters**
 
-        Automatic installation of critical updates ensures that macOS systems remain protected against known vulnerabilities and exploits. Critical updates often address security flaws, stability issues, and other high-priority concerns that could compromise the system if left unpatched.
+        These two channels exist precisely because the normal update cycle is too slow for the situations they address.
 
-        By enabling automatic installation of critical updates, organizations can:
-          - Reduce the risk of exploitation of known vulnerabilities
-          - Ensure timely application of essential patches
-          - Enhance overall system security and compliance with best practices
+        XProtect definitions are how macOS recognizes known malware at launch. Apple updates them as new families appear, and the update is small, requires no restart, and is useless if it does not arrive. A machine that does not take these automatically is checking downloads against a signature set that is however many weeks old the last full update was.
 
-        Without these protections, macOS systems may remain vulnerable to known threats, undermining their overall security posture.
+        Security Responses are shipped when a vulnerability is being exploited in the wild and Apple is not prepared to wait for the next release. The window that matters for one of these is measured in days, and manual application does not happen in that window across an estate.
+
+        Neither channel requires the disruption that discourages users from installing updates. There is very little reason to leave them off.
       audit: |
         ### Audit via System Settings
 
@@ -3612,18 +3643,19 @@ queries:
       macos.softwareupdate.updates.where(recommended == true) == empty
     docs:
       desc: |
-        This check ensures that macOS is up to date with the latest patches to mitigate vulnerabilities and enhance system security.
+        This check verifies that the Mac has applied every update Apple currently recommends for it.
+
+        The check reads the pending update list and requires that no recommended update remains outstanding. Where the other update checks in this policy confirm the machine is configured to find and fetch updates, this one confirms the result.
 
         **Why this matters**
 
-        Keeping macOS updated ensures that known vulnerabilities are patched, reducing the risk of exploitation by attackers. Regular updates address security flaws, improve system stability, and provide new features that enhance the overall user experience.
+        The other update checks in this policy confirm the machine is configured to find and fetch updates. This one confirms the result, which is the only part that affects whether the machine is actually exposed.
 
-        By ensuring macOS is up to date, organizations can:
-          - Mitigate risks associated with known vulnerabilities
-          - Enhance system stability and performance
-          - Align with security best practices and compliance requirements
+        The two can differ for ordinary reasons. Updates that require a restart wait for one, and a laptop that is only ever closed rather than restarted can carry a pending update for weeks. Low disk space, a deferral policy in the management platform, or a user repeatedly postponing the prompt all produce the same outcome: a machine correctly configured, aware of what it needs, and still unpatched.
 
-        Without these protections, outdated macOS systems may remain vulnerable to known threats, undermining their overall security posture.
+        The exposure that creates is specific rather than general. Apple publishes what each update fixes at the moment it ships, so the release itself tells an attacker exactly which vulnerabilities work against machines that have not applied it. Proof-of-concept code for macOS vulnerabilities frequently appears within days.
+
+        Where this fails, look for the reason rather than reapplying the setting. A pending restart, insufficient disk space, and a deferral window are the common causes, and each needs a different response.
       audit: |
         ### Audit via System Settings
 
@@ -3735,24 +3767,19 @@ queries:
       macos.firewall.blockAllIncoming == true
     docs:
       desc: |
-        This check verifies that the macOS firewall is configured to block all incoming connections. When enabled, only essential system services such as DHCP and Bonjour can receive incoming connections.
+        This check verifies that the macOS firewall is set to block all incoming connections.
+
+        This is the strictest firewall mode. It refuses inbound connections to every application except the small set of services the system requires for basic network operation, rather than deciding application by application. The check reads `macos.firewall.blockAllIncoming`, which must be `true`.
 
         **Why this matters**
 
-        This setting provides the strongest network protection available through the macOS firewall by reducing the attack surface to only essential system services. It is appropriate for high-security endpoints that do not need to accept inbound connections.
+        The default per-application model depends on someone answering the prompt correctly each time a new program asks to accept connections. Users answer those prompts while trying to do something else, and the answer that makes the interruption stop is to allow it. Over the life of a machine the allowed list accumulates entries nobody would approve deliberately.
 
-        By enabling this setting, organizations can:
-          - Maximize protection against unauthorized network access
-          - Reduce the attack surface to only essential system services
-          - Enforce a strict security posture for high-security endpoints
+        Blocking all incoming removes the decision. Nothing accepts inbound connections regardless of what is installed, what was allowed previously, or what a user clicked, which means a development server left running, a collaboration tool's helper daemon, and a listener installed by malware are all equally unreachable from the network.
 
-        Without this protection, the system may accept incoming connections that could be exploited by attackers.
+        This suits a workstation because a workstation initiates connections rather than receiving them. Browsing, mail, chat, and conferencing all work normally, since outbound connections and their replies are unaffected.
 
-        **Risk mitigation**
-
-        - Enable the "Block all incoming connections" setting via System Settings or the `socketfilterfw` CLI.
-        - Apply this setting on high-security endpoints that do not need to accept inbound connections.
-        - Use MDM profiles to enforce this setting across managed devices and prevent users from disabling it.
+        Machines that genuinely must accept inbound connections, such as a developer running a service others test against, need the per-application mode instead. That is a deliberate exception rather than the default posture.
       audit: |
         ### Audit via System Settings
 
