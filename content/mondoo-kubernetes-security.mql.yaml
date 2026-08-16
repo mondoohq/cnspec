@@ -726,22 +726,31 @@ queries:
 
         By ensuring proper ownership and restrictive permissions on the kubelet configuration file, organizations can reduce the risk of unauthorized access and maintain a secure Kubernetes environment.
       audit: |
-        View the kubelet configuration file details:
+        The file evaluated here is the one the kubelet was started with, named by its `--config` argument and defaulting to `/var/lib/kubelet/config.yaml`. It is not `/etc/kubernetes/kubelet.conf`, which is the kubelet's kubeconfig.
 
-        ```console
-        $ ls -l /etc/kubernetes/kubelet.conf
-        -rw-r--r-- 1 root root 1155 Sep 21 15:03 /etc/kubernetes/kubelet.conf
-        ```
+        1. Confirm which file the running kubelet loaded:
+
+           ```bash
+           ps -ef | grep [k]ubelet | grep -o -- '--config=[^ ]*'
+           ```
+
+        2. Inspect its ownership and permissions:
+
+           ```bash
+           stat -c "%a %U:%G" /var/lib/kubelet/config.yaml
+           ```
+
+        If the output is `600 root:root`, the check passes. If the permissions are more permissive than `600`, or the file is not owned by `root:root`, the check fails.
       remediation:
         - id: cli
           desc: |
             **Using CLI**
 
-            Update the ownership and permissions:
+            Update the ownership and permissions of the file named by the kubelet's `--config` argument. On kubeadm nodes that is `/var/lib/kubelet/config.yaml`:
 
             ```bash
-            chown root:root /etc/kubernetes/kubelet.conf
-            chmod 600 /etc/kubernetes/kubelet.conf
+            chown root:root /var/lib/kubelet/config.yaml
+            chmod 600 /var/lib/kubelet/config.yaml
             ```
         - id: ansible
           desc: |
@@ -756,7 +765,7 @@ queries:
               tasks:
                 - name: Ensure kubelet configuration file has correct ownership and permissions
                   ansible.builtin.file:
-                    path: /etc/kubernetes/kubelet.conf
+                    path: /var/lib/kubelet/config.yaml
                     owner: root
                     group: root
                     mode: '0600'
@@ -770,8 +779,8 @@ queries:
             set -e
 
             echo "Securing kubelet configuration file..."
-            chown root:root /etc/kubernetes/kubelet.conf
-            chmod 600 /etc/kubernetes/kubelet.conf
+            chown root:root /var/lib/kubelet/config.yaml
+            chmod 600 /var/lib/kubelet/config.yaml
             ```
     refs:
       - url: https://kubernetes.io/docs/reference/command-line-tools-reference/kubelet/
@@ -827,18 +836,27 @@ queries:
 
         By ensuring proper ownership and restrictive permissions on the kubelet's certificate authorities file, organizations can reduce the risk of unauthorized access and maintain a secure Kubernetes environment.
       audit: |
-        View the ownership and permissions:
+        The file evaluated here is the one named by `authentication.x509.clientCAFile` in the kubelet configuration, so read that path before inspecting anything. The path differs by distribution: kubeadm nodes use `/etc/kubernetes/pki/ca.crt` and GKE nodes use `/etc/srv/kubernetes/pki/ca-certificates.crt`.
 
-        ```console
-        $ ls -l /etc/srv/kubernetes/pki/ca-certificates.crt
-        -rw------- 1 root root 1159 Sep 13 04:14 /etc/srv/kubernetes/pki/ca-certificates.crt
-        ```
+        1. Read the configured path:
+
+           ```bash
+           awk '/x509:/{f=1} f && /clientCAFile:/{print $2; exit}' /var/lib/kubelet/config.yaml
+           ```
+
+        2. Inspect the ownership and permissions of that file:
+
+           ```bash
+           stat -c "%a %U:%G" /etc/srv/kubernetes/pki/ca-certificates.crt
+           ```
+
+        If the output is `600 root:root`, the check passes. If the permissions are more permissive than `600`, or the file is not owned by `root:root`, the check fails.
       remediation:
         - id: cli
           desc: |
             **Using CLI**
 
-            Set the appropriate ownership and permissions:
+            Set the ownership and permissions on the file named by `authentication.x509.clientCAFile` in the kubelet configuration. The path below is the GKE default; substitute the path your node reports:
 
             ```bash
             chown root:root /etc/srv/kubernetes/pki/ca-certificates.crt
@@ -1597,17 +1615,20 @@ queries:
 
         By ensuring that containers do not mount the Docker socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/var/run/docker.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/var/run/docker.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
         apiVersion: v1
         kind: Pod
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/docker.sock
+                path: /var/run/docker.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -1616,17 +1637,26 @@ queries:
                   name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/var/run/docker.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/var/run/docker.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
         apiVersion: v1
         kind: Pod
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
           volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/docker.sock  # <--- this shouldn't be there
+            - name: config
+              configMap:
+                name: app-config
+          containers:
+            - name: app
+              image: images.my-company.example/app:v1.2.3
+              volumeMounts:
+                - mountPath: /etc/app
+                  name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -1667,36 +1697,56 @@ queries:
 
         By ensuring that containers do not mount the Docker socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/var/run/docker.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/var/run/docker.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: batch/v1
+        kind: CronJob
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/docker.sock
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1.2.3
-              volumeMounts:
-                - mountPath: /var/run/docker.sock
-                  name: vol
+          jobTemplate:
+            spec:
+              template:
+                spec:
+                  volumes:
+                    - name: vol
+                      hostPath:
+                        path: /var/run/docker.sock
+                  containers:
+                    - name: app
+                      image: images.my-company.example/app:v1.2.3
+                      volumeMounts:
+                        - mountPath: /var/run/docker.sock
+                          name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/var/run/docker.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/var/run/docker.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: batch/v1
+        kind: CronJob
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/docker.sock  # <--- this shouldn't be there
+          jobTemplate:
+            spec:
+              template:
+                spec:
+                  volumes:
+                    - name: config
+                      configMap:
+                        name: app-config
+                  containers:
+                    - name: app
+                      image: images.my-company.example/app:v1.2.3
+                      volumeMounts:
+                        - mountPath: /etc/app
+                          name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -1734,36 +1784,52 @@ queries:
 
         By ensuring that containers do not mount the Docker socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/var/run/docker.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/var/run/docker.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: StatefulSet
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/docker.sock
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1.2.3
-              volumeMounts:
-                - mountPath: /var/run/docker.sock
-                  name: vol
+          template:
+            spec:
+              volumes:
+                - name: vol
+                  hostPath:
+                    path: /var/run/docker.sock
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /var/run/docker.sock
+                      name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/var/run/docker.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/var/run/docker.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: StatefulSet
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/docker.sock  # <--- this shouldn't be there
+          template:
+            spec:
+              volumes:
+                - name: config
+                  configMap:
+                    name: app-config
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /etc/app
+                      name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -1801,36 +1867,52 @@ queries:
 
         By ensuring that containers do not mount the Docker socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/var/run/docker.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/var/run/docker.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/docker.sock
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1.2.3
-              volumeMounts:
-                - mountPath: /var/run/docker.sock
-                  name: vol
+          template:
+            spec:
+              volumes:
+                - name: vol
+                  hostPath:
+                    path: /var/run/docker.sock
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /var/run/docker.sock
+                      name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/var/run/docker.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/var/run/docker.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/docker.sock  # <--- this shouldn't be there
+          template:
+            spec:
+              volumes:
+                - name: config
+                  configMap:
+                    name: app-config
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /etc/app
+                      name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -1868,36 +1950,52 @@ queries:
 
         By ensuring that containers do not mount the Docker socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/var/run/docker.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/var/run/docker.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/docker.sock
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1.2.3
-              volumeMounts:
-                - mountPath: /var/run/docker.sock
-                  name: vol
+          template:
+            spec:
+              volumes:
+                - name: vol
+                  hostPath:
+                    path: /var/run/docker.sock
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /var/run/docker.sock
+                      name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/var/run/docker.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/var/run/docker.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/docker.sock  # <--- this shouldn't be there
+          template:
+            spec:
+              volumes:
+                - name: config
+                  configMap:
+                    name: app-config
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /etc/app
+                      name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -1935,36 +2033,52 @@ queries:
 
         By ensuring that containers do not mount the Docker socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/var/run/docker.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/var/run/docker.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: ReplicaSet
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/docker.sock
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1.2.3
-              volumeMounts:
-                - mountPath: /var/run/docker.sock
-                  name: vol
+          template:
+            spec:
+              volumes:
+                - name: vol
+                  hostPath:
+                    path: /var/run/docker.sock
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /var/run/docker.sock
+                      name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/var/run/docker.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/var/run/docker.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: ReplicaSet
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/docker.sock  # <--- this shouldn't be there
+          template:
+            spec:
+              volumes:
+                - name: config
+                  configMap:
+                    name: app-config
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /etc/app
+                      name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2002,36 +2116,52 @@ queries:
 
         By ensuring that containers do not mount the Docker socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/var/run/docker.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/var/run/docker.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: DaemonSet
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/docker.sock
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1.2.3
-              volumeMounts:
-                - mountPath: /var/run/docker.sock
-                  name: vol
+          template:
+            spec:
+              volumes:
+                - name: vol
+                  hostPath:
+                    path: /var/run/docker.sock
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /var/run/docker.sock
+                      name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/var/run/docker.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/var/run/docker.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: DaemonSet
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/docker.sock  # <--- this shouldn't be there
+          template:
+            spec:
+              volumes:
+                - name: config
+                  configMap:
+                    name: app-config
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /etc/app
+                      name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2069,17 +2199,20 @@ queries:
 
         By ensuring that containers do not mount the containerd socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/run/containerd/containerd.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/run/containerd/containerd.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
         apiVersion: v1
         kind: Pod
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
           volumes:
             - name: vol
               hostPath:
-                - path: /run/containerd/containerd.sock
+                path: /run/containerd/containerd.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -2088,17 +2221,26 @@ queries:
                   name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/run/containerd/containerd.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/run/containerd/containerd.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
         apiVersion: v1
         kind: Pod
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
           volumes:
-            - name: vol
-              hostPath:
-                - path: /run/containerd/containerd.sock  # <--- this shouldn't be there
+            - name: config
+              configMap:
+                name: app-config
+          containers:
+            - name: app
+              image: images.my-company.example/app:v1.2.3
+              volumeMounts:
+                - mountPath: /etc/app
+                  name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2136,36 +2278,56 @@ queries:
 
         By ensuring that containers do not mount the containerd socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/run/containerd/containerd.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/run/containerd/containerd.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: batch/v1
+        kind: CronJob
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /run/containerd/containerd.sock
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1.2.3
-              volumeMounts:
-                - mountPath: /run/containerd/containerd.sock
-                  name: vol
+          jobTemplate:
+            spec:
+              template:
+                spec:
+                  volumes:
+                    - name: vol
+                      hostPath:
+                        path: /run/containerd/containerd.sock
+                  containers:
+                    - name: app
+                      image: images.my-company.example/app:v1.2.3
+                      volumeMounts:
+                        - mountPath: /run/containerd/containerd.sock
+                          name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/run/containerd/containerd.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/run/containerd/containerd.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: batch/v1
+        kind: CronJob
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /run/containerd/containerd.sock  # <--- this shouldn't be there
+          jobTemplate:
+            spec:
+              template:
+                spec:
+                  volumes:
+                    - name: config
+                      configMap:
+                        name: app-config
+                  containers:
+                    - name: app
+                      image: images.my-company.example/app:v1.2.3
+                      volumeMounts:
+                        - mountPath: /etc/app
+                          name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2203,36 +2365,52 @@ queries:
 
         By ensuring that containers do not mount the containerd socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/run/containerd/containerd.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/run/containerd/containerd.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: StatefulSet
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /run/containerd/containerd.sock
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1.2.3
-              volumeMounts:
-                - mountPath: /run/containerd/containerd.sock
-                  name: vol
+          template:
+            spec:
+              volumes:
+                - name: vol
+                  hostPath:
+                    path: /run/containerd/containerd.sock
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /run/containerd/containerd.sock
+                      name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/run/containerd/containerd.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/run/containerd/containerd.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: StatefulSet
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /run/containerd/containerd.sock  # <--- this shouldn't be there
+          template:
+            spec:
+              volumes:
+                - name: config
+                  configMap:
+                    name: app-config
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /etc/app
+                      name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2270,36 +2448,52 @@ queries:
 
         By ensuring that containers do not mount the containerd socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/run/containerd/containerd.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/run/containerd/containerd.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /run/containerd/containerd.sock
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1.2.3
-              volumeMounts:
-                - mountPath: /run/containerd/containerd.sock
-                  name: vol
+          template:
+            spec:
+              volumes:
+                - name: vol
+                  hostPath:
+                    path: /run/containerd/containerd.sock
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /run/containerd/containerd.sock
+                      name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/run/containerd/containerd.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/run/containerd/containerd.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /run/containerd/containerd.sock  # <--- this shouldn't be there
+          template:
+            spec:
+              volumes:
+                - name: config
+                  configMap:
+                    name: app-config
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /etc/app
+                      name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2337,36 +2531,52 @@ queries:
 
         By ensuring that containers do not mount the containerd socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/run/containerd/containerd.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/run/containerd/containerd.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /run/containerd/containerd.sock
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1.2.3
-              volumeMounts:
-                - mountPath: /run/containerd/containerd.sock
-                  name: vol
+          template:
+            spec:
+              volumes:
+                - name: vol
+                  hostPath:
+                    path: /run/containerd/containerd.sock
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /run/containerd/containerd.sock
+                      name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/run/containerd/containerd.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/run/containerd/containerd.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /run/containerd/containerd.sock  # <--- this shouldn't be there
+          template:
+            spec:
+              volumes:
+                - name: config
+                  configMap:
+                    name: app-config
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /etc/app
+                      name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2404,36 +2614,52 @@ queries:
 
         By ensuring that containers do not mount the containerd socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/run/containerd/containerd.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/run/containerd/containerd.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: ReplicaSet
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /run/containerd/containerd.sock
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1.2.3
-              volumeMounts:
-                - mountPath: /run/containerd/containerd.sock
-                  name: vol
+          template:
+            spec:
+              volumes:
+                - name: vol
+                  hostPath:
+                    path: /run/containerd/containerd.sock
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /run/containerd/containerd.sock
+                      name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/run/containerd/containerd.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/run/containerd/containerd.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: ReplicaSet
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /run/containerd/containerd.sock  # <--- this shouldn't be there
+          template:
+            spec:
+              volumes:
+                - name: config
+                  configMap:
+                    name: app-config
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /etc/app
+                      name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2471,36 +2697,52 @@ queries:
 
         By ensuring that containers do not mount the containerd socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/run/containerd/containerd.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/run/containerd/containerd.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: DaemonSet
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /run/containerd/containerd.sock
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1.2.3
-              volumeMounts:
-                - mountPath: /run/containerd/containerd.sock
-                  name: vol
+          template:
+            spec:
+              volumes:
+                - name: vol
+                  hostPath:
+                    path: /run/containerd/containerd.sock
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /run/containerd/containerd.sock
+                      name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/run/containerd/containerd.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/run/containerd/containerd.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: DaemonSet
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /run/containerd/containerd.sock  # <--- this shouldn't be there
+          template:
+            spec:
+              volumes:
+                - name: config
+                  configMap:
+                    name: app-config
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /etc/app
+                      name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2538,17 +2780,20 @@ queries:
 
         By ensuring that containers do not mount the CRI-O socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/var/run/crio/crio.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/var/run/crio/crio.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
         apiVersion: v1
         kind: Pod
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/crio/crio.sock
+                path: /var/run/crio/crio.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -2557,17 +2802,26 @@ queries:
                   name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/var/run/crio/crio.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/var/run/crio/crio.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
         apiVersion: v1
         kind: Pod
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
           volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/crio/crio.sock  # <--- this shouldn't be there
+            - name: config
+              configMap:
+                name: app-config
+          containers:
+            - name: app
+              image: images.my-company.example/app:v1.2.3
+              volumeMounts:
+                - mountPath: /etc/app
+                  name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2605,36 +2859,56 @@ queries:
 
         By ensuring that containers do not mount the CRI-O socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/var/run/crio/crio.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/var/run/crio/crio.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: batch/v1
+        kind: CronJob
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/crio/crio.sock
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1.2.3
-              volumeMounts:
-                - mountPath: /var/run/crio/crio.sock
-                  name: vol
+          jobTemplate:
+            spec:
+              template:
+                spec:
+                  volumes:
+                    - name: vol
+                      hostPath:
+                        path: /var/run/crio/crio.sock
+                  containers:
+                    - name: app
+                      image: images.my-company.example/app:v1.2.3
+                      volumeMounts:
+                        - mountPath: /var/run/crio/crio.sock
+                          name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/var/run/crio/crio.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/var/run/crio/crio.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: batch/v1
+        kind: CronJob
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/crio/crio.sock  # <--- this shouldn't be there
+          jobTemplate:
+            spec:
+              template:
+                spec:
+                  volumes:
+                    - name: config
+                      configMap:
+                        name: app-config
+                  containers:
+                    - name: app
+                      image: images.my-company.example/app:v1.2.3
+                      volumeMounts:
+                        - mountPath: /etc/app
+                          name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2672,36 +2946,52 @@ queries:
 
         By ensuring that containers do not mount the CRI-O socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/var/run/crio/crio.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/var/run/crio/crio.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: StatefulSet
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/crio/crio.sock
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1.2.3
-              volumeMounts:
-                - mountPath: /var/run/crio/crio.sock
-                  name: vol
+          template:
+            spec:
+              volumes:
+                - name: vol
+                  hostPath:
+                    path: /var/run/crio/crio.sock
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /var/run/crio/crio.sock
+                      name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/var/run/crio/crio.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/var/run/crio/crio.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: StatefulSet
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/crio/crio.sock  # <--- this shouldn't be there
+          template:
+            spec:
+              volumes:
+                - name: config
+                  configMap:
+                    name: app-config
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /etc/app
+                      name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2739,36 +3029,52 @@ queries:
 
         By ensuring that containers do not mount the CRI-O socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/var/run/crio/crio.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/var/run/crio/crio.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/crio/crio.sock
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1.2.3
-              volumeMounts:
-                - mountPath: /var/run/crio/crio.sock
-                  name: vol
+          template:
+            spec:
+              volumes:
+                - name: vol
+                  hostPath:
+                    path: /var/run/crio/crio.sock
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /var/run/crio/crio.sock
+                      name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/var/run/crio/crio.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/var/run/crio/crio.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/crio/crio.sock  # <--- this shouldn't be there
+          template:
+            spec:
+              volumes:
+                - name: config
+                  configMap:
+                    name: app-config
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /etc/app
+                      name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2806,36 +3112,52 @@ queries:
 
         By ensuring that containers do not mount the CRI-O socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/var/run/crio/crio.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/var/run/crio/crio.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/crio/crio.sock
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1.2.3
-              volumeMounts:
-                - mountPath: /var/run/crio/crio.sock
-                  name: vol
+          template:
+            spec:
+              volumes:
+                - name: vol
+                  hostPath:
+                    path: /var/run/crio/crio.sock
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /var/run/crio/crio.sock
+                      name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/var/run/crio/crio.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/var/run/crio/crio.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/crio/crio.sock  # <--- this shouldn't be there
+          template:
+            spec:
+              volumes:
+                - name: config
+                  configMap:
+                    name: app-config
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /etc/app
+                      name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2873,36 +3195,52 @@ queries:
 
         By ensuring that containers do not mount the CRI-O socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/var/run/crio/crio.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/var/run/crio/crio.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: ReplicaSet
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/crio/crio.sock
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1.2.3
-              volumeMounts:
-                - mountPath: /var/run/crio/crio.sock
-                  name: vol
+          template:
+            spec:
+              volumes:
+                - name: vol
+                  hostPath:
+                    path: /var/run/crio/crio.sock
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /var/run/crio/crio.sock
+                      name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/var/run/crio/crio.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/var/run/crio/crio.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: ReplicaSet
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/crio/crio.sock  # <--- this shouldn't be there
+          template:
+            spec:
+              volumes:
+                - name: config
+                  configMap:
+                    name: app-config
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /etc/app
+                      name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2940,36 +3278,52 @@ queries:
 
         By ensuring that containers do not mount the CRI-O socket, organizations can prevent privilege escalation, maintain workload isolation, and protect the integrity of the Kubernetes environment.
       audit: |
-        A pod `volumes` list that mounts `/var/run/crio/crio.sock` as a `hostPath` triggers this check, as shown in the manifest below:
+        A `volumes` list that mounts `/var/run/crio/crio.sock` as a `hostPath` triggers this check, as shown in the manifest below:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: DaemonSet
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/crio/crio.sock
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1.2.3
-              volumeMounts:
-                - mountPath: /var/run/crio/crio.sock
-                  name: vol
+          template:
+            spec:
+              volumes:
+                - name: vol
+                  hostPath:
+                    path: /var/run/crio/crio.sock
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /var/run/crio/crio.sock
+                      name: vol
         ```
       remediation: |
-        Remove any `hostPath` volume that mounts `/var/run/crio/crio.sock` from the pod's `volumes` list. The manifest below marks the entry that must be deleted:
+        Delete the `hostPath` volume that mounts `/var/run/crio/crio.sock` from the `volumes` list, and delete the `volumeMounts` entry that references it. A workload that genuinely needs to build images or inspect containers should use a rootless image builder or the Kubernetes API rather than the runtime socket. The corrected manifest:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: DaemonSet
+        metadata:
+          name: example
+          namespace: example-namespace
         spec:
-          volumes:
-            - name: vol
-              hostPath:
-                - path: /var/run/crio/crio.sock  # <--- this shouldn't be there
+          template:
+            spec:
+              volumes:
+                - name: config
+                  configMap:
+                    name: app-config
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1.2.3
+                  volumeMounts:
+                    - mountPath: /etc/app
+                      name: config
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -6759,7 +7113,7 @@ queries:
         metadata:
           name: example-app
         spec:
-          serviceAccountName: some-account <-- Set the name of the ServiceAccount created for the Pod
+          serviceAccountName: some-account # <-- Set the name of the ServiceAccount created for the Pod
           containers:
             - name: example-app
               image: index.docker.io/yournamespace/repository
@@ -6862,7 +7216,7 @@ queries:
             spec:
               template:
                 spec:
-                  serviceAccountName: some-account <-- Set the name of the ServiceAccount created for the Pod
+                  serviceAccountName: some-account # <-- Set the name of the ServiceAccount created for the Pod
                   containers:
                     - name: example-app
                       image: index.docker.io/yournamespace/repository
@@ -6963,7 +7317,7 @@ queries:
         spec:
           template:
             spec:
-              serviceAccountName: some-account <-- Set the name of the ServiceAccount created for the Pod
+              serviceAccountName: some-account # <-- Set the name of the ServiceAccount created for the Pod
               containers:
                 - name: example-app
                   image: index.docker.io/yournamespace/repository
@@ -7062,7 +7416,7 @@ queries:
         spec:
           template:
             spec:
-              serviceAccountName: some-account <-- Set the name of the ServiceAccount created for the Pod
+              serviceAccountName: some-account # <-- Set the name of the ServiceAccount created for the Pod
               containers:
                 - name: example-app
                   image: index.docker.io/yournamespace/repository
@@ -7161,7 +7515,7 @@ queries:
         spec:
           template:
             spec:
-              serviceAccountName: some-account <-- Set the name of the ServiceAccount created for the Pod
+              serviceAccountName: some-account # <-- Set the name of the ServiceAccount created for the Pod
               containers:
                 - name: example-app
                   image: index.docker.io/yournamespace/repository
@@ -7260,7 +7614,7 @@ queries:
         spec:
           template:
             spec:
-              serviceAccountName: some-account <-- Set the name of the ServiceAccount created for the Pod
+              serviceAccountName: some-account # <-- Set the name of the ServiceAccount created for the Pod
               containers:
                 - name: example-app
                   image: index.docker.io/yournamespace/repository
@@ -7359,7 +7713,7 @@ queries:
         spec:
           template:
             spec:
-              serviceAccountName: some-account <-- Set the name of the ServiceAccount created for the Pod
+              serviceAccountName: some-account # <-- Set the name of the ServiceAccount created for the Pod
               containers:
                 - name: example-app
                   image: index.docker.io/yournamespace/repository
@@ -8988,7 +9342,7 @@ queries:
         apiVersion: v1
         kind: Pod
         metadata:
-          name: examplePod
+          name: example-pod
           namespace: example-namespace
         spec:
           containers:
@@ -9577,7 +9931,7 @@ queries:
         apiVersion: v1
         kind: Pod
         metadata:
-          name: examplePod
+          name: example-pod
           namespace: example-namespace
         spec:
           containers:
@@ -11009,17 +11363,19 @@ queries:
           name: example
           namespace: example-namespace
         spec:
-          template:
+          jobTemplate:
             spec:
-              containers:
-                - volumeMounts:
-                  - mountPath: /host
-                    name: hostpath-volume
-                    readOnly: true # <-- ensure readOnly is set to true
-              volumes:
-                - hostPath:
-                    path: /etc
-                  name: hostpath-volume
+              template:
+                spec:
+                  containers:
+                    - volumeMounts:
+                      - mountPath: /host
+                        name: hostpath-volume
+                        readOnly: true # <-- ensure readOnly is set to true
+                  volumes:
+                    - hostPath:
+                        path: /etc
+                      name: hostpath-volume
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/
@@ -11697,19 +12053,27 @@ queries:
 
         If the command returns no output, the check passes. If any PersistentVolume name is listed, that volume uses `hostPath` and the check fails.
       remediation: |
-        Replace hostPath PersistentVolumes with a proper storage backend:
+        Replace hostPath PersistentVolumes with a proper storage backend. A PersistentVolume that pins data to one node's filesystem looks like this:
 
         ```yaml
-        # Instead of:
+        ---
         apiVersion: v1
         kind: PersistentVolume
         metadata:
           name: example-pv
         spec:
+          capacity:
+            storage: 10Gi
+          accessModes:
+            - ReadWriteOnce
           hostPath:
             path: /data/app
+        ```
 
-        # Use a CSI driver or cloud storage:
+        Back the same volume with a CSI driver or cloud storage instead. Delete the hostPath PersistentVolume and apply the replacement, keeping the claim's capacity and access modes the same so the workload's PersistentVolumeClaim still binds:
+
+        ```yaml
+        ---
         apiVersion: v1
         kind: PersistentVolume
         metadata:
