@@ -517,7 +517,11 @@ queries:
               exit 1
             fi
             CRON_LINE="0 5 * * * $AIDE_BIN --check"
-            (crontab -l 2>/dev/null | grep -v -F "aide --check" ; echo "$CRON_LINE") | crontab -
+            # `grep -v` exits 1 when it selects nothing, which is what happens when root has
+            # no crontab at all. Without the `|| true` that status aborts the subshell under
+            # `set -e`, so `crontab -` reads empty input and clears the crontab instead of
+            # adding the entry.
+            { crontab -l 2>/dev/null | grep -v -F "aide --check" || true; echo "$CRON_LINE"; } | crontab -
 
             echo "AIDE daily check scheduled at 5AM via cron."
             ```
@@ -4371,17 +4375,25 @@ queries:
               become: true
 
               tasks:
+                - name: Check whether Postfix is installed
+                  ansible.builtin.stat:
+                    path: /etc/postfix/main.cf
+                  register: postfix_main_cf
+
                 - name: Configure Postfix for local-only mode
                   ansible.builtin.lineinfile:
                     path: /etc/postfix/main.cf
                     regexp: '^inet_interfaces'
                     line: 'inet_interfaces = loopback-only'
                     state: present
+                  when: postfix_main_cf.stat.exists
+                  register: postfix_config_change
 
                 - name: Restart Postfix
                   ansible.builtin.systemd:
                     name: postfix
                     state: restarted
+                  when: postfix_config_change.changed
             ```
 
             Use this Ansible playbook to ensure the Exim4 is configured for local-only mode:
@@ -4393,21 +4405,30 @@ queries:
               become: true
 
               tasks:
+                - name: Check whether Exim4 is installed
+                  ansible.builtin.stat:
+                    path: /etc/exim4/update-exim4.conf.conf
+                  register: exim4_conf
+
                 - name: Configure Exim4 for local-only mode
                   ansible.builtin.lineinfile:
                     path: /etc/exim4/update-exim4.conf.conf
                     regexp: '^dc_local_interfaces'
                     line: "dc_local_interfaces='127.0.0.1 ; ::1'"
                     state: present
+                  when: exim4_conf.stat.exists
+                  register: exim4_config_change
 
                 - name: Regenerate Exim4 configuration
                   ansible.builtin.command:
                     cmd: update-exim4.conf
+                  when: exim4_config_change.changed
 
                 - name: Restart Exim4
                   ansible.builtin.systemd:
                     name: exim4
                     state: restarted
+                  when: exim4_config_change.changed
             ```
         - id: chef
           desc: |
@@ -4433,7 +4454,10 @@ queries:
                        end
                 ::File.write(main_cf, body)
               end
-              not_if { ::File.read(main_cf).match?(/^inet_interfaces\s*=\s*loopback-only\s*$/) }
+              # File.read raises Errno::ENOENT on a host that does not run Postfix, so the
+              # existence test has to come before the content test in the same guard.
+              only_if { ::File.exist?(main_cf) }
+              not_if { ::File.exist?(main_cf) && ::File.read(main_cf).match?(/^inet_interfaces\s*=\s*loopback-only\s*$/) }
               notifies :restart, 'service[postfix]', :delayed
             end
             ```
@@ -4464,7 +4488,10 @@ queries:
                        end
                 ::File.write(exim_conf, body)
               end
-              not_if { ::File.read(exim_conf).match?(/^dc_local_interfaces='127\.0\.0\.1 ; ::1'\s*$/) }
+              # File.read raises Errno::ENOENT on a host that does not run Exim4, so the
+              # existence test has to come before the content test in the same guard.
+              only_if { ::File.exist?(exim_conf) }
+              not_if { ::File.exist?(exim_conf) && ::File.read(exim_conf).match?(/^dc_local_interfaces='127\.0\.0\.1 ; ::1'\s*$/) }
               notifies :run, 'execute[regenerate the Exim4 configuration]', :delayed
             end
             ```
@@ -11822,8 +11849,29 @@ queries:
             echo "Setting permissions on all log files in /var/log..."
             find /var/log/ -type f -exec chmod g-wx,o-rwx {} +
 
+            # Tighten the mode rsyslog creates new files with. Without this the daemon
+            # recreates world-readable log files and the hardening above is undone on the
+            # next rotation.
+            if [ -f /etc/rsyslog.conf ]; then
+              echo "Setting the rsyslog file creation mode and umask..."
+
+              if grep -q '^\$FileCreateMode' /etc/rsyslog.conf; then
+                sed -i 's/^\$FileCreateMode.*/\$FileCreateMode 0640/' /etc/rsyslog.conf
+              else
+                echo '$FileCreateMode 0640' >> /etc/rsyslog.conf
+              fi
+
+              if grep -q '^\$Umask' /etc/rsyslog.conf; then
+                sed -i 's/^\$Umask.*/\$Umask 0077/' /etc/rsyslog.conf
+              else
+                echo '$Umask 0077' >> /etc/rsyslog.conf
+              fi
+
+              systemctl restart rsyslog
+            fi
+
             echo "Configuring tmpfiles.d to set default permissions for newly created log files..."
-            cat <<EOF >> /etc/tmpfiles.d/var.conf
+            cat <<EOF > /etc/tmpfiles.d/var.conf
             f /var/log/alternatives.log 0640 root utmp -
             f /var/log/apt/history.log 0640 root utmp -
             f /var/log/auth.log 0640 root utmp -
@@ -12468,10 +12516,13 @@ queries:
             LogLevel INFO
             ```
 
-            If the system uses configuration snippets in `/etc/ssh/sshd_config.d/`, check for a conflicting `LogLevel` directive there. The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads these snippets first:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'LogLevel' /etc/ssh/sshd_config.d/
+            touch /etc/ssh/sshd_config.d/00-hardening.conf
+            chmod 600 /etc/ssh/sshd_config.d/00-hardening.conf
+            echo 'LogLevel VERBOSE' >> /etc/ssh/sshd_config.d/00-hardening.conf
             ```
 
             Validate the configuration before restarting:
@@ -12505,12 +12556,25 @@ queries:
             #!/bin/bash
             set -e
 
-            if grep -q '^LogLevel' /etc/ssh/sshd_config; then
-              echo "Updating LogLevel to VERBOSE in /etc/ssh/sshd_config..."
-              sed -i 's/^LogLevel.*/LogLevel VERBOSE/' /etc/ssh/sshd_config
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+              SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
+              mkdir -p /etc/ssh/sshd_config.d
+              touch "$SSHD_CONFIG"
+              chmod 600 "$SSHD_CONFIG"
             else
-              echo "Adding LogLevel VERBOSE to /etc/ssh/sshd_config..."
-              echo "LogLevel VERBOSE" >> /etc/ssh/sshd_config
+              SSHD_CONFIG=/etc/ssh/sshd_config
+            fi
+
+            if grep -q '^LogLevel' "$SSHD_CONFIG"; then
+              echo "Updating LogLevel to VERBOSE in $SSHD_CONFIG..."
+              sed -i 's/^LogLevel.*/LogLevel VERBOSE/' "$SSHD_CONFIG"
+            else
+              echo "Adding LogLevel VERBOSE to $SSHD_CONFIG..."
+              echo "LogLevel VERBOSE" >> "$SSHD_CONFIG"
             fi
 
             # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
@@ -12536,9 +12600,31 @@ queries:
               become: true
 
               tasks:
+                - name: Detect whether sshd reads drop-in configuration files
+                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  register: sshd_include
+                  changed_when: false
+                  failed_when: false
+
+                # sshd uses the first value it reads for each keyword, and the Include at the top of
+                # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order, so a drop-in numbered
+                # below the vendor snippets is the only place a new value reliably wins.
+                - name: Select the configuration file sshd reads first
+                  ansible.builtin.set_fact:
+                    sshd_target: "{{ '/etc/ssh/sshd_config.d/00-hardening.conf' if sshd_include.rc == 0 else '/etc/ssh/sshd_config' }}"
+
+                - name: Ensure the hardening drop-in exists
+                  ansible.builtin.copy:
+                    dest: "{{ sshd_target }}"
+                    content: ""
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0600'
+
                 - name: Set LogLevel in sshd_config
                   ansible.builtin.lineinfile:
-                    path: /etc/ssh/sshd_config
+                    path: "{{ sshd_target }}"
                     regexp: '^LogLevel'
                     line: 'LogLevel VERBOSE'
                   register: ssh_config_change
@@ -12560,8 +12646,28 @@ queries:
             Use this Chef Infra recipe code to raise the SSH log level so that failed logins and key fingerprints are recorded:
 
             ```ruby
-            sshd_config = '/etc/ssh/sshd_config'
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
+                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            directory '/etc/ssh/sshd_config.d' do
+              owner 'root'
+              group 'root'
+              mode '0755'
+              only_if { sshd_include }
+            end
+
+            file sshd_config do
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create_if_missing
+            end
 
             service ssh_service do
               action :nothing
@@ -12640,10 +12746,13 @@ queries:
             X11Forwarding no
             ```
 
-            If the system uses configuration snippets in `/etc/ssh/sshd_config.d/`, check for a conflicting `X11Forwarding` directive there. The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads these snippets first:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'X11Forwarding' /etc/ssh/sshd_config.d/
+            touch /etc/ssh/sshd_config.d/00-hardening.conf
+            chmod 600 /etc/ssh/sshd_config.d/00-hardening.conf
+            echo 'X11Forwarding no' >> /etc/ssh/sshd_config.d/00-hardening.conf
             ```
 
             Validate the configuration before restarting:
@@ -12677,12 +12786,25 @@ queries:
             #!/bin/bash
             set -e
 
-            if grep -q '^X11Forwarding' /etc/ssh/sshd_config; then
-              echo "Updating X11Forwarding to no in /etc/ssh/sshd_config..."
-              sed -i 's/^X11Forwarding.*/X11Forwarding no/' /etc/ssh/sshd_config
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+              SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
+              mkdir -p /etc/ssh/sshd_config.d
+              touch "$SSHD_CONFIG"
+              chmod 600 "$SSHD_CONFIG"
             else
-              echo "Adding X11Forwarding no to /etc/ssh/sshd_config..."
-              echo "X11Forwarding no" >> /etc/ssh/sshd_config
+              SSHD_CONFIG=/etc/ssh/sshd_config
+            fi
+
+            if grep -q '^X11Forwarding' "$SSHD_CONFIG"; then
+              echo "Updating X11Forwarding to no in $SSHD_CONFIG..."
+              sed -i 's/^X11Forwarding.*/X11Forwarding no/' "$SSHD_CONFIG"
+            else
+              echo "Adding X11Forwarding no to $SSHD_CONFIG..."
+              echo "X11Forwarding no" >> "$SSHD_CONFIG"
             fi
 
             # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
@@ -12708,9 +12830,31 @@ queries:
               become: true
 
               tasks:
+                - name: Detect whether sshd reads drop-in configuration files
+                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  register: sshd_include
+                  changed_when: false
+                  failed_when: false
+
+                # sshd uses the first value it reads for each keyword, and the Include at the top of
+                # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order, so a drop-in numbered
+                # below the vendor snippets is the only place a new value reliably wins.
+                - name: Select the configuration file sshd reads first
+                  ansible.builtin.set_fact:
+                    sshd_target: "{{ '/etc/ssh/sshd_config.d/00-hardening.conf' if sshd_include.rc == 0 else '/etc/ssh/sshd_config' }}"
+
+                - name: Ensure the hardening drop-in exists
+                  ansible.builtin.copy:
+                    dest: "{{ sshd_target }}"
+                    content: ""
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0600'
+
                 - name: Set X11Forwarding to no in sshd_config
                   ansible.builtin.lineinfile:
-                    path: /etc/ssh/sshd_config
+                    path: "{{ sshd_target }}"
                     regexp: '^X11Forwarding'
                     line: 'X11Forwarding no'
                   register: ssh_config_change
@@ -12732,8 +12876,28 @@ queries:
             Use this Chef Infra recipe code to disable X11 forwarding:
 
             ```ruby
-            sshd_config = '/etc/ssh/sshd_config'
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
+                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            directory '/etc/ssh/sshd_config.d' do
+              owner 'root'
+              group 'root'
+              mode '0755'
+              only_if { sshd_include }
+            end
+
+            file sshd_config do
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create_if_missing
+            end
 
             service ssh_service do
               action :nothing
@@ -12813,10 +12977,13 @@ queries:
             MaxAuthTries 4
             ```
 
-            If the system uses configuration snippets in `/etc/ssh/sshd_config.d/`, check for a conflicting `MaxAuthTries` directive there. The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads these snippets first:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'MaxAuthTries' /etc/ssh/sshd_config.d/
+            touch /etc/ssh/sshd_config.d/00-hardening.conf
+            chmod 600 /etc/ssh/sshd_config.d/00-hardening.conf
+            echo 'MaxAuthTries 4' >> /etc/ssh/sshd_config.d/00-hardening.conf
             ```
 
             Validate the configuration before restarting:
@@ -12850,12 +13017,25 @@ queries:
             #!/bin/bash
             set -e
 
-            if grep -q '^MaxAuthTries' /etc/ssh/sshd_config; then
-              echo "Updating MaxAuthTries to 4 in /etc/ssh/sshd_config..."
-              sed -i 's/^MaxAuthTries.*/MaxAuthTries 4/' /etc/ssh/sshd_config
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+              SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
+              mkdir -p /etc/ssh/sshd_config.d
+              touch "$SSHD_CONFIG"
+              chmod 600 "$SSHD_CONFIG"
             else
-              echo "Adding MaxAuthTries 4 to /etc/ssh/sshd_config..."
-              echo "MaxAuthTries 4" >> /etc/ssh/sshd_config
+              SSHD_CONFIG=/etc/ssh/sshd_config
+            fi
+
+            if grep -q '^MaxAuthTries' "$SSHD_CONFIG"; then
+              echo "Updating MaxAuthTries to 4 in $SSHD_CONFIG..."
+              sed -i 's/^MaxAuthTries.*/MaxAuthTries 4/' "$SSHD_CONFIG"
+            else
+              echo "Adding MaxAuthTries 4 to $SSHD_CONFIG..."
+              echo "MaxAuthTries 4" >> "$SSHD_CONFIG"
             fi
 
             # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
@@ -12881,9 +13061,31 @@ queries:
               become: true
 
               tasks:
+                - name: Detect whether sshd reads drop-in configuration files
+                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  register: sshd_include
+                  changed_when: false
+                  failed_when: false
+
+                # sshd uses the first value it reads for each keyword, and the Include at the top of
+                # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order, so a drop-in numbered
+                # below the vendor snippets is the only place a new value reliably wins.
+                - name: Select the configuration file sshd reads first
+                  ansible.builtin.set_fact:
+                    sshd_target: "{{ '/etc/ssh/sshd_config.d/00-hardening.conf' if sshd_include.rc == 0 else '/etc/ssh/sshd_config' }}"
+
+                - name: Ensure the hardening drop-in exists
+                  ansible.builtin.copy:
+                    dest: "{{ sshd_target }}"
+                    content: ""
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0600'
+
                 - name: Set MaxAuthTries in sshd_config
                   ansible.builtin.lineinfile:
-                    path: /etc/ssh/sshd_config
+                    path: "{{ sshd_target }}"
                     regexp: '^MaxAuthTries'
                     line: 'MaxAuthTries 4'
                   register: ssh_config_change
@@ -12905,8 +13107,28 @@ queries:
             Use this Chef Infra recipe code to cap the number of authentication attempts per connection:
 
             ```ruby
-            sshd_config = '/etc/ssh/sshd_config'
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
+                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            directory '/etc/ssh/sshd_config.d' do
+              owner 'root'
+              group 'root'
+              mode '0755'
+              only_if { sshd_include }
+            end
+
+            file sshd_config do
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create_if_missing
+            end
 
             service ssh_service do
               action :nothing
@@ -12986,10 +13208,13 @@ queries:
             IgnoreRhosts yes
             ```
 
-            If the system uses configuration snippets in `/etc/ssh/sshd_config.d/`, check for a conflicting `IgnoreRhosts` directive there. The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads these snippets first:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'IgnoreRhosts' /etc/ssh/sshd_config.d/
+            touch /etc/ssh/sshd_config.d/00-hardening.conf
+            chmod 600 /etc/ssh/sshd_config.d/00-hardening.conf
+            echo 'IgnoreRhosts yes' >> /etc/ssh/sshd_config.d/00-hardening.conf
             ```
 
             Validate the configuration before restarting:
@@ -13023,12 +13248,25 @@ queries:
             #!/bin/bash
             set -e
 
-            if grep -q '^IgnoreRhosts' /etc/ssh/sshd_config; then
-              echo "Updating IgnoreRhosts to yes in /etc/ssh/sshd_config..."
-              sed -i 's/^IgnoreRhosts.*/IgnoreRhosts yes/' /etc/ssh/sshd_config
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+              SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
+              mkdir -p /etc/ssh/sshd_config.d
+              touch "$SSHD_CONFIG"
+              chmod 600 "$SSHD_CONFIG"
             else
-              echo "Adding IgnoreRhosts yes to /etc/ssh/sshd_config..."
-              echo "IgnoreRhosts yes" >> /etc/ssh/sshd_config
+              SSHD_CONFIG=/etc/ssh/sshd_config
+            fi
+
+            if grep -q '^IgnoreRhosts' "$SSHD_CONFIG"; then
+              echo "Updating IgnoreRhosts to yes in $SSHD_CONFIG..."
+              sed -i 's/^IgnoreRhosts.*/IgnoreRhosts yes/' "$SSHD_CONFIG"
+            else
+              echo "Adding IgnoreRhosts yes to $SSHD_CONFIG..."
+              echo "IgnoreRhosts yes" >> "$SSHD_CONFIG"
             fi
 
             # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
@@ -13054,9 +13292,31 @@ queries:
               become: true
 
               tasks:
+                - name: Detect whether sshd reads drop-in configuration files
+                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  register: sshd_include
+                  changed_when: false
+                  failed_when: false
+
+                # sshd uses the first value it reads for each keyword, and the Include at the top of
+                # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order, so a drop-in numbered
+                # below the vendor snippets is the only place a new value reliably wins.
+                - name: Select the configuration file sshd reads first
+                  ansible.builtin.set_fact:
+                    sshd_target: "{{ '/etc/ssh/sshd_config.d/00-hardening.conf' if sshd_include.rc == 0 else '/etc/ssh/sshd_config' }}"
+
+                - name: Ensure the hardening drop-in exists
+                  ansible.builtin.copy:
+                    dest: "{{ sshd_target }}"
+                    content: ""
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0600'
+
                 - name: Set IgnoreRhosts to yes in sshd_config
                   ansible.builtin.lineinfile:
-                    path: /etc/ssh/sshd_config
+                    path: "{{ sshd_target }}"
                     regexp: '^IgnoreRhosts'
                     line: 'IgnoreRhosts yes'
                   register: ssh_config_change
@@ -13078,8 +13338,28 @@ queries:
             Use this Chef Infra recipe code to make sshd ignore `.rhosts` and `.shosts` files:
 
             ```ruby
-            sshd_config = '/etc/ssh/sshd_config'
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
+                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            directory '/etc/ssh/sshd_config.d' do
+              owner 'root'
+              group 'root'
+              mode '0755'
+              only_if { sshd_include }
+            end
+
+            file sshd_config do
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create_if_missing
+            end
 
             service ssh_service do
               action :nothing
@@ -13159,10 +13439,13 @@ queries:
             HostbasedAuthentication no
             ```
 
-            If the system uses configuration snippets in `/etc/ssh/sshd_config.d/`, check for a conflicting `HostbasedAuthentication` directive there. The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads these snippets first:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'HostbasedAuthentication' /etc/ssh/sshd_config.d/
+            touch /etc/ssh/sshd_config.d/00-hardening.conf
+            chmod 600 /etc/ssh/sshd_config.d/00-hardening.conf
+            echo 'HostbasedAuthentication no' >> /etc/ssh/sshd_config.d/00-hardening.conf
             ```
 
             Validate the configuration before restarting:
@@ -13196,12 +13479,25 @@ queries:
             #!/bin/bash
             set -e
 
-            if grep -q '^HostbasedAuthentication' /etc/ssh/sshd_config; then
-              echo "Updating HostbasedAuthentication to no in /etc/ssh/sshd_config..."
-              sed -i 's/^HostbasedAuthentication.*/HostbasedAuthentication no/' /etc/ssh/sshd_config
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+              SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
+              mkdir -p /etc/ssh/sshd_config.d
+              touch "$SSHD_CONFIG"
+              chmod 600 "$SSHD_CONFIG"
             else
-              echo "Adding HostbasedAuthentication no to /etc/ssh/sshd_config..."
-              echo "HostbasedAuthentication no" >> /etc/ssh/sshd_config
+              SSHD_CONFIG=/etc/ssh/sshd_config
+            fi
+
+            if grep -q '^HostbasedAuthentication' "$SSHD_CONFIG"; then
+              echo "Updating HostbasedAuthentication to no in $SSHD_CONFIG..."
+              sed -i 's/^HostbasedAuthentication.*/HostbasedAuthentication no/' "$SSHD_CONFIG"
+            else
+              echo "Adding HostbasedAuthentication no to $SSHD_CONFIG..."
+              echo "HostbasedAuthentication no" >> "$SSHD_CONFIG"
             fi
 
             # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
@@ -13227,9 +13523,31 @@ queries:
               become: true
 
               tasks:
+                - name: Detect whether sshd reads drop-in configuration files
+                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  register: sshd_include
+                  changed_when: false
+                  failed_when: false
+
+                # sshd uses the first value it reads for each keyword, and the Include at the top of
+                # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order, so a drop-in numbered
+                # below the vendor snippets is the only place a new value reliably wins.
+                - name: Select the configuration file sshd reads first
+                  ansible.builtin.set_fact:
+                    sshd_target: "{{ '/etc/ssh/sshd_config.d/00-hardening.conf' if sshd_include.rc == 0 else '/etc/ssh/sshd_config' }}"
+
+                - name: Ensure the hardening drop-in exists
+                  ansible.builtin.copy:
+                    dest: "{{ sshd_target }}"
+                    content: ""
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0600'
+
                 - name: Set HostbasedAuthentication to no in sshd_config
                   ansible.builtin.lineinfile:
-                    path: /etc/ssh/sshd_config
+                    path: "{{ sshd_target }}"
                     regexp: '^HostbasedAuthentication'
                     line: 'HostbasedAuthentication no'
                   register: ssh_config_change
@@ -13251,8 +13569,28 @@ queries:
             Use this Chef Infra recipe code to disable host-based authentication:
 
             ```ruby
-            sshd_config = '/etc/ssh/sshd_config'
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
+                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            directory '/etc/ssh/sshd_config.d' do
+              owner 'root'
+              group 'root'
+              mode '0755'
+              only_if { sshd_include }
+            end
+
+            file sshd_config do
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create_if_missing
+            end
 
             service ssh_service do
               action :nothing
@@ -13338,10 +13676,13 @@ queries:
             PermitRootLogin prohibit-password
             ```
 
-            If the system uses configuration snippets in `/etc/ssh/sshd_config.d/`, check for a conflicting `PermitRootLogin` directive there. Cloud images often set it in a snippet such as `50-cloud-init.conf`. The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads these snippets first:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'PermitRootLogin' /etc/ssh/sshd_config.d/
+            touch /etc/ssh/sshd_config.d/00-hardening.conf
+            chmod 600 /etc/ssh/sshd_config.d/00-hardening.conf
+            echo 'PermitRootLogin no' >> /etc/ssh/sshd_config.d/00-hardening.conf
             ```
 
             Validate the configuration before restarting:
@@ -13375,12 +13716,25 @@ queries:
             #!/bin/bash
             set -e
 
-            if grep -q '^PermitRootLogin' /etc/ssh/sshd_config; then
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+              SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
+              mkdir -p /etc/ssh/sshd_config.d
+              touch "$SSHD_CONFIG"
+              chmod 600 "$SSHD_CONFIG"
+            else
+              SSHD_CONFIG=/etc/ssh/sshd_config
+            fi
+
+            if grep -q '^PermitRootLogin' "$SSHD_CONFIG"; then
               echo "Updating PermitRootLogin in sshd_config..."
-              sed -i 's/^PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+              sed -i 's/^PermitRootLogin.*/PermitRootLogin no/' "$SSHD_CONFIG"
             else
               echo "Adding PermitRootLogin to sshd_config..."
-              echo "PermitRootLogin no" >> /etc/ssh/sshd_config
+              echo "PermitRootLogin no" >> "$SSHD_CONFIG"
             fi
 
             # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
@@ -13406,9 +13760,31 @@ queries:
               become: true
 
               tasks:
+                - name: Detect whether sshd reads drop-in configuration files
+                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  register: sshd_include
+                  changed_when: false
+                  failed_when: false
+
+                # sshd uses the first value it reads for each keyword, and the Include at the top of
+                # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order, so a drop-in numbered
+                # below the vendor snippets is the only place a new value reliably wins.
+                - name: Select the configuration file sshd reads first
+                  ansible.builtin.set_fact:
+                    sshd_target: "{{ '/etc/ssh/sshd_config.d/00-hardening.conf' if sshd_include.rc == 0 else '/etc/ssh/sshd_config' }}"
+
+                - name: Ensure the hardening drop-in exists
+                  ansible.builtin.copy:
+                    dest: "{{ sshd_target }}"
+                    content: ""
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0600'
+
                 - name: Set PermitRootLogin to no in sshd_config
                   ansible.builtin.lineinfile:
-                    path: /etc/ssh/sshd_config
+                    path: "{{ sshd_target }}"
                     regexp: '^PermitRootLogin'
                     line: 'PermitRootLogin no'
                   register: ssh_config_change
@@ -13430,8 +13806,28 @@ queries:
             Use this Chef Infra recipe code to stop root from logging in over SSH. Confirm that an administrative account with sudo access can log in before you apply it, or you will lock yourself out:
 
             ```ruby
-            sshd_config = '/etc/ssh/sshd_config'
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
+                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            directory '/etc/ssh/sshd_config.d' do
+              owner 'root'
+              group 'root'
+              mode '0755'
+              only_if { sshd_include }
+            end
+
+            file sshd_config do
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create_if_missing
+            end
 
             service ssh_service do
               action :nothing
@@ -13511,10 +13907,13 @@ queries:
             PermitEmptyPasswords no
             ```
 
-            If the system uses configuration snippets in `/etc/ssh/sshd_config.d/`, check for a conflicting `PermitEmptyPasswords` directive there. The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads these snippets first:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'PermitEmptyPasswords' /etc/ssh/sshd_config.d/
+            touch /etc/ssh/sshd_config.d/00-hardening.conf
+            chmod 600 /etc/ssh/sshd_config.d/00-hardening.conf
+            echo 'PermitEmptyPasswords no' >> /etc/ssh/sshd_config.d/00-hardening.conf
             ```
 
             Validate the configuration before restarting:
@@ -13548,12 +13947,25 @@ queries:
             #!/bin/bash
             set -e
 
-            if grep -q '^PermitEmptyPasswords' /etc/ssh/sshd_config; then
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+              SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
+              mkdir -p /etc/ssh/sshd_config.d
+              touch "$SSHD_CONFIG"
+              chmod 600 "$SSHD_CONFIG"
+            else
+              SSHD_CONFIG=/etc/ssh/sshd_config
+            fi
+
+            if grep -q '^PermitEmptyPasswords' "$SSHD_CONFIG"; then
               echo "Updating PermitEmptyPasswords in sshd_config..."
-              sed -i 's/^PermitEmptyPasswords.*/PermitEmptyPasswords no/' /etc/ssh/sshd_config
+              sed -i 's/^PermitEmptyPasswords.*/PermitEmptyPasswords no/' "$SSHD_CONFIG"
             else
               echo "Adding PermitEmptyPasswords to sshd_config..."
-              echo "PermitEmptyPasswords no" >> /etc/ssh/sshd_config
+              echo "PermitEmptyPasswords no" >> "$SSHD_CONFIG"
             fi
 
             # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
@@ -13579,9 +13991,31 @@ queries:
               become: true
 
               tasks:
+                - name: Detect whether sshd reads drop-in configuration files
+                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  register: sshd_include
+                  changed_when: false
+                  failed_when: false
+
+                # sshd uses the first value it reads for each keyword, and the Include at the top of
+                # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order, so a drop-in numbered
+                # below the vendor snippets is the only place a new value reliably wins.
+                - name: Select the configuration file sshd reads first
+                  ansible.builtin.set_fact:
+                    sshd_target: "{{ '/etc/ssh/sshd_config.d/00-hardening.conf' if sshd_include.rc == 0 else '/etc/ssh/sshd_config' }}"
+
+                - name: Ensure the hardening drop-in exists
+                  ansible.builtin.copy:
+                    dest: "{{ sshd_target }}"
+                    content: ""
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0600'
+
                 - name: Set PermitEmptyPasswords to no in sshd_config
                   ansible.builtin.lineinfile:
-                    path: /etc/ssh/sshd_config
+                    path: "{{ sshd_target }}"
                     regexp: '^PermitEmptyPasswords'
                     line: 'PermitEmptyPasswords no'
                   register: ssh_config_change
@@ -13603,8 +14037,28 @@ queries:
             Use this Chef Infra recipe code to reject accounts with an empty password:
 
             ```ruby
-            sshd_config = '/etc/ssh/sshd_config'
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
+                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            directory '/etc/ssh/sshd_config.d' do
+              owner 'root'
+              group 'root'
+              mode '0755'
+              only_if { sshd_include }
+            end
+
+            file sshd_config do
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create_if_missing
+            end
 
             service ssh_service do
               action :nothing
@@ -13684,10 +14138,13 @@ queries:
             PermitUserEnvironment no
             ```
 
-            If the system uses configuration snippets in `/etc/ssh/sshd_config.d/`, check for a conflicting `PermitUserEnvironment` directive there. The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads these snippets first:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'PermitUserEnvironment' /etc/ssh/sshd_config.d/
+            touch /etc/ssh/sshd_config.d/00-hardening.conf
+            chmod 600 /etc/ssh/sshd_config.d/00-hardening.conf
+            echo 'PermitUserEnvironment no' >> /etc/ssh/sshd_config.d/00-hardening.conf
             ```
 
             Validate the configuration before restarting:
@@ -13721,12 +14178,25 @@ queries:
             #!/bin/bash
             set -e
 
-            if grep -q '^PermitUserEnvironment' /etc/ssh/sshd_config; then
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+              SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
+              mkdir -p /etc/ssh/sshd_config.d
+              touch "$SSHD_CONFIG"
+              chmod 600 "$SSHD_CONFIG"
+            else
+              SSHD_CONFIG=/etc/ssh/sshd_config
+            fi
+
+            if grep -q '^PermitUserEnvironment' "$SSHD_CONFIG"; then
               echo "Updating PermitUserEnvironment in sshd_config..."
-              sed -i 's/^PermitUserEnvironment.*/PermitUserEnvironment no/' /etc/ssh/sshd_config
+              sed -i 's/^PermitUserEnvironment.*/PermitUserEnvironment no/' "$SSHD_CONFIG"
             else
               echo "Adding PermitUserEnvironment to sshd_config..."
-              echo "PermitUserEnvironment no" >> /etc/ssh/sshd_config
+              echo "PermitUserEnvironment no" >> "$SSHD_CONFIG"
             fi
 
             # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
@@ -13752,9 +14222,31 @@ queries:
               become: true
 
               tasks:
+                - name: Detect whether sshd reads drop-in configuration files
+                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  register: sshd_include
+                  changed_when: false
+                  failed_when: false
+
+                # sshd uses the first value it reads for each keyword, and the Include at the top of
+                # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order, so a drop-in numbered
+                # below the vendor snippets is the only place a new value reliably wins.
+                - name: Select the configuration file sshd reads first
+                  ansible.builtin.set_fact:
+                    sshd_target: "{{ '/etc/ssh/sshd_config.d/00-hardening.conf' if sshd_include.rc == 0 else '/etc/ssh/sshd_config' }}"
+
+                - name: Ensure the hardening drop-in exists
+                  ansible.builtin.copy:
+                    dest: "{{ sshd_target }}"
+                    content: ""
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0600'
+
                 - name: Set PermitUserEnvironment to no in sshd_config
                   ansible.builtin.lineinfile:
-                    path: /etc/ssh/sshd_config
+                    path: "{{ sshd_target }}"
                     regexp: '^PermitUserEnvironment'
                     line: 'PermitUserEnvironment no'
                   register: ssh_config_change
@@ -13776,8 +14268,28 @@ queries:
             Use this Chef Infra recipe code to stop sshd from reading user-supplied environment options:
 
             ```ruby
-            sshd_config = '/etc/ssh/sshd_config'
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
+                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            directory '/etc/ssh/sshd_config.d' do
+              owner 'root'
+              group 'root'
+              mode '0755'
+              only_if { sshd_include }
+            end
+
+            file sshd_config do
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create_if_missing
+            end
 
             service ssh_service do
               action :nothing
@@ -13875,6 +14387,15 @@ queries:
             Ciphers aes256-ctr,aes192-ctr,aes128-ctr
             ```
 
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+
+            ```bash
+            grep -ri 'Ciphers' /etc/ssh/sshd_config.d/
+            touch /etc/ssh/sshd_config.d/00-hardening.conf
+            chmod 600 /etc/ssh/sshd_config.d/00-hardening.conf
+            echo 'Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr' >> /etc/ssh/sshd_config.d/00-hardening.conf
+            ```
+
             Validate the configuration and restart the SSH service to apply the changes:
 
             ```bash
@@ -13904,6 +14425,19 @@ queries:
             #!/bin/bash
             set -e
 
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+              SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
+              mkdir -p /etc/ssh/sshd_config.d
+              touch "$SSHD_CONFIG"
+              chmod 600 "$SSHD_CONFIG"
+            else
+              SSHD_CONFIG=/etc/ssh/sshd_config
+            fi
+
             openssh_version=$(ssh -V 2>&1 | grep -oP 'OpenSSH_\K\d+')
 
             if [ "$openssh_version" -lt 7 ]; then
@@ -13912,12 +14446,12 @@ queries:
               CIPHER_LINE="Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr"
             fi
 
-            if grep -q '^Ciphers' /etc/ssh/sshd_config; then
+            if grep -q '^Ciphers' "$SSHD_CONFIG"; then
               echo "Updating Ciphers in sshd_config..."
-              sed -i "s/^Ciphers.*/$CIPHER_LINE/" /etc/ssh/sshd_config
+              sed -i "s/^Ciphers.*/$CIPHER_LINE/" "$SSHD_CONFIG"
             else
               echo "Adding Ciphers to sshd_config..."
-              echo "$CIPHER_LINE" >> /etc/ssh/sshd_config
+              echo "$CIPHER_LINE" >> "$SSHD_CONFIG"
             fi
 
             # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
@@ -13943,9 +14477,31 @@ queries:
               become: true
 
               tasks:
+                - name: Detect whether sshd reads drop-in configuration files
+                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  register: sshd_include
+                  changed_when: false
+                  failed_when: false
+
+                # sshd uses the first value it reads for each keyword, and the Include at the top of
+                # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order, so a drop-in numbered
+                # below the vendor snippets is the only place a new value reliably wins.
+                - name: Select the configuration file sshd reads first
+                  ansible.builtin.set_fact:
+                    sshd_target: "{{ '/etc/ssh/sshd_config.d/00-hardening.conf' if sshd_include.rc == 0 else '/etc/ssh/sshd_config' }}"
+
+                - name: Ensure the hardening drop-in exists
+                  ansible.builtin.copy:
+                    dest: "{{ sshd_target }}"
+                    content: ""
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0600'
+
                 - name: Ensure Ciphers are set in sshd_config
                   ansible.builtin.lineinfile:
-                    path: /etc/ssh/sshd_config
+                    path: "{{ sshd_target }}"
                     regexp: '^Ciphers'
                     line: 'Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr'
                     create: yes
@@ -13969,8 +14525,28 @@ queries:
             Use this Chef Infra recipe code to restrict SSH to strong ciphers: On hosts running OpenSSH 6.x, change the value to `aes256-ctr,aes192-ctr,aes128-ctr`, because the chacha20 and GCM ciphers are not supported there.
 
             ```ruby
-            sshd_config = '/etc/ssh/sshd_config'
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
+                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            directory '/etc/ssh/sshd_config.d' do
+              owner 'root'
+              group 'root'
+              mode '0755'
+              only_if { sshd_include }
+            end
+
+            file sshd_config do
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create_if_missing
+            end
 
             service ssh_service do
               action :nothing
@@ -14059,6 +14635,15 @@ queries:
             MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256
             ```
 
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+
+            ```bash
+            grep -ri 'MACs' /etc/ssh/sshd_config.d/
+            touch /etc/ssh/sshd_config.d/00-hardening.conf
+            chmod 600 /etc/ssh/sshd_config.d/00-hardening.conf
+            echo 'MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256' >> /etc/ssh/sshd_config.d/00-hardening.conf
+            ```
+
             Validate the configuration and restart the SSH service to apply the changes:
 
             ```bash
@@ -14088,14 +14673,27 @@ queries:
             #!/bin/bash
             set -e
 
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+              SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
+              mkdir -p /etc/ssh/sshd_config.d
+              touch "$SSHD_CONFIG"
+              chmod 600 "$SSHD_CONFIG"
+            else
+              SSHD_CONFIG=/etc/ssh/sshd_config
+            fi
+
             MAC_LINE="MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256"
 
-            if grep -q '^MACs' /etc/ssh/sshd_config; then
+            if grep -q '^MACs' "$SSHD_CONFIG"; then
               echo "Updating MACs in sshd_config..."
-              sed -i "s/^MACs.*/$MAC_LINE/" /etc/ssh/sshd_config
+              sed -i "s/^MACs.*/$MAC_LINE/" "$SSHD_CONFIG"
             else
               echo "Adding MACs to sshd_config..."
-              echo "$MAC_LINE" >> /etc/ssh/sshd_config
+              echo "$MAC_LINE" >> "$SSHD_CONFIG"
             fi
 
             # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
@@ -14121,9 +14719,31 @@ queries:
               become: true
 
               tasks:
+                - name: Detect whether sshd reads drop-in configuration files
+                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  register: sshd_include
+                  changed_when: false
+                  failed_when: false
+
+                # sshd uses the first value it reads for each keyword, and the Include at the top of
+                # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order, so a drop-in numbered
+                # below the vendor snippets is the only place a new value reliably wins.
+                - name: Select the configuration file sshd reads first
+                  ansible.builtin.set_fact:
+                    sshd_target: "{{ '/etc/ssh/sshd_config.d/00-hardening.conf' if sshd_include.rc == 0 else '/etc/ssh/sshd_config' }}"
+
+                - name: Ensure the hardening drop-in exists
+                  ansible.builtin.copy:
+                    dest: "{{ sshd_target }}"
+                    content: ""
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0600'
+
                 - name: Ensure MACs are set in sshd_config
                   ansible.builtin.lineinfile:
-                    path: /etc/ssh/sshd_config
+                    path: "{{ sshd_target }}"
                     regexp: '^MACs'
                     line: 'MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256'
                     create: yes
@@ -14147,8 +14767,28 @@ queries:
             Use this Chef Infra recipe code to restrict SSH to strong MAC algorithms:
 
             ```ruby
-            sshd_config = '/etc/ssh/sshd_config'
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
+                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            directory '/etc/ssh/sshd_config.d' do
+              owner 'root'
+              group 'root'
+              mode '0755'
+              only_if { sshd_include }
+            end
+
+            file sshd_config do
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create_if_missing
+            end
 
             service ssh_service do
               action :nothing
@@ -14268,6 +14908,15 @@ queries:
               KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
               ```
 
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+
+            ```bash
+            grep -ri 'KexAlgorithms' /etc/ssh/sshd_config.d/
+            touch /etc/ssh/sshd_config.d/00-hardening.conf
+            chmod 600 /etc/ssh/sshd_config.d/00-hardening.conf
+            echo 'KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512' >> /etc/ssh/sshd_config.d/00-hardening.conf
+            ```
+
             Validate the configuration before restarting:
 
             ```bash
@@ -14299,6 +14948,19 @@ queries:
             #!/bin/bash
             set -e
 
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+              SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
+              mkdir -p /etc/ssh/sshd_config.d
+              touch "$SSHD_CONFIG"
+              chmod 600 "$SSHD_CONFIG"
+            else
+              SSHD_CONFIG=/etc/ssh/sshd_config
+            fi
+
             if ! command -v bc >/dev/null 2>&1; then
               echo "Warning: 'bc' is required but not installed. Please install 'bc' and re-run this script."
               exit 1
@@ -14317,12 +14979,12 @@ queries:
               kex_algos="sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512"
             fi
 
-            if grep -q '^KexAlgorithms' /etc/ssh/sshd_config; then
+            if grep -q '^KexAlgorithms' "$SSHD_CONFIG"; then
               echo "Updating existing KexAlgorithms configuration value"
-              sed -i "s/^KexAlgorithms.*/KexAlgorithms $kex_algos/" /etc/ssh/sshd_config
+              sed -i "s/^KexAlgorithms.*/KexAlgorithms $kex_algos/" "$SSHD_CONFIG"
             else
               echo "Adding KexAlgorithms configuration value to SSH config"
-              echo "KexAlgorithms $kex_algos" >> /etc/ssh/sshd_config
+              echo "KexAlgorithms $kex_algos" >> "$SSHD_CONFIG"
             fi
 
             # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
@@ -14347,6 +15009,28 @@ queries:
               become: true
               gather_facts: true
               tasks:
+                - name: Detect whether sshd reads drop-in configuration files
+                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  register: sshd_include
+                  changed_when: false
+                  failed_when: false
+
+                # sshd uses the first value it reads for each keyword, and the Include at the top of
+                # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order, so a drop-in numbered
+                # below the vendor snippets is the only place a new value reliably wins.
+                - name: Select the configuration file sshd reads first
+                  ansible.builtin.set_fact:
+                    sshd_target: "{{ '/etc/ssh/sshd_config.d/00-hardening.conf' if sshd_include.rc == 0 else '/etc/ssh/sshd_config' }}"
+
+                - name: Ensure the hardening drop-in exists
+                  ansible.builtin.copy:
+                    dest: "{{ sshd_target }}"
+                    content: ""
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0600'
+
                 - name: Get OpenSSH version
                   ansible.builtin.shell: |
                     ssh -V 2>&1 | grep -oP 'OpenSSH_\K\d+\.\d+'
@@ -14373,7 +15057,7 @@ queries:
 
                 - name: Ensure KexAlgorithms is set in sshd_config
                   ansible.builtin.lineinfile:
-                    path: /etc/ssh/sshd_config
+                    path: "{{ sshd_target }}"
                     regexp: '^KexAlgorithms'
                     line: "KexAlgorithms {{ kexalgos | trim }}"
                     create: yes
@@ -14397,8 +15081,28 @@ queries:
             Use this Chef Infra recipe code to restrict SSH to approved key exchange algorithms. The algorithm list depends on the OpenSSH release, so it is selected from the version reported by the installed binary:
 
             ```ruby
-            sshd_config = '/etc/ssh/sshd_config'
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
+                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            directory '/etc/ssh/sshd_config.d' do
+              owner 'root'
+              group 'root'
+              mode '0755'
+              only_if { sshd_include }
+            end
+
+            file sshd_config do
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create_if_missing
+            end
             openssh_version = shell_out('ssh -V').stderr[/OpenSSH_(\d+\.\d+)/, 1].to_f
             kex_algorithms = if openssh_version < 7.0
                                'curve25519-sha256@libssh.org'
@@ -14527,6 +15231,16 @@ queries:
             ClientAliveCountMax 2
             ```
 
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+
+            ```bash
+            grep -ri 'ClientAlive' /etc/ssh/sshd_config.d/
+            touch /etc/ssh/sshd_config.d/00-hardening.conf
+            chmod 600 /etc/ssh/sshd_config.d/00-hardening.conf
+            echo 'ClientAliveInterval 300' >> /etc/ssh/sshd_config.d/00-hardening.conf
+            echo 'ClientAliveCountMax 2' >> /etc/ssh/sshd_config.d/00-hardening.conf
+            ```
+
             Validate the configuration and restart the SSH service to apply the changes:
 
             ```bash
@@ -14556,20 +15270,33 @@ queries:
             #!/bin/bash
             set -e
 
-            if grep -q '^ClientAliveInterval' /etc/ssh/sshd_config; then
-              echo "Updating existing ClientAliveInterval configuration value"
-              sed -i 's/^ClientAliveInterval.*/ClientAliveInterval 300/' /etc/ssh/sshd_config
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+              SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
+              mkdir -p /etc/ssh/sshd_config.d
+              touch "$SSHD_CONFIG"
+              chmod 600 "$SSHD_CONFIG"
             else
-              echo "Adding ClientAliveInterval configuration value to SSH config"
-              echo 'ClientAliveInterval 300' >> /etc/ssh/sshd_config
+              SSHD_CONFIG=/etc/ssh/sshd_config
             fi
 
-            if grep -q '^ClientAliveCountMax' /etc/ssh/sshd_config; then
+            if grep -q '^ClientAliveInterval' "$SSHD_CONFIG"; then
+              echo "Updating existing ClientAliveInterval configuration value"
+              sed -i 's/^ClientAliveInterval.*/ClientAliveInterval 300/' "$SSHD_CONFIG"
+            else
+              echo "Adding ClientAliveInterval configuration value to SSH config"
+              echo 'ClientAliveInterval 300' >> "$SSHD_CONFIG"
+            fi
+
+            if grep -q '^ClientAliveCountMax' "$SSHD_CONFIG"; then
               echo "Updating existing ClientAliveCountMax configuration value"
-              sed -i 's/^ClientAliveCountMax.*/ClientAliveCountMax 2/' /etc/ssh/sshd_config
+              sed -i 's/^ClientAliveCountMax.*/ClientAliveCountMax 2/' "$SSHD_CONFIG"
             else
               echo "Adding ClientAliveCountMax configuration value to SSH config"
-              echo 'ClientAliveCountMax 2' >> /etc/ssh/sshd_config
+              echo 'ClientAliveCountMax 2' >> "$SSHD_CONFIG"
             fi
 
             # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
@@ -14595,9 +15322,31 @@ queries:
               become: true
 
               tasks:
+                - name: Detect whether sshd reads drop-in configuration files
+                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  register: sshd_include
+                  changed_when: false
+                  failed_when: false
+
+                # sshd uses the first value it reads for each keyword, and the Include at the top of
+                # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order, so a drop-in numbered
+                # below the vendor snippets is the only place a new value reliably wins.
+                - name: Select the configuration file sshd reads first
+                  ansible.builtin.set_fact:
+                    sshd_target: "{{ '/etc/ssh/sshd_config.d/00-hardening.conf' if sshd_include.rc == 0 else '/etc/ssh/sshd_config' }}"
+
+                - name: Ensure the hardening drop-in exists
+                  ansible.builtin.copy:
+                    dest: "{{ sshd_target }}"
+                    content: ""
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0600'
+
                 - name: Ensure ClientAliveInterval is set in sshd_config
                   ansible.builtin.lineinfile:
-                    path: /etc/ssh/sshd_config
+                    path: "{{ sshd_target }}"
                     regexp: '^ClientAliveInterval'
                     line: 'ClientAliveInterval 300'
                     create: yes
@@ -14606,7 +15355,7 @@ queries:
 
                 - name: Ensure ClientAliveCountMax is set in sshd_config
                   ansible.builtin.lineinfile:
-                    path: /etc/ssh/sshd_config
+                    path: "{{ sshd_target }}"
                     regexp: '^ClientAliveCountMax'
                     line: 'ClientAliveCountMax 2'
                     create: yes
@@ -14630,8 +15379,28 @@ queries:
             Use this Chef Infra recipe code to disconnect idle SSH sessions after ten minutes:
 
             ```ruby
-            sshd_config = '/etc/ssh/sshd_config'
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
+                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            directory '/etc/ssh/sshd_config.d' do
+              owner 'root'
+              group 'root'
+              mode '0755'
+              only_if { sshd_include }
+            end
+
+            file sshd_config do
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create_if_missing
+            end
 
             service ssh_service do
               action :nothing
@@ -14714,6 +15483,15 @@ queries:
             LoginGraceTime 60
             ```
 
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+
+            ```bash
+            grep -ri 'LoginGraceTime' /etc/ssh/sshd_config.d/
+            touch /etc/ssh/sshd_config.d/00-hardening.conf
+            chmod 600 /etc/ssh/sshd_config.d/00-hardening.conf
+            echo 'LoginGraceTime 60' >> /etc/ssh/sshd_config.d/00-hardening.conf
+            ```
+
             Validate the configuration and restart the SSH service to apply the changes:
 
             ```bash
@@ -14743,12 +15521,25 @@ queries:
             #!/bin/bash
             set -e
 
-            if grep -q '^LoginGraceTime' /etc/ssh/sshd_config; then
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+              SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
+              mkdir -p /etc/ssh/sshd_config.d
+              touch "$SSHD_CONFIG"
+              chmod 600 "$SSHD_CONFIG"
+            else
+              SSHD_CONFIG=/etc/ssh/sshd_config
+            fi
+
+            if grep -q '^LoginGraceTime' "$SSHD_CONFIG"; then
               echo "Updating existing LoginGraceTime configuration value"
-              sed -i 's/^LoginGraceTime.*/LoginGraceTime 60/' /etc/ssh/sshd_config
+              sed -i 's/^LoginGraceTime.*/LoginGraceTime 60/' "$SSHD_CONFIG"
             else
               echo "Adding LoginGraceTime configuration value to SSH config"
-              echo 'LoginGraceTime 60' >> /etc/ssh/sshd_config
+              echo 'LoginGraceTime 60' >> "$SSHD_CONFIG"
             fi
 
             # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
@@ -14774,9 +15565,31 @@ queries:
               become: true
 
               tasks:
+                - name: Detect whether sshd reads drop-in configuration files
+                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  register: sshd_include
+                  changed_when: false
+                  failed_when: false
+
+                # sshd uses the first value it reads for each keyword, and the Include at the top of
+                # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order, so a drop-in numbered
+                # below the vendor snippets is the only place a new value reliably wins.
+                - name: Select the configuration file sshd reads first
+                  ansible.builtin.set_fact:
+                    sshd_target: "{{ '/etc/ssh/sshd_config.d/00-hardening.conf' if sshd_include.rc == 0 else '/etc/ssh/sshd_config' }}"
+
+                - name: Ensure the hardening drop-in exists
+                  ansible.builtin.copy:
+                    dest: "{{ sshd_target }}"
+                    content: ""
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0600'
+
                 - name: Ensure LoginGraceTime is set in sshd_config
                   ansible.builtin.lineinfile:
-                    path: /etc/ssh/sshd_config
+                    path: "{{ sshd_target }}"
                     regexp: '^LoginGraceTime'
                     line: 'LoginGraceTime 60'
                     create: yes
@@ -14796,8 +15609,28 @@ queries:
             Use this Chef Infra recipe code to close connections that do not authenticate within one minute:
 
             ```ruby
-            sshd_config = '/etc/ssh/sshd_config'
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
+                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            directory '/etc/ssh/sshd_config.d' do
+              owner 'root'
+              group 'root'
+              mode '0755'
+              only_if { sshd_include }
+            end
+
+            file sshd_config do
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create_if_missing
+            end
 
             service ssh_service do
               action :nothing
@@ -15057,6 +15890,15 @@ queries:
             Banner /etc/issue.net
             ```
 
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+
+            ```bash
+            grep -ri 'Banner' /etc/ssh/sshd_config.d/
+            touch /etc/ssh/sshd_config.d/00-hardening.conf
+            chmod 600 /etc/ssh/sshd_config.d/00-hardening.conf
+            echo 'Banner /etc/issue.net' >> /etc/ssh/sshd_config.d/00-hardening.conf
+            ```
+
             Validate the configuration and restart the SSH service to apply the changes:
 
             ```bash
@@ -15086,13 +15928,26 @@ queries:
             #!/bin/bash
             set -e
 
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+              SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
+              mkdir -p /etc/ssh/sshd_config.d
+              touch "$SSHD_CONFIG"
+              chmod 600 "$SSHD_CONFIG"
+            else
+              SSHD_CONFIG=/etc/ssh/sshd_config
+            fi
+
             echo "Setting SSH warning banner"
-            if grep -q '^Banner' /etc/ssh/sshd_config; then
+            if grep -q '^Banner' "$SSHD_CONFIG"; then
               echo "Updating existing Banner configuration value"
-              sed -i 's|^Banner.*|Banner /etc/issue.net|' /etc/ssh/sshd_config
+              sed -i 's|^Banner.*|Banner /etc/issue.net|' "$SSHD_CONFIG"
             else
               echo "Adding Banner configuration value to SSH config"
-              echo "Banner /etc/issue.net" >> /etc/ssh/sshd_config
+              echo "Banner /etc/issue.net" >> "$SSHD_CONFIG"
             fi
 
             # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
@@ -15118,9 +15973,31 @@ queries:
               become: true
 
               tasks:
+                - name: Detect whether sshd reads drop-in configuration files
+                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  register: sshd_include
+                  changed_when: false
+                  failed_when: false
+
+                # sshd uses the first value it reads for each keyword, and the Include at the top of
+                # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order, so a drop-in numbered
+                # below the vendor snippets is the only place a new value reliably wins.
+                - name: Select the configuration file sshd reads first
+                  ansible.builtin.set_fact:
+                    sshd_target: "{{ '/etc/ssh/sshd_config.d/00-hardening.conf' if sshd_include.rc == 0 else '/etc/ssh/sshd_config' }}"
+
+                - name: Ensure the hardening drop-in exists
+                  ansible.builtin.copy:
+                    dest: "{{ sshd_target }}"
+                    content: ""
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0600'
+
                 - name: Ensure Banner is set in sshd_config
                   ansible.builtin.lineinfile:
-                    path: /etc/ssh/sshd_config
+                    path: "{{ sshd_target }}"
                     regexp: '^Banner'
                     line: 'Banner /etc/issue.net'
                     create: yes
@@ -15140,8 +16017,28 @@ queries:
             Use this Chef Infra recipe code to present a warning banner before authentication:
 
             ```ruby
-            sshd_config = '/etc/ssh/sshd_config'
+            # sshd uses the first value it reads for each keyword, and the Include at the top of
+            # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
+            # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
+            # below theirs is the only place a new value reliably wins.
+            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
+                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            directory '/etc/ssh/sshd_config.d' do
+              owner 'root'
+              group 'root'
+              mode '0755'
+              only_if { sshd_include }
+            end
+
+            file sshd_config do
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create_if_missing
+            end
 
             service ssh_service do
               action :nothing
@@ -15624,7 +16521,14 @@ queries:
             echo "Setting ownership and permissions on /etc/gshadow"
             chown root:"$GROUP" /etc/gshadow
             chmod "$MODE" /etc/gshadow
-            echo "f /etc/gshadow $MODE root $GROUP -" >> /etc/tmpfiles.d/etc.conf
+
+            if grep -qE '^[[:space:]]*f /etc/gshadow ' /etc/tmpfiles.d/etc.conf 2>/dev/null; then
+              echo "Modifying existing /etc/tmpfiles.d/etc.conf entry to maintain permissions"
+              sed -i -E "s|^[[:space:]]*f /etc/gshadow .*|f /etc/gshadow $MODE root $GROUP -|" /etc/tmpfiles.d/etc.conf
+            else
+              echo "Adding entry to /etc/tmpfiles.d/etc.conf to maintain permissions"
+              echo "f /etc/gshadow $MODE root $GROUP -" >> /etc/tmpfiles.d/etc.conf
+            fi
             ```
         - id: ansible
           desc: |
@@ -17190,10 +18094,15 @@ queries:
               fi
             done < /etc/passwd
 
-            echo "Locking sync, shutdown, and halt users"
-            usermod -L sync
-            usermod -L shutdown
-            usermod -L halt
+            # Only Red Hat family distributions ship the shutdown and halt accounts, so
+            # check each one exists before locking it. Without the guard usermod exits
+            # non-zero on Debian and Ubuntu and `set -e` aborts the script.
+            for account in sync shutdown halt; do
+              if getent passwd "$account" >/dev/null; then
+                echo "Locking the $account account"
+                usermod -L "$account"
+              fi
+            done
             ```
         - id: ansible
           desc: |
@@ -17220,14 +18129,18 @@ queries:
                     shell: /usr/sbin/nologin
                   loop: "{{ system_accounts.stdout_lines }}"
 
-                - name: Lock sync, shutdown, and halt users
+                # Only Red Hat family distributions ship the shutdown and halt accounts.
+                # ansible.builtin.user defaults to state: present, so looping over the
+                # names without this filter creates them on Debian and Ubuntu.
+                - name: Read the accounts defined on the host
+                  ansible.builtin.getent:
+                    database: passwd
+
+                - name: Lock the sync, shutdown, and halt accounts that exist
                   ansible.builtin.user:
                     name: "{{ item }}"
                     password_lock: true
-                  loop:
-                    - sync
-                    - shutdown
-                    - halt
+                  loop: "{{ ['sync', 'shutdown', 'halt'] | select('in', ansible_facts.getent_passwd) | list }}"
             ```
         - id: chef
           desc: |
@@ -17407,10 +18320,14 @@ queries:
               block do
                 body = ::File.exist?(pam_su) ? ::File.read(pam_su) : ''
                 directive = 'auth required pam_wheel.so use_uid'
+                # Append rather than prepend. PAM ignores the success of a `sufficient`
+                # module once an earlier `required` module has failed, so placing this
+                # line above `auth sufficient pam_rootok.so` would stop root from
+                # running `su` whenever root is not a member of the wheel group.
                 body = if body.match?(/^\s*auth\s+required\s+pam_wheel\.so\b/)
                          body.gsub(/^\s*auth\s+required\s+pam_wheel\.so\b.*$/, directive)
                        else
-                         "#{directive}\n#{body}"
+                         "#{body.chomp}\n#{directive}\n".lstrip
                        end
                 ::File.write(pam_su, body)
               end
@@ -17483,6 +18400,35 @@ queries:
                 ```
 
             **Note:** Switching from disabled to enforcing requires a system relabel. On the next boot, SELinux will automatically relabel the filesystem, which may take several minutes depending on disk size.
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to put SELinux into enforcing mode. It writes the persistent setting first so the runtime change cannot be lost on the next boot:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            CONF=/etc/selinux/config
+
+            if grep -qE '^[[:space:]]*SELINUX=' "$CONF"; then
+              echo "Setting SELINUX=enforcing in $CONF"
+              sed -i 's/^[[:space:]]*SELINUX=.*/SELINUX=enforcing/' "$CONF"
+            else
+              echo "Adding SELINUX=enforcing to $CONF"
+              echo 'SELINUX=enforcing' >> "$CONF"
+            fi
+
+            if setenforce 1; then
+              echo "SELinux is now enforcing."
+            else
+              # Moving from disabled to enforcing needs a full file system relabel, which
+              # only happens during boot.
+              touch /.autorelabel
+              echo "SELinux was disabled at boot. Reboot to relabel the file system and enforce."
+            fi
+            ```
         - id: ansible
           desc: |
             The `ansible.posix.selinux` module updates the persistent configuration and applies enforcing mode at runtime where possible, but switching from disabled requires a relabel on the next boot. The module reports `reboot_required` when a reboot is needed to fully apply the policy, so gate a reboot on that result to keep the runtime state and the persistent config from diverging:
@@ -17576,6 +18522,32 @@ queries:
 
             ```bash
             setenforce 1
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to set enforcing mode in the persistent SELinux configuration:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            CONF=/etc/selinux/config
+
+            if grep -qE '^[[:space:]]*SELINUX=' "$CONF"; then
+              echo "Setting SELINUX=enforcing in $CONF"
+              sed -i 's/^[[:space:]]*SELINUX=.*/SELINUX=enforcing/' "$CONF"
+            else
+              echo "Adding SELINUX=enforcing to $CONF"
+              echo 'SELINUX=enforcing' >> "$CONF"
+            fi
+
+            # Bring the running kernel into line as well. This fails when SELinux was
+            # disabled at boot, in which case only a reboot can load the policy.
+            if ! setenforce 1; then
+              echo "SELinux was disabled at boot. Reboot to load the policy."
+            fi
             ```
         - id: ansible
           desc: |

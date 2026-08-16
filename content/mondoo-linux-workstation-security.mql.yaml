@@ -195,7 +195,7 @@ queries:
             Bootloader configuration files must be owned by `root:root` with no group or other access. Run these commands to secure each bootloader configuration file present on the system:
 
             ```bash
-            for f in /boot/grub/grub.cfg /boot/grub/menu.lst /boot/grub2/grub.cfg /boot/grub2/user.cfg /boot/loader/loader.conf; do
+            for f in /boot/grub/grub.cfg /boot/grub/menu.lst /boot/grub/user.cfg /boot/grub2/grub.cfg /boot/grub2/user.cfg /boot/loader/loader.conf; do
               if [ -e "$f" ]; then
                 chown root:root "$f"
                 chmod og-rwx "$f"
@@ -203,7 +203,13 @@ queries:
             done
             ```
 
-            **If the system uses UEFI**, edit `/etc/fstab` and set restrictive masks on the `/boot/efi` mount:
+            **If the system uses UEFI**, set restrictive masks on every vfat file system mounted under `/boot`. That is `/boot/efi` on most installs, and `/boot` itself where systemd-boot owns the EFI system partition. List them first:
+
+            ```bash
+            findmnt -t vfat -o TARGET,SOURCE,OPTIONS
+            ```
+
+            Then edit `/etc/fstab` and set the masks on each one:
 
             _Example:_
 
@@ -211,7 +217,7 @@ queries:
             <device> /boot/efi vfat defaults,fmask=0077,dmask=0077,uid=0,gid=0 0 2
             ```
 
-            Then apply the new options:
+            Apply the new options to each mount point you changed:
 
             ```bash
             mount -o remount /boot/efi
@@ -228,7 +234,7 @@ queries:
             #!/bin/bash
             set -eu
 
-            for f in /boot/grub/grub.cfg /boot/grub/menu.lst /boot/grub2/grub.cfg /boot/grub2/user.cfg /boot/loader/loader.conf; do
+            for f in /boot/grub/grub.cfg /boot/grub/menu.lst /boot/grub/user.cfg /boot/grub2/grub.cfg /boot/grub2/user.cfg /boot/loader/loader.conf; do
               if [ -e "$f" ]; then
                 echo "Securing $f"
                 chown root:root "$f"
@@ -236,14 +242,24 @@ queries:
               fi
             done
 
-            if findmnt -n -t vfat /boot/efi > /dev/null; then
-              if ! grep -Eq '^[^#]+[[:space:]]/boot/efi[[:space:]]+vfat[[:space:]]+\S*fmask=0077' /etc/fstab; then
-                cp -p /etc/fstab /etc/fstab.bak
-                sed -i -E 's|^(\S+\s+/boot/efi\s+vfat\s+)\S+|\1defaults,fmask=0077,dmask=0077,uid=0,gid=0|' /etc/fstab
-                mount -o remount /boot/efi
-                echo "Updated /boot/efi mount options; a backup was saved to /etc/fstab.bak"
-              fi
+            # vfat has no permission model, so the mask has to come from the mount options.
+            # Cover every vfat file system under /boot, which is /boot/efi on most installs
+            # and /boot itself where systemd-boot owns the EFI system partition.
+            vfat_mounts=$(findmnt -rn -t vfat -o TARGET | grep '^/boot' || true)
+
+            if [ -n "$vfat_mounts" ]; then
+              cp -p /etc/fstab /etc/fstab.bak
+              echo "Saved a backup of /etc/fstab to /etc/fstab.bak"
             fi
+
+            for mp in $vfat_mounts; do
+              if grep -Eq "^[^#]+[[:space:]]+${mp}[[:space:]]+vfat[[:space:]]+[^[:space:]]*fmask=0077" /etc/fstab; then
+                continue
+              fi
+              sed -i -E "s|^([^[:space:]]+[[:space:]]+${mp}[[:space:]]+vfat[[:space:]]+)[^[:space:]]+|\\1defaults,fmask=0077,dmask=0077,uid=0,gid=0|" /etc/fstab
+              mount -o remount "$mp"
+              echo "Updated $mp mount options"
+            done
             ```
         - id: ansible
           desc: |
@@ -264,6 +280,7 @@ queries:
                   loop:
                     - /boot/grub/grub.cfg
                     - /boot/grub/menu.lst
+                    - /boot/grub/user.cfg
                     - /boot/grub2/grub.cfg
                     - /boot/grub2/user.cfg
                     - /boot/loader/loader.conf
@@ -277,18 +294,30 @@ queries:
                     mode: '0600'
                   loop: "{{ bootloader_files.results | selectattr('stat.exists') | list }}"
 
-                - name: Set restrictive masks for /boot/efi in /etc/fstab
+                # vfat has no permission model, so the mask has to come from the mount
+                # options. Cover every vfat file system under /boot, which is /boot/efi on
+                # most installs and /boot itself where systemd-boot owns the EFI system
+                # partition.
+                - name: Find the vfat file systems mounted under /boot
+                  ansible.builtin.set_fact:
+                    boot_vfat_mounts: >-
+                      {{ ansible_mounts
+                         | selectattr('fstype', 'equalto', 'vfat')
+                         | selectattr('mount', 'match', '^/boot')
+                         | map(attribute='mount') | list }}
+
+                - name: Set restrictive masks for the EFI system partition in /etc/fstab
                   ansible.builtin.replace:
                     path: /etc/fstab
-                    regexp: '^(\S+\s+/boot/efi\s+vfat\s+)\S+'
+                    regexp: '^(\S+\s+{{ item | regex_escape }}\s+vfat\s+)\S+'
                     replace: '\1defaults,fmask=0077,dmask=0077,uid=0,gid=0'
-                  when: ansible_mounts | selectattr('mount', 'equalto', '/boot/efi') | list | length > 0
+                  loop: "{{ boot_vfat_mounts }}"
 
-                - name: Remount /boot/efi with the new options
+                - name: Remount the EFI system partition with the new options
                   ansible.posix.mount:
-                    path: /boot/efi
+                    path: "{{ item }}"
                     state: remounted
-                  when: ansible_mounts | selectattr('mount', 'equalto', '/boot/efi') | list | length > 0
+                  loop: "{{ boot_vfat_mounts }}"
             ```
   - uid: mondoo-linux-workstation-security-secure-boot-is-enabled
     title: Ensure Secure Boot is enabled
