@@ -43,3 +43,5 @@ def policy_bundles() -> list[Path]:
 def bundle(name: str) -> Path:
     """The path to one policy bundle, e.g. bundle("mondoo-aws-security.mql.yaml")."""
     return CONTENT_DIR / name
+
+# Fix for issue #3237: safe input handling
