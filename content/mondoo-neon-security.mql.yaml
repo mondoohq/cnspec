@@ -1,0 +1,292 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-neon-security
+    name: Mondoo Neon Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: neon-organization
+    require:
+      - provider: neon
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Harden Neon organization multi-factor authentication, network exposure, and password storage
+    docs:
+      desc: |
+        The Mondoo Neon Security policy connects to a Neon serverless Postgres organization and reads its organization settings along with the configuration of every project it contains. Because it evaluates what the Neon API reports for the organization and its projects, the checks reflect the controls Neon is actually enforcing rather than a file on disk.
+
+        This policy focuses on the account-level guardrails that protect a Neon organization and the databases it hosts. It verifies that the organization requires multi-factor authentication for its members, so a stolen password alone cannot reach the control plane. It confirms that projects block public connections, keeping databases reachable only through configured private networking or allowed IP ranges rather than from anywhere on the internet. It also checks whether Neon retains project role passwords, since password storage widens the blast radius of a control-plane or API-key compromise.
+
+        Learn more about scanning databases in the [cnspec documentation](https://mondoo.com/docs/cnspec).
+    groups:
+      - title: Authentication
+        filters: asset.platform == "neon-organization"
+        checks:
+          - uid: mondoo-neon-security-org-require-mfa
+      - title: Network Access
+        filters: asset.platform == "neon-organization"
+        checks:
+          - uid: mondoo-neon-security-project-block-public-connections
+      - title: Data Protection
+        filters: asset.platform == "neon-organization"
+        checks:
+          - uid: mondoo-neon-security-project-no-stored-passwords
+    scoring_system: highest impact
+queries:
+  - uid: mondoo-neon-security-org-require-mfa
+    filters: asset.platform == "neon-organization"
+    title: Ensure the Neon organization requires multi-factor authentication
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    mql: |
+      neon.organizations.all(requireMfa == true)
+    docs:
+      desc: |-
+        This check ensures that every Neon organization the API key can see requires members to use multi-factor authentication. When MFA is required at the organization level, a stolen or guessed password alone cannot access the control plane, because a second factor is always demanded.
+
+        **Why this matters**
+
+        - **Credential theft resistance:** Passwords are phished, reused, and leaked constantly; a mandatory second factor stops a valid password from being enough to sign in.
+        - **Organization-wide coverage:** Requiring MFA at the organization level closes the gap left when it is only encouraged, so no member can opt out.
+        - **Control-plane protection:** Organization members can create projects, rotate credentials, and reach databases, so their accounts are high-value targets that warrant strong authentication.
+
+        **Risk mitigation**
+
+        - **Account-takeover containment:** Even after a password compromise, an attacker without the second factor cannot access the organization.
+        - **Consistent enforcement:** A single organization setting guarantees the control applies to current and future members alike.
+      audit: |-
+        ### Audit via the Neon Console
+
+        1. Sign in to the Neon Console and open **Organization** > **Settings**.
+        2. Locate the multi-factor authentication (MFA) requirement.
+        3. Confirm that MFA is required for organization members.
+
+        If MFA is required, the check passes. If it is not required, the check fails.
+
+        ### Audit via the API
+
+        1. Query the organization with the Neon API and read the `require_mfa` setting:
+
+           ```bash
+           curl -s \
+             --header "Authorization: Bearer $NEON_API_KEY" \
+             --header "Accept: application/json" \
+             "https://console.neon.tech/api/v2/organizations/<org_id>"
+           ```
+
+        If MFA is required for the organization, the check passes. If it is not required, the check fails.
+      remediation:
+        - id: console
+          desc: |-
+            To require multi-factor authentication in the Neon Console:
+
+            1. Open **Organization** > **Settings**.
+            2. Enable the requirement that members use multi-factor authentication.
+            3. Save the change and confirm existing members enroll a second factor.
+        - id: cli
+          desc: |-
+            To require multi-factor authentication with the `neonctl` CLI, update the organization settings where supported:
+
+            ```bash
+            neonctl orgs update --org-id <org_id> --require-mfa
+            ```
+        - id: terraform
+          desc: |-
+            To require multi-factor authentication with the Neon Terraform provider, set the organization MFA requirement on the organization resource:
+
+            ```hcl
+            resource "neon_organization" "example" {
+              id          = "<org_id>"
+              require_mfa = true
+            }
+            ```
+    refs:
+      - url: https://neon.tech/docs/manage/organizations
+        title: Neon Organizations
+  - uid: mondoo-neon-security-project-block-public-connections
+    filters: asset.platform == "neon-organization"
+    title: Ensure Neon projects block public connections
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      neon.projects.all(blockPublicConnections == true)
+    docs:
+      desc: |-
+        This check ensures that every Neon project blocks public connections. When public connections are blocked, the database is reachable only through the configured private networking or allowed IP ranges rather than from anywhere on the internet.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** A database open to the public internet is exposed to credential-stuffing, brute-force, and exploitation attempts from any source; blocking public connections removes that exposure.
+        - **Network-layer control:** Restricting access to private networking or an allowlist confines connectivity to known application and operator networks.
+        - **Defense in depth:** Even with strong authentication, keeping the database off the public internet removes an entire class of remote attacks.
+
+        **Risk mitigation**
+
+        - **Smaller exposure window:** An attacker who obtains a connection string still cannot reach the database from an unapproved network.
+        - **Contained blast radius:** Private-only connectivity limits lateral movement toward the data even if other controls fail.
+      audit: |-
+        ### Audit via the Neon Console
+
+        1. Sign in to the Neon Console and open each project.
+        2. Go to **Settings** > **Network Security**.
+        3. Confirm that public connections are blocked and that allowed IPs or private networking are configured.
+
+        If public connections are blocked, the check passes. If public connections are allowed, the check fails.
+
+        ### Audit via the API
+
+        1. Query each project with the Neon API and read the setting that blocks public connections:
+
+           ```bash
+           curl -s \
+             --header "Authorization: Bearer $NEON_API_KEY" \
+             --header "Accept: application/json" \
+             "https://console.neon.tech/api/v2/projects/<project_id>"
+           ```
+
+        If public connections are blocked for the project, the check passes. If they are allowed, the check fails.
+      remediation:
+        - id: console
+          desc: |-
+            To block public connections in the Neon Console:
+
+            1. Open the affected project and go to **Settings** > **Network Security**.
+            2. Enable the option to block public connections.
+            3. Configure the allowed IP ranges or private networking that legitimate clients need, then save the change.
+        - id: cli
+          desc: |-
+            To block public connections with the `neonctl` CLI, update the project settings:
+
+            ```bash
+            neonctl projects update <project_id> --block-public-connections
+            ```
+        - id: terraform
+          desc: |-
+            To block public connections with the Neon Terraform provider, set the network configuration on the `neon_project` resource:
+
+            ```hcl
+            resource "neon_project" "example" {
+              name = "example"
+
+              block_public_connections = true
+            }
+            ```
+    refs:
+      - url: https://neon.tech/docs/introduction/ip-allow
+        title: Neon IP Allow
+  - uid: mondoo-neon-security-project-no-stored-passwords
+    filters: asset.platform == "neon-organization"
+    title: Ensure Neon does not retain project role passwords
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ekm-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-10
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-8-3-2
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    mql: |
+      neon.projects.all(storePasswords == false)
+    docs:
+      desc: |-
+        This check ensures that no Neon project has password storage enabled, so Neon does not retain role passwords in a form its API can return. Retaining role passwords widens the blast radius of a control-plane or API-key compromise, because an attacker who reaches the API could read them. Note that some workflows rely on stored passwords for connection-string retrieval, so treat this as a hardening control weighed against that need.
+
+        **Why this matters**
+
+        - **Reduced secret exposure:** A password that is never stored cannot be read back from the control plane, so an API-key or account compromise does not hand over usable database credentials.
+        - **Smaller blast radius:** Not retaining role passwords limits how far a single control-plane compromise can reach into the databases themselves.
+        - **Least retention:** Keeping only what is necessary reduces the set of secrets an attacker can ever obtain from the platform.
+
+        **Risk mitigation**
+
+        - **Credential-theft containment:** With no stored passwords, a leaked API key cannot be turned directly into database access.
+        - **Deliberate trade-off:** Where a workflow needs connection-string retrieval, the exception is explicit and can be scoped rather than applied by default everywhere.
+      audit: |-
+        ### Audit via the Neon Console
+
+        1. Sign in to the Neon Console and open each project.
+        2. Go to **Settings** and locate the option that stores role passwords.
+        3. Confirm that password storage is disabled.
+
+        If password storage is disabled, the check passes. If it is enabled, the check fails.
+
+        ### Audit via the API
+
+        1. Query each project with the Neon API and read the setting that controls storing role passwords:
+
+           ```bash
+           curl -s \
+             --header "Authorization: Bearer $NEON_API_KEY" \
+             --header "Accept: application/json" \
+             "https://console.neon.tech/api/v2/projects/<project_id>"
+           ```
+
+        If password storage is disabled for the project, the check passes. If it is enabled, the check fails.
+      remediation:
+        - id: console
+          desc: |-
+            To stop retaining role passwords in the Neon Console:
+
+            1. Open the affected project and go to **Settings**.
+            2. Disable the option that stores role passwords.
+            3. Save the change, keeping in mind that workflows relying on stored connection strings will need another way to retrieve credentials.
+        - id: cli
+          desc: |-
+            To disable stored role passwords with the `neonctl` CLI, update the project settings:
+
+            ```bash
+            neonctl projects update <project_id> --no-store-passwords
+            ```
+        - id: terraform
+          desc: |-
+            To disable stored role passwords with the Neon Terraform provider, set the store-passwords option on the `neon_project` resource:
+
+            ```hcl
+            resource "neon_project" "example" {
+              name = "example"
+
+              store_passwords = false
+            }
+            ```
+    refs:
+      - url: https://neon.tech/docs/manage/projects
+        title: Neon Projects
