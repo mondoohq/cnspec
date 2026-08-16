@@ -18772,6 +18772,12 @@ queries:
             To ensure Azure Batch accounts have diagnostic settings enabled in Terraform:
 
             ```hcl
+            resource "azurerm_batch_account" "example" {
+              name                = "examplebatch"
+              location            = azurerm_resource_group.example.location
+              resource_group_name = azurerm_resource_group.example.name
+            }
+
             resource "azurerm_monitor_diagnostic_setting" "example" {
               name                       = "example-diagnostics"
               target_resource_id         = azurerm_batch_account.example.id
@@ -18833,7 +18839,6 @@ queries:
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_batch_account")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_monitor_diagnostic_setting").any(
-        change.after['target_resource_id'] == null ||
         change.after['target_resource_id'].contains("/batchAccounts/")
       )
   - uid: mondoo-azure-security-batch-diagnostic-settings-enabled-terraform-state
@@ -23235,19 +23240,25 @@ queries:
   - uid: mondoo-azure-security-postgresql-flexible-server-public-access-disabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_postgresql_flexible_server")
     mql: |
+      # Delegating a subnet puts the server in VNet-integrated mode, where Azure
+      # turns public access off and azurerm computes the flag rather than taking
+      # it from configuration. The MySQL sibling already accepts both shapes.
       terraform.resources("azurerm_postgresql_flexible_server").all(
+        arguments['delegated_subnet_id'] != empty ||
         arguments['public_network_access_enabled'] == false
       )
   - uid: mondoo-azure-security-postgresql-flexible-server-public-access-disabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_postgresql_flexible_server")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_postgresql_flexible_server").all(
+        change.after['delegated_subnet_id'] != empty ||
         change.after['public_network_access_enabled'] == false
       )
   - uid: mondoo-azure-security-postgresql-flexible-server-public-access-disabled-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_postgresql_flexible_server")
     mql: |
       terraform.state.resources.where(type == "azurerm_postgresql_flexible_server").all(
+        values['delegated_subnet_id'] != empty ||
         values['public_network_access_enabled'] == false
       )
   - uid: mondoo-azure-security-postgresql-flexible-server-public-access-disabled-bicep
@@ -28373,7 +28384,13 @@ queries:
               --query "[?contains(permissions[0].actions, '*')].{Name:roleName, Actions:permissions[0].actions}"
             ```
 
-            Update the role to use specific actions:
+            Export the offending role so there is a file to edit:
+
+            ```bash
+            az role definition list --name <RoleName> --custom-role-only --output json > role.json
+            ```
+
+            `az role definition list` returns an array, so trim `role.json` down to the single role object and replace the `*` entry in its `actions` array with the specific operations the role needs. Then apply it:
 
             ```bash
             az role definition update --role-definition @role.json
@@ -28555,13 +28572,17 @@ queries:
       remediation:
         - id: cli
           desc: |
-            To ensure custom roles do not allow role creation using the Azure CLI, remove the role definition write permission from custom roles:
+            To ensure custom roles do not allow role creation using the Azure CLI, export the role so there is a file to edit:
+
+            ```bash
+            az role definition list --name <RoleName> --custom-role-only --output json > role.json
+            ```
+
+            `az role definition list` returns an array, so trim `role.json` down to the single role object and delete `Microsoft.Authorization/roleDefinitions/write` from its `actions` array. Then apply it:
 
             ```bash
             az role definition update --role-definition @role.json
             ```
-
-            Ensure `Microsoft.Authorization/roleDefinitions/write` is not in the `actions` array.
         - id: bicep
           desc: |
             To ensure custom roles do not allow role creation in Bicep:
