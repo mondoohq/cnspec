@@ -28,8 +28,8 @@ func init() {
 	vulnCmd.Flags().Lookup("asset-name").Hidden = true
 
 	vulnCmd.Flags().String("inventory-file", "", "Set the path to the inventory file")
-	vulnCmd.Flags().Bool("inventory-ansible", false, "Set the inventory format to Ansible")
-	vulnCmd.Flags().Bool("inventory-domainlist", false, "Set the inventory format to domain list")
+	vulnCmd.Flags().Bool("inventory-format-ansible", false, "Set the inventory format to Ansible")
+	vulnCmd.Flags().Bool("inventory-format-domainlist", false, "Set the inventory format to domain list")
 }
 
 var vulnCmd = &cobra.Command{
@@ -40,8 +40,8 @@ var vulnCmd = &cobra.Command{
 		_ = viper.BindPFlag("output", cmd.Flags().Lookup("output"))
 		_ = viper.BindPFlag("platform-id", cmd.Flags().Lookup("platform-id"))
 		_ = viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
-		_ = viper.BindPFlag("inventory-ansible", cmd.Flags().Lookup("inventory-ansible"))
-		_ = viper.BindPFlag("inventory-domainlist", cmd.Flags().Lookup("inventory-domainlist"))
+		_ = viper.BindPFlag("inventory-format-ansible", cmd.Flags().Lookup("inventory-format-ansible"))
+		_ = viper.BindPFlag("inventory-format-domainlist", cmd.Flags().Lookup("inventory-format-domainlist"))
 	},
 }
 
