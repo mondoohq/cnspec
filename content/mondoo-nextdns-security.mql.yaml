@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-nextdns-security
     name: Mondoo NextDNS Security
-    version: 1.0.3
+    version: 1.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -38,15 +38,22 @@ policies:
           - uid: mondoo-nextdns-security-ai-threat-detection-enabled
           - uid: mondoo-nextdns-security-cryptojacking-protection-enabled
           - uid: mondoo-nextdns-security-dga-protection-enabled
+          - uid: mondoo-nextdns-security-google-safe-browsing-enabled
           - uid: mondoo-nextdns-security-idn-homograph-protection-enabled
           - uid: mondoo-nextdns-security-typosquatting-protection-enabled
           - uid: mondoo-nextdns-security-nrd-blocking-enabled
+          - uid: mondoo-nextdns-security-dynamic-dns-blocking-enabled
           - uid: mondoo-nextdns-security-csam-blocking-enabled
           - uid: mondoo-nextdns-security-parked-domain-blocking-enabled
+      - title: Filtering Integrity
+        filters: asset.platform == "nextdns-profile"
+        checks:
+          - uid: mondoo-nextdns-security-bypass-method-blocking-enabled
       - title: Logging and Visibility
         filters: asset.platform == "nextdns-profile"
         checks:
           - uid: mondoo-nextdns-security-query-logging-enabled
+          - uid: mondoo-nextdns-security-query-log-domains-retained
     scoring_system: average
 queries:
   # ==========================================
@@ -412,6 +419,76 @@ queries:
       - url: https://nextdns.github.io/api/#security
         title: NextDNS API — Security
 
+  - uid: mondoo-nextdns-security-google-safe-browsing-enabled
+    title: Ensure NextDNS Google Safe Browsing is enabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-b-security-awareness-training-and-tools-protection-from-malicious-software
+      compliance/iso-27001-2022: iso-27001-2022-a-8-7
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-de-cm-4
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-5-4-1
+      compliance/soc2-2017: soc2-control-cc6-8-4
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    mql: |
+      nextdns.profile.security.googleSafeBrowsing == true
+    docs:
+      desc: |
+        This check verifies that the Google Safe Browsing blocklist is applied to the profile alongside the NextDNS feeds.
+
+        Google Safe Browsing is the list that Chrome, Safari, Firefox, and Android consult before loading a page, assembled from Google's own crawling of the web and from reports sent back by browser installations. NextDNS applies the same list at the resolver, so a name on it is refused before any client opens a connection to it. NextDNS calls the toggle **Google Safe Browsing** on the Security tab of a profile, and this check requires it to be on.
+
+        **Why this matters**
+
+        How much a blocklist catches depends on what its operator can see, and Google sees an unusual amount. It crawls continuously and receives reports from billions of browser installations, so a phishing page is frequently listed within hours of going live, sometimes before a threat intelligence feed has picked the domain up at all. Running both sources means a name has to be missing from both before it resolves.
+
+        Enforcing the list at the resolver also reaches everything the browser check cannot. Safe Browsing protects a user only inside a browser that implements it and has not had it switched off. It does nothing for a link opened from a mail client, nothing for a chat application rendering a preview, nothing for a script fetching a URL, and nothing at all for a device that has no browser. The resolver applies the same list to every client on the profile no matter what software asked.
+
+        The list is aimed at web pages rather than domains, so it occasionally flags a name whose content has since changed or which shares hosting with something that was flagged. Review a block before acting on it, and where the name is genuinely needed add it to the profile's Allowlist tab rather than turning the source off for every client.
+      audit: |
+        To verify that Google Safe Browsing is enabled from the NextDNS dashboard:
+
+        1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+        2. Open the **Security** tab.
+        3. Inspect the **Google Safe Browsing** toggle.
+
+        If the toggle is on, the check passes. If it is off, the check fails.
+
+        To verify via the NextDNS API, inspect `googleSafeBrowsing`:
+
+        ```bash
+        curl -s https://api.nextdns.io/profiles/<profile-id>/security \
+          -H "X-Api-Key: $NEXTDNS_API_KEY"
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To enable Google Safe Browsing from the NextDNS dashboard:
+
+            1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+            2. Open the **Security** tab.
+            3. Turn on **Google Safe Browsing**.
+        - id: api
+          desc: |
+            To enable Google Safe Browsing using the NextDNS API:
+
+            ```bash
+            curl -X PATCH https://api.nextdns.io/profiles/<profile-id>/security \
+              -H "X-Api-Key: $NEXTDNS_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"googleSafeBrowsing": true}'
+            ```
+    refs:
+      - url: https://nextdns.github.io/api/#security
+        title: NextDNS API — Security
+
   - uid: mondoo-nextdns-security-idn-homograph-protection-enabled
     title: Ensure NextDNS IDN homograph protection is enabled
     impact: 70
@@ -628,6 +705,78 @@ queries:
       - url: https://nextdns.github.io/api/#security
         title: NextDNS API — Security
 
+  - uid: mondoo-nextdns-security-dynamic-dns-blocking-enabled
+    title: Ensure NextDNS dynamic DNS hostname blocking is enabled
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-b-security-awareness-training-and-tools-protection-from-malicious-software
+      compliance/iso-27001-2022: iso-27001-2022-a-8-7
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-de-cm-4
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-5-2-1
+      compliance/soc2-2017: soc2-control-cc6-8-4
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    mql: |
+      nextdns.profile.security.ddns == true
+    docs:
+      desc: |
+        This check verifies that hostnames served by dynamic DNS providers are blocked for the profile.
+
+        A dynamic DNS provider hands out a name underneath a domain it owns and lets whoever claimed it repoint that name at any address, at any moment, usually free of charge and with no identity check. NextDNS calls the toggle **Block Dynamic DNS Hostnames** on the Security tab of a profile, and this check requires it to be on.
+
+        **Why this matters**
+
+        That combination is why so much attacker infrastructure lives on one. A command-and-control name costs nothing, leaves no registrar record tying it to anyone, and can be moved to fresh hosting the moment the current address is seized or blocked, so an implant keeps reaching its operator with no update pushed to it. Remote access trojans have shipped with dynamic DNS naming as their default for two decades, and commodity malware families still do.
+
+        The same properties make it the quickest way to stand up a phishing or payload page. A hostname is resolving within a minute of being claimed, and it inherits a parent domain that has existed for years, so it slips past the age heuristics that catch a freshly registered name. Newly registered domain blocking does not cover this, because the domain is not new.
+
+        Blocking is done by provider, so nothing underneath the provider's domain resolves. That is what makes the control effective and also what makes it blunt: home routers, IP cameras, and remote access appliances use these hostnames legitimately, and a small site reaching an office over one will stop working the moment this is turned on.
+
+        NextDNS keeps each provider's own website and its address update endpoint reachable, so devices that depend on one can still refresh their record. Where a business genuinely needs to reach a specific dynamic DNS hostname, add that one name to the profile's Allowlist tab rather than leaving the whole category resolving.
+      audit: |
+        To verify that dynamic DNS hostname blocking is enabled from the NextDNS dashboard:
+
+        1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+        2. Open the **Security** tab.
+        3. Inspect the **Block Dynamic DNS Hostnames** toggle.
+
+        If the toggle is on, the check passes. If it is off, the check fails.
+
+        To verify via the NextDNS API, inspect `ddns`:
+
+        ```bash
+        curl -s https://api.nextdns.io/profiles/<profile-id>/security \
+          -H "X-Api-Key: $NEXTDNS_API_KEY"
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To enable dynamic DNS hostname blocking from the NextDNS dashboard:
+
+            1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+            2. Open the **Security** tab.
+            3. Turn on **Block Dynamic DNS Hostnames**.
+        - id: api
+          desc: |
+            To enable dynamic DNS hostname blocking using the NextDNS API:
+
+            ```bash
+            curl -X PATCH https://api.nextdns.io/profiles/<profile-id>/security \
+              -H "X-Api-Key: $NEXTDNS_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"ddns": true}'
+            ```
+    refs:
+      - url: https://nextdns.github.io/api/#security
+        title: NextDNS API — Security
+
   - uid: mondoo-nextdns-security-csam-blocking-enabled
     title: Ensure NextDNS child sexual abuse material blocking is enabled
     impact: 60
@@ -773,6 +922,81 @@ queries:
         title: NextDNS API — Security
 
   # ==========================================
+  # Filtering Integrity
+  # ==========================================
+  - uid: mondoo-nextdns-security-bypass-method-blocking-enabled
+    title: Ensure NextDNS bypass method blocking is enabled
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-uem-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-23
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-pt-4
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-1-2-5
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    mql: |
+      nextdns.profile.parentalControl.blockBypass == true
+    docs:
+      desc: |
+        This check verifies that the services used to route around the profile's filtering are blocked.
+
+        A device is protected only for as long as it keeps asking NextDNS. A commercial VPN, a web proxy, the Tor network, or a third-party encrypted DNS resolver each moves name resolution somewhere the profile cannot see, and every other control on the profile stops applying to that device the moment one is in use. NextDNS calls the toggle **Block Bypass Methods** on the Parental Control tab of a profile, and this check requires it to be on.
+
+        **Why this matters**
+
+        Installing a free VPN app on a managed phone takes under a minute and moves all of its name resolution off the resolver. Nothing breaks, nobody is prompted, and the profile keeps reporting healthy, because it is no longer being asked anything. A device that has left looks exactly like a device that is quiet, which is why this rarely gets noticed until someone goes looking for a specific query and finds the whole device missing from the logs.
+
+        It is not only deliberate evasion. Browsers and applications ship their own encrypted DNS endpoints and will use them ahead of the system resolver in some configurations, so a device can leave the profile because of a default nobody chose. Refusing the well-known endpoints pushes those clients back onto the system resolver, where the profile applies again.
+
+        The same escape is available to malware. An implant that resolves its operator's domain through a public encrypted DNS endpoint sidesteps every blocklist on the profile, and because the query never reaches the resolver it leaves no trace in the logs either. Denying the names those endpoints live at closes that path without needing anything installed on the endpoint.
+
+        This is a DNS-layer control and only reaches what resolves by name. A VPN client configured with a hardcoded address, a laptop tethered to a phone, and Tor bridges are all outside its reach, and the blocked list does not cover every provider that exists. Pair it with device management that governs which VPN profiles and DNS configurations can be installed in the first place.
+      audit: |
+        To verify that bypass method blocking is enabled from the NextDNS dashboard:
+
+        1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+        2. Open the **Parental Control** tab.
+        3. Inspect the **Block Bypass Methods** toggle.
+
+        If the toggle is on, the check passes. If it is off, the check fails.
+
+        To verify via the NextDNS API, inspect `blockBypass`:
+
+        ```bash
+        curl -s https://api.nextdns.io/profiles/<profile-id>/parentalControl \
+          -H "X-Api-Key: $NEXTDNS_API_KEY"
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To enable bypass method blocking from the NextDNS dashboard:
+
+            1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+            2. Open the **Parental Control** tab.
+            3. Turn on **Block Bypass Methods**.
+        - id: api
+          desc: |
+            To enable bypass method blocking using the NextDNS API:
+
+            ```bash
+            curl -X PATCH https://api.nextdns.io/profiles/<profile-id>/parentalControl \
+              -H "X-Api-Key: $NEXTDNS_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"blockBypass": true}'
+            ```
+    refs:
+      - url: https://nextdns.github.io/api/#profile
+        title: NextDNS API — Profile
+
+  # ==========================================
   # Logging and Visibility
   # ==========================================
   - uid: mondoo-nextdns-security-query-logging-enabled
@@ -842,6 +1066,78 @@ queries:
               -H "X-Api-Key: $NEXTDNS_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"enabled": true}'
+            ```
+    refs:
+      - url: https://nextdns.github.io/api/#settings
+        title: NextDNS API — Settings
+
+  - uid: mondoo-nextdns-security-query-log-domains-retained
+    title: Ensure NextDNS query logs retain the queried domains
+    impact: 55
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
+      compliance/pci-dss-4: pcidss-requirement-10-2-2
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      nextdns.profile.settings.logsDropDomain == false
+    docs:
+      desc: |
+        This check verifies that the name a client asked for is written to the profile's query logs rather than redacted out of them.
+
+        NextDNS can keep a query log while discarding the domain from every entry, leaving the time, the device, and whether the answer was blocked, but not what was asked for. NextDNS calls the toggle **Log domains** on the Settings tab of a profile, and this check requires it to be on.
+
+        **Why this matters**
+
+        The domain is the only field in a DNS record that answers a question. Without it the log says a device made forty thousand requests and that three hundred were refused, and it cannot say which name was reached for, which control refused it, or whether anyone on the network ever contacted the indicator that was published this morning. Logging is on, storage is being consumed, and no investigation can begin.
+
+        That gap is close to invisible until it matters. The profile reports logging as enabled, the dashboard still draws its charts of blocked and allowed counts, and the setting reads like a privacy refinement rather than the removal of the record's contents. It is usually discovered during an incident, which is the worst possible moment to learn that the evidence was never written.
+
+        Keeping the name is also what makes the rest of the profile auditable. Judging whether a blocklist is too aggressive, confirming that a control is firing at all, and deciding whether a device needs an entry on the Allowlist tab all depend on reading back the specific names involved.
+
+        Where DNS logging is legally constrained, the field to give up is the client address rather than the domain. Dropping the client address removes what identifies a person while leaving a log that can still say what was reached for on the network, and a shorter retention period limits the exposure either way. If the names themselves genuinely cannot be held, turn logging off rather than keeping a record that answers nothing.
+      audit: |
+        To verify that queried domains are retained in the logs from the NextDNS dashboard:
+
+        1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+        2. Open the **Settings** tab.
+        3. Inspect the **Log domains** toggle under the logging options.
+
+        If the toggle is on, the check passes. If it is off, the check fails.
+
+        To verify via the NextDNS API, inspect `logs.drop.domain` under settings, which must be `false`:
+
+        ```bash
+        curl -s https://api.nextdns.io/profiles/<profile-id>/settings \
+          -H "X-Api-Key: $NEXTDNS_API_KEY"
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To retain queried domains in the logs from the NextDNS dashboard:
+
+            1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+            2. Open the **Settings** tab.
+            3. Turn on **Log domains**, and set retention and storage location to match your privacy requirements.
+        - id: api
+          desc: |
+            To retain queried domains in the logs using the NextDNS API:
+
+            ```bash
+            curl -X PATCH https://api.nextdns.io/profiles/<profile-id>/settings/logs \
+              -H "X-Api-Key: $NEXTDNS_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"drop": {"domain": false}}'
             ```
     refs:
       - url: https://nextdns.github.io/api/#settings
