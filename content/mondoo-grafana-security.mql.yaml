@@ -75,18 +75,17 @@ queries:
     mql: grafana.serviceAccounts.none(role == "Admin")
     docs:
       desc: |
-        This check ensures that service accounts are configured to use a least-privilege role rather than the Admin role. Admin service accounts can modify organization settings, manage users, and install plugins, creating a broad attack surface if a token is compromised.
+        This check verifies that no Grafana service account holds the Admin role.
+
+        Service accounts are the machine identities that dashboard-as-code pipelines, provisioning jobs, and alerting integrations authenticate as, and each one carries an organization role. That role is set under **Administration > Users and access > Service accounts** in the Grafana UI, or through the service account API, and it should be Viewer for read-only automation and Editor for anything that writes dashboards. This check requires that none of them is Admin.
 
         **Why this matters**
 
-        - **Least privilege:** Restricting service accounts to Viewer or Editor roles aligns automation credentials with the minimum access they need to function.
-        - **Reduced blast radius:** A compromised non-Admin token cannot manage users, alter datasource credentials, or install plugins.
-        - **Auditability:** Limiting Admin assignments to human-reviewed accounts keeps privileged access decisions deliberate and traceable.
+        Service account tokens live in places human passwords do not: CI runner environments, Terraform state, container images, and repository secrets that several teams can read. They are used without any second factor, and unless someone set an expiry they do not lapse on their own. Treat one as eventually readable by someone outside the team that created it.
 
-        **Risk mitigation**
+        An Admin token is worth far more than the pipeline holding it. The Admin role manages users and their roles inside the organization, so whoever holds it invites an account they control and grants it access. It manages data sources, so it can repoint an existing data source at a server the attacker runs and collect the queries and credentials that follow, or read the estate through the ones already configured. It installs plugins, which is code that then runs in the Grafana server. A leaked Viewer token reads dashboards; a leaked Admin token owns the organization and everything Grafana can reach from it.
 
-        - **Credential leak containment:** If an automation token is leaked, the attacker inherits only the scoped role rather than full organizational control.
-        - **Configuration integrity:** Non-Admin service accounts cannot silently change organization configuration, protecting the Grafana environment from tampering.
+        Automation that appears to need Admin usually needs one specific privileged action. Service accounts are cheap, so the right answer is a separate, narrowly scoped identity for that action rather than an Admin role on the pipeline that runs every day.
       audit: |
         ### Audit via UI
 
@@ -153,18 +152,19 @@ queries:
     mql: grafana.serviceAccounts.all(tokens.all(hasExpiration == true))
     docs:
       desc: |
-        This check ensures that every service account token is configured with an expiration date. Tokens without an expiration persist indefinitely and remain valid until manually revoked, which is a significant risk if one is leaked.
+        This check verifies that every Grafana service account token has an expiration date.
+
+        Tokens are created under **Administration > Users and access > Service accounts** by selecting the account and adding a token, and the dialog offers an optional expiration. Leave it unset and the token is valid forever. This check requires that every existing token carries an expiry, which in practice means choosing a rotation period short enough that a leak has an end date. Ninety days is a common choice.
 
         **Why this matters**
 
-        - **Forced rotation:** An expiration date compels regular token rotation instead of relying on long-lived static credentials.
-        - **Limited exposure window:** Even an undetected leak only grants access until the token expires.
-        - **Credential hygiene:** Expiring tokens reduce credential sprawl across CI pipelines, repositories, and workstations.
+        A non-expiring token is a credential with no failure mode that ever removes it. It stays in the CI variable it was pasted into, in the shell history of whoever tested it, and in the repository it was accidentally committed to, and it keeps working through every reorganization, contractor offboarding, and laptop replacement that follows. Search a large organization's repositories and the Grafana tokens found there are almost always the ones created without an expiry.
 
-        **Risk mitigation**
+        The consequence is that time-to-discovery equals duration of access. An attacker who finds a token in a public repository, a leaked container image, or a build log gets whatever the account can do for as long as they want it, and use of a valid token looks exactly like the automation it was issued for. There is no failed sign-in, no new device, and no second factor to trip an alert.
 
-        - **Leaked token containment:** A token embedded in a pipeline or committed to a repository becomes useless once it expires.
-        - **Stale access removal:** Expiration ensures abandoned integrations lose access automatically rather than retaining indefinite credentials.
+        What they reach is the estate, not just a dashboard. Grafana panels describe which systems exist, which environments they belong to, and what normal traffic looks like, and the data sources behind them can often be queried through the server itself.
+
+        Expiry is the control that works while nobody is paying attention, so the real operational task is a rotation job rather than a calendar reminder.
       audit: |
         ### Audit via UI
 
@@ -229,18 +229,19 @@ queries:
     mql: grafana.serviceAccounts.all(tokens.none(isExpired == true))
     docs:
       desc: |
-        This check ensures that expired service account tokens are cleaned up promptly. Expired tokens cannot authenticate, but their presence indicates poor credential hygiene and that token rotation procedures are not being followed.
+        This check verifies that no expired tokens remain attached to a Grafana service account.
+
+        An expired token cannot authenticate, so removing it is housekeeping rather than a fix for live access. Delete them by opening the account under **Administration > Users and access > Service accounts** and removing the entries whose expiry has passed, or by deleting them through the service account token API. This check requires that none is left behind.
 
         **Why this matters**
 
-        - **Clear audit surface:** Removing expired tokens makes it easier to identify which credentials are actually active.
-        - **Rotation discipline:** Cleaning up expired tokens reflects a working rotation process rather than a neglected one.
-        - **Integration health:** A lingering expired token can signal an integration that broke silently when its token lapsed.
+        The reason to care is that dead tokens make the live ones hard to see. A service account with nine expired tokens and one working one is a page an operator scrolls past, and the review that was supposed to answer which credentials can reach this organization today becomes an exercise in reading dates. Access reviews that are tedious get skipped, and a token that should have been revoked survives because nobody wanted to work out which entry it was.
 
-        **Risk mitigation**
+        A pile of them also encodes a specific failure. Every expired token was either rotated properly, in which case the old entry should have gone with the new one, or it lapsed and broke an integration nobody noticed. The second case is usually resolved by someone creating a replacement token without an expiry, which is precisely the outcome a companion check in this policy exists to prevent.
 
-        - **Reduced confusion:** Auditors and operators are not misled by stale credentials when reviewing service account configuration.
-        - **Detection of silent failures:** Prompt cleanup surfaces integrations that stopped working when a token expired, prompting timely remediation.
+        There is a cleanup consequence as well. Deleting an unused service account is an obvious decision once its token list is empty and a hesitant one while entries are still shown, so stale entries keep abandoned accounts alive in the organization, and each of those is another identity someone has to keep track of.
+
+        Removing the dead entries costs nothing and makes the remaining list mean something.
       audit: |
         ### Audit via UI
 
@@ -310,18 +311,19 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that disabled service accounts retain no tokens. A disabled service account cannot authenticate, but keeping tokens attached means all of them become immediately valid if the account is re-enabled.
+        This check verifies that Grafana service accounts which have been disabled have no tokens left attached.
+
+        Disabling an account under **Administration > Users and access > Service accounts** stops its tokens from authenticating, but it does not delete them. They stay listed against the account, and they become valid again the moment the account is switched back on. This check requires a disabled account's token list to be empty, which means deleting each token as part of disabling the account.
 
         **Why this matters**
 
-        - **Deliberate re-enablement:** Removing tokens makes re-enabling an account a two-step decision rather than a single toggle restoring active credentials.
-        - **Credential hygiene:** Disabled accounts with no tokens leave no dormant credentials in the configuration.
-        - **Reduced attack surface:** There are no latent tokens to leak or misuse while an account sits disabled.
+        Accounts are usually disabled at exactly the moments when their credentials should be treated as compromised: a contractor's integration ends, a build system is decommissioned, or someone noticed the token in a place it should not have been. Disabling is the fast reaction, and leaving the tokens attached means the reaction was never completed.
 
-        **Risk mitigation**
+        What that leaves is a single toggle between an attacker and working access. Anyone who can administer service accounts, including a lower-privileged account an attacker has already taken, can re-enable an old identity and immediately hold every credential it ever had, without creating a token and without the record that creating one would leave. A token that leaked months earlier and was quietly parked by disabling the account starts working again.
 
-        - **Accidental reactivation:** If a disabled account is re-enabled by mistake, no old tokens are revived to grant unintended access.
-        - **Scoped recovery:** Re-enabling an account forces creation of fresh, purpose-scoped tokens instead of reusing stale ones.
+        Re-enablement by mistake is the more common version. A cleanup script or a restored configuration flips the flag back, and dormant credentials that several people believe are dead are live again, held by whoever collected them in the meantime.
+
+        Emptying the token list makes recovery deliberate. Turning the account back on then requires issuing a fresh token for a stated purpose, which is the decision that should have been made in the first place.
       audit: |
         ### Audit via UI
 
@@ -388,20 +390,19 @@ queries:
     mql: grafana.users.where(role == "Admin").length <= 3
     docs:
       desc: |
-        This check ensures that the number of users with the Admin role in a Grafana organization is kept to a minimum. Admin users can modify organization settings, manage users and teams, configure datasources, and install plugins, so each one is a high-value target.
+        This check verifies that a Grafana organization keeps its Admin-role users to a small number.
+
+        Organization roles are assigned under **Administration > Users and access > Users** in the Grafana UI, or through the organization users API. Admin is the top of the three roles, above Editor and Viewer, and it carries user management, data source configuration, and plugin installation. This check counts the users holding Admin in the organization and requires the total to be 3 or fewer, a threshold to adjust if your operating model genuinely needs more.
 
         **Why this matters**
 
-        - **Smaller attack surface:** Fewer Admin accounts mean fewer credentials whose compromise grants full organizational control.
-        - **Deliberate privilege:** Limiting Admins ensures privileged access is granted intentionally and remains auditable.
-        - **Role appropriateness:** Most users can operate effectively with Viewer or Editor roles, reserving Admin for genuine need.
+        Every Admin account is a complete path into the organization, so the count is the number of independent ways in. Compromise one and the attacker manages roles, which is how they establish a persistent account of their own, and manages data sources, which is how they reach the systems behind Grafana rather than only the pictures of them. Ten Admins mean ten phishing targets, ten sets of session cookies worth stealing, and ten laptops whose compromise is a full compromise.
 
-        **Risk mitigation**
+        Those accounts also tend to be the least defended. Admin is often granted early to whoever set the instance up and then never reviewed, so the list accumulates people who changed teams, contractors whose engagement ended, and shared logins nobody owns. Those are the accounts with weak passwords and no second factor, because nobody thinks of them as privileged any more.
 
-        - **Compromise containment:** With fewer Admin accounts, the odds that any single account is breached and abused are reduced.
-        - **Accountability:** A short, documented list of Admins makes it clear who holds organizational control and why.
+        A short list has a second effect that matters during an incident. When four people hold Admin, an unexpected configuration change has four plausible authors and can be resolved in minutes. When thirty do, the same change is unattributable and the investigation stalls while the intruder keeps working.
 
-        This check allows up to 3 organization administrators. If your organization requires more, adjust the threshold to match your operational needs.
+        Most of what people request Admin for is Editor work. Reserve the role for the users who administer Grafana itself, and review the list on a schedule rather than after something goes wrong.
       audit: |
         ### Audit via UI
 
@@ -473,18 +474,19 @@ queries:
     mql: grafana.users.none(login == "admin" && role == "Admin")
     docs:
       desc: |
-        This check ensures that the default Grafana admin login has been changed. A default installation creates an administrator with the login name `admin`, and this well-known name is the first target for brute-force attacks and credential stuffing.
+        This check verifies that no administrator signs in to Grafana with the default `admin` login name.
+
+        A fresh Grafana installation creates one user whose login is `admin`. On self-hosted instances the credentials for it come from the `[security]` section of `grafana.ini`, as `admin_user` and `admin_password`, or from the matching `GF_SECURITY_ADMIN_USER` and `GF_SECURITY_ADMIN_PASSWORD` environment variables. Set a unique login there before the first start, or afterwards create a replacement administrator with its own login name, confirm it can reach both organization and server administration, and then rename or delete the original.
 
         **Why this matters**
 
-        - **Harder automated attacks:** A unique admin login name defeats tooling that assumes the default `admin` account exists.
-        - **Reduced default exposure:** Removing the predictable login closes one of the most common attack vectors against Grafana.
-        - **Stronger access baseline:** A renamed administrator encourages a fresh credential rather than the shipped default.
+        The default login is half of a credential the attacker does not have to discover. Every scanner and credential-stuffing list already carries `admin` for Grafana, so an exposed instance is attacked with a known username from the first request and the attacker only has to be right about the password. Leave the shipped password in place as well and the instance is taken over by automation rather than by a person.
 
-        **Risk mitigation**
+        The account is also worth taking. The original administrator normally holds the server-level Grafana Admin permission on top of its organization role, which reaches every organization on the instance, all of its users, and every data source configured anywhere in it. From there the attacker reads the dashboards that describe what the estate contains and where it runs, then queries the data sources themselves through the Grafana proxy using credentials they never have to see.
 
-        - **Brute-force resistance:** Attackers cannot target a known username and must first discover a valid login name.
-        - **Credential stuffing defense:** Reused or leaked `admin` password pairs no longer line up with an account that exists.
+        A unique login also makes failed sign-ins meaningful. Attempts against `admin` are constant background noise on any reachable instance, while attempts against a name only your team knows are worth alerting on.
+
+        Rename or replace the account rather than deleting it before the replacement holds the server administration permission, or you lose the ability to administer the instance at all.
       audit: |
         ### Audit via UI
 
@@ -552,18 +554,19 @@ queries:
     mql: grafana.datasources.all(access == "proxy")
     docs:
       desc: |
-        This check ensures that datasources are configured to use proxy access mode rather than direct browser access. In proxy mode the Grafana server makes requests to the datasource on behalf of the user, while direct mode has the user's browser connect to the datasource itself.
+        This check verifies that every Grafana data source is queried by the Grafana server rather than by the user's browser.
+
+        A data source's access mode is either proxy, where the server makes the query and returns the result, or direct, where the browser connects to the data source itself. Recent Grafana versions removed the setting from the UI for most data source types, so it is normally read and changed through the data source API, or set as `access: proxy` in the provisioning YAML on self-hosted instances. This check requires proxy mode on every data source.
 
         **Why this matters**
 
-        - **Server-side credentials:** Proxy mode keeps datasource credentials on the Grafana server instead of sending them to the browser.
-        - **Network containment:** Datasources do not need to be reachable from user browsers, avoiding exposure of internal services.
-        - **Enforced access control:** Routing requests through Grafana lets the server apply access controls consistently.
+        Direct mode has to give the browser everything the query needs, which means the data source credentials are delivered to the client. They are then readable in the browser's developer tools, by any extension the user has installed, and by any script running on the page. A dashboard viewer who was only ever meant to see a chart ends up holding the credential for the database behind it, and can query it directly for everything the chart does not show.
 
-        **Risk mitigation**
+        It also requires the data source to be reachable from wherever the user's browser is. That is what turns an internal metrics store or database into something answering requests from laptops on home networks and hotel wifi. The address of that internal endpoint is published in the dashboard's own configuration, so an attacker who can load a dashboard learns both where the system is and, from the same page, how to authenticate to it.
 
-        - **Credential interception:** Authentication details for the datasource are never delivered to the client, preventing browser-side capture.
-        - **Internal endpoint exposure:** Internal datasource endpoints stay shielded from the user's network, reducing reconnaissance and pivot opportunities.
+        Proxy mode also keeps the query on a path Grafana controls, so its permissions and its logging apply. Direct queries are invisible to the Grafana server and leave no record of who read what.
+
+        Browser access exists for the rare data source that must be reached from the client. If one is genuinely required, treat its credentials as public.
       audit: |
         ### Audit via API
 
@@ -633,18 +636,19 @@ queries:
     mql: grafana.datasources.none(basicAuth == true)
     docs:
       desc: |
-        This check ensures that datasources are configured to avoid basic authentication with a username and password. Basic auth transmits credentials in a reversible encoding and is vulnerable to interception, especially where TLS is not properly configured end to end.
+        This check verifies that no Grafana data source authenticates with a static username and password.
+
+        Basic authentication is enabled per data source under **Connections > Data sources**, and is reported as `basicAuth` by the data source API. It sends the username and password base64-encoded in a header on every request, which is an encoding rather than encryption. This check requires it to be off, with a bearer token, mutual TLS, or an identity provider integration configured in its place.
 
         **Why this matters**
 
-        - **Stronger authentication:** API tokens, OAuth, and managed identity provide better security guarantees than a static username and password.
-        - **Better auditability:** Token and identity-based methods make datasource access easier to trace and revoke.
-        - **Reduced credential reuse:** Avoiding basic auth discourages embedding shared passwords across datasource configurations.
+        The credential travels with every single query. A dashboard that refreshes on a timer sends the same reusable password to the data source thousands of times a day, so the number of places it can be captured grows with use: any hop where TLS is absent or terminated, any proxy that logs request headers, and any intermediary recording traffic for debugging. Recovering the password from a captured header is a base64 decode, not an attack.
 
-        **Risk mitigation**
+        Because it is a static password, capture is enough. There is no exchange to replay and no binding to a session, so an attacker who reads one header authenticates to the data source directly from anywhere, bypassing Grafana and every permission Grafana would have applied. They then query the underlying database or metrics store for everything it holds rather than the series a panel displays.
 
-        - **Header interception:** Base64-encoded credentials sent with every request can no longer be captured from an unencrypted hop or logged HTTP headers.
-        - **Credential replay:** Without static basic auth credentials in transit, attackers cannot trivially replay captured headers to reach the datasource.
+        These passwords are also usually shared and rarely rotated. The same account tends to be configured across several data sources and copied into provisioning files kept in version control, so one exposure reaches multiple systems, and revoking it breaks dashboards nobody has inventoried.
+
+        Tokens and certificates can be revoked one at a time and attributed to a single integration, which is what makes the migration worth doing.
       audit: |
         ### Audit via UI
 
@@ -720,18 +724,19 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that datasource connection URLs are configured to use HTTPS so data in transit is encrypted. Unencrypted HTTP connections expose query data and potentially authentication credentials to network-level interception. Connections to localhost or 127.0.0.1 are exempt because they do not traverse the network.
+        This check verifies that Grafana reaches its data sources over an encrypted connection.
+
+        The URL field of a data source, set under **Connections > Data sources** and stored as `url` by the API, decides the transport. A URL beginning with `https://` is encrypted and one beginning with `http://` is not. This check requires HTTPS on every data source that has a URL, treating `localhost`, `127.0.0.1`, and the IPv6 loopback address as exempt because those connections never leave the machine.
 
         **Why this matters**
 
-        - **Encrypted telemetry:** Metrics, logs, and tracing data carried by datasources stay confidential between the Grafana server and the datasource.
-        - **Protected headers:** Authentication headers cannot be read by anyone observing the connection path.
-        - **Integrity in transit:** TLS protects datasource traffic from tampering as well as eavesdropping.
+        The hop from the Grafana server to a data source carries the query results, which is the actual content of every dashboard in the organization. Over plain HTTP anyone positioned between the two reads that traffic: business metrics, log lines with their message bodies, trace payloads, and whatever identifiers those records contain. This is often the most sensitive path in the deployment and the one least likely to be reviewed, because it sits inside a network that is assumed to be trusted.
 
-        **Risk mitigation**
+        The authentication credential moves over the same hop. A bearer token or a basic authentication header is sent with every query, so an observer who captures one request can then query the data source directly, without Grafana and without whatever permissions Grafana would have applied.
 
-        - **Network eavesdropping:** Data is no longer visible to an attacker with network access between Grafana and the datasource.
-        - **Header replay:** Authentication headers sent over HTTP cannot be captured and replayed once the connection uses TLS.
+        Plaintext responses are also modifiable in flight. An attacker able to rewrite the answer to a query controls what the dashboard shows and, more importantly, what an alert rule evaluates, which means alerts can be held quiet while the condition they watch for is true.
+
+        An internal network is not an exemption here. Traffic between a Grafana pod and a data source crosses shared infrastructure that other workloads sit on, and one compromised neighbor is enough to be on that path.
       audit: |
         ### Audit via UI
 
@@ -800,18 +805,19 @@ queries:
     mql: grafana.notificationPolicy.receiver != ""
     docs:
       desc: |
-        This check ensures that the Grafana notification policy tree is configured with a default receiver. Without a default receiver, alerts that match no specific routing rule are silently dropped, leaving security events undetected.
+        This check verifies that Grafana's alert notification tree has a default contact point set.
+
+        The root of the tree, edited under **Alerting > Notification policies**, has a default contact point that receives every alert not matched by a more specific route. Leave it unset and those alerts are evaluated, recorded as firing, and delivered nowhere. This check requires the root policy to name a receiver.
 
         **Why this matters**
 
-        - **Safety net for alerts:** A default receiver guarantees that unmatched alerts still reach at least one notification channel.
-        - **Resilience to misconfiguration:** Incomplete or incorrect routing rules no longer cause alerts to vanish.
-        - **Reliable detection:** Critical security events are surfaced even when specific routes do not apply.
+        The failure is quiet in both directions. The alert rule fires correctly, the state change is visible to anyone who happens to open the alerting page, and no error is raised, so the team's evidence that alerting works comes entirely from the rules that do match a route. A gap in the tree is discovered when someone asks why nobody responded to something.
 
-        **Risk mitigation**
+        Routing gaps appear exactly where the alerts are least expected. Specific routes are written for the systems people already worry about and are matched on labels, so a rule added later by a different team, or one whose labels were renamed during a refactor, falls through all of them. New and unfamiliar alerts are the ones most likely to matter, and they are the ones with no route.
 
-        - **Lost alerts:** Alerts that fail to match a routing rule are still delivered rather than discarded.
-        - **Undetected incidents:** Security events cannot slip past monitoring because of a gap in the routing tree.
+        That has a direct security consequence, because detection content is delivered by the same tree. Alerts on bursts of failed authentication, on a certificate about to expire, on an agent that stopped reporting, and on a data source that went unreachable all travel this path. An attacker does not need to disable anything for those to go unnoticed, because an unset default has already done it.
+
+        Set the root receiver to something a human actually reads, then send a test notification through it, since a contact point that is configured but broken fails just as quietly.
       audit: |
         ### Audit via UI
 
@@ -878,18 +884,19 @@ queries:
     mql: grafana.contactPoints.none(disableResolveMessage == true)
     docs:
       desc: |
-        This check ensures that contact points are configured to keep resolve messages enabled. Resolve messages notify recipients when an alert condition has cleared, which is essential for incident management workflows and for reducing alert fatigue.
+        This check verifies that Grafana contact points still send a notification when an alert stops firing.
+
+        Each contact point under **Alerting > Contact points** has a toggle that suppresses resolved notifications, reported as `disableResolveMessage` by the provisioning API. Turn it on and the destination is told when a condition starts and never told when it ends. This check requires the toggle to be off on every contact point.
 
         **Why this matters**
 
-        - **Incident lifecycle tracking:** Resolve messages automatically signal when an alert condition has cleared.
-        - **Lower responder load:** On-call staff do not have to manually check whether an alert has resolved.
-        - **Downstream automation:** Ticketing systems and chat integrations can close or update incidents when a resolve message arrives.
+        Without the resolved message nothing downstream can close anything. A ticketing system or chat integration fed by Grafana accumulates open incidents that were fixed hours ago, and the queue an on-call engineer scans at handover stops distinguishing what is broken now from what was broken last week. The signal each alert carries decays as the noise around it grows.
 
-        **Risk mitigation**
+        That decay is what makes this a security concern rather than a tidiness one. Responders learn from an unreliable channel that most of what it sends is stale, and the next real alert arrives into that assumption. An intrusion detection alert, a burst of failed sign-ins, or a certificate expiry warning gets the same treatment as the twenty open records nobody has closed.
 
-        - **Slow response:** Responders learn promptly that a condition has cleared instead of investigating an already-resolved alert.
-        - **Stale incidents:** Automated integrations can close incidents accurately, preventing lingering open records that obscure real issues.
+        It also removes the fastest way to tell a fix from a coincidence. Confirming that a condition cleared means going back to the dashboard by hand, and during an incident that is time spent proving the problem is over rather than working on it. Teams under pressure skip the confirmation and move on, which is how a partially fixed condition gets closed.
+
+        The toggle exists for destinations that can only accept an event without a lifecycle, such as a one-way webhook into a system that cannot correlate the two. Turn it off only where the receiving system genuinely cannot use the message.
       audit: |
         ### Audit via UI
 
