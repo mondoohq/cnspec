@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-nextdns-security
     name: Mondoo NextDNS Security
-    version: 1.0.2
+    version: 1.0.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -74,18 +74,19 @@ queries:
       nextdns.profile.security.threatIntelligenceFeeds == true
     docs:
       desc: |
-        This check verifies that NextDNS threat intelligence feeds are enabled on the profile. The feeds block resolution of domains associated with malware, command-and-control infrastructure, and phishing, stopping threats at the DNS layer before a connection is ever made.
+        This check verifies that curated threat intelligence blocking is enabled for the profile.
+
+        NextDNS subscribes to feeds of domains observed hosting malware, phishing kits, and command-and-control infrastructure, and refuses to answer for those names on behalf of any client using the profile. NextDNS calls the toggle **Use Threat Intelligence Feeds** on the Security tab of a profile, and this check requires it to be on.
 
         **Why this matters**
 
-        - **Malware blocking:** Threat intelligence feeds prevent clients from reaching domains known to host or distribute malware.
-        - **Command-and-control disruption:** Blocking known C2 domains severs the channel an infection uses to receive instructions or exfiltrate data.
-        - **Phishing defense:** Resolving fewer malicious domains reduces the chance a user lands on a credential-harvesting page.
+        DNS is the earliest chokepoint in most intrusions. A dropper fetches its second stage by name, a phishing link resolves by name, and an implant finds its operator by name. Refusing the answer stops the connection before a socket is opened, before TLS is negotiated, and before any payload crosses the wire, and it does so with nothing installed on the endpoint.
 
-        **Risk mitigation**
+        With the feeds off, every name a client asks about resolves, and the first opportunity to stop an attack moves downstream to whatever inspects the traffic afterward. For a phone, a printer, a camera, or a contractor's laptop, that is frequently nothing at all.
 
-        - **First line of defense:** DNS-layer blocking stops threats before any TCP/TLS session is established, complementing endpoint and network controls.
-        - **Continuously updated:** The feeds are maintained by NextDNS, so coverage tracks emerging threats without manual list curation.
+        The feeds also work after a host is already compromised. Malware that beacons out to a known operator domain gets a blocked answer instead of an address, so the infection cannot be tasked and cannot exfiltrate over that channel, which buys time to find the device and rebuild it.
+
+        Name-based blocking only reaches devices that keep asking NextDNS. A client pointed at a different resolver, or an application shipping its own DNS-over-HTTPS endpoint, never consults the profile at all, so pair this with enforcement that keeps devices on it.
       audit: |
         To verify that threat intelligence feeds are enabled from the NextDNS dashboard:
 
@@ -145,18 +146,19 @@ queries:
       nextdns.profile.security.dnsRebinding == true
     docs:
       desc: |
-        This check verifies that DNS rebinding protection is enabled on the profile. DNS rebinding protection blocks responses that resolve public hostnames to private or reserved IP ranges, defeating attacks that use a victim's browser to reach internal services.
+        This check verifies that DNS rebinding protection is enabled for the profile.
+
+        Rebinding protection discards answers that map a public hostname to a private or otherwise reserved address such as `10.0.0.0/8`, `192.168.0.0/16`, or `127.0.0.1`. NextDNS calls the toggle **Enable DNS Rebinding Protection** on the Security tab of a profile, and this check requires it to be on.
 
         **Why this matters**
 
-        - **Internal pivot prevention:** DNS rebinding lets a malicious web page bypass the same-origin policy and interact with devices on the local network, such as routers and IoT devices.
-        - **SSRF-style exposure:** Resolving external names to internal addresses can expose services that assume they are only reachable from the LAN.
-        - **Browser-based attacks:** The victim only needs to load a web page; no malware installation is required.
+        A rebinding attack turns a browser into a bridge onto the network it sits in. The victim loads a page served from a hostname the attacker controls, and that hostname is then re-resolved to an internal address. The origin has not changed as far as the browser is concerned, so same-origin policy no longer stands between the attacker's script and the internal service, and the script can both send requests to it and read the responses.
 
-        **Risk mitigation**
+        What that reaches is everything built on the assumption it was unreachable: a router's admin interface, a printer, a home automation hub, an unauthenticated metrics or debug port on a developer's machine, a container runtime API. Those services usually have weak or absent authentication precisely because the network was treated as the boundary.
 
-        - **Address-range filtering:** Blocking answers that point to private ranges removes the core primitive a rebinding attack relies on.
-        - **Defense for unmanaged devices:** DNS-layer protection covers IoT and BYOD devices that cannot run host-based defenses.
+        Nothing has to be installed for this to work. Loading a page is the entire delivery mechanism, which puts the attack within reach of a malicious ad as easily as a phishing link, and covers devices whose owners never open a browser on them at all.
+
+        Filtering the answer protects devices that could never run a defense of their own, but it is not a substitute for authentication on the services themselves. Anything that would be dangerous if reached should demand credentials regardless of who can resolve a name to it.
       audit: |
         To verify that DNS rebinding protection is enabled from the NextDNS dashboard:
 
@@ -216,18 +218,19 @@ queries:
       nextdns.profile.security.aiThreatDetection == true
     docs:
       desc: |
-        This check verifies that AI-driven threat detection is enabled on the profile. This feature uses machine-learning models to identify malicious domains that are not yet present on static threat feeds, catching novel and short-lived threats.
+        This check verifies that heuristic detection of malicious domains is enabled for the profile.
+
+        Alongside the curated feeds, NextDNS scores domains against models trained on the characteristics of attacker infrastructure, including registration age, name structure, hosting neighborhood, and query behavior, so it can refuse a name that no published list carries yet. NextDNS calls the toggle **Enable AI-Driven Threat Detection** on the Security tab of a profile, and this check requires it to be on.
 
         **Why this matters**
 
-        - **Zero-day coverage:** AI detection flags newly observed malicious domains before they appear on curated blocklists.
-        - **Evasion resistance:** Attackers rotate domains rapidly; behavioral detection catches patterns that signature lists miss.
-        - **Layered heuristics:** It complements the static threat feeds rather than replacing them, widening overall coverage.
+        Feed-based blocking is always behind. A domain has to be registered, used, observed, reported, and published before any list carries it, and campaigns are designed around that delay: infrastructure is bought in bulk, burned within days, and rotated. The gap between first use and first listing is exactly when a campaign does its damage.
 
-        **Risk mitigation**
+        Scoring the domain itself narrows that gap. A name registered hours ago, resolving into a block already serving known-bad neighbors, and queried by a handful of clients for the first time looks wrong before anyone has classified it, and it can be refused on that evidence alone.
 
-        - **Faster reaction:** Detecting malicious domains heuristically shortens the window between a threat appearing and being blocked.
-        - **Reduced reliance on lists:** Coverage no longer depends solely on a domain having already been reported.
+        The same signal cuts through domain rotation. An operator who moves to fresh infrastructure after each takedown is moving to domains that all share the properties the model keys on, so replacing the name does not reset the score.
+
+        Heuristics are wrong in both directions, so a legitimate new vendor or a short-lived service can be blocked. Watch for that in the profile's logs and restore individual names through the Allowlist tab rather than turning the detection off.
       audit: |
         To verify that AI-driven threat detection is enabled from the NextDNS dashboard:
 
@@ -287,18 +290,19 @@ queries:
       nextdns.profile.security.cryptojacking == true
     docs:
       desc: |
-        This check verifies that cryptojacking protection is enabled on the profile. Cryptojacking protection blocks domains that serve in-browser and host-based cryptocurrency miners, which consume resources and signal compromise.
+        This check verifies that blocking of cryptocurrency mining infrastructure is enabled for the profile.
+
+        This control refuses to resolve the domains that deliver in-browser miners and the mining pool endpoints that both browser and host miners contact to receive work and submit results. NextDNS calls the toggle **Enable Cryptojacking Protection** on the Security tab of a profile, and this check requires it to be on.
 
         **Why this matters**
 
-        - **Resource abuse:** Unauthorized miners degrade device performance, increase power consumption, and shorten hardware life.
-        - **Compromise indicator:** Cryptojacking scripts often arrive through malicious ads or compromised sites, indicating broader exposure.
-        - **Drive-by execution:** Browser-based miners run without any installation, affecting any user who loads an infected page.
+        A miner that cannot reach a pool earns nothing. Mining is one of the few payloads whose entire value depends on sustained contact with specific outside infrastructure, so refusing to resolve the pool drives the attacker's revenue to zero even when the code is already running on the host.
 
-        **Risk mitigation**
+        The theft is metered while it lasts. Unauthorized mining pins cores at full load, raises power draw, throttles everything else on the machine, and shortens the life of the hardware; in a cloud account it converts directly into a bill that grows with the intrusion. On laptops and phones it usually shows up as battery life and fan noise long before anyone thinks to look for a cause.
 
-        - **Source blocking:** Preventing resolution of known mining-pool and miner-delivery domains stops the activity at the DNS layer.
-        - **Fleet-wide coverage:** DNS-level blocking protects every device using the profile, including those without endpoint agents.
+        What matters more is what a miner implies. Browser miners arrive through malvertising and compromised sites; host miners arrive through the same paths that deliver anything else, including exposed services, unpatched software, and stolen credentials. Finding one means something got in, and mining is the most benign thing that access could have been used for.
+
+        Blocking pool domains is not containment. A host seen reaching for mining infrastructure should be investigated as compromised, not considered handled because the lookup failed.
       audit: |
         To verify that cryptojacking protection is enabled from the NextDNS dashboard:
 
@@ -358,18 +362,19 @@ queries:
       nextdns.profile.security.dga == true
     docs:
       desc: |
-        This check verifies that domain generation algorithm (DGA) protection is enabled on the profile. DGA protection detects and blocks the algorithmically generated domains that malware uses to locate its command-and-control servers.
+        This check verifies that detection of algorithmically generated command-and-control domains is enabled for the profile.
+
+        Many malware families carry no fixed address for their operator. They derive a fresh batch of domain names from a seed such as the current date, try them in turn, and the operator only has to register one of that batch to be found. NextDNS identifies these names from their structure rather than from list membership. NextDNS calls the toggle **Enable DGA Protection** on the Security tab of a profile, and this check requires it to be on.
 
         **Why this matters**
 
-        - **C2 resilience defeat:** Malware families generate thousands of pseudo-random domains so defenders cannot pre-block them all; DGA detection identifies the pattern itself.
-        - **Infection containment:** Blocking DGA lookups prevents an already-infected host from reaching its operator.
-        - **Early signal:** Frequent DGA-style lookups are a strong indicator of an active infection on the network.
+        The technique exists to make blocklists useless. A family generating a thousand candidates a day produces far more names than any defender can pre-register or pre-block, and seizing the one currently in use costs the operator a few dollars and a day's delay before the next one takes over.
 
-        **Risk mitigation**
+        Recognizing the pattern inverts the economics. Algorithmically generated names do not look like names people choose, and blocking on that character catches the whole batch at once, including the candidates nobody has ever observed.
 
-        - **Pattern-based blocking:** Detecting the generation pattern blocks the whole family of rotating domains rather than chasing individual entries.
-        - **Breaks the kill chain:** Severing the C2 channel limits an attacker's ability to escalate or exfiltrate.
+        The lookups are also evidence in their own right. Ordinary hosts do not ask for hundreds of nonexistent random-looking domains in a row, so a client producing that pattern in the profile's logs has almost certainly executed malware, and the log entry names the device.
+
+        This works on the query, so it does nothing for malware that carries a hardcoded address or resolves through its own encrypted endpoint. Treat a blocked lookup of this kind as the start of an investigation into the endpoint, not as the end of the incident.
       audit: |
         To verify that DGA protection is enabled from the NextDNS dashboard:
 
@@ -429,18 +434,19 @@ queries:
       nextdns.profile.security.idnHomographs == true
     docs:
       desc: |
-        This check verifies that internationalized domain name (IDN) homograph protection is enabled on the profile. Homograph protection blocks domains that use look-alike Unicode characters to impersonate legitimate brands and sites.
+        This check verifies that blocking of look-alike internationalized domain names is enabled for the profile.
+
+        Domain names may be registered using characters from non-Latin scripts, and many of those characters are drawn identically to Latin ones. A Cyrillic `а` and a Latin `a` are different characters that render the same, so `аpple.com` and `apple.com` are two different domains that look like one. NextDNS calls the toggle **Enable Homograph Attacks Protection** on the Security tab of a profile, and this check requires it to be on.
 
         **Why this matters**
 
-        - **Visual spoofing:** Characters from non-Latin scripts can render identically to Latin letters, so `аpple.com` (Cyrillic "а") looks like `apple.com`.
-        - **Phishing enabler:** Homograph domains are used to host convincing phishing pages that pass a casual visual inspection.
-        - **Hard to spot:** Even attentive users cannot reliably distinguish look-alike characters in a browser address bar.
+        This defeats the advice every user has been given. "Check the address bar" works against a misspelled domain, a wrong suffix, or an extra word bolted onto a brand. It does nothing when the rendered string is character for character indistinguishable from the real one, which is why look-alike domains are reserved for the pages that have to survive a careful look: banking portals, single sign-on prompts, and password reset flows.
 
-        **Risk mitigation**
+        The rest of the stack cooperates with the attacker here. The look-alike domain is one the attacker genuinely owns, so it gets a valid certificate, a padlock, and no browser warning of any kind. Nothing visible to the user separates it from the site being impersonated, and a stolen password is entered with full confidence.
 
-        - **Look-alike blocking:** Preventing resolution of homograph domains stops a common impersonation technique at the DNS layer.
-        - **Brand protection:** Users are shielded from spoofed versions of the sites and services they trust.
+        Resolution is where the two are still distinguishable, because the resolver compares the encoded form of the name rather than its rendering. Refusing the answer removes the page before anything is displayed to judge.
+
+        Browsers apply rules of their own and will sometimes show the encoded form instead, but those rules differ by browser and version, and a user who followed a link from a mail client or a chat app may never see an address bar at all. Do not rely on the client to catch this.
       audit: |
         To verify that IDN homograph protection is enabled from the NextDNS dashboard:
 
@@ -500,18 +506,19 @@ queries:
       nextdns.profile.security.typosquatting == true
     docs:
       desc: |
-        This check verifies that typosquatting protection is enabled on the profile. Typosquatting protection blocks domains that rely on common misspellings of popular names to catch users who mistype an address.
+        This check verifies that blocking of misspelled look-alike domains is enabled for the profile.
+
+        Typosquatting registrations are the near misses of names people type often: a dropped letter, a doubled letter, two letters transposed, or a neighboring key struck by accident. NextDNS calls the toggle **Enable Typosquatting Protection** on the Security tab of a profile, and this check requires it to be on.
 
         **Why this matters**
 
-        - **Typo interception:** Attackers register misspelled variants (such as `gogle.com`) to capture traffic intended for the real site.
-        - **Malware and phishing delivery:** Typosquatted domains commonly host phishing pages, scams, or drive-by malware.
-        - **Credential theft:** Users who do not notice the typo may enter credentials on the impostor site.
+        The traffic arrives without being sent. An attacker who registers a plausible misspelling of a service your organization uses every day does not need to phish anyone; a steady share of the people who mistype the real name land on the impostor already intending to sign in, and a copy of the expected login page collects their credentials with no pretext required.
 
-        **Risk mitigation**
+        Mail is the other half of the same registration. A near-miss domain that also accepts mail harvests the messages people fumble the address on, which in a company means invoices, contracts, and password resets delivered to a stranger's mailbox. It also gives the attacker a sending domain that survives a glance at the From header.
 
-        - **Misspelling blocking:** Preventing resolution of known typosquat domains removes the payoff for registering them.
-        - **Low-friction protection:** Users are protected from their own typos without changing how they browse.
+        Machines mistype too. Build systems, installers, and scripts fetch by name, and a typo in a hostname inside a configuration file sends the request, sometimes with a token attached, to whoever registered the near miss.
+
+        Public lists cover well-known brands, so the near misses of your own domains will not be on them. Register or monitor the obvious variants of the names your organization depends on, and add any that are already in someone else's hands to the profile's Denylist tab.
       audit: |
         To verify that typosquatting protection is enabled from the NextDNS dashboard:
 
@@ -571,18 +578,19 @@ queries:
       nextdns.profile.security.nrd == true
     docs:
       desc: |
-        This check verifies that newly registered domain (NRD) blocking is enabled on the profile. NRD blocking prevents resolution of domains registered within the last 30 days, a window in which a disproportionate share of malicious domains are active.
+        This check verifies that blocking of newly registered domains is enabled for the profile.
+
+        This control refuses to resolve any domain registered within a recent window, currently the last 30 days, whether or not anything specific is known about it. NextDNS calls the toggle **Block Newly Registered Domains** on the Security tab of a profile, and this check requires it to be on.
 
         **Why this matters**
 
-        - **Attacker infrastructure:** Phishing and malware campaigns frequently use freshly registered domains that have no reputation history yet.
-        - **Reputation gap:** Newly registered domains have not been observed long enough to appear on most threat feeds.
-        - **Short-lived campaigns:** Many malicious domains are used and abandoned within days of registration.
+        Attack infrastructure is disproportionately new. Domains for a phishing wave or a malware campaign are registered shortly before use because they are expected to be burned, and the typical malicious domain does its work within days of registration and is abandoned or seized soon afterward. Age is therefore a usable signal that requires no knowledge of the campaign behind it.
 
-        **Risk mitigation**
+        It also covers the interval that nothing else can. Feeds and reputation systems need a domain to be seen and reported before they can classify it, and for the first hours or days a malicious domain is not clean, it is simply unclassified. Blocking on age treats "nothing is known about this yet" as grounds to refuse rather than grounds to allow.
 
-        - **Age-based filtering:** Blocking very new domains pre-empts threats before any feed has had time to classify them.
-        - **Broad coverage:** The control catches malicious domains regardless of the specific campaign or family behind them.
+        The effect compounds against bulk registration. An operator who buys hundreds of domains ahead of a campaign is buying hundreds of domains that this control blocks on sight, so the usual answer of rotating to a fresh name does not help.
+
+        This is the bluntest control on the profile and it will block legitimate things: a new vendor, a product launch, a marketing site, a link shortener a partner stood up last week. That cost is real, so plan for the requests and clear them by adding the specific name to the profile's Allowlist tab rather than by turning the control off.
       audit: |
         To verify that newly registered domain blocking is enabled from the NextDNS dashboard:
 
@@ -642,18 +650,19 @@ queries:
       nextdns.profile.security.csam == true
     docs:
       desc: |
-        This check verifies that child sexual abuse material (CSAM) blocking is enabled on the profile. This feature blocks domains identified as hosting or distributing CSAM, drawing on lists maintained by recognized protection organizations.
+        This check verifies that blocking of child sexual abuse material is enabled for the profile.
+
+        This control refuses to resolve domains that appear on lists maintained by recognized child protection organizations, so no client on the profile can reach them. NextDNS calls the toggle **Block Child Sexual Abuse Material** on the Security tab of a profile, and this check requires it to be on.
 
         **Why this matters**
 
-        - **Legal exposure:** Inadvertent access to CSAM creates serious legal and reputational risk for an organization.
-        - **Duty of care:** Blocking this content supports an organization's obligation to provide a safe environment for its users.
-        - **Authoritative sourcing:** The blocklists are curated by dedicated child-protection bodies rather than general threat feeds.
+        Reaching this material from a network you operate is a legal exposure rather than a matter of policy preference. In many jurisdictions possession carries strict liability, and a copy can be written to a device's cache by a page load nobody sought out. Refusing the answer prevents the fetch that creates the copy.
 
-        **Risk mitigation**
+        Deliberate access is not the only route to it. Links surface in spam, on compromised sites, and at the end of redirect chains from parked and malvertising domains, and a click does not imply intent.
 
-        - **Content blocking:** Preventing resolution of flagged domains removes a path to this material at the DNS layer.
-        - **Network-wide enforcement:** Every device using the profile is covered, including unmanaged and guest devices.
+        There is an obligation side as well. For a network serving employees, students, guests, or family members, an operator who was offered a blocklist maintained specifically for this material and left it switched off is in a poor position to explain that decision afterward.
+
+        Blocking removes access; it does not produce a record or a report. If the profile's logs show a client repeatedly reaching for domains blocked by this control, route it through legal counsel and the appropriate national reporting body rather than treating it as an ordinary security ticket.
       audit: |
         To verify that CSAM blocking is enabled from the NextDNS dashboard:
 
@@ -713,18 +722,19 @@ queries:
       nextdns.profile.security.parking == true
     docs:
       desc: |
-        This check verifies that parked domain blocking is enabled on the profile. Parked domains host no real content and typically serve ad-laden landing pages that are frequently abused to deliver scams and malicious redirects.
+        This check verifies that blocking of parked and monetized placeholder domains is enabled for the profile.
+
+        A parked domain runs no service. It is a registration pointed at a monetization platform that answers with a page of advertising and onward redirects, and nothing else. NextDNS calls the toggle **Block Parked Domains** on the Security tab of a profile, and this check requires it to be on.
 
         **Why this matters**
 
-        - **Malvertising surface:** Parking pages are saturated with low-quality ad networks that are a common malware and scam delivery vector.
-        - **Expired-domain risk:** Lapsed domains are often re-registered and parked by opportunistic actors who later weaponize them.
-        - **No legitimate value:** Parked domains provide no useful content, so blocking them rarely affects normal use.
+        Parking pages are advertising with nothing behind them, sold through the least selective networks on the web. That makes them a dependable delivery point for the ad-served half of an attack: fake update prompts, browser lockers, tech support scams, and redirect chains into exploit and fraud infrastructure.
 
-        **Risk mitigation**
+        How users get there sharpens the problem. People reach parked domains by mistyping, by following a link whose target expired, or by clicking a bookmark nobody has touched in years, so the arrival already feels like something went slightly wrong. That is exactly the frame the scam page is written to exploit, and the user is primed to accept an explanation for it.
 
-        - **Landing-page blocking:** Preventing resolution of parked domains removes exposure to the ad and redirect chains they host.
-        - **Reduced noise:** Blocking parked pages also cuts unwanted advertising and tracking.
+        Expired domains are the other route in. A domain that once belonged to a vendor, a project, or an internal tool lapses and is picked up by a squatter, and every request still pointed at it, including from scripts and configuration nobody updated, now arrives at a stranger's page.
+
+        Almost nothing legitimate lives on a parked domain, so the false-positive cost here is low, though a domain your organization has just bought and not yet pointed anywhere can be classified this way. When that happens, finish pointing it at real infrastructure instead of adding it to the profile's Allowlist tab.
       audit: |
         To verify that parked domain blocking is enabled from the NextDNS dashboard:
 
@@ -787,18 +797,19 @@ queries:
       nextdns.profile.settings.logsEnabled == true
     docs:
       desc: |
-        This check verifies that query logging is enabled on the profile. Logs provide the DNS query visibility needed to investigate incidents, confirm that blocks are working, and detect anomalous resolution behavior. Configure retention and IP/domain redaction to meet your privacy obligations.
+        This check verifies that query logging is enabled for the profile.
+
+        With logging on, NextDNS records the names clients ask for, which device asked, and whether the answer was blocked and by which control. NextDNS calls the toggle **Logs** on the Settings tab of a profile, alongside the retention period and the storage region, and this check requires logging to be on.
 
         **Why this matters**
 
-        - **Incident investigation:** DNS logs show which domains a device contacted, which is often the first evidence of compromise.
-        - **Detection:** Patterns such as repeated C2-style or DGA lookups are only visible when queries are logged.
-        - **Validation:** Logs confirm that security and content blocks are actually taking effect for clients.
+        Without logs, the resolver blocks and reports nothing. Nobody can say which device reached for a command-and-control domain, when it started, whether it stopped, or whether a control that was switched on is taking effect for the clients that matter. Every other setting on the profile becomes an assertion no one can check.
 
-        **Risk mitigation**
+        DNS history is usually the fastest evidence available in an intrusion. It names the device and the minute, it lives on the resolver so it survives the endpoint being wiped or the disk being encrypted, and it exists for devices that could never have carried an agent. When an indicator is published weeks later, the logs are what answer whether anyone on the network ever contacted it.
 
-        - **Forensic readiness:** Retained query history shortens investigation time and supports root-cause analysis.
-        - **Tunable privacy:** NextDNS lets you set retention and drop client IPs or domains so visibility can be balanced against data-minimization requirements.
+        The cost of holding them is genuine and worth stating plainly. A DNS log is a record of what people looked at, and it is among the most sensitive telemetry an organization can hold. It exposes health, finances, politics, job hunting, and religion, for staff and for anyone else sharing the network, at a resolution no business process requires.
+
+        Treat retention as the real control rather than the toggle. NextDNS lets you choose how long logs are kept and which region stores them, and the Settings tab can also drop client IP addresses or the queried domains from what is written. Pick the shortest retention and the least detail that still answers your investigation questions, tell the people on the network that their queries are recorded, and confirm the legal basis first where DNS logging is regulated locally.
       audit: |
         To verify that query logging is enabled from the NextDNS dashboard:
 
