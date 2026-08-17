@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-junos-security
     name: Mondoo Juniper Junos Security
-    version: 1.1.3
+    version: 1.1.4
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -120,18 +120,19 @@ queries:
       junos.sshConfig.rootLogin == "deny" || junos.sshConfig.rootLogin == "deny-password"
     docs:
       desc: |
-        This check verifies that root login via SSH is denied on the Junos device. Denying root login ensures that administrators authenticate with individual accounts and only escalate privileges when needed.
+        This check verifies that direct root login over SSH is denied, so administrators authenticate as themselves before escalating.
+
+        Junos exposes the `root` account to SSH according to the `root-login` statement under `set system services ssh`. The permitted values are `allow`, `deny`, and `deny-password`, and this check requires `deny` or `deny-password`, the second of which still accepts a root SSH key while refusing a root password.
 
         **Why this matters**
 
-        The root account has unrestricted access to the entire device. If direct root login via SSH is permitted:
+        `root` is the one username an attacker knows exists on every Junos device in the world. Leaving it reachable over SSH turns credential guessing into a single-variable problem, because the attacker only has to find the password, and every scanner and password-spraying tool already targets that account by default. A successful guess yields the whole routing engine, not a limited shell.
 
-        - Attackers can target the root account directly with brute-force attacks, since it is a well-known username on every device.
-        - Successful logins cannot be attributed to individual administrators, undermining audit trails and accountability.
-        - All role-based access controls are bypassed, granting full device control without any privilege separation.
-        - The principle of least privilege is violated, increasing the blast radius of a compromised credential.
+        Root logins also destroy attribution. The device records the session as `root` no matter who opened it, so the syslog record cannot separate an on-call engineer from an intruder, and it cannot separate one engineer from another. When the configuration changes at 03:00 and the audit trail says only `root`, the investigation starts with no lead at all. Named accounts in the `super-user` class preserve who did what, and each commit records the author of the configuration it applied.
 
-        By denying root login, organizations enforce individual accountability and reduce the risk of unauthorized privileged access to the device.
+        Because the device forwards production traffic, a root compromise is not confined to the box. The attacker can install a firewall filter that mirrors flows to a port they control, change routing policy to pull traffic through a path they observe, or blackhole a prefix and take a site offline. Junos also keeps numbered rollback configurations that an attacker with root can load, so recovery is not guaranteed to be simple.
+
+        Deny root login only after confirming that a named `super-user` account works over SSH, and apply the change with `commit confirmed` so the device restores the previous configuration automatically if the new one locks you out. Root access over the console stays available and should be kept as the recovery path.
       audit: |
         To verify the root login setting from the Junos CLI:
 
@@ -199,18 +200,19 @@ queries:
       junos.sshConfig.ciphers.containsNone(["arcfour", "arcfour128", "arcfour256", "3des-cbc", "blowfish-cbc", "cast128-cbc"])
     docs:
       desc: |
-        This check verifies that no weak or deprecated SSH ciphers are configured on the Junos device. Using only strong ciphers protects the confidentiality of SSH sessions against cryptographic attacks.
+        This check verifies that the SSH service offers only strong symmetric ciphers for management sessions.
+
+        Ciphers encrypt everything that travels inside an SSH session to the routing engine, including the password typed at login and the full configuration printed by `show configuration`. Junos lets an operator pin the accepted list with `set system services ssh ciphers`, and this check fails when that list contains `arcfour`, `arcfour128`, `arcfour256`, `3des-cbc`, `blowfish-cbc`, or `cast128-cbc`.
 
         **Why this matters**
 
-        SSH ciphers protect the confidentiality of management sessions to the device. If weak ciphers are configured:
+        Each of those ciphers is broken in a way an attacker on the traffic path can use. RC4, which Junos calls `arcfour`, leaks keystream bias in its early output, so an observer who captures enough sessions recovers plaintext without ever touching the key. Sweet32 exploits the 64-bit block size shared by `3des-cbc`, `blowfish-cbc`, and `cast128-cbc`: after roughly 32 GB inside a single session the birthday bound produces repeated blocks, and management sessions to a router are exactly the kind that stay open for hours.
 
-        - RC4 (arcfour) ciphers have known keystream biases that make them cryptographically weak and susceptible to plaintext recovery.
-        - 3DES has a limited 64-bit block size that is vulnerable to Sweet32 birthday attacks, allowing data recovery from long-lived sessions.
-        - Blowfish and CAST128 share similar 64-bit block size weaknesses that expose them to the same class of attacks.
-        - Modern security standards and compliance frameworks require AES-128 or stronger encryption for management traffic.
+        What leaks is not incidental traffic. The recovered plaintext is a management session, which means the login credential, the running configuration with its community strings and shared secrets, and the commands used to change them. An attacker who reads one such session no longer needs to attack the device, because they can log in the way the operator did.
 
-        By restricting SSH to strong ciphers, organizations ensure that management sessions remain confidential and resistant to known cryptographic attacks.
+        Cipher lists are negotiated, so a weak entry does not have to be preferred to be dangerous. An attacker able to force a downgrade strips the strong offers and the session settles on whatever weak option remains configured. Deleting the entry is what removes the exposure.
+
+        Pin the list explicitly instead of relying on the default, because the default set travels with the Junos release and these devices go years between upgrades. Confirm that management stations and automation tooling support the remaining ciphers before you commit, since a client with no overlapping cipher cannot open a session at all.
       audit: |
         To verify the configured SSH ciphers from the Junos CLI:
 
@@ -273,18 +275,19 @@ queries:
       junos.sshConfig.macs.containsNone(["hmac-md5", "hmac-md5-96", "hmac-sha1-96", "hmac-md5-etm@openssh.com", "hmac-md5-96-etm@openssh.com"])
     docs:
       desc: |
-        This check verifies that no weak SSH message authentication codes (MACs) are configured. Strong MACs ensure that SSH session data has not been modified in transit.
+        This check verifies that SSH uses only strong message authentication codes to protect session integrity.
+
+        The MAC algorithm proves that each SSH packet arrived exactly as it was sent. Junos accepts an explicit list under `set system services ssh macs`, and this check fails when that list contains `hmac-md5`, `hmac-md5-96`, `hmac-sha1-96`, `hmac-md5-etm@openssh.com`, or `hmac-md5-96-etm@openssh.com`.
 
         **Why this matters**
 
-        MACs protect the integrity of data exchanged during SSH sessions. If weak MACs are allowed:
+        Encryption without integrity buys less than it appears to. The cipher hides the bytes, and the MAC is the only thing that tells the routing engine those bytes were not altered in flight. When the MAC is weak, an attacker positioned on the management path can attempt to forge or modify packets that the device will then accept as legitimate operator input.
 
-        - MD5-based MACs rely on a cryptographically broken hash function that is vulnerable to collision attacks, allowing potential session tampering.
-        - Truncated 96-bit MAC variants provide reduced security compared to their full-length counterparts, making forgery more feasible.
-        - Compromised integrity checks could allow attackers to modify commands or data within an SSH session without detection.
-        - NIST and industry standards require SHA-256 or stronger algorithms for integrity verification.
+        The two families fail differently. MD5 has practical collision attacks and has been unfit for authentication use for well over a decade. The 96-bit truncations discard a third of the tag, which cuts the work of a forgery attempt by orders of magnitude against the full-length variant, and `hmac-sha1-96` inherits the weakening of SHA-1 on top of the truncation.
 
-        By configuring only strong MACs, organizations protect the integrity of management sessions and meet compliance requirements for cryptographic controls.
+        A forged packet on a router session is not a corrupted file, it is a command. Injected text that lands in configuration mode adds a user, rewrites a firewall filter, or removes a screen profile, and the resulting change is committed under the operator's identity and appears in the audit trail as their work.
+
+        Restrict the list to the SHA-2 family, and verify that jump hosts, backup tools, and NETCONF clients negotiate one of the remaining algorithms before committing, because an unsupported list leaves those clients unable to connect.
       audit: |
         To verify the configured SSH MACs from the Junos CLI:
 
@@ -346,18 +349,19 @@ queries:
       junos.sshConfig.keyExchanges.containsNone(["dh-group1-sha1", "group-exchange-sha1", "diffie-hellman-group1-sha1", "diffie-hellman-group-exchange-sha1"])
     docs:
       desc: |
-        This check verifies that weak SSH key exchange algorithms are not configured. Strong key exchange algorithms ensure that session keys are securely negotiated and that past sessions remain protected.
+        This check verifies that SSH negotiates session keys using only strong key exchange algorithms.
+
+        Key exchange establishes the shared secret that protects everything else in the session, before any credential is sent. Junos takes an explicit list at `set system services ssh key-exchange`, and this check fails when `dh-group1-sha1`, `group-exchange-sha1`, `diffie-hellman-group1-sha1`, or `diffie-hellman-group-exchange-sha1` appears in it.
 
         **Why this matters**
 
-        Key exchange algorithms establish the shared secret used to encrypt SSH sessions. If weak algorithms are permitted:
+        The group behind `dh-group1-sha1` is a fixed 1024-bit Diffie-Hellman group, and it is the same group on every device that supports it. Logjam showed that a one-time precomputation against such a group makes each individual session cheap to break afterward, which is exactly the economics a well-resourced attacker wants against a whole fleet of routers. The SHA-1 variants compound this by binding the exchange to a hash with demonstrated collision attacks.
 
-        - DH Group 1 uses only 768-bit parameters, which are far too small for modern security and can be broken with current computing resources.
-        - SHA-1 based exchanges rely on a hash function with known collision vulnerabilities, weakening the key exchange process.
-        - Small Diffie-Hellman groups are vulnerable to Logjam precomputation attacks that can compromise session keys.
-        - Without strong key exchange, forward secrecy is undermined, meaning past sessions could be decrypted if long-term keys are later compromised.
+        Breaking the exchange breaks the session retroactively. An attacker who has been recording encrypted management traffic passively, which is straightforward at an upstream provider or on a shared management VLAN, can decrypt those captures later and read the credentials and configuration they carried. Forward secrecy is the property that makes passive capture worthless, and a weak group is what removes it.
 
-        By restricting key exchange to strong algorithms, organizations ensure secure session negotiation and maintain forward secrecy for all management connections.
+        One weak entry is enough, because the algorithm is negotiated. Listing strong exchanges as well does not help if a downgrading attacker can push the session onto `dh-group1-sha1`, so the fix is deleting the entry rather than reordering the list.
+
+        Move to the curve25519 and ECDH groups, and check that older management tooling still connects before the change is committed permanently. Staging it with `commit confirmed` gives an automatic return to the working configuration if the untested client turns out to be the one that pages you.
       audit: |
         To verify the configured SSH key exchange algorithms from the Junos CLI:
 
@@ -420,17 +424,19 @@ queries:
       junos.sshConfig.tcpForwarding == false
     docs:
       desc: |
-        This check verifies that SSH TCP forwarding (port forwarding) is disabled on the Junos device. Disabling TCP forwarding prevents the SSH service from being used as a proxy to tunnel unauthorized traffic through the device.
+        This check verifies that SSH port forwarding is disabled so the device cannot be used as a tunnel into the network.
+
+        An SSH client with forwarding available can ask the server to open arbitrary TCP connections on its behalf and relay them back through the encrypted session. Junos turns this off with `set system services ssh no-tcp-forwarding`, and the check fails when that statement is absent, which is the default state.
 
         **Why this matters**
 
-        SSH TCP forwarding allows users to create encrypted tunnels through the device. If this feature is enabled:
+        A router or firewall sits by design at a boundary, with interfaces in networks that are not supposed to reach each other. SSH forwarding hands any account that can log in a general-purpose proxy across that boundary. An attacker with one valid credential opens a local forward and reaches the management network, the out-of-band segment, or the inside of the zone the firewall exists to separate, and none of that traffic touches a security policy, because the routing engine itself originates it.
 
-        - Users can tunnel arbitrary traffic through the device, effectively bypassing firewall rules and security policies.
-        - Attackers can use the encrypted tunnels to exfiltrate sensitive data without detection by network monitoring tools.
-        - Compromised accounts can be leveraged to pivot through the network device and reach otherwise isolated network segments.
+        The traffic is also invisible to the controls built to see it. To every sensor between the attacker and the device there is one SSH session to a router, which is the most ordinary thing on a management network. Whatever rides inside it, a database dump on its way out or an interactive shell on its way in, looks identical to an operator at work.
 
-        By disabling TCP forwarding, organizations prevent the SSH service from being misused as a network proxy and maintain the integrity of their firewall and segmentation controls.
+        Forwarding also converts a low-value credential into a high-value one. A read-only account that can log in but change nothing is normally a minor finding, and with forwarding it becomes a persistent foothold on both sides of the boundary.
+
+        Disable forwarding unless a documented workflow depends on it. Where an operational tool genuinely needs a tunnel, run it through a dedicated jump host rather than through the network device, and note that the setting applies to new sessions, so any forwarded session already established survives the commit until it is cleared.
       audit: |
         To verify the SSH TCP forwarding setting from the Junos CLI:
 
@@ -488,17 +494,19 @@ queries:
       junos.sshConfig.connectionLimit > 0
     docs:
       desc: |
-        This check verifies that a limit is configured for unauthenticated SSH connections, mitigating brute-force and denial-of-service attacks against the SSH service.
+        This check verifies that the number of simultaneous SSH connections the device accepts is capped.
+
+        `set system services ssh connection-limit` bounds how many SSH sessions the routing engine will hold at one time, counting the sessions that have not finished authenticating. The check requires a configured value greater than zero rather than a limit left at the platform default.
 
         **Why this matters**
 
-        The SSH connection limit controls how many unauthenticated sessions can be pending at once. Without a connection limit configured:
+        Every pending SSH connection costs the routing engine memory and a process slot before anyone has proven who they are. Without an explicit cap, an attacker who can reach the management address opens thousands of them from a script, and the cost of doing so is trivial next to the cost of servicing them. The routing engine is a modest processor, and it is also the processor running the routing protocols.
 
-        - Attackers can open a large number of concurrent unauthenticated sessions, enabling rapid brute-force credential guessing.
-        - Connection floods can exhaust device resources such as memory and CPU, degrading overall device performance.
-        - Legitimate administrators may be unable to connect to the device during an active attack due to resource exhaustion.
+        That last point is what separates this from the same problem on a server. When the routing engine saturates, management is not the only casualty. BGP and OSPF hellos are handled by the same engine, and adjacencies that time out withdraw routes and reconverge the network around a device that is physically fine. A management-plane flood becomes a forwarding-plane outage.
 
-        By setting a connection limit, organizations ensure that the SSH service remains available to authorized users even during brute-force or denial-of-service attempts.
+        The cap also blunts parallel credential guessing. An attacker who can only hold a handful of pending sessions has to guess serially instead of in bulk, which stretches the attack from minutes into a window long enough for the authentication failures to be noticed in syslog.
+
+        Set the limit high enough for the real operator population plus the automation that polls the device, and pair it with a loopback firewall filter that admits only the management prefixes, which is the control that stops a flood from reaching the routing engine at all.
       audit: |
         To verify the SSH connection limit from the Junos CLI:
 
@@ -550,17 +558,19 @@ queries:
       junos.sshConfig.rateLimit > 0
     docs:
       desc: |
-        This check verifies that a rate limit is configured for SSH authentication attempts, slowing down automated credential guessing attacks.
+        This check verifies that the rate of new SSH connection attempts is throttled.
+
+        `set system services ssh rate-limit` caps how many SSH connection attempts the device will accept per minute. The check requires a configured value greater than zero, so that attempt volume is bounded rather than left at the default.
 
         **Why this matters**
 
-        The SSH rate limit controls how many authentication attempts are allowed per connection per minute. Without a rate limit:
+        Password guessing against a network device is cheap and quiet when nothing slows it down. A script that manages several hundred logins a minute works through a common-password list in an afternoon, and the accounts on a router are frequently shared, rarely rotated, and often identical across a fleet of devices built from the same template.
 
-        - Automated credential guessing tools can attempt thousands of password combinations in a short time.
-        - The SSH service may become degraded under sustained brute-force attacks, affecting availability for legitimate users.
-        - Attackers face no throttling penalty, making brute-force attacks significantly more likely to succeed.
+        Throttling changes that arithmetic directly. Cutting attempts to a handful per minute turns hours of guessing into years, and it produces something more useful than delay: a steady, low-volume stream of authentication failures in syslog that stands out instead of drowning in noise. An unthrottled service generates the same failures at a rate nobody reads.
 
-        By configuring a rate limit, organizations slow down automated attacks and reduce the likelihood of successful credential compromise while keeping the SSH service responsive for authorized administrators.
+        The throttle also protects availability. Connection attempts arriving faster than the routing engine can dispose of them compete with the protocol traffic that keeps the device in the network, so the limit doubles as a guard on the control plane.
+
+        Choose a value that tolerates legitimate bursts, since monitoring systems and configuration management runs often open several sessions at once after a restart, and enforce the same boundary at the network edge with a loopback filter that permits only known management sources.
       audit: |
         To verify the SSH rate limit from the Junos CLI:
 
@@ -615,17 +625,19 @@ queries:
       junos.users.all(hasPassword == true || sshKeys.length > 0)
     docs:
       desc: |
-        This check verifies that every local user account has either a password or SSH keys configured for authentication. Accounts without credentials represent a serious security gap that can be exploited for unauthorized access.
+        This check verifies that every local login account has an authentication credential.
+
+        A Junos user is defined at `set system login user <name>`, and the account can exist with a class and permissions but no `authentication` statement at all. This check requires each account to carry either an encrypted password or at least one SSH public key.
 
         **Why this matters**
 
-        Local user accounts are a primary means of authenticating to the device. If any account lacks authentication credentials:
+        An account without an authentication statement is not a locked account, it is an account with nothing to check. Paired with a service that accepts the username, it is an open door with a name written on it, and the name is usually guessable because these accounts are created for a stated purpose: `backup`, `monitor`, `netops`, `tacacs-fallback`.
 
-        - The account can be accessed without providing any form of authentication, allowing anyone with network access to log in.
-        - All security frameworks and compliance standards require proper authentication for every account on network infrastructure.
-        - Credentialless accounts are trivial targets that require no effort for an attacker to exploit.
+        Accounts end up in this state for predictable reasons and then persist. A user is created during a maintenance window with the intention of adding a key afterward, an account is cut over to TACACS+ and the local authentication is deleted instead of the account, or a template defines classes for staff who were never provisioned. Because network devices are configured once and left for years, the account outlives everyone who remembers why it exists.
 
-        By ensuring every account has credentials, organizations close a fundamental authentication gap and prevent unauthorized access through unprotected accounts.
+        The account still carries real privilege. Junos evaluates the login class regardless of how weak the authentication was, so an unprotected account in the `super-user` class grants the full routing engine, and even an operator-class account can clear sessions, restart processes, and read the running configuration with its community strings and shared secrets.
+
+        Either give the account a credential or delete it. Local accounts still need credentials on devices that authenticate through TACACS+ or RADIUS, because they are the fallback the device uses when the authentication servers are unreachable, which is precisely the moment during an outage when someone will need them.
       audit: |
         To verify that every local user has authentication credentials from the Junos CLI:
 
@@ -701,17 +713,19 @@ queries:
       junos.users.where(class == "super-user").length <= 3
     docs:
       desc: |
-        This check verifies that no more than three user accounts are assigned the super-user login class. Limiting the number of privileged accounts reduces the attack surface and potential impact of credential compromise.
+        This check verifies that no more than three local accounts hold the `super-user` login class.
+
+        Junos assigns permissions through login classes at `set system login user <name> class`, and `super-user` carries every permission bit the system has, including configuration, secret viewing, maintenance, and shell access. The check counts the accounts in that class and fails above three.
 
         **Why this matters**
 
-        The super-user login class grants unrestricted access to the device. If too many accounts have this privilege level:
+        Every `super-user` account is a complete copy of the device's authority, and an attacker needs only one of them. A phishing message, a password reused from an unrelated breach, or a key left on a decommissioned laptop works against any one account, so the practical chance of compromise grows with the count while the benefit of the extra accounts does not.
 
-        - Each super-user account is a potential target for credential compromise, and more accounts mean a larger attack surface.
-        - Most administrators do not need full super-user access to perform their daily tasks, violating the principle of least privilege.
-        - A compromised super-user account gives an attacker complete control over the device, and limiting these accounts reduces that exposure.
+        Full privilege on a Junos device is full privilege over the traffic it carries. The holder can attach a firewall filter that mirrors flows to an interface of their choosing, change routing policy to pull traffic along a path they observe, or deactivate the screen profiles and log statements that would otherwise record it. They can also delete accounts and load an older rollback configuration to erase the trace of the change.
 
-        By restricting the number of super-user accounts, organizations minimize the risk of privileged credential compromise and enforce least-privilege access across their network infrastructure.
+        Most work does not need that reach. Reading counters, clearing a BGP session, and displaying the configuration all fall inside narrower classes, and Junos builds custom classes from individual permission bits and regular expressions that allow or deny specific commands, so restricting an engineer does not mean blocking their daily work.
+
+        Move routine operators to `operator` or to a purpose-built class, and keep the remaining `super-user` accounts individually named rather than shared, so the syslog and commit records identify a person. A threshold of three is a sensible default rather than a universal rule, and a large operations team under a formal change process may justify a different number.
       audit: |
         To verify how many users hold the super-user login class from the Junos CLI:
 
@@ -784,17 +798,19 @@ queries:
       junos.services.none(name == "telnet")
     docs:
       desc: |
-        This check verifies that the Telnet service is not enabled. Telnet transmits all data including credentials in clear text and should be replaced with SSH for all remote management access.
+        This check verifies that the Telnet service is not enabled on the device.
+
+        Telnet is switched on by the presence of `set system services telnet` and off by deleting that statement. The check fails whenever the statement exists in the configuration, regardless of any firewall filter that happens to be limiting who can reach the port today.
 
         **Why this matters**
 
-        Telnet is an inherently insecure protocol with no encryption or integrity protection. If Telnet is enabled on the device:
+        Telnet has no encryption whatsoever. The password an engineer types to enter configuration mode crosses the network as readable text, and so does everything the session prints back, including the running configuration with its SNMP community strings, RADIUS secrets, and preshared keys. An attacker who can observe traffic anywhere on the path, which on a management VLAN means any compromised host on that VLAN, harvests working credentials by doing nothing but listening.
 
-        - Usernames and passwords are sent in plain text and can be captured by anyone with access to a packet sniffer on the network path.
-        - Active Telnet sessions can be intercepted and hijacked, allowing an attacker to take over an administrative session.
-        - Data transmitted over Telnet has no integrity verification, meaning commands and responses can be silently altered in transit.
+        The session can be taken as well as copied. Telnet carries no integrity protection, so an attacker on the path injects keystrokes into an authenticated session or hijacks it outright, and the commands they insert run with the operator's privileges on a device that is forwarding production traffic.
 
-        By disabling Telnet and using SSH exclusively, organizations protect management credentials and session data from interception and tampering.
+        The exposure lasts as long as the hardware does. Routers and switches stay in service for a decade, and a Telnet statement added during a turn-up because the SSH keys were not ready yet is still there long after everyone involved has moved on.
+
+        Confirm SSH works before deleting the statement, because removing Telnet while SSH is misconfigured leaves only console access. Some laboratory and console-server workflows still speak Telnet toward a terminal server, but that is a different device and is not a reason to keep the service running on the routing engine.
       audit: |
         To verify that the Telnet service is disabled from the Junos CLI:
 
@@ -862,17 +878,19 @@ queries:
       junos.services.none(name == "ftp")
     docs:
       desc: |
-        This check verifies that the FTP service is not enabled. FTP transmits credentials and data in plain text and should be replaced with SCP or SFTP for secure file transfers.
+        This check verifies that the FTP server is not enabled on the device.
+
+        `set system services ftp` starts an FTP daemon on the routing engine that authenticates with the device's own local accounts and serves its file system. The check fails when the statement is present. The secure replacements are SCP and SFTP, which ride the SSH service already running.
 
         **Why this matters**
 
-        FTP is an unencrypted file transfer protocol with well-known security weaknesses. If FTP is enabled on the device:
+        FTP authenticates in the clear, and the credentials it exposes are the device's login accounts. An attacker who captures one FTP login on a management segment holds a credential that also works over SSH, so a service used a few times a year for image transfers hands over interactive access to the routing engine.
 
-        - Authentication credentials are transmitted in clear text and can be easily intercepted by any observer on the network.
-        - File transfers are completely unencrypted, allowing sensitive configuration data or firmware images to be captured in transit.
-        - FTP server implementations have a long history of exploitable vulnerabilities that can provide an additional attack vector.
+        What moves over FTP makes the capture worse. The files transferred to and from a Junos device are configuration archives and software images. A configuration archive read off the wire contains every secret the device holds, and a software image an attacker can substitute in transit, which unauthenticated FTP permits, becomes control of the device that survives reboots.
 
-        By disabling FTP and using SCP instead, organizations ensure that file transfers to and from the device are encrypted and authenticated.
+        FTP is also an inbound listener with a long vulnerability history and an awkward dual-channel design that forces firewalls to track and open data connections. That is more control-plane attack surface than the handful of transfers it serves is worth.
+
+        Delete the statement and move file transfers to `scp` or `sftp` over the existing SSH service. Repoint any automated archive job or image distribution system before the commit, because a configuration archive that silently stops running is not noticed until the day the archive is needed.
       audit: |
         To verify that the FTP service is disabled from the Junos CLI:
 
@@ -942,17 +960,19 @@ queries:
       junos.services.none(name == "finger")
     docs:
       desc: |
-        This check verifies that the finger service is not enabled. The finger protocol exposes user account information without any authentication, aiding attacker reconnaissance efforts.
+        This check verifies that the finger service is not enabled on the device.
+
+        `set system services finger` starts a daemon that answers questions about the accounts on the routing engine. It requires no authentication by design, and the check fails when the statement is present.
 
         **Why this matters**
 
-        The finger protocol was designed for user information lookup but has no security mechanisms. If the finger service is enabled:
+        Finger gives away the first half of a credential for free. A single unauthenticated query returns valid usernames, and with them the login and idle times that reveal which accounts are actually used and which are dormant service accounts nobody watches. Guessing against a network device is slow work when the attacker has to guess the username too, and finger removes that variable entirely so every attempt lands on an account that exists.
 
-        - It reveals usernames, login times, and idle times to any unauthenticated user who queries the service.
-        - Attackers use finger to enumerate valid user accounts, which are then targeted in brute-force authentication attacks.
-        - The protocol provides no authentication or access controls, meaning anyone with network access can query it.
+        The activity data is separately useful to an attacker. Knowing when the operators are logged in tells them when their own session would be noticed, and knowing that an account has been idle for months tells them which one to use so that nobody recognizes the anomaly.
 
-        By disabling the finger service, organizations eliminate an unnecessary information disclosure vector and reduce the data available for attacker reconnaissance.
+        Nothing depends on the service. Finger is a convenience protocol from the 1970s with no role in modern network operations, and no monitoring or automation platform in current use queries it.
+
+        Delete the statement. No configuration makes the service safe to expose, so restricting it with a firewall filter is a stopgap rather than a fix.
       audit: |
         To verify that the finger service is disabled from the Junos CLI:
 
@@ -1007,17 +1027,19 @@ queries:
       junos.snmpCommunities.none(name.in(["public", "private"]))
     docs:
       desc: |
-        This check verifies that default SNMP community strings ("public" and "private") are not configured. Default community strings are universally known and are the first credentials attackers attempt when probing SNMP services.
+        This check verifies that the well-known default SNMP community strings are not configured.
+
+        A community string set at `set snmp community <name>` is the entire authentication mechanism for SNMPv1 and v2c. This check fails when a community named `public` or `private` exists, because those two names are the vendor defaults every scanner tries first.
 
         **Why this matters**
 
-        SNMP community strings act as passwords for accessing device information. If default strings remain configured:
+        `public` and `private` are not weak passwords, they are published ones. They are built into every SNMP scanning tool, every internet-wide survey, and the default wordlist of every credential-stuffing script, so a device carrying them is compromised by the first automated sweep that reaches it rather than by an attacker who deliberately chose to target it.
 
-        - The strings "public" and "private" are universally known and are included in every automated scanning tool, making the device trivially accessible.
-        - An attacker with read access through SNMP can extract device configuration details, routing tables, interface data, and other sensitive information.
-        - If a default read-write community string is present, attackers can remotely modify the device configuration to create backdoors or disable security features.
+        Read access alone gives up the network. An SNMP walk returns the interface list and addressing, the ARP and routing tables, the neighbor relationships, and the hardware model and software version. That is a map of the topology plus a list of the software an attacker can look up known vulnerabilities against, retrieved without producing a single log entry that looks like an intrusion.
 
-        By replacing default community strings with unique, complex values, organizations prevent trivial unauthorized access to device information through SNMP.
+        If the default community also carries write authorization, the attacker never has to log in. SNMP SET can shut down interfaces and, on many platforms, drive configuration transfer and load operations, and it does so over UDP where the source address can be forged by anyone who does not need to see the reply.
+
+        Delete the default communities, use a unique random string per device, restrict each community to specific client addresses, and move to SNMPv3 with authentication and privacy wherever the monitoring platform supports it, because a v2c string crosses the network in clear text no matter how well chosen it is.
       audit: |
         To verify that default SNMP community strings are not configured from the Junos CLI:
 
@@ -1072,17 +1094,19 @@ queries:
       junos.snmpCommunities.all(authorization == "read-only")
     docs:
       desc: |
-        This check verifies that no SNMP community is configured with read-write access. Read-write SNMP allows remote configuration changes via SNMP SET operations, which poses a significant risk to device integrity.
+        This check verifies that no SNMP community grants write access to the device.
+
+        Junos sets the access level per community with `set snmp community <name> authorization`, and the choices are `read-only` and `read-write`. This check requires every configured community to be `read-only`.
 
         **Why this matters**
 
-        SNMP read-write access grants the ability to modify device configuration remotely. If any community has read-write authorization:
+        A read-write community is an administrative credential transmitted in clear text. SNMPv1 and v2c carry the string in the packet with no encryption, so anyone who can observe a single poll from the monitoring system learns it, and polls happen every minute of every day, which makes the capture window permanent rather than opportunistic.
 
-        - Attackers who obtain the community string can modify the device configuration via SNMP SET operations, potentially disabling security features or creating backdoors.
-        - SNMP write access enables configuration tampering that may go unnoticed, since changes made through SNMP may not generate the same audit trail as CLI changes.
-        - SNMPv1 and v2c community strings are transmitted in clear text, meaning read-write credentials can be captured from network traffic.
+        What that credential permits is not monitoring. SNMP SET can administratively down an interface, and on Junos it can drive configuration file transfer and load operations, so an attacker holding the string takes a link out of service or pushes a configuration of their choosing without ever authenticating to the CLI. Downing a transit interface on a router is an outage for everything behind it.
 
-        By restricting all SNMP communities to read-only access, organizations prevent unauthorized remote configuration changes and limit the impact of a compromised community string.
+        SNMP is also a poor place to look for evidence afterward. Requests arrive over UDP with a source address the attacker can forge, and the record left by an SNMP-driven change is thin next to the commit history that names the author of every CLI change.
+
+        Nothing in normal operations needs write access. Monitoring, capacity planning, and inventory are all read operations, and configuration changes belong to the commit process or to NETCONF over SSH, which authenticates properly and leaves an attributable record. Set every community to `read-only`, and where a platform genuinely requires SNMP writes, move it to SNMPv3 with authentication and privacy instead of leaving a v2c write string in place.
       audit: |
         To verify the authorization level of each SNMP community from the Junos CLI:
 
@@ -1140,17 +1164,19 @@ queries:
       junos.snmpCommunities.all(clients.length > 0)
     docs:
       desc: |
-        This check verifies that all SNMP communities have client address restrictions configured, limiting which hosts can query the device via SNMP.
+        This check verifies that every SNMP community restricts which hosts may use it.
+
+        `set snmp community <name> clients` attaches a list of permitted source addresses or prefixes to a community, and Junos refuses requests from anywhere else. The check fails for any community configured without at least one client entry, since that community is usable by any source able to reach the SNMP port.
 
         **Why this matters**
 
-        SNMP client lists control which IP addresses are allowed to communicate with the SNMP service. Without client restrictions:
+        Without a client list the community string is the only thing standing between an attacker and the device's inventory, and that string travels in clear text on every poll under v1 and v2c. A client list means capturing the string is no longer sufficient, because the attacker also has to send from an address the device accepts, which is a materially harder position to reach than passive observation.
 
-        - Any host on the network can query the device for sensitive information, greatly increasing the exposure of the SNMP service.
-        - Application-level access control lists provide an important defense-in-depth layer that complements network firewall rules.
-        - Unrestricted access makes it easier for attackers to conduct brute-force community string guessing from any location on the network.
+        It also puts a floor under guessing. An unrestricted community can be brute-forced from anywhere with an unlimited number of attempts over UDP, with no lockout and no interactive login to slow it down. A client list confines that attempt surface to a handful of monitoring hosts.
 
-        By restricting SNMP access to specific management hosts or networks, organizations reduce the attack surface and add a layer of access control beyond perimeter firewalls.
+        The device enforces the list itself, which matters because perimeter filtering is exactly what fails during the incidents where it counts. A misapplied firewall filter, a management VLAN that turns out to be reachable from a user segment, or a compromised host already inside the permitted range each bypass the network control while the per-community list still applies.
+
+        Scope each community to the monitoring systems that actually use it, keep the entries as narrow as the deployment allows, and treat the list as a complement to a loopback filter rather than a substitute for it. Under v2c an attacker who does not need to see the response can still forge a permitted source address, so the client list limits exposure without eliminating it.
       audit: |
         To verify that SNMP communities restrict client access from the Junos CLI:
 
@@ -1212,18 +1238,19 @@ queries:
       junos.syslogHosts.length > 0
     docs:
       desc: |
-        This check verifies that at least one remote syslog host is configured. Remote logging ensures that audit records are preserved even if the device is compromised or fails.
+        This check verifies that the device forwards its logs to at least one remote collector.
+
+        `set system syslog host <address>` sends selected facilities and severities off the device as they are generated. The check requires at least one such host, so that log records exist somewhere other than the local storage of the device that produced them.
 
         **Why this matters**
 
-        Centralized remote logging is a critical component of security monitoring and incident response. Without a remote syslog host configured:
+        Local logs belong to whoever controls the device. An attacker who reaches `super-user` clears the log files, edits what remains, or simply turns logging off, and the record of how they arrived disappears with it. A remote collector makes the evidence a copy the attacker does not hold, so the interesting events are already elsewhere by the time removing them occurs to anyone.
 
-        - An attacker who compromises the device can destroy all local log evidence of the intrusion, eliminating the audit trail.
-        - Local logs are lost if the device experiences a hardware failure, is wiped, or runs out of storage space.
-        - Security teams cannot correlate events across multiple devices, reducing their ability to detect coordinated attacks.
-        - Integration with SIEM platforms and security monitoring tools is not possible without remote log forwarding.
+        Local logs are small and temporary even without an attacker. Routing engine storage is limited, files roll over on a schedule measured in days on a busy device, and a reboot or a routing engine switchover loses what has not been written. An investigation that opens a week after the intrusion finds nothing, not because the events went unlogged but because they were overwritten.
 
-        By configuring remote syslog, organizations create a tamper-resistant audit trail that supports threat detection, incident response, and compliance requirements.
+        Forwarding is also what makes the logs usable. One device's log shows an authentication failure, while the collector shows the same source trying the same account across forty devices in an hour, and that pattern is what distinguishes an attack from a typo. Correlation exists only where the records are gathered.
+
+        Send `authorization` and `interactive-commands` at a minimum, because those carry login attempts and the commands operators enter, and confirm after the commit that messages are actually arriving at the collector. A collector that quietly stopped accepting this device months ago looks exactly like one that works, right up to the day it is needed.
       audit: |
         To verify that a remote syslog host is configured from the Junos CLI:
 
@@ -1277,18 +1304,19 @@ queries:
       junos.syslogHosts.all(transport == "tcp" || transport == "tls")
     docs:
       desc: |
-        This check verifies that all syslog hosts use TCP or TLS transport instead of UDP. Reliable and encrypted transport ensures that security-critical log data is delivered intact and protected from eavesdropping.
+        This check verifies that log messages leave the device over a reliable and protected transport.
+
+        The `transport` statement under `set system syslog host <address>` selects `udp`, `tcp`, or `tls`, and UDP is the default. This check requires TCP or TLS on every configured host.
 
         **Why this matters**
 
-        The transport protocol determines the reliability and confidentiality of log delivery. If UDP syslog is used:
+        UDP syslog drops messages without telling anyone. There is no acknowledgment and no retransmission, so congestion, a burst of log volume, or a brief path problem simply removes records, and the resulting gap at the collector looks identical to a period when nothing happened. An attacker who wants such a gap does not need to reach the device at all, because flooding the path is enough to push the interesting messages out.
 
-        - UDP provides no delivery guarantee, meaning security-critical log messages can be silently dropped during network congestion without any indication of loss.
-        - Log data is transmitted in clear text, exposing sensitive information such as usernames, IP addresses, and security events to anyone monitoring the network.
-        - UDP syslog messages can be spoofed by an attacker to inject false log entries, potentially masking malicious activity or triggering false alerts.
-        - TLS transport provides both encryption and reliable delivery, addressing all of these concerns.
+        The protocol is also forgeable. Anyone able to send UDP to the collector can write entries claiming to come from this router, which lets an attacker bury a real event in noise or manufacture a plausible false trail. With no transport authentication the collector cannot distinguish those from genuine records, which is what undermines the log as evidence.
 
-        By requiring TCP or TLS transport for syslog, organizations ensure that audit data is delivered reliably and protected from interception or manipulation.
+        The messages themselves are sensitive. Syslog from a network device names accounts, source addresses, interfaces, and the commands operators run, and under UDP or plain TCP all of it crosses the network readable. TLS is the option that adds confidentiality alongside delivery guarantees, and it authenticates the collector as well, so the device is not shipping its audit trail to whoever happens to answer at that address.
+
+        Prefer TLS on port 6514 and fall back to TCP where the collector cannot terminate TLS. Bear in mind that TCP syslog applies back pressure to the device when the collector is unreachable, so pair the change with monitoring of the collector itself.
       audit: |
         To verify the transport protocol of each syslog host from the Junos CLI:
 
@@ -1360,18 +1388,19 @@ queries:
       junos.securityPolicies.all(logInit == true || logClose == true)
     docs:
       desc: |
-        This check verifies that all security policies have at least session-init or session-close logging enabled. Policy logging provides essential visibility into the traffic flowing through the firewall.
+        This check verifies that every security policy records the sessions it acts on.
+
+        On an SRX firewall a policy decides what passes between zones, and the `then log session-init` and `then log session-close` statements under `set security policies` are what turn that decision into a record. This check requires at least one of the two on every configured policy.
 
         **Why this matters**
 
-        Security policy logs record which traffic is permitted or denied by the firewall. Without policy logging enabled:
+        A firewall without policy logging enforces silently. The rule set may be correct, but nothing on the device can show which policy matched a given flow, so an operator cannot tell an overly broad rule from a tightly scoped one by looking at what it actually passed. Rule sets accumulate through years of change requests, and logging is the only way to find the rule doing more than anyone intended.
 
-        - There is no visibility into what traffic the firewall is permitting or denying, making it impossible to verify that policies are working as intended.
-        - Unusual traffic patterns and potential threats cannot be detected because there is no record of firewall decisions to analyze.
-        - Incident response efforts are severely hampered without policy logs that show attack attempts, lateral movement, and data exfiltration.
-        - Forensic reconstruction of attack timelines requires session logs that document the sequence of permitted and denied connections.
+        For an intrusion, the session records are the investigation. Session-init says the connection was attempted and which policy allowed it, and session-close adds the byte counts that separate a probe from an exfiltration. Without them, an analyst who learns on Tuesday that a host was compromised on Friday cannot establish what that host talked to, which means no way to scope the incident and no way to say whether data left.
 
-        By enabling session logging on all security policies, organizations gain the visibility needed for threat detection, incident response, and compliance auditing.
+        Missing records also hide the slow patterns. Scanning, beaconing to a command-and-control address on a fixed interval, and lateral movement between internal zones are each visible as a shape in session data across hours and invisible in any single connection. Nothing surfaces them if the sessions were never recorded.
+
+        Log session-close where traffic volume permits, since it carries the byte counts, and session-init on high-rate policies where close logging would overwhelm the collector. Watch the volume on internet-facing deny policies, which produce enormous message rates during a scan, and send the output to the remote collector rather than relying on local storage.
       audit: |
         To verify that security policies have session logging enabled from the Junos CLI:
 
@@ -1424,18 +1453,19 @@ queries:
       junos.securityZones.where(name == "untrust").all(screen != "")
     docs:
       desc: |
-        This check verifies that untrust security zones have IDS/IPS screen profiles applied. Screen profiles inspect packets before security policies are evaluated, providing an efficient first line of defense against network attacks.
+        This check verifies that the untrust security zone has a screen profile bound to it.
+
+        Screens are the Junos IDS options that inspect packets before policy evaluation, and a profile defined with `set security screen ids-option <name>` only takes effect once it is attached to a zone with `set security zones security-zone untrust screen <name>`. This check examines zones named `untrust` and fails when no profile is attached.
 
         **Why this matters**
 
-        Screen profiles provide packet-level inspection at the perimeter before policy evaluation occurs. Without screen profiles on untrust zones:
+        A screen profile that exists but is bound to nothing does nothing, and that is the common failure. The ids-option block gets written during the build, the binding line is missed, and the configuration reads as though the protections are in place while every packet reaches the policy engine unscreened. The untrust zone faces the internet, so it is where that gap is exercised continuously.
 
-        - The device has no protection against denial-of-service attacks such as SYN floods, ICMP floods, and UDP floods that can overwhelm device resources.
-        - Reconnaissance techniques including IP sweeps, port scans, and OS fingerprinting go undetected and unblocked.
-        - Malformed packets and protocol violations pass through to internal systems without any anomaly detection.
-        - Attack traffic that could be efficiently dropped at the perimeter instead consumes resources during full policy evaluation.
+        Screens act earlier and more cheaply than policies. A SYN flood, an address sweep, or a stream of malformed fragments dropped at the screen never consumes a session-table entry or a policy lookup, whereas the same traffic reaching the policy engine is what exhausts the session table and takes the firewall down. Under a volumetric attack the difference between screening and not screening is whether the device stays in service.
 
-        By applying screen profiles to untrust zones, organizations establish a high-performance first line of defense that mitigates common network attacks before they reach the policy engine.
+        The traffic screens catch is also reconnaissance. Port scans and IP sweeps from the untrust zone are how an attacker builds a target list before any real attempt, and a bound profile both drops that traffic and raises the alarm that says someone is looking.
+
+        Attach a profile to every internet-facing zone, not only the one literally named `untrust`, since custom zone names are common and this check cannot see them. Tune the thresholds against observed traffic before enforcing, and apply the change with `commit confirmed` so a threshold set too tight backs itself out instead of dropping production traffic until someone notices.
       audit: |
         To verify that untrust security zones have a screen profile applied from the Junos CLI:
 
@@ -1493,18 +1523,19 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that the untrust zone does not allow insecure or unnecessary host-inbound services. Exposing management services to untrusted networks gives attackers direct access to the device control plane.
+        This check verifies that the untrust zone does not accept insecure management protocols aimed at the device itself.
+
+        Host-inbound traffic controls what the routing engine will answer on an interface, separately from the policies that govern transit traffic. This check reads the `host-inbound-traffic system-services` statements under `set security zones security-zone untrust` and fails when they include `telnet`, `ftp`, `finger`, `http`, `snmp`, or `all`.
 
         **Why this matters**
 
-        Host-inbound services determine which management protocols are accessible from a given security zone. If insecure services are exposed on the untrust zone:
+        These statements govern the control plane, not traffic passing through. A service listed here answers packets addressed to the firewall's own untrust interface, which is to say packets from the internet, and no security policy stands in front of it. An operator who has written the zone policies carefully can still be publishing a login prompt to every scanner on the internet through a single line in the wrong place.
 
-        - Each enabled service is a potential entry point for attackers coming from untrusted networks, expanding the device's attack surface.
-        - Insecure protocols like Telnet, FTP, finger, and HTTP transmit data in clear text and should never be exposed to untrusted networks.
-        - Enabling SNMP on untrusted zones allows external attackers to perform device reconnaissance and potentially modify the configuration.
-        - Using the "all" keyword enables every host-inbound service, including insecure ones, creating maximum exposure.
+        The listed services are the ones with nothing behind them. Telnet and FTP surrender their credentials to anyone watching, and on an untrust interface the observers include every network between the attacker and the device. J-Web over plain `http` submits the administrative password unencrypted and has a long record of remotely exploitable vulnerabilities, several of them used in the wild against internet-exposed SRX devices. SNMP under v2c is a clear-text community string that yields the topology.
 
-        By restricting host-inbound services on the untrust zone to only essential encrypted protocols, organizations minimize the control plane attack surface exposed to untrusted networks.
+        The `all` keyword is the worst case in a single word. It enables every host-inbound service the platform supports, including the ones an operator would never turn on individually, and because it reads as one short statement it survives configuration reviews that would have caught the same services listed by name.
+
+        Permit only what is genuinely needed from that zone, which for most deployments is nothing beyond ping for reachability testing, and manage the device from a dedicated management interface or an inside zone. Where remote management from the internet is unavoidable, restrict it to SSH behind a firewall filter that admits only known source prefixes, and stage the change with `commit confirmed` if your own session arrives through that zone.
       audit: |
         To verify the host-inbound services on the untrust zone from the Junos CLI:
 
@@ -1573,18 +1604,19 @@ queries:
       junos.screenProfiles.all(tcpSynFlood == true)
     docs:
       desc: |
-        This check verifies that all screen profiles have TCP SYN flood protection enabled. SYN flood attacks exhaust device connection tables with half-open connections, disrupting legitimate traffic.
+        This check verifies that screen profiles mitigate TCP SYN floods.
+
+        `set security screen ids-option <name> tcp syn-flood` enables SYN proxy behavior with alarm, attack, and timeout thresholds, so the firewall completes the handshake on behalf of the protected host before it commits a session. The check requires the option on every configured screen profile.
 
         **Why this matters**
 
-        TCP SYN flood attacks are among the most common denial-of-service techniques targeting network devices. Without SYN flood protection:
+        A SYN flood costs the attacker almost nothing and costs the firewall a session-table entry per packet. Each half-open connection holds resources until it times out, and a source that never completes a handshake creates them faster than they expire. Once the session table fills, the firewall stops accepting new connections, which means it stops passing legitimate traffic, and every service behind it is unreachable while the device itself stays powered on and apparently healthy.
 
-        - Attackers can fill the device connection table with half-open connections, preventing legitimate traffic from being processed.
-        - Critical services behind the firewall become unavailable when the connection table is exhausted, causing widespread disruption.
-        - SYN floods remain one of the most prevalent and effective denial-of-service techniques used against network infrastructure.
-        - Junos SYN flood protection uses SYN proxy to validate connections before committing device resources, efficiently mitigating these attacks.
+        Source addresses in a SYN flood are usually spoofed, so there is nothing to block. Adding a deny policy works against a single attacker and does nothing against randomized sources, which is why the mitigation has to live in the handshake rather than in the rule set. SYN proxy answers the SYN itself and allocates a real session only when the third packet of the handshake arrives, which spoofed traffic cannot produce.
 
-        By enabling SYN flood protection, organizations defend against a common and effective denial-of-service attack vector while ensuring continued availability of critical services.
+        Recovery from a saturated session table is not automatic. The device can stay wedged after the flood subsides, and clearing it may take an intervention on a device that is now hard to reach, because management traffic is competing with the same flood.
+
+        Derive the attack threshold from observed connection rates rather than accepting an arbitrary number, since a threshold below the site's real peak turns a busy morning into a self-inflicted outage. Tune during a normal traffic period and commit with confirmation so an incorrect value reverts on its own.
       audit: |
         To verify that screen profiles have TCP SYN flood protection from the Junos CLI:
 
@@ -1638,17 +1670,19 @@ queries:
       junos.screenProfiles.all(icmpPingDeath == true)
     docs:
       desc: |
-        This check verifies that all screen profiles have ICMP ping-of-death protection enabled. Ping-of-death attacks use oversized ICMP packets to cause buffer overflows and system instability in vulnerable systems.
+        This check verifies that screen profiles drop oversized ICMP packets.
+
+        `set security screen ids-option <name> icmp ping-death` rejects ICMP echo requests whose reassembled length exceeds the 65,535-byte maximum an IP datagram is allowed to have. The check requires the option on every screen profile.
 
         **Why this matters**
 
-        Oversized ICMP packets exploit buffer handling weaknesses in network stacks. Without ping-of-death protection enabled:
+        The attack works through fragmentation. Each fragment is legal on its own, and only the reassembled total exceeds what the IP header can describe, so a stack that sizes its buffer from the header and then copies the fragments overruns it. That is a memory corruption on a device that was not expecting the packet, and depending on the target it produces a crash, a reboot, or something the attacker gets to influence.
 
-        - Oversized ICMP packets can trigger buffer overflows that cause system crashes or instability on vulnerable devices and hosts.
-        - Malicious ICMP traffic can destabilize routers and firewalls along the packet path, causing cascading network disruptions.
-        - An entire class of ICMP-based attacks is left unmitigated at the perimeter, allowing them to reach internal systems.
+        The class did not stay in the 1990s. Oversized and malformed ICMP reassembly has produced new remotely triggerable vulnerabilities repeatedly since, in operating systems, embedded stacks, and network appliances alike, because reassembly code is intricate and rarely exercised.
 
-        By enabling ping-of-death protection, organizations block oversized ICMP packets at the perimeter and protect internal systems from this class of attacks.
+        Filtering at the perimeter is what protects the targets that cannot protect themselves. One screen profile covers an entire segment, which matters when that segment holds printers, cameras, building controllers, and industrial equipment whose vendors stopped issuing firmware years ago and whose network stacks were never audited.
+
+        No legitimate traffic is blocked by this option, so it can be enabled without tuning. Enable it alongside the other ICMP screens rather than in isolation, since floods and fragment attacks arrive from the same sources.
       audit: |
         To verify that screen profiles have ICMP ping-of-death protection from the Junos CLI:
 
@@ -1700,18 +1734,19 @@ queries:
       junos.screenProfiles.all(ipSourceRoute == true)
     docs:
       desc: |
-        This check verifies that all screen profiles block IP packets with the source route option set. Source routing allows senders to specify the route a packet takes through the network, which attackers exploit to bypass security controls.
+        This check verifies that screen profiles drop IP packets carrying source route options.
+
+        The loose and strict source route options let a sender dictate the path a packet takes instead of leaving it to the routing tables. `set security screen ids-option <name> ip source-route-option` discards packets carrying them, and the check requires the option on every profile.
 
         **Why this matters**
 
-        IP source routing is a legacy feature with no legitimate use in modern networks. If source-routed packets are allowed:
+        Source routing lets an attacker choose which of the firewall's interfaces a packet appears to arrive on, and the arrival interface is what determines the packet's zone. Steering an internet-sourced flow so that it enters through an interface the firewall treats as internal puts it under the wrong policy set, which amounts to asking the device to apply the rules written for trusted traffic to traffic that is not.
 
-        - Attackers can use source routing to circumvent firewall rules and routing policies by specifying a path that avoids security inspection points.
-        - Source routing enables IP spoofing by making packets appear to originate from trusted network segments.
-        - Traffic can be redirected through attacker-controlled devices, enabling man-in-the-middle attacks on otherwise secure communications.
-        - There is no legitimate use case for source routing in modern production networks, so blocking it carries no operational impact.
+        It also makes address spoofing practical. Normally an attacker who forges a source address cannot see the reply, because the reply follows the routing table back to the real owner of that address. A source-routed packet brings the response back along the specified path instead, so the attacker forges the address and still receives the answer, which is enough to complete handshakes and hold sessions that would otherwise be blind.
 
-        By blocking source-routed packets, organizations eliminate an attack technique that can bypass firewalls and enable spoofing, with no impact on legitimate traffic.
+        Every device on the specified path can read and alter the traffic. Directing flows through an attacker-controlled hop is a machine-in-the-middle position obtained without touching the routing protocols at all.
+
+        Nothing in modern operations sends source-routed packets, and most transit networks have discarded them for years, so this option can be enabled with no operational effect. Screens are an SRX feature, so on a pure routing platform apply the equivalent with a firewall filter instead.
       audit: |
         To verify that screen profiles block the IP source route option from the Junos CLI:
 
@@ -1763,17 +1798,19 @@ queries:
       junos.screenProfiles.all(tcpLand == true)
     docs:
       desc: |
-        This check verifies that all screen profiles have TCP land attack protection enabled. Land attacks send TCP packets where the source and destination addresses are identical, causing the device to enter a processing loop.
+        This check verifies that screen profiles block TCP land attacks.
+
+        A land attack is a TCP SYN whose source address and port are identical to its destination address and port, so the target is effectively opening a connection to itself. `set security screen ids-option <name> tcp land` discards those packets, and the check requires the option on every profile.
 
         **Why this matters**
 
-        Land attacks exploit TCP stack behavior by creating self-referencing connections. Without land attack protection:
+        The packet is self-referential in a way stacks were not written to expect. A vulnerable target replies to itself, matches its own reply against the half-open connection it just created, and loops, burning CPU until it stops responding to anything else. One malformed packet costs the attacker a single send and can cost the target its availability.
 
-        - The device is forced to continuously process self-addressed packets, consuming CPU resources and degrading performance.
-        - Sustained land attacks can cause CPU exhaustion and service degradation, potentially taking the device offline.
-        - Land attacks are a well-known and easily executed attack type that should be blocked at the perimeter as a basic security measure.
+        The attack is old, but the pattern keeps reappearing in new places. Land variants have resurfaced in embedded stacks, in virtual appliances, and in devices whose TCP implementation was written from scratch for constrained hardware, all of which sit behind firewalls and none of which receive the scrutiny a mainstream operating system does.
 
-        By enabling land attack protection, organizations block a well-known denial-of-service technique and prevent unnecessary resource consumption on their network devices.
+        Blocking it at the perimeter is the only realistic control, because the traffic is unambiguously invalid and the systems most likely to be affected are the ones least likely to be patched.
+
+        No legitimate packet has matching source and destination endpoints, so this option carries no risk of false positives. Enable it as part of the baseline profile alongside the other TCP screens rather than adding options one incident at a time.
       audit: |
         To verify that screen profiles have TCP land attack protection from the Junos CLI:
 
@@ -1825,17 +1862,19 @@ queries:
       junos.screenProfiles.all(ipTearDrop == true)
     docs:
       desc: |
-        This check verifies that all screen profiles have IP teardrop attack protection enabled. Teardrop attacks use malformed fragmented IP packets with overlapping offsets that crash systems during packet reassembly.
+        This check verifies that screen profiles block overlapping IP fragments.
+
+        A teardrop attack sends fragments whose offsets overlap, so that reassembly computes a negative or nonsensical length. `set security screen ids-option <name> ip tear-drop` discards fragment sets shaped that way, and the check requires the option on every profile.
 
         **Why this matters**
 
-        Teardrop attacks exploit IP fragment reassembly logic in network stacks. Without teardrop protection:
+        Fragment reassembly is where an arithmetic error becomes a memory error. The receiving stack subtracts offsets to work out how much of the next fragment to copy, and crafted overlaps make that subtraction yield a value the copy loop was never meant to see. On a vulnerable target the result is a kernel-level crash from a handful of packets, delivered before any application-layer control has a chance to look at them.
 
-        - Overlapping IP fragments can crash operating systems or network devices during the reassembly process, causing service outages.
-        - Some systems experience kernel panics when processing the malformed fragment offsets used in teardrop attacks.
-        - Leaving this protection disabled allows an entire class of IP fragmentation attacks to pass through the perimeter unmitigated.
+        Overlapping fragments are also a way past inspection. A sensor and an end host that resolve overlaps by different rules reassemble two different payloads from the same packets, so an attacker can build a stream where the sensor sees something benign and the host receives something else. Discarding the overlap outright removes the ambiguity instead of trying to resolve it.
 
-        By enabling teardrop protection, organizations block malformed fragmented packets at the perimeter and prevent fragmentation-based attacks from reaching internal systems.
+        Neither problem is historical. Fragment handling defects turn up regularly in current operating systems and embedded stacks, and the devices behind a firewall that would be hit hardest are the ones with no patch pipeline at all.
+
+        Legitimate traffic does not produce overlapping fragments, so this option is safe to enable everywhere. It addresses malformed overlaps specifically, so pair it with the fragment and flood screens when the concern is fragmentation-based resource exhaustion rather than malformed reassembly.
       audit: |
         To verify that screen profiles have IP teardrop protection from the Junos CLI:
 
@@ -1887,17 +1926,19 @@ queries:
       junos.screenProfiles.all(tcpWinNuke == true)
     docs:
       desc: |
-        This check verifies that all screen profiles have TCP WinNuke attack protection enabled. WinNuke attacks send out-of-band TCP data to port 139, which can crash vulnerable systems running NetBIOS services.
+        This check verifies that screen profiles neutralize WinNuke traffic.
+
+        WinNuke sends TCP segments with the urgent flag set to the NetBIOS session port, 139, where certain stacks mishandle the out-of-band pointer. `set security screen ids-option <name> tcp winnuke` scans NetBIOS session packets, unsets the urgent flag and pointer, forwards the corrected packet, and writes a log entry. The check requires the option on every profile.
 
         **Why this matters**
 
-        WinNuke attacks target the TCP out-of-band data handling in network stacks. Without WinNuke protection:
+        The original targets are long gone, but the traffic pattern remains a reliable signal. Nothing legitimate sends urgent-flagged segments to port 139 from outside the network, so a hit on this screen means someone is running an old scanning toolkit against the perimeter, which is worth knowing early, because the same operator generally moves on to more current probes.
 
-        - Legacy systems can crash when they receive out-of-band TCP data on port 139, causing service disruptions.
-        - NetBIOS services on vulnerable systems behind the firewall may be affected, leading to system instability or denial of service.
-        - An entire class of OOB-based TCP attacks passes through the perimeter unblocked, potentially affecting any vulnerable internal system.
+        Port 139 traffic arriving from an untrusted zone is itself the finding. SMB and NetBIOS have no business crossing a perimeter, and where this screen fires, the real questions are what else is reaching that port and what is answering on the inside.
 
-        By enabling WinNuke protection, organizations block out-of-band TCP attacks at the perimeter and protect internal systems from this class of exploits.
+        Urgent-pointer handling has also not aged into safety. Out-of-band processing is an obscure corner of TCP implementations, and defects in it keep appearing in embedded and appliance stacks that sit behind firewalls and receive no updates.
+
+        Because the screen repairs the packet rather than dropping the flow, enabling it does not break connectivity and it belongs in the standard profile. Its value is mostly detection, so it only helps if the alarms reach the log collector and someone reads them.
       audit: |
         To verify that screen profiles have TCP WinNuke protection from the Junos CLI:
 
@@ -1952,17 +1993,19 @@ queries:
       junos.licenses.all(state != "expired")
     docs:
       desc: |
-        This check verifies that no installed feature licenses have expired. Expired licenses can silently disable critical security features, leaving the device with reduced protection.
+        This check verifies that no installed Junos feature license has expired.
+
+        Junos gates advanced capabilities behind licenses installed with `request system license add` and reported by `show system license`, each carrying a validity period. The check reads the state of every installed license and fails when any of them is expired.
 
         **Why this matters**
 
-        Junos feature licenses control access to advanced security capabilities. If licenses are allowed to expire:
+        An expired license does not announce itself in the traffic path. The feature it enabled stops updating or stops enforcing while the configuration that references it stays exactly as written, so the device keeps reporting a security posture it is no longer delivering. An operator reading the configuration sees IDP, UTM, or URL filtering configured and has no reason to suspect otherwise.
 
-        - Critical security features such as IPS, UTM, application identification, and URL filtering may be disabled without warning.
-        - The device may silently fall back to basic packet forwarding without the advanced security capabilities that were part of the security architecture.
-        - Security features required for regulatory compliance may stop functioning, creating compliance gaps that go unnoticed until the next audit.
+        What lapses first is usually the part that has to stay current. Intrusion prevention signatures, antivirus definitions, application identification, and URL category feeds all depend on a subscription, and the day it ends the device begins inspecting today's traffic against last year's knowledge. It keeps inspecting, keeps logging, and keeps reporting clean, while the attacks it was bought to catch pass through.
 
-        By monitoring license status and renewing before expiration, organizations ensure that all licensed security features remain active and the device continues to provide the expected level of protection.
+        Some licenses gate capacity rather than features, and those fail loudly instead of silently. Session, tunnel, or user counts drop back to a base limit and the device starts refusing connections it accepted the day before, which on a production path is an outage whose cause nobody looks for, because nothing in the configuration changed.
+
+        Track expiry dates centrally rather than waiting for the device to warn you, and renew ahead of the date, since installing a license after the lapse happens under pressure and often needs a maintenance window. Grace periods differ by feature and by release, so confirm the behavior for the specific licenses in use rather than assuming every feature degrades gracefully.
       audit: |
         To verify the status of installed feature licenses from the Junos CLI:
 
