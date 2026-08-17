@@ -294,6 +294,8 @@ Two things about the Proxmox grammar are worth knowing:
 
 **Never hand-edit anything in `data/`.** Extend or re-run the dump script instead.
 
+**Every dump is written pretty-printed, and that is a reviewability rule rather than a stylistic one.** Nothing reads these files but the validators, so formatting cannot change what they accept. What it changes is the one place a human is in the loop: the weekly refresh pull request, whose entire purpose is to show which endpoints, commands and schemas moved. A multi-megabyte document on a single line renders as one changed line, which GitHub declines to display at all, so approving the bump degrades into trusting the vendor. `upstream/data_format_test.py` fails the build on a single-line dump, so a script that starts minifying is caught rather than merged. The scripts differ on `indent=1` versus `indent=2` and that is fine; what is not allowed is one line.
+
 ### Spelling
 
 `crate-ci/typos` with the allowlist in `typos.toml` at the repository root. The allowlist is **case-insensitive**, so one lowercase entry covers every casing. Add genuinely new terms to `[default.extend-words]`; where a policy deliberately shows a misspelling as an example, reword the surrounding prose instead.

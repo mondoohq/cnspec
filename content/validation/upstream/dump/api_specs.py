@@ -24,6 +24,21 @@
 # re-running this script — the same model as azure_commands.json and
 # ncli_commands.json. Never hand-edit the output files.
 #
+# Every spec is written pretty-printed with sorted keys, and that is a
+# reviewability decision rather than a stylistic one. These files are only ever
+# read by a machine, but they are refreshed by an automated weekly pull request
+# that a human has to approve, and the whole point of that pull request is to
+# show which endpoints, parameters and schemas moved. Two of them used to be
+# stored minified to save disk: a one-line 3 MiB file renders as a single
+# changed line, which no reviewer and no code-review tool can read, so the
+# approval step degraded to trusting the vendor.
+#
+# The size argument that motivated minifying does not survive being measured.
+# Uncompressed the two files grow 3.05 -> 6.61 MiB and 2.67 -> 3.58 MiB, but
+# git stores compressed blobs, and there the same change is 0.37 -> 0.54 MiB
+# and 0.44 -> 0.48 MiB: about 0.2 MiB total against a repository whose .git is
+# already ~390 MiB. Readability is worth four hundredths of a percent.
+#
 # PyYAML is needed only here, when regenerating.
 #
 # Usage: python3 content/validation/upstream/dump/api_specs.py
@@ -68,13 +83,12 @@ SPECS = [
         "output": "atlassian_user_management_openapi.json",
     },
     {
-        # Vercel serves its spec from a live, unversioned endpoint. It is
-        # large (~9.5 MiB pretty-printed), so it is stored minified (~2.9
-        # MiB, comparable to azure_commands.json).
+        # Vercel serves its spec from a live, unversioned endpoint, so every
+        # regeneration can pick up whatever changed since the last one. That
+        # makes it the file whose diff most needs to be readable.
         "source": "https://openapi.vercel.sh/",
         "format": "json",
         "output": "vercel_openapi.json",
-        "minify": True,
     },
     {
         # Okta publishes the Management API spec as YAML only. `-minimal` is
@@ -88,8 +102,6 @@ SPECS = [
         "pin": OKTA_SPEC_VERSION,
         "format": "yaml",
         "output": "okta_openapi.json",
-        # ~2.7 MiB minified, comparable to vercel_openapi.json.
-        "minify": True,
     },
     {
         # Portainer publishes both a Swagger 2.0 (swagger.yaml) and an
@@ -149,10 +161,7 @@ def main():
             # without re-deriving it from the URL.
             spec["_meta"]["pin"] = entry["pin"]
         out = CMD_DATA_DIR / entry["output"]
-        if entry.get("minify"):
-            out.write_text(json.dumps(spec, separators=(",", ":"), sort_keys=True) + "\n")
-        else:
-            out.write_text(json.dumps(spec, indent=1, sort_keys=True) + "\n")
+        out.write_text(json.dumps(spec, indent=1, sort_keys=True) + "\n")
         print(f"  wrote {out} ({out.stat().st_size // 1024} KiB)", file=sys.stderr)
 
 
