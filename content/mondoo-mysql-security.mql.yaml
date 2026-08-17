@@ -133,20 +133,19 @@ queries:
       mysql.conf.bindAddress.none(_ == "*" || _ == "0.0.0.0" || _ == "::")
     docs:
       desc: |
-        This check ensures that `bind_address` names specific addresses instead of accepting connections on every interface. MySQL binds to every interface when the option is unset, so an installation that never sets it is reachable from every network the host is attached to.
+        This check verifies that the server answers TCP connections only on addresses an administrator has named, rather than on every interface the host happens to have.
 
-        Since MySQL 8.0.13 the option accepts a comma-separated list, so a server that must serve several networks can name each one explicitly rather than falling back to the wildcard. Where the database only serves applications on the same host, `skip_networking` removes the TCP listener entirely.
+        `bind_address` is written under the `[mysqld]` group of the server option file, typically `/etc/mysql/mysql.conf.d/mysqld.cnf` or a fragment under `/etc/my.cnf.d`. From MySQL 8.0.13 onward it accepts a comma-separated list, so a server that genuinely has to serve several networks can name each address instead of falling back to a wildcard. The check fails `*`, `0.0.0.0`, and `::`, and it fails an installation that never sets the option, since the server's own default is the wildcard.
 
         **Why this matters**
 
-        - **Smaller network surface:** Only the addresses you name can accept a connection attempt.
-        - **Defense in depth behind the firewall:** Binding narrowly means a firewall change does not immediately expose the database.
-        - **Explicit intent:** A named address list documents which networks the server is expected to serve.
+        An unrestricted listener is found by scanning rather than by targeting. Anyone with a route to the host sweeps port 3306, reads the version out of the handshake, and starts guessing passwords against accounts defined for `'%'`. Nothing had to advertise the database for that to begin, and a cloud instance that acquires a public address during a rebuild is exposed from the moment it boots.
 
-        **Risk mitigation**
+        The distinction worth stating is local socket against network. Applications on the same host reach MySQL through its Unix socket and need no TCP listener at all, so on a single-host deployment the listener is exposure with no corresponding use. Where nothing off the box connects, `skip_networking` removes the listener entirely and is stronger than any address list.
 
-        - **Blocks opportunistic scanning:** Scanners probing port 3306 cannot fingerprint a server that never answers them.
-        - **Contains credential attacks:** Password guessing cannot begin against an address the server does not accept.
+        Naming addresses also keeps a firewall mistake from being immediately fatal. A security group opened one rule too wide reaches a server that still refuses the packet, because it was never listening on that address in the first place.
+
+        Replicas and application tiers on other hosts do need a listener. Name the private address they connect to and leave the host's other interfaces alone. This option cannot be changed at runtime, so it belongs in the option file and takes effect on restart.
       audit: |
         ### Audit via CLI
 
@@ -255,20 +254,17 @@ queries:
       mysql.conf.skipNameResolve == true
     docs:
       desc: |
-        This check ensures that `skip_name_resolve` is enabled so the server matches accounts by IP address rather than resolving client hostnames. With name resolution active, an account defined for a hostname is authorized based on the answer a DNS or reverse lookup returns at connection time.
+        This check verifies that the server decides which account an incoming connection matches from its IP address alone, without asking a naming service.
 
-        That makes an external naming service part of the authorization decision. An attacker who can influence reverse DNS for an address they control can cause the server to match a host pattern that was meant for a trusted machine.
+        `skip_name_resolve` belongs under `[mysqld]` in the server option file. While it is off, MySQL performs a reverse lookup on every connection and compares the answer to the host part of each account, so an account defined as `'app'@'jobs.example.com'` is authorized on the strength of whatever a resolver returns at the moment the connection arrives.
 
         **Why this matters**
 
-        - **Authorization stops depending on DNS:** Host matching uses the address the connection actually came from.
-        - **Removes a spoofable input:** Reverse lookup answers cannot be manipulated into matching a trusted pattern.
-        - **Predictable connection handling:** Connections are not delayed or refused when a naming service is slow or unavailable.
+        That makes DNS part of the authorization decision, and DNS is not an authorization system. An attacker who controls the reverse record for an address they own, through a resolver they compromised, a poisoned cache, or an `in-addr.arpa` delegation the organization no longer tracks, points that record at a trusted name. Their connection from an untrusted address then matches an account scoped to a trusted host, and they authenticate as it. No database credential was cracked and nothing on the server was exploited.
 
-        **Risk mitigation**
+        It also removes a failure mode that has nothing to do with attackers. Every connection waits on a lookup before it can proceed, so a slow resolver adds latency to every new session and an unreachable one stalls or refuses connections while the database itself is perfectly healthy.
 
-        - **Blocks DNS-based authorization bypass:** A forged reverse record cannot satisfy a hostname-scoped account.
-        - **Removes a denial of service path:** A failing resolver cannot prevent clients from connecting.
+        Enabling this changes which accounts match. Once name resolution is off, any account whose host part is a hostname stops matching anything at all. Look through the account definitions in `mysql.user` first, and reissue the privilege each of those accounts holds against an address or address pattern before setting the option and restarting.
       audit: |
         ### Audit via CLI
 
@@ -383,20 +379,17 @@ queries:
       mysql.conf.skipShowDatabase == true
     docs:
       desc: |
-        This check ensures that `skip_show_database` is enabled so `SHOW DATABASES` is restricted to accounts holding the `SHOW DATABASES` privilege. Without it, every authenticated account can enumerate every schema name on the server, including schemas it has no privilege to read.
+        This check verifies that listing the schemas on the server is a privilege an account has to hold, rather than something any authenticated connection can do.
 
-        Schema names routinely disclose which applications, tenants, and environments share a server. That information shapes an attacker's next step after obtaining any low-privilege credential.
+        `skip_show_database` belongs under `[mysqld]` in the server option file. With it off, every account that authenticates can run `SHOW DATABASES` and get back every schema name on the server, including the ones it has no privilege to read a single row from. With it on, the statement answers only accounts that hold the `SHOW DATABASES` privilege, so grant that to the administrative accounts that need it before making the change.
 
         **Why this matters**
 
-        - **Limits enumeration:** An account sees only the schemas it is entitled to know about.
-        - **Reduces tenant disclosure:** Shared servers do not reveal the names of unrelated applications or customers.
-        - **Least privilege for metadata:** Catalog visibility becomes a privilege rather than a default.
+        Schema names are reconnaissance, and they are cheap. An attacker holding one low-privilege application credential, recovered from a configuration file or obtained through an injected query, runs a single statement and learns the layout of the server: which other applications share it, which customers or tenants are named, whether a `staging` schema sits beside `prod`, whether something called `payments` or `pii_archive` exists. That list decides where the next hour of their effort goes.
 
-        **Risk mitigation**
+        On a shared instance the disclosure crosses a boundary between customers. One tenant's leaked credential reveals the names of every other tenant on the server, which those tenants never agreed to publish and which is often enough on its own to be a reportable event.
 
-        - **Slows lateral movement:** A compromised application account cannot map the rest of the server.
-        - **Reduces targeting information:** Attackers cannot identify high-value schemas to pursue.
+        Treating catalog visibility as a privilege is the same least-privilege reasoning applied to metadata rather than to rows. An account that can read one schema has no operational need to be told which others exist.
       audit: |
         ### Audit via CLI
 
@@ -503,20 +496,17 @@ queries:
       mysql.conf.requireSecureTransport == true
     docs:
       desc: |
-        This check ensures that `require_secure_transport` is enabled so the server refuses connections that are neither encrypted nor made over a local socket. Configuring certificate material makes TLS available, but MySQL still accepts unencrypted TCP connections unless this option forces the requirement.
+        This check verifies that the server refuses any connection that is neither encrypted nor made over a local Unix socket.
 
-        Enforcing the requirement server-side is what closes the gap. Per-account `REQUIRE SSL` clauses achieve the same for individual accounts, but they must be applied to every account and are easy to omit when a new one is created.
+        `require_secure_transport` belongs under `[mysqld]` in the server option file. Installing certificate material makes TLS available to clients that ask for it, but MySQL still accepts a plain unencrypted TCP connection from a client that does not ask. This option takes the choice away from the client: an unencrypted TCP connection is rejected during the handshake. Local socket connections continue to work, because they never touch a network.
 
         **Why this matters**
 
-        - **Encryption becomes mandatory:** A client cannot connect by declining TLS.
-        - **Applies to every account:** The requirement does not depend on remembering a per-account clause.
-        - **Credentials protected in transit:** Authentication exchanges are never observable on the network.
+        Without it, a connector that defaults to no TLS, or one whose TLS setup silently failed and fell back, connects in cleartext and nobody notices, because from the application's point of view everything works. What crosses the network readable is the authentication exchange, every query, and every row returned. An attacker with a tap on a switch, a compromised host on the same subnet running ARP spoofing, or access to a mirrored port collects a working credential and then the data itself, without touching either endpoint and without leaving anything in a log.
 
-        **Risk mitigation**
+        Per-account `REQUIRE SSL` clauses cover the accounts that carry them, which is exactly why they are not a substitute for the server-wide setting. They have to be applied to every account, including the one created in a hurry during an incident, and a single omission reopens the whole path.
 
-        - **Defeats passive interception:** Captured traffic yields no readable queries or credentials.
-        - **Prevents accidental cleartext:** A misconfigured client library cannot silently connect without TLS.
+        Turn this on only once the server has usable certificate material, because a server that refuses unencrypted transport and has no certificate refuses every remote connection. A companion check in this policy covers the certificate and key. Since this check reads the option file, a runtime change does not satisfy it and would not survive a restart in any case.
       audit: |
         ### Audit via CLI
 
@@ -642,20 +632,17 @@ queries:
       mysql.conf.tlsVersion.none(_.downcase == "tlsv1" || _.downcase == "tlsv1.1")
     docs:
       desc: |
-        This check ensures that `tls_version` is set explicitly and names only TLS 1.2 and TLS 1.3. TLS 1.0 and TLS 1.1 are deprecated, depend on obsolete hashing and cipher constructions, and are no longer adequate for protecting authentication material.
+        This check verifies that the server offers only modern TLS versions, and that the accepted set is stated in configuration rather than inherited from whatever the build supports.
 
-        Leaving the option unset falls back to the versions the server was compiled to accept, which varies by build and by MySQL release. Setting it explicitly makes the accepted set verifiable from the option file and keeps it from widening when the server is upgraded or moved to a different build.
+        `tls_version` belongs under `[mysqld]` in the server option file and takes a comma-separated list such as `TLSv1.2,TLSv1.3`. The check fails an unset option, and it fails a list naming `TLSv1` or `TLSv1.1`. Those two versions depend on obsolete hashing and cipher constructions, offer no authenticated encryption modes, and are not adequate for carrying authentication material.
 
         **Why this matters**
 
-        - **Removes downgrade room:** A client cannot negotiate a protocol version the server refuses to offer.
-        - **Modern cipher suites only:** TLS 1.2 and above provide authenticated encryption modes older versions lack.
-        - **Verifiable from configuration:** The accepted set does not depend on a compiled-in default.
+        Any version the server still offers is a version an attacker can steer a handshake toward. Someone positioned to modify packets in flight tampers with the client hello so negotiation settles on TLS 1.0, then attacks that weaker construction rather than the strong one the client would happily have used. The client sees an encrypted session the whole time. Removing the old versions from what the server offers is what makes the downgrade impossible, because there is nothing left to fall back to.
 
-        **Risk mitigation**
+        Leaving the option unset is not the same as being strict. It means the accepted set comes from the versions the build was compiled to support, which varies between distributions, between MySQL releases, and between a package upgrade and the version it replaced. A server that was strict last year can quietly widen after routine patching, with nothing in the configuration recording the change and nothing in the logs announcing it.
 
-        - **Blocks protocol downgrade attacks:** An attacker influencing the handshake cannot force a deprecated version.
-        - **Removes weak-cipher exposure:** Attacks against obsolete constructions in TLS 1.0 and 1.1 no longer apply.
+        Confirm every connector in use negotiates TLS 1.2 or above before restricting the list. An old client library pinned to TLS 1.0 stops connecting the instant the server stops offering it, and that failure surfaces in production rather than in the change window.
       audit: |
         ### Audit via CLI
 
@@ -765,20 +752,17 @@ queries:
       mysql.conf.sslKeyFile != empty
     docs:
       desc: |
-        This check ensures that `ssl_cert` and `ssl_key` name the server certificate and its private key. Without both, the server cannot present a verifiable identity, and clients configured to verify it will refuse to connect.
+        This check verifies that the server presents an identity clients can verify, by requiring both a certificate and the matching private key to be named explicitly.
 
-        MySQL generates self-signed material on first start when none is provided, which lets TLS negotiate but gives clients nothing they can validate against a trusted authority. Naming the material explicitly means the certificate is one you issued and can rotate.
+        `ssl_cert` and `ssl_key` belong under `[mysqld]` in the server option file and point at files the account running the server can read. Both are needed. What makes this different from most TLS checks is that MySQL does not go without when no material is provided:, it generates a self-signed certificate and key on first start, so TLS negotiates successfully and looks fine while offering nothing a client can validate against a trusted authority.
 
         **Why this matters**
 
-        - **Server identity is verifiable:** Clients can confirm they reached the intended database rather than an interposed listener.
-        - **Certificates become manageable:** Explicit paths give you a place to rotate and monitor expiry.
-        - **Enables strict client verification:** Clients using verify-identity modes have a chain they can validate.
+        Encryption without a verifiable identity defends against a passive listener and nothing more. An attacker able to redirect traffic, through DNS, ARP, or a route they control, stands up a listener of their own, terminates the client's TLS session against material they generated, and relays the connection to the real database. The client sees encryption and proceeds. The attacker reads every credential and every row that passes through. A certificate the client can chain to an authority it already trusts is the only thing that tells the real server from that listener, and the auto-generated one chains to nothing.
 
-        **Risk mitigation**
+        Naming the material also makes it manageable. A certificate at a known path is one you can watch for expiry, replace on a schedule, and reissue when a key is suspected of exposure. None of that is possible for a file the server quietly created for itself and nobody records.
 
-        - **Defeats machine-in-the-middle:** An attacker cannot present substitute material that clients will accept.
-        - **Avoids silent trust of generated material:** Auto-generated self-signed certificates are not relied on in production.
+        This is the prerequisite for requiring encrypted transport, so configure it first, and verify the key matches the certificate before restarting.
       audit: |
         ### Audit via CLI
 
@@ -920,20 +904,17 @@ queries:
       mysql.conf.sslCaFile != empty || mysql.conf.sslCaPath != empty
     docs:
       desc: |
-        This check ensures that either `ssl_ca` or `ssl_capath` names a trust anchor. The server needs one to validate client certificates, so accounts created with `REQUIRE X509`, `REQUIRE ISSUER`, or `REQUIRE SUBJECT` cannot be enforced without it.
+        This check verifies that the server holds a trust anchor it can validate presented client certificates against.
 
-        A configured authority also completes the chain that clients verify. Clients using `VERIFY_CA` or `VERIFY_IDENTITY` need the same authority to validate the certificate the server presents, so publishing it alongside the server material is what makes strict client verification workable.
+        `ssl_ca` names a single authority certificate file and `ssl_capath` names a directory of them. Both belong under `[mysqld]` in the server option file, and either satisfies this check. Without one, the server has nothing to check a client certificate against, so an account created with `REQUIRE X509`, `REQUIRE ISSUER`, or `REQUIRE SUBJECT` cannot be enforced at all.
 
         **Why this matters**
 
-        - **Client certificates become enforceable:** Account-level X.509 requirements have something to validate against.
-        - **Controls who can issue identities:** Only certificates chaining to the configured authority are accepted.
-        - **Supports revocation:** A managed authority gives you a place to distrust compromised certificates.
+        An account requirement that cannot be evaluated is worse than none, because it reads as a control. Someone scopes a high-privilege account to certificate authentication, records that decision in a design document, and moves on. The server, with no anchor, is left with the password as the only real barrier on an account whose password handling was relaxed precisely because a certificate was supposed to carry the weight.
 
-        **Risk mitigation**
+        A configured authority is also what bounds who can mint an identity the server will accept. Only certificates chaining to it are honored, so an attacker who generates their own self-signed client certificate is turned away rather than admitted. It gives you somewhere to distrust a certificate whose key has leaked, which is not possible when there is no chain in the first place.
 
-        - **Rejects untrusted certificates:** A self-issued client certificate cannot satisfy an X.509 account requirement.
-        - **Prevents a false sense of assurance:** Account requirements that could never validate are surfaced before they are relied upon.
+        The same anchor serves the other direction. Clients connecting with `VERIFY_CA` or `VERIFY_IDENTITY` need to trust the issuer of the server's certificate, so distributing the authority alongside the server material is what makes strict client-side verification practical rather than aspirational. Inspect the authority contents when one is configured, since a bundle that accumulated public roots trusts far more issuers than intended.
       audit: |
         ### Audit via CLI
 
@@ -1065,20 +1046,17 @@ queries:
       mysql.conf.skipGrantTables == false
     docs:
       desc: |
-        This check ensures that `skip_grant_tables` is not present in any option file. The option starts the server with the privilege system switched off entirely: every connection is accepted without a password and acts with full privileges on every schema.
+        This check verifies that the privilege system is loaded, by confirming that no option file in the include chain asks the server to start without it.
 
-        The option exists to recover a server whose administrative password has been lost, and it is meant to be used briefly with networking disabled. Left in an option file, it survives every restart and turns the database into an unauthenticated service. Because the resource reports an option written with no value as enabled, a bare `skip_grant_tables` line is detected as well as an explicit `ON`.
+        `skip_grant_tables` belongs, if anywhere, under `[mysqld]`, and the check searches every fragment the server reads, not only the main file. The option is enabled by its presence: a bare `skip_grant_tables` line with no value counts exactly as much as an explicit `ON`, and both fail.
 
         **Why this matters**
 
-        - **Access control is switched off:** No password is required and no privilege is checked.
-        - **Recovery settings must not persist:** A recovery option left in place becomes a permanent bypass.
-        - **A bare flag counts:** The option is enabled by its presence alone, without a value.
+        With the option in effect the server has no privilege system. Grant tables are not read, no password is asked for, and every session acts with full rights on every schema. MySQL narrows the blast radius somewhat by enabling `skip_networking` at the same time, so remote connections are refused, but that only moves the boundary rather than restoring it. Every local account on the host is now a database administrator, as is every process in a container that shares the socket, every scheduled job, and any attacker with the smallest foothold on the machine.
 
-        **Risk mitigation**
+        What they take is not limited to the current data. The account table itself is readable, so the password hashes leave with them and are cracked offline, then tried against the other servers where the same people reused those passwords. Failed-login tracking and account locking are also disabled, and loadable functions and events registered in the system tables do not load, so the server is running in a state nothing else in this policy applies to.
 
-        - **Prevents unauthenticated full access:** Nobody reaching the server obtains administrative control without a credential.
-        - **Blocks credential exfiltration:** The account tables cannot be read and cracked offline.
+        The option exists to recover a server whose administrative password has been lost, and is meant to be used for minutes. What this check catches is the recovery that ended with service restored and the line forgotten. It survives every restart from then on, and the server looks entirely ordinary from the outside.
       audit: |
         ### Audit via CLI
 
@@ -1199,20 +1177,19 @@ queries:
       mysql.conf.defaultAuthenticationPlugin.downcase != "mysql_native_password"
     docs:
       desc: |
-        This check ensures that `default_authentication_plugin` is not set to `mysql_native_password`. That plugin stores a single unsalted SHA-1 based hash of the password, so identical passwords produce identical hashes across accounts and servers, and the stored value is directly replayable by a client that knows it.
+        This check verifies that the server has not been configured to create new accounts with the legacy `mysql_native_password` authentication plugin.
 
-        MySQL 8.0 defaults to `caching_sha2_password`, which applies salting and iterated hashing. The check treats an unset option as compliant so a default installation is not failed, and fails only where the weaker plugin has been selected explicitly. On MySQL 8.0.27 and later this option is superseded by `authentication_policy`, which the resource also exposes.
+        `default_authentication_plugin` belongs under `[mysqld]` in the server option file and decides which plugin an account gets when `CREATE USER` does not name one. MySQL 8.0 already defaults to `caching_sha2_password`, so the check treats an unset option as compliant and fails only where the weaker plugin has been selected deliberately. On 8.0.27 and later this option is superseded by `authentication_policy`, which expresses the same choice as a list of factors.
 
         **Why this matters**
 
-        - **Salted, iterated storage:** Identical passwords do not produce identical stored values.
-        - **Stolen hashes are not credentials:** A `caching_sha2_password` value cannot be replayed the way a native password hash can.
-        - **Stronger transport handling:** The modern plugin requires either TLS or an RSA key exchange to carry the password.
+        The difference is in what the account table holds. `mysql_native_password` stores a single unsalted SHA-1 based value, so the same password produces the same stored value for every account on every server in the world. An attacker who obtains the table matches those values against precomputed sets rather than cracking anything, and recovers passwords for the common ones instantly.
 
-        **Risk mitigation**
+        Worse, that stored value is itself sufficient to authenticate. The protocol proves knowledge of the hash, not of the password, so an attacker who reads the account table can connect as those accounts without ever recovering the plaintext. Reading the table is equivalent to holding the credentials.
 
-        - **Defeats precomputation:** Rainbow tables built for unsalted SHA-1 hashes do not apply.
-        - **Blocks pass-the-hash:** Reading the account table no longer yields directly usable credentials.
+        `caching_sha2_password` salts and iterates, so identical passwords produce different stored values, precomputation does not apply, and the stored value is not directly replayable. It also insists the password reach the server over TLS or an RSA key exchange rather than in the clear.
+
+        Migration is not automatic. Changing the option affects new accounts only; existing ones keep their plugin until each password is set again, so identify those accounts and plan the reset rather than assuming the restart finished the job.
       audit: |
         ### Audit via CLI
 
@@ -1340,20 +1317,17 @@ queries:
       mysql.conf.pluginLoad.any(_ == /validate_password/)
     docs:
       desc: |
-        This check ensures that `validate_password` is named in `plugin_load` or `plugin_load_add` so password strength rules are enforced from the moment the server starts. Loading it at runtime instead leaves a window after every restart during which any password is accepted, and a runtime installation is easy to lose during a rebuild.
+        This check verifies that password strength rules are in force from the moment the server starts, by requiring the component that enforces them to be named in the option file.
 
-        Without the component, MySQL accepts any password an account is created with, including single characters and the account name itself. The policy options in this group have no effect until the component is loaded.
+        `validate_password` has to appear in `plugin_load` or `plugin_load_add` under `[mysqld]`. Without it the server has no opinion about passwords at all and accepts whatever an account is created with, including a single character, the account name, or the string `password` itself.
 
         **Why this matters**
 
-        - **Rules apply from startup:** There is no interval after a restart where weak passwords are accepted.
-        - **Survives host rebuilds:** The requirement lives in configuration rather than in server state.
-        - **Prerequisite for the policy options:** Length, policy class, and username checks depend on it.
+        Registering it only at runtime leaves a real gap. Runtime registration lives in server state, so it survives an ordinary restart on a healthy host, but it does not survive a rebuild, a restore from an image, or a node stood up by configuration management that only knows about the option files. Anything that builds the server from configuration builds it with no password policy, and the accounts created during that window are exactly the ones nobody audits afterward.
 
-        **Risk mitigation**
+        The outcome is an account with a guessable password sitting on a server that believes it enforces a policy. An attacker who can reach the port works a short wordlist against the application account name and gets in, with no exploit, no leak, and no unusual traffic, because nothing ever refused the password at the point it was set.
 
-        - **Blocks trivial passwords:** Dictionary words and short strings are rejected at the point an account is created.
-        - **Closes the post-restart gap:** Accounts cannot be created with weak passwords immediately after a restart.
+        This is also the prerequisite for the rest of the password checks in this group. The policy class, the minimum length, and the account name comparison are all settings this component reads, so a configuration that sets them without loading it enforces nothing while presenting as fully configured. Confirm the policy variables actually appear after the restart rather than assuming the load succeeded.
       audit: |
         ### Audit via CLI
 
@@ -1477,20 +1451,19 @@ queries:
       mysql.conf.validatePasswordPolicy.downcase == "medium" || mysql.conf.validatePasswordPolicy.downcase == "strong"
     docs:
       desc: |
-        This check ensures that `validate_password.policy` is set to `MEDIUM` or `STRONG`. The `LOW` setting enforces length alone, so a password of repeated lowercase letters satisfies it. `MEDIUM` additionally requires numeric, mixed case, and special characters, and `STRONG` adds a dictionary check.
+        This check verifies that accepted passwords have to satisfy more than a length requirement, by requiring the policy class to be `MEDIUM` or `STRONG`.
 
-        Composition requirements matter most where passwords are chosen by people or generated by scripts that were written before any policy existed. Service account credentials generated at high entropy already satisfy `STRONG` without effort.
+        `validate_password.policy` belongs under `[mysqld]` in the server option file and takes one of three values. `LOW` enforces length and nothing else, so a string of repeated lowercase letters passes. `MEDIUM` adds requirements for numeric, mixed case, and special characters. `STRONG` adds a dictionary check on top of that. The check fails `LOW` and fails an unset value.
 
         **Why this matters**
 
-        - **Raises guessing cost:** A larger character set multiplies the search space for any given length.
-        - **Rejects patterned passwords:** Sequential and repeated character passwords fail composition rules.
-        - **Dictionary screening at STRONG:** Known-word passwords are rejected outright.
+        At `LOW`, the shape of password people actually choose when told to make it long defeats the policy completely. A memorable all-lowercase phrase satisfies the rule, and that is precisely the first region a cracking rig searches. Attackers working a stolen hash do not start from the full character space; they start from dictionary words, then those words with predictable substitutions, then all-lowercase strings ordered by length. A password from that region falls in the first hours of the run.
 
-        **Risk mitigation**
+        `MEDIUM` pushes the candidate out of the cheap part of that ordering, since a password must draw on several character classes at once and the combinations a human generates from a phrase no longer qualify. `STRONG` screens against a dictionary file directly, so known words are rejected outright rather than merely made more expensive.
 
-        - **Defeats dictionary attacks:** Common words and their simple mutations are rejected.
-        - **Slows offline cracking:** A stolen hash takes substantially longer to recover.
+        The requirement lands almost entirely on passwords chosen by people, or generated by scripts written before any policy existed. A service credential produced at high entropy from a secret manager already satisfies `STRONG` with no effort and no exception needed.
+
+        The rules apply when a password is set, so they shape what enters the account table rather than judging what is already there. Rotate credentials set before the component was loaded.
       audit: |
         ### Audit via CLI
 
@@ -1598,20 +1571,19 @@ queries:
       mysql.conf.validatePasswordLength >= 14
     docs:
       desc: |
-        This check ensures that `validate_password.length` requires at least 14 characters. MySQL defaults this to 8, which is short enough that a stolen hash can be recovered by exhaustive search on commodity hardware.
+        This check verifies that the server refuses any password shorter than 14 characters.
 
-        Length contributes more to resistance against offline cracking than composition rules do, because each additional character multiplies the search space. The resource reports 0 when the option is unset, so an unset value fails this check and prompts an explicit minimum to be configured.
+        `validate_password.length` belongs under `[mysqld]` in the server option file and is read by the password validation component. MySQL's own default is 8. The check also fails when the option is absent, which reads as 0, so the minimum has to be written down rather than left to whatever the installed release ships.
 
         **Why this matters**
 
-        - **Exponential cost growth:** Each additional character multiplies the work an attacker must do.
-        - **Outlasts hardware gains:** A 14 character minimum remains defensible as cracking speeds increase.
-        - **Explicit rather than inherited:** The minimum is visible in configuration rather than left at a short default.
+        The attack this defends against happens offline and out of your sight. An attacker who obtains the account table, through a filesystem read, a stolen backup, a copied data directory, or a query on a server where privileges were too broad, takes the hashes away and attacks them on hardware you do not control. No rate limit applies. No failed-login alert fires. Nothing is connecting to your server any more, so nothing in your monitoring can tell you it is happening.
 
-        **Risk mitigation**
+        Against that attack, length is the variable that matters most. Each additional character multiplies the search space, so cost grows exponentially with length while composition rules widen the alphabet only by a constant factor. Eight characters is within reach of commodity GPUs for common hash constructions, and the margin shrinks every year. Fourteen keeps a randomly chosen password outside exhaustive search and stays there as hardware improves.
 
-        - **Defeats exhaustive search:** Full keyspace attacks against a stolen hash become impractical.
-        - **Limits credential stuffing success:** Longer passwords are less likely to appear in breach corpora.
+        Longer passwords are also less likely to appear verbatim in a breach corpus, which is what defeats credential stuffing from an unrelated site's leak rather than from yours.
+
+        Writing the minimum explicitly puts it in the option file where it can be reviewed, instead of leaving it at a default that differs between versions and can move under you.
       audit: |
         ### Audit via CLI
 
@@ -1719,20 +1691,19 @@ queries:
       mysql.conf.validatePasswordCheckUserName == true
     docs:
       desc: |
-        This check ensures that `validate_password.check_user_name` is enabled so a password cannot match the account name it belongs to, forwards or reversed. Account names are the first thing an attacker tries, and they are frequently predictable from the application or service the account serves.
+        This check verifies that a password cannot be the account name it belongs to, forwards or reversed.
 
-        The comparison is made against the account name at the time the password is set, which catches the common pattern of naming a service account and giving it a password derived from that name.
+        `validate_password.check_user_name` belongs under `[mysqld]` in the server option file and is read by the password validation component. With it on, the server compares a proposed password against the account name at the moment the password is set and rejects a match in either direction. The check fails when the option is off and when the component is not loaded, since the comparison then never happens.
 
         **Why this matters**
 
-        - **Removes the first guess:** The most obvious candidate password is rejected outright.
-        - **Covers the reversed form:** A trivially transformed account name is rejected as well.
-        - **Applies at creation time:** Weak choices never enter the account table.
+        The account name is the first thing anyone guesses, and unlike a password it is not a secret. Account names are visible in application configuration, in connection error messages, in monitoring dashboards, in infrastructure code committed to a repository, and in the names of the services they belong to. An attacker enumerating a server tries the obvious ones first, and `backup` with the password `backup` costs them one attempt.
 
-        **Risk mitigation**
+        The pattern this rejects is specific and common: a service account is created during a deployment, someone needs a password immediately, and the name is right there. That credential then persists for years, because nothing about it ever fails and no rotation touches an account nobody remembers owning.
 
-        - **Defeats trivial guessing:** Attempts using the account name fail immediately.
-        - **Blocks predictable service credentials:** A password derived from a service account name is rejected.
+        Covering the reversed form closes the trivial evasion, where the same person types the name backwards and considers the problem solved.
+
+        Because the comparison runs when the password is set, this only shapes credentials created after the option is on. Accounts that already carry their own name as a password are unaffected and have to be found and rotated separately.
       audit: |
         ### Audit via CLI
 
@@ -1838,20 +1809,19 @@ queries:
       mysql.conf.defaultPasswordLifetime > 0
     docs:
       desc: |
-        This check ensures that `default_password_lifetime` sets a rotation interval in days. MySQL 8.0 defaults to 0, which means passwords never expire, so a credential exposed years ago remains valid indefinitely unless someone notices and changes it.
+        This check verifies that passwords on this server have a finite lifetime, by requiring a rotation interval in days.
 
-        A finite lifetime bounds how long a leaked credential stays useful. Where an account genuinely should not rotate, such as one authenticating with a certificate or a socket plugin, the exception belongs on that account with `PASSWORD EXPIRE NEVER` rather than on the whole server.
+        `default_password_lifetime` belongs under `[mysqld]` in the server option file and is expressed in days. MySQL 8.0 defaults it to 0, which means no password on the server ever expires, and the check fails that value.
 
         **Why this matters**
 
-        - **Bounds credential validity:** An exposed password stops working after a known interval.
-        - **Forces periodic review:** Rotation surfaces accounts nobody owns any more.
-        - **Server-wide default with per-account exceptions:** Automation accounts can opt out deliberately.
+        Without an interval, a credential stays valid until a person notices something. That is the failure mode: nobody notices. A password pasted into a support ticket in 2021, committed to a repository and later removed from the working tree but not the history, or read out of a log by a contractor who has since left, still authenticates today, and the only signal that anything is wrong would be someone using it.
 
-        **Risk mitigation**
+        A finite lifetime bounds how long a leak stays useful without requiring anyone to detect the leak. An attacker who obtained a password and has been using it quietly loses it at the next rotation, whether or not their access was ever noticed. Rotation also surfaces the accounts nobody owns any more, because the expiry is what forces someone to go looking for who is responsible for a service that just stopped connecting.
 
-        - **Limits the value of old leaks:** Credentials from a historic breach expire.
-        - **Shortens undetected access:** An attacker holding a password loses it at the next rotation.
+        The exception belongs on the account, not on the server. An account that authenticates with a certificate or a socket plugin, or one whose credential is managed by a secret store on its own schedule, is marked `PASSWORD EXPIRE NEVER` individually. That records the decision against the account where a reviewer will see it, rather than removing expiry for everything.
+
+        Identify accounts already older than the new interval before restarting, since they expire at once and their applications stop connecting.
       audit: |
         ### Audit via CLI
 
@@ -1964,20 +1934,19 @@ queries:
       mysql.conf.passwordHistory > 0 || mysql.conf.passwordReuseInterval > 0
     docs:
       desc: |
-        This check ensures that either `password_history` or `password_reuse_interval` is set, so a rotation cannot simply restore a previous password. Both default to 0, which means an account prompted to change its password can set it back to the value it just replaced.
+        This check verifies that a password change cannot restore a password the account previously used, by requiring a history depth, a reuse interval, or both.
 
-        The two options address the same weakness from different angles. `password_history` blocks a number of most recent passwords, and `password_reuse_interval` blocks any password used within a number of days. Either satisfies this check, and setting both is stronger.
+        `password_history` counts how many recent passwords are blocked, and `password_reuse_interval` blocks any password used within a number of days. Both belong under `[mysqld]` in the server option file, and both default to 0. Either being positive satisfies this check; setting both is stronger.
 
         **Why this matters**
 
-        - **Rotation becomes meaningful:** A forced change produces a genuinely new credential.
-        - **Two complementary controls:** Count-based and time-based limits cover different rotation patterns.
-        - **Defeats alternation:** Accounts cannot cycle between two familiar passwords.
+        Rotation with no history check produces no new secret. An account told to change its password sets it back to the value it just replaced, or alternates between two familiar ones on every cycle, and the audit trail shows a dutiful change each time while the credential actually in circulation never changed at all.
 
-        **Risk mitigation**
+        That matters most for the password you already know leaked. A credential exposed in a commit, a log file, or a ticket is supposed to be dead the moment it is rotated. If nothing prevents the owner from setting it again next quarter, an attacker who filed it away and retries it periodically gets back in, on a credential everyone believes was retired, and the successful login looks entirely legitimate.
 
-        - **Prevents restoring a leaked password:** A credential known to an attacker cannot be reinstated.
-        - **Makes expiry effective:** Rotation cannot be satisfied without changing the secret.
+        The two options cover different rotation patterns, which is why both exist. A count-based limit is defeated by an account that cycles through enough throwaway passwords in one sitting to push the old one out of history; a time-based limit is defeated by an account that rotates rarely enough for the window to expire. Setting both closes each gap with the other.
+
+        History is recorded from the moment the options take effect, so the first rotation after the change is the first one they can actually constrain.
       audit: |
         ### Audit via CLI
 
@@ -2094,20 +2063,21 @@ queries:
       mysql.conf.passwordRequireCurrent == true
     docs:
       desc: |
-        This check ensures that `password_require_current` is enabled so an account must supply its existing password to set a new one. The option defaults to off, which means a session that has already authenticated can replace the account password without proving it knows the current value.
+        This check verifies that changing an account's password requires knowing the current one.
 
-        The distinction matters when a session is obtained without the password itself, for example through a hijacked application connection or an unattended client. Requiring the current password stops such a session from locking the legitimate owner out.
+        `password_require_current` belongs under `[mysqld]` in the server option file and is off by default. While it is off, any session that has already authenticated can replace its own account's password without proving it knows the value it is replacing.
 
         **Why this matters**
 
-        - **Proves ongoing possession:** Changing a credential requires knowing it, not merely holding a session.
-        - **Protects against session hijacking:** A stolen connection cannot be converted into permanent ownership.
-        - **Preserves owner access:** An attacker cannot silently lock out the legitimate account holder.
+        This closes the gap between holding a session and holding the credential, and those are not the same thing. A session can be obtained without ever learning the password: an application connection hijacked through a compromised web process, a pooled connection reachable from injected code, a client left open on an unlocked workstation, or a connection handed over by a bug in a proxy layer.
 
-        **Risk mitigation**
+        From any of those, an attacker with the option off runs one statement and now owns the account outright. The new password works from anywhere, survives the session ending, survives the application being restarted, and survives the vulnerability that gave them the session being patched. What was a temporary foothold becomes durable access on a credential of their own choosing.
 
-        - **Blocks account takeover from a hijacked session:** The password cannot be rotated without the current one.
-        - **Limits damage from unattended clients:** An open client session cannot be used to seize the account.
+        It also locks out the legitimate owner, which is how this is usually discovered, and the resulting incident is treated as an application fault long before anyone reads it as a takeover.
+
+        Requiring the current password means the same attacker gets only what the session already allows, and loses it when the session ends.
+
+        Individual accounts can override the server default in either direction, so review the accounts that do. An automation account whose password is rotated by a secret store without presenting the old value is a legitimate exception, and it belongs on that account rather than on the whole server.
       audit: |
         ### Audit via CLI
 
@@ -2213,20 +2183,19 @@ queries:
       mysql.conf.serverOptions["user"] != empty && mysql.conf.serverOptions["user"].downcase != "root"
     docs:
       desc: |
-        This check ensures that the `user` option names a dedicated unprivileged account rather than `root`. The account named here is the identity the server drops to after binding its port, and it is the identity every file operation the server performs runs under.
+        This check verifies that the server drops to a dedicated unprivileged operating system account instead of running as `root`.
 
-        A server running as `root` turns any file write primitive into full host compromise. MySQL exposes several such primitives to sufficiently privileged accounts, including `SELECT ... INTO OUTFILE` and user-defined function libraries, so the account boundary is what keeps a database compromise from becoming a host compromise. The check also fails when the option is unset, because the server then keeps the identity of whichever account started it.
+        The `user` option belongs under `[mysqld]` in the server option file and names the account the server switches to once it has bound its port. On a packaged install that account is `mysql`. The check fails when the option names `root` and when it is absent, because an unset option leaves the server holding the identity of whatever started it, which for a service started at boot is `root`.
 
         **Why this matters**
 
-        - **Blast radius containment:** File writes are limited to what the database account can reach.
-        - **Data directory ownership is meaningful:** Files are owned by an account that owns nothing else.
-        - **Explicit rather than inherited:** Naming the account means the identity does not depend on how the service was started.
+        This is the boundary that keeps a database compromise from becoming a host compromise. MySQL hands sufficiently privileged accounts several ways to write a file: `SELECT ... INTO OUTFILE`, a user-defined function library loaded from the plugin directory, and the log destinations themselves. Every one of those writes runs as the operating system account the server holds.
 
-        **Risk mitigation**
+        Running as `root`, that write primitive is control of the machine. An attacker who reaches a privileged database account appends a key to `/root/.ssh/authorized_keys`, drops a file into `/etc/cron.d`, or overwrites a systemd unit, and returns as the host administrator on the next connection or the next minute. None of that needs a MySQL vulnerability. It is the documented behavior of a documented statement, aimed at paths it was never meant to reach.
 
-        - **Prevents privilege escalation to the host:** A file write primitive cannot overwrite system files or authorized keys.
-        - **Limits damage from a UDF loaded by an attacker:** Library code executes without host administrative rights.
+        Running as a dedicated account, the same primitive reaches only what that account owns, which is the data directory and the log directory, and nothing else on the host.
+
+        Create the account, transfer ownership of the data directory to it, then set the option and restart. Confirm the running process actually holds that identity afterward, since the switch only happens when the server had the privilege to make it.
       audit: |
         ### Audit via CLI
 
@@ -2370,20 +2339,17 @@ queries:
       mysql.conf.localInfile == false
     docs:
       desc: |
-        This check ensures that `local_infile` is disabled so the server does not accept `LOAD DATA LOCAL INFILE` statements. That statement makes the server ask the connecting client to send the contents of a file from the client's own filesystem.
+        This check verifies that the server does not accept `LOAD DATA LOCAL INFILE`, the form of the bulk load statement that reads a file from the connecting client rather than from the server.
 
-        The direction of that transfer is what makes the option dangerous. A malicious or compromised server, or an attacker who can inject a statement into an application's connection, can request any file the client process can read, including application configuration holding credentials. The read happens on the client, so no privilege on the server is required.
+        `local_infile` belongs under `[mysqld]` in the server option file. MySQL 8.0 ships with it off, so the failing case is a server where someone turned it on for a one-off import and left it that way.
 
         **Why this matters**
 
-        - **Clients stop honoring file requests:** The server never asks a client to upload local files.
-        - **No server privilege is needed to abuse it:** Disabling the feature is the control, not restricting grants.
-        - **Bulk loading has safer alternatives:** Server-side `LOAD DATA INFILE` confined by `secure_file_priv` covers legitimate use.
+        The danger is the direction of the transfer. In the `LOCAL` form the server sends the client a request naming a path, and a compliant client library opens that path on its own filesystem and uploads the contents. No privilege on the server is involved, because the file read happens on the client.
 
-        **Risk mitigation**
+        That yields two concrete attacks. An attacker who can inject a statement into an application's database connection, through SQL injection or a compromised query builder, makes the server ask the application host for `/etc/passwd`, for the application's own configuration file with its credentials in it, for an instance credential written to disk, or for a private key. The contents come back as rows the attacker can read. Alternatively, an attacker who stands up a malicious server and gets clients to connect to it, through a hostname they control or a redirected connection, requests files from every client that arrives, harvesting configuration from developer laptops and CI runners that connected to what they thought was a test database.
 
-        - **Prevents client-side file disclosure:** An injected statement cannot exfiltrate files from application hosts.
-        - **Blocks a credential theft path:** Application configuration files cannot be read through the database connection.
+        Server-side `LOAD DATA INFILE` is the safe counterpart. It reads from the server's own filesystem and is confined by `secure_file_priv`, so confirm no bulk load job depends on the client-side form before turning the option off.
       audit: |
         ### Audit via CLI
 
@@ -2489,20 +2455,19 @@ queries:
       mysql.conf.secureFilePriv != empty
     docs:
       desc: |
-        This check ensures that `secure_file_priv` is not set to an empty value. An empty value removes the restriction entirely, which lets `LOAD DATA INFILE` read and `SELECT ... INTO OUTFILE` write anywhere on the filesystem the server account can reach.
+        This check verifies that the server's file-reading and file-writing statements are confined, by requiring `secure_file_priv` to hold a value instead of being empty.
 
-        Set to a directory, the option confines both statements to that directory. Set to `NULL`, it disables the statements outright, which is the strongest setting where no bulk file exchange is needed. Either satisfies this check; only an empty value fails it.
+        The option belongs under `[mysqld]` in the server option file. A directory path confines both `LOAD DATA INFILE` and `SELECT ... INTO OUTFILE` to that directory. The literal `NULL` disables both statements outright and is the stronger choice where no bulk file exchange is needed. Either satisfies this check; only an empty value fails, because an empty value removes the restriction entirely.
 
         **Why this matters**
 
-        - **File access is confined:** Reads and writes are limited to a directory you designate.
-        - **Sensitive files are unreachable:** Server configuration and key material fall outside the permitted path.
-        - **NULL is available:** Servers with no bulk load requirement can disable the statements completely.
+        Unrestricted, those two statements amount to an arbitrary file read and an arbitrary file write anywhere the server account can reach, available to any account holding the `FILE` privilege.
 
-        **Risk mitigation**
+        The read side turns a database credential into a filesystem credential. An attacker selects the server's own option files to learn where the TLS private key and the keyring data live, reads those, and then reads whatever else on the host the server account can open. In a query log none of it looks like anything but an ordinary bulk load.
 
-        - **Blocks arbitrary file read:** An attacker with `FILE` privilege cannot read files outside the directory.
-        - **Prevents arbitrary file write:** Writing a web shell or a cron entry through the database is not possible.
+        The write side is worse, because it is persistence. A file written into a web root the same host serves is a web shell. A file written into `/etc/cron.d` runs on a schedule as its owner. A line appended to an authorized keys file is a login. Each is one statement, and each converts read access to a database into code execution on the machine.
+
+        Point the option at a directory owned by the server account and used for nothing else, or set `NULL` and remove the statements from play. Review which accounts hold the privilege the option constrains while you are there.
       audit: |
         ### Audit via CLI
 
@@ -2628,20 +2593,19 @@ queries:
       mysql.conf.symbolicLinks == false
     docs:
       desc: |
-        This check ensures that `symbolic_links` is disabled so table files cannot be redirected outside the data directory. With the feature enabled, a `.frm` or data file may be a symbolic link pointing anywhere the server account can write.
+        This check verifies that the data directory is a real boundary, by confirming the server will not follow a symbolic link out of it when opening a table file.
 
-        That breaks the assumption that the data directory bounds where the server reads and writes. An account able to create a table with a `DATA DIRECTORY` clause, or an attacker who can place a link inside the data directory, can cause the server to write through it to a path of their choosing.
+        `symbolic_links` belongs under `[mysqld]` in the server option file and has to be off. With the feature enabled, a `.frm` or data file may be a symbolic link pointing anywhere the server account can write, and the server follows it without comment.
 
         **Why this matters**
 
-        - **The data directory becomes a real boundary:** Table storage stays inside the directory the server owns.
-        - **Backups and snapshots stay complete:** Tools that copy the data directory capture everything.
-        - **Removes an indirection:** File paths cannot be redirected after a table is created.
+        The rest of the file protections in this policy assume the server reads and writes inside its data directory. A symbolic link breaks that assumption invisibly, because the catalog still records an ordinary local path while the bytes land somewhere else entirely.
 
-        **Risk mitigation**
+        There are two routes in. An account that can issue `CREATE TABLE` with a `DATA DIRECTORY` clause chooses where the table's storage lives, and every insert afterward writes there as the server account. An attacker who has any file write inside the data directory, from a bulk export or a compromised backup process, replaces a table file with a link and lets the server do the writing through it on the next flush.
 
-        - **Prevents writes outside the data directory:** A symbolic link cannot be used to overwrite unrelated files.
-        - **Blocks a privilege escalation path:** Table creation cannot be turned into an arbitrary file write.
+        Either way, content the attacker controls is written to a path they chose, by a process the host trusts. That is the same escalation the file privilege checks here are trying to prevent, arriving through the storage layer instead of through a statement.
+
+        Look for existing links inside the data directory before changing this. A table that currently depends on one becomes unreadable when the option is turned off, and a link nobody put there deliberately is worth investigating before it is broken.
       audit: |
         ### Audit via CLI
 
@@ -2757,20 +2721,19 @@ queries:
       mysql.conf.allowSuspiciousUdfs == false
     docs:
       desc: |
-        This check ensures that `allow_suspicious_udfs` is disabled. The option controls whether the server accepts a user-defined function library that exports only the main function symbol, without the auxiliary initialization and deinitialization symbols a legitimate UDF provides.
+        This check verifies that the server refuses to load a shared library as a user-defined function unless the library is shaped like a real one.
 
-        A library exporting only that one symbol is characteristic of a shared object that was not written as a MySQL UDF at all, which is exactly the shape of a library repurposed to gain code execution inside the server process. Refusing such libraries removes a well-established post-exploitation technique.
+        `allow_suspicious_udfs` belongs under `[mysqld]` in the server option file, and the check searches the whole include chain for it. With it off, a function library must export the auxiliary initialization and deinitialization symbols alongside the main function symbol. With it on, a library exporting only the main symbol is accepted.
 
         **Why this matters**
 
-        - **Libraries must look like real UDFs:** The server rejects shared objects that lack the expected symbols.
-        - **Code runs in the server process:** A loaded library executes with the server account's full access.
-        - **Legitimate UDFs are unaffected:** Properly written functions export the required symbols.
+        A library exporting only that symbol is almost never something written as a user-defined function. It is the shape of an arbitrary shared object being pointed at the server so its code runs inside the server process, which is a long-established route from database access to host code execution.
 
-        **Risk mitigation**
+        The technique goes like this. An attacker who has reached a sufficiently privileged account gets a shared object into the plugin directory, often by writing it there with the file statements this policy also restricts, registers it as a function with `CREATE FUNCTION` or by using `INSERT` on `mysql.func` directly, and calls it. The code then runs in the server process with the server account's full reach: the data directory, the keyring material, the TLS private key, and the network. From that point the database is incidental.
 
-        - **Blocks a code execution technique:** An attacker with `INSERT` on `mysql.func` cannot load an arbitrary shared object.
-        - **Raises the bar after compromise:** Turning database access into host code execution requires more work.
+        Refusing malformed libraries does not stop someone who compiles a properly formed one, but it removes the off-the-shelf version, which is the version that arrives inside an automated post-exploitation toolkit.
+
+        Correctly written functions export the symbols the server asks for and are unaffected. Where the option is found enabled, review the registered functions and the contents of the plugin directory before assuming the server is clean.
       audit: |
         ### Audit via CLI
 
@@ -2889,20 +2852,19 @@ queries:
       mysql.conf.logBinTrustFunctionCreators == false
     docs:
       desc: |
-        This check ensures that `log_bin_trust_function_creators` is disabled so creating a stored function requires the `SUPER` privilege in addition to `CREATE ROUTINE` when binary logging is active. Enabling the option removes that additional requirement.
+        This check verifies that the extra privilege requirement on stored function creation is still in place while binary logging is active.
 
-        The safety check exists because stored functions can be nondeterministic, which makes statement-based replication diverge between a source and its replicas. Its security value is that it keeps routine creation, a form of persistent server-side code, behind a privilege that is granted sparingly.
+        `log_bin_trust_function_creators` belongs under `[mysqld]` in the server option file and has to be off. Off, creating a stored function requires the `SUPER` privilege in addition to `CREATE ROUTINE`. On, that additional requirement disappears and `CREATE ROUTINE` alone is enough.
 
         **Why this matters**
 
-        - **Routine creation stays privileged:** Adding server-side code requires more than routine-level grants.
-        - **Replication consistency is preserved:** Nondeterministic routines cannot silently diverge replicas.
-        - **Fewer accounts can persist code:** The set of accounts able to install a routine stays small.
+        A stored function is server-side code that lives in the schema and runs under a definer's rights whenever anything calls it. That makes routine creation a persistence mechanism, and the privilege it demands decides how many accounts hold one.
 
-        **Risk mitigation**
+        An attacker who has compromised an ordinary application account, which typically holds routine privileges on its own schema so that migrations work, installs a function and then arranges for something to invoke it: a trigger, a view, a scheduled event, or the application's own next query. The function reads what that account can read and writes what it can write, and it outlives a password rotation on the account that created it, because the code is now part of the schema rather than part of a session. Keeping this behind `SUPER`, which is granted to few accounts and reviewed, is what keeps that path shut to application credentials.
 
-        - **Limits persistence mechanisms:** A compromised application account cannot install a routine to maintain access.
-        - **Prevents replica divergence:** An attacker cannot use a nondeterministic routine to corrupt replicas.
+        The requirement was introduced for replication correctness rather than for security. A nondeterministic function produces different results on a source and on its replicas under statement-based replication, so the check exists to make someone with broad privilege take responsibility for that. The security benefit is a side effect worth keeping.
+
+        Confirm no deployment process depends on creating routines without `SUPER` before restoring it.
       audit: |
         ### Audit via CLI
 
@@ -3008,20 +2970,17 @@ queries:
       mysql.conf.automaticSpPrivileges == false
     docs:
       desc: |
-        This check ensures that `automatic_sp_privileges` is disabled so creating a stored routine does not automatically grant its creator `EXECUTE` and `ALTER ROUTINE` on it. The option is enabled by default, which means routine privileges appear without anyone granting them.
+        This check verifies that every privilege on a stored routine was granted deliberately rather than appearing because somebody created the routine.
 
-        Automatic grants make the privilege model harder to reason about, because the grants recorded for an account no longer reflect only deliberate decisions. Disabling the option means every routine privilege is explicit and reviewable.
+        `automatic_sp_privileges` belongs under `[mysqld]` in the server option file and has to be set to `OFF` explicitly. The server's default is on, which means that whenever an account creates a stored routine it is silently granted `EXECUTE` and `ALTER ROUTINE` on it, with no statement anywhere recording the decision.
 
         **Why this matters**
 
-        - **Privileges stay deliberate:** Every grant appears because someone issued it.
-        - **Reviews are meaningful:** The grant tables reflect intended access rather than side effects.
-        - **Separation of duties:** Creating a routine and being able to execute it can be split between accounts.
+        The consequence is that the grant tables stop being a record of decisions. Reviewing what an account can do means reading its grants, and when some of them materialized as a side effect of a `CREATE PROCEDURE` run by a migration job months ago, a reviewer cannot separate intended access from accumulated access. The natural response to an unexpected routine privilege becomes to assume it arrived automatically and move on, which is exactly the reasoning an attacker needs nobody to question.
 
-        **Risk mitigation**
+        It also couples two capabilities that are more useful apart. An account that can create routines automatically gains the ability to execute and to alter them, so a compromised deployment credential meant only to install code also holds the ability to run it and to rewrite it afterward. Separating creation from execution means an attacker who takes the deployment account still needs a second credential before the code they installed does anything.
 
-        - **Prevents unintended privilege accumulation:** An account does not gain execute rights simply by creating routines.
-        - **Makes privilege audits reliable:** Unexpected routine access is visible rather than explained away as automatic.
+        Turning the option off revokes nothing that already exists. Grant `EXECUTE` explicitly to the accounts that call existing routines before the change, then review the routine-level grants already recorded, since the ones that appeared automatically are indistinguishable from the ones someone chose.
       audit: |
         ### Audit via CLI
 
@@ -3130,20 +3089,17 @@ queries:
       mysql.conf.logError != empty
     docs:
       desc: |
-        This check ensures that `log_error` names a destination for the error log. When the option is empty, the server writes diagnostics to its standard error stream, where they depend entirely on how the service was started and are frequently discarded.
+        This check verifies that the server writes diagnostics to a file you can name, rather than to whatever its standard error stream happens to be attached to.
 
-        The error log records startup and shutdown, failed connection attempts, and plugin or component load failures. It is the record that shows whether the security settings in this policy actually took effect, and it is usually the first artifact examined during an incident.
+        `log_error` belongs under `[mysqld]` in the server option file and names a path in a directory the server account owns. When the option is empty, output goes to standard error, and its fate depends entirely on how the service was started: captured by the journal on one host, redirected into an unrotated file on another, and thrown away on a third.
 
         **Why this matters**
 
-        - **Durable diagnostics:** Messages are written to a file that survives a restart.
-        - **Failed authentication is recorded:** Repeated connection failures become visible.
-        - **Confirms configuration took effect:** Component and plugin load failures are reported rather than silent.
+        The error log is where the evidence of an attack in progress accumulates. Repeated failed connection attempts from one address, clients aborting mid-handshake, authentication failures against an account that has no business authenticating from outside: on a server without a separate audit plugin, these land here and nowhere else. Responders open this file first, and finding it was never written is the point at which an investigation stops being able to establish anything about what happened or when.
 
-        **Risk mitigation**
+        It is also where you learn whether the rest of this policy took effect. A component that failed to register, an option the server parsed and rejected, a certificate file it could not read: each of these is reported once at startup and never again. On a server that discards its startup output, a password validation component can fail to load and the configuration goes on saying the policy is enforced, with nothing anywhere contradicting it.
 
-        - **Preserves incident evidence:** Authentication failures and errors remain available for investigation.
-        - **Surfaces silent security failures:** A password validation component that failed to load is visible.
+        Create the log directory owned by the server account before setting the path, restart, and confirm entries are actually appearing rather than assuming the destination is writable.
       audit: |
         ### Audit via CLI
 
@@ -3269,20 +3225,19 @@ queries:
       mysql.conf.logErrorVerbosity >= 2
     docs:
       desc: |
-        This check ensures that `log_error_verbosity` is at least 2 so warnings are recorded alongside errors. At verbosity 1 only errors are logged, which suppresses the messages that report aborted connections, failed authentication attempts, and deprecated or ignored options.
+        This check verifies that the error log records warnings and not only errors, by requiring `log_error_verbosity` to be at least 2.
 
-        Warnings are where most security-relevant signal lives. An attacker probing credentials produces aborted connection warnings rather than errors, so a server at verbosity 1 can be attacked continuously without the error log showing anything.
+        The option belongs under `[mysqld]` in the server option file and takes 1 for errors alone, 2 for errors and warnings, and 3 for errors, warnings, and informational messages. The check fails 1.
 
         **Why this matters**
 
-        - **Failed authentication becomes visible:** Aborted connection warnings record unsuccessful attempts.
-        - **Configuration problems surface:** Options the server ignored are reported rather than silently dropped.
-        - **Small volume increase:** Warnings add far less volume than statement logging while carrying most of the signal.
+        Failed authentication does not produce an error on this server. It produces a warning about an aborted connection. That means a server at verbosity 1 can be under sustained password guessing, thousands of attempts an hour against every account name an attacker can think of, and the error log stays entirely silent. The first entry anyone sees is the successful login, which is indistinguishable from every other successful login.
 
-        **Risk mitigation**
+        Verbosity 2 is where that signal begins. A run of aborted connections from a single address, or against a single account name, is the pattern that separates an attack from a misconfigured client, and it is only a pattern if the individual events were recorded in the first place.
 
-        - **Detects credential attacks:** Repeated aborted connections from one address become apparent.
-        - **Reveals ineffective hardening:** An option the server rejected is reported instead of assumed active.
+        The same level surfaces options the server read and then ignored, which is the difference between a hardening change that took effect and one that was silently dropped because of a typo or a variable that does not exist in this release. Deprecation notices arrive here too, which is how you find out a setting you rely on is going away before an upgrade removes it.
+
+        The cost is modest. Warnings add far less volume than statement logging while carrying most of the security-relevant signal, so this is the level to raise before considering anything that records queries.
       audit: |
         ### Audit via CLI
 
@@ -3391,20 +3346,19 @@ queries:
       mysql.conf.logOutput.none(_.downcase == "none")
     docs:
       desc: |
-        This check ensures that `log_output` names a real destination rather than `NONE`. The option controls where the general and slow query logs are written, and setting it to `NONE` discards their contents even while the logs themselves are enabled.
+        This check verifies that the general and slow query logs actually write somewhere, by requiring `log_output` to name a real destination.
 
-        That combination is misleading during a review, because `slow_query_log` reads as `ON` while nothing is retained anywhere. Naming `FILE` or `TABLE` explicitly means an enabled log actually produces records.
+        The option belongs under `[mysqld]` in the server option file and accepts `FILE`, `TABLE`, or both. The check fails the value `NONE`, which discards the output of both logs while leaving the logs themselves switched on, and it fails an unset option.
 
         **Why this matters**
 
-        - **Enabled logs produce output:** A log that is on is written somewhere.
-        - **Removes a misleading configuration:** The log state and the retained data agree.
-        - **Slow query analysis stays possible:** Long-running statements are recorded for review.
+        `NONE` produces a configuration that misleads a reviewer. `slow_query_log` reads as `ON`, the control appears in every inventory of what is enabled, and not one record exists anywhere. Somebody signs off on query logging being in place, and the evidence it was supposed to produce was never written at all.
 
-        **Risk mitigation**
+        The practical loss is the slow query log, which is the one of the two that belongs on. It is the record that shows a query returning far more rows than the application would ever ask for, a full table scan on a table that is always accessed by key, or a statement shape nothing in the codebase generates. Those are the fingerprints of bulk extraction through a legitimate credential, and they are the difference between noticing an exfiltration while it is happening and reading about it afterward.
 
-        - **Prevents silent loss of query records:** Statements are retained rather than discarded.
-        - **Avoids false assurance during audit:** An enabled log cannot appear compliant while retaining nothing.
+        Set `FILE` where a log pipeline ships records off the host, or `TABLE` where they need to be queryable on the server itself.
+
+        This option decides only where output goes, not what is recorded. What gets logged is a separate decision, and a companion check in this policy requires the general query log to stay off, because unlike the slow query log it captures credentials.
       audit: |
         ### Audit via CLI
 
@@ -3515,20 +3469,19 @@ queries:
       mysql.conf.generalLog == false
     docs:
       desc: |
-        This check ensures that `general_log` is disabled. Unlike the other logging checks in this policy, the secure state here is off, because the general query log records every statement the server receives in cleartext, including the statements that set passwords.
+        This check verifies that the general query log is off, which is the opposite of what the other logging checks in this policy ask for, and for a specific reason.
 
-        A `CREATE USER` or `ALTER USER ... IDENTIFIED BY` statement is written to the general log with the password in plain text, so an enabled general log turns the log file into a credential store. Use the audit log for a durable record of activity, since it redacts the arguments of password-setting statements.
+        `general_log` belongs under `[mysqld]` in the server option file. When on, the server writes every statement it receives to the log verbatim and in cleartext, including the statements that set passwords.
 
         **Why this matters**
 
-        - **Passwords are written in cleartext:** Statements that set a password are recorded verbatim.
-        - **Log readers become credential holders:** Anyone able to read the log obtains those passwords.
-        - **Purpose-built alternatives exist:** The audit log records activity without capturing password arguments.
+        A `CREATE USER` or an `ALTER USER ... IDENTIFIED BY` statement lands in the file with the password spelled out in full. An enabled general query log is therefore a credential store, holding every database password created or changed while it was running, in plain text, in a file carrying ordinary log permissions.
 
-        **Risk mitigation**
+        Everyone who can read logs then holds those credentials, and that is a far wider group than the people who hold database administration rights. It includes the agent shipping logs off the host, the aggregation service and everyone with a search box on it, the backup that swept up `/var/log`, and the engineer granted read access to diagnose something unrelated last quarter. An attacker with a foothold anywhere along that chain, or who exfiltrates the file outright, walks away with working passwords rather than hashes, so nothing needs cracking and nothing rate-limits them.
 
-        - **Prevents credential disclosure through logs:** Passwords are not persisted to disk in readable form.
-        - **Limits damage from log exfiltration:** A copied log file does not yield working credentials.
+        There is a real performance cost as well, since every statement is written before it runs, but the credential exposure is why this check exists.
+
+        Use the audit log where a durable activity record is needed, because it redacts the arguments of password-setting statements. When the option is found on, treat the existing file as an exposure: rotate it, remove it securely, and rotate every credential that was set while it was running.
       audit: |
         ### Audit via CLI
 
@@ -3648,20 +3601,19 @@ queries:
       mysql.conf.auditLogPolicy != empty && mysql.conf.auditLogPolicy.downcase != "none"
     docs:
       desc: |
-        This check ensures that `audit_log_policy` names a class of activity to record. The audit log plugin produces a structured, durable record of connections and statements, and unlike the general query log it redacts the arguments of statements that set passwords.
+        This check verifies that the audit log is recording a class of activity rather than sitting loaded and idle.
 
-        That redaction is what makes the audit log the right mechanism for a permanent activity record. Setting the policy to `LOGINS` captures connection activity, `QUERIES` captures statements, and `ALL` captures both. An empty value or `NONE` means the plugin records nothing even when it is loaded.
+        `audit_log_policy` belongs under `[mysqld]` in the server option file and takes `ALL`, `LOGINS`, or `QUERIES`. The check fails `NONE`, which records nothing, and fails an empty value. The audit log plugin itself is available in MySQL Enterprise and as an equivalent plugin in Percona Server, and it has to be loaded from the option file for the policy setting to mean anything.
 
         **Why this matters**
 
-        - **Durable, structured record:** Activity is captured in a parseable format suited to a log pipeline.
-        - **Passwords are redacted:** Statements that set credentials are recorded without their arguments.
-        - **Attribution for every connection:** The `LOGINS` class records who connected and from where.
+        Auditing is the mechanism that answers the questions incident response actually asks: which accounts connected, from where, when, and what they ran. Without it, a compromised credential leaves a server that can tell you its current state and nothing about how it got there. The scope of a breach notification then rests on assumption rather than on evidence, which usually means assuming the worst.
 
-        **Risk mitigation**
+        `LOGINS` captures connection activity, so a run of failed attempts and the moment a stolen credential was first used are both visible and attributable to an address. `QUERIES` captures statements, so what an attacker did once inside is on record: which tables were read, whether an account was created, whether a grant was altered. `ALL` captures both, which is what most servers holding regulated data want.
 
-        - **Supports incident reconstruction:** Responders can establish which accounts acted and when.
-        - **Detects credential misuse:** Connections from unexpected accounts or addresses are recorded.
+        The reason to use this rather than the general query log is redaction. The audit log records that a password-setting statement ran without writing the password into the file, so it can be retained and shipped to a pipeline. The general query log cannot, and a companion check in this policy requires it to stay off for exactly that reason.
+
+        Set the policy, the destination, and the format together, and confirm records appear.
       audit: |
         ### Audit via CLI
 
@@ -3809,20 +3761,19 @@ queries:
       mysql.conf.defaultTableEncryption == true
     docs:
       desc: |
-        This check ensures that `default_table_encryption` is enabled so new schemas and general tablespaces are encrypted at rest unless a statement explicitly opts out. The option defaults to off, which means encryption depends on every `CREATE TABLE` remembering to request it.
+        This check verifies that new schemas and general tablespaces are encrypted at rest unless a statement explicitly asks otherwise.
 
-        Making encryption the default inverts that burden. A table created by a migration script or an application that knows nothing about the policy is still encrypted, and an unencrypted table becomes a deliberate exception rather than an oversight.
+        `default_table_encryption` belongs under `[mysqld]` in the server option file and defaults to off. While it is off, encryption depends on every `CREATE TABLE` remembering to request it, which means it depends on every migration script, every ORM, and every developer who has never read this policy.
 
         **Why this matters**
 
-        - **New tables are covered automatically:** Encryption does not depend on per-statement clauses.
-        - **Exceptions become visible:** An unencrypted table requires an explicit clause that shows up in review.
-        - **Protects data at rest:** Files copied from the data directory are unreadable without the keyring.
+        Encryption at rest is what stands between the files and someone who has them but not a running server. A decommissioned disk that left the building unwiped, a snapshot copied into a bucket that turns out to be readable, a backup archive on a share with inherited permissions, a laptop with a restored dump on it: in every one of those the attacker holds the data directory and no credential at all. Encrypted tablespaces are inert without the keyring; unencrypted ones open in any tool that understands the file format.
 
-        **Risk mitigation**
+        It also contains an attacker who has reached the host but not a privileged database account. Reading table files straight out of the data directory bypasses every grant the server would otherwise have enforced, and encryption is what makes that read produce nothing usable.
 
-        - **Limits exposure from stolen media:** A lost disk or backup does not disclose table contents.
-        - **Contains filesystem-level access:** An account able to read data files cannot read table data directly.
+        Turning the default on inverts where the burden falls. A table created by a script that knows nothing about the policy is still encrypted, and an unencrypted table now requires an explicit clause that shows up in code review as a deliberate exception rather than an oversight nobody sees.
+
+        Encryption needs a keyring component configured, since table creation fails without one, and existing tablespaces are not converted by the change. Identify them and convert them afterward.
       audit: |
         ### Audit via CLI
 
@@ -3941,20 +3892,19 @@ queries:
       mysql.conf.binlogEncryption == true
     docs:
       desc: |
-        This check ensures that `binlog_encryption` is enabled so binary and relay log files are encrypted at rest. The binary log records the row images of every change, which means it contains the same data as the tables themselves.
+        This check verifies that binary and relay log files are encrypted at rest.
 
-        Encrypting tables while leaving the binary log in cleartext leaves the data readable in a second location. Binary logs are also frequently retained longer than expected and copied to replicas and backup hosts, which widens the number of places the unencrypted content exists.
+        `binlog_encryption` belongs under `[mysqld]` in the server option file and depends on the same keyring component the other encryption options here use. It applies to newly written files, so the logs have to be rotated after the restart before the current files are replaced with encrypted ones.
 
         **Why this matters**
 
-        - **Closes a parallel copy of the data:** Row images in the log are protected like the tables.
-        - **Covers replicas and backups:** Log files copied elsewhere remain encrypted.
-        - **Consistent encryption posture:** Table encryption is not undermined by an unprotected log.
+        The binary log records the row images of every change the server makes. That is not metadata about the data, it is the data, written a second time into a different file. A server with encrypted tables and a cleartext binary log has published its entire change history in the open, and an attacker who reads it reconstructs the rows without decrypting anything.
 
-        **Risk mitigation**
+        Binary logs also travel much further than tables do. Every replica pulls them, so the content lands on every replica host and in the relay logs there. Backup jobs capture them, often into a different retention tier with different access controls and a longer life. Change-data-capture pipelines read them, and those frequently run on hosts the database team does not administer. Each copy is another place where read access to a file is enough.
 
-        - **Prevents data recovery from log files:** A copied binary log does not disclose table contents.
-        - **Limits exposure from long retention:** Historical changes stay protected for as long as the log exists.
+        They also persist longer than people expect. An expiry tuned for disk space rather than for retention leaves months of changes on disk, so the exposure covers not only what the tables hold now but every value they have held since the oldest surviving file.
+
+        Confirm the keyring is active, set the option, restart, and rotate the logs so the current files are rewritten encrypted rather than left as they are.
       audit: |
         ### Audit via CLI
 
@@ -4071,20 +4021,19 @@ queries:
       mysql.conf.innodbRedoLogEncrypt == true
     docs:
       desc: |
-        This check ensures that `innodb_redo_log_encrypt` is enabled so the InnoDB redo log is encrypted at rest. The redo log holds recently modified page contents, so encrypted tables can still leave readable copies of their most recent data in it.
+        This check verifies that the InnoDB redo log is encrypted at rest, closing the copy of recent data that table encryption alone leaves readable.
 
-        Table encryption alone therefore leaves a gap. The redo log is written continuously and lives inside the data directory, so anything able to read the data directory can recover recent changes to encrypted tables from it.
+        `innodb_redo_log_encrypt` belongs under `[mysqld]` in the server option file and needs the same keyring component that table encryption needs.
 
         **Why this matters**
 
-        - **Closes a recent-data gap:** Modified page contents are protected as well as the tables.
-        - **Covers the whole data directory:** Encryption is consistent across the files InnoDB writes.
-        - **Protects crash recovery data:** Content retained for recovery is not readable.
+        The redo log holds the contents of recently modified pages so the server can recover after a crash, and those page contents are table data. Encrypting the tables while leaving the redo log in cleartext therefore leaves the most recent writes to those tables sitting readable in a second file, inside the same data directory, written continuously as the server runs.
 
-        **Risk mitigation**
+        For an attacker that is often the better target. The tables are the whole dataset and take work to sift; the redo log is what changed recently, which is where the new orders, the new accounts, and the freshly rotated credentials are. Anyone who can read the data directory, whether through a foothold on the host, a copied snapshot, or a backup that captured the whole directory, recovers those changes without holding a database credential and without touching the encrypted tablespaces at all.
 
-        - **Prevents recovery of recent changes:** The redo log cannot be read to reconstruct encrypted table data.
-        - **Limits exposure from filesystem access:** Reading the data directory does not reveal recent writes.
+        The gap is invisible from inside the database. Every table reports as encrypted, the check that covers table encryption passes, and the file next to them is plaintext.
+
+        Confirm the keyring is active before enabling this and restart. Data already written to the redo log is not retroactively protected, so treat existing log content as exposed if the data directory has ever been reachable by anyone outside the server account.
       audit: |
         ### Audit via CLI
 
@@ -4199,20 +4148,19 @@ queries:
       mysql.conf.innodbUndoLogEncrypt == true
     docs:
       desc: |
-        This check ensures that `innodb_undo_log_encrypt` is enabled so InnoDB undo logs are encrypted at rest. Undo logs retain the previous versions of modified rows so transactions can be rolled back and so consistent reads can be served.
+        This check verifies that InnoDB undo logs are encrypted at rest.
 
-        Those previous row versions are table data. An unencrypted undo log therefore holds readable copies of rows from encrypted tables, and it can retain them for as long as a transaction stays open.
+        `innodb_undo_log_encrypt` belongs under `[mysqld]` in the server option file and depends on the same keyring component as the rest of the encryption options here.
 
         **Why this matters**
 
-        - **Previous row versions are protected:** Historical values are covered by the same encryption as the tables.
-        - **Long-running transactions are handled:** Retained versions stay protected however long they persist.
-        - **Completes data directory coverage:** Undo, redo, and table files are all encrypted.
+        Undo logs retain the previous version of every modified row, so that a transaction can be rolled back and so that other sessions can be served a consistent read of the data as it was when their statement began. Those previous versions are table data. An unencrypted undo log therefore holds readable copies of rows from encrypted tables, which is precisely the disclosure table encryption was configured to prevent.
 
-        **Risk mitigation**
+        The retention is what makes it worse than it sounds. A row version stays in the undo log for as long as any transaction might still need it, so one long-running reporting query or one session that opened a transaction and never committed pins historical values on disk for hours. What an attacker recovers there is not only the current state but the values before an update, which is the part that is often the most sensitive: the balance before the correction, the address before it was redacted, the password hash before it was rotated.
 
-        - **Prevents recovery of previous values:** Superseded row versions cannot be read from disk.
-        - **Closes a rollback data gap:** Data retained for transaction rollback is unreadable.
+        Reading it needs no database credential. Anyone with access to the data directory, through a host foothold, a snapshot, or a backup, reads the undo tablespaces directly.
+
+        Confirm the keyring is active, set the option, and restart. Review the undo tablespaces and their encryption state afterward, since the setting governs what is written from that point on.
       audit: |
         ### Audit via CLI
 
@@ -4327,20 +4275,19 @@ queries:
       mysql.conf.clientOptions["password"] == empty
     docs:
       desc: |
-        This check ensures that no `password` option appears in the client option groups. The `[client]`, `[mysql]`, and `[client-server]` groups are read by every client program the server ships, so a password written there is available to every account that can read the option file.
+        This check verifies that no database password is written into the client option groups of a shared option file.
 
-        A password in a system-wide option file is a durable credential in a file that is often more readable than intended and is frequently captured by configuration management, backups, and container images. Use a login path created with `mysql_config_editor`, which stores credentials in a per-user obfuscated file, or supply the credential from a secret store at run time.
+        The `password` option is what the check looks for, in the groups the MySQL client programs read: `[client]`, `[client-server]`, and `[mysql]`. A password in any of them is available to every client program that reads the file and to every account on the host that can open it.
 
         **Why this matters**
 
-        - **Option files are widely readable:** System option files are commonly readable beyond the database account.
-        - **Credentials spread with copies:** Backups, images, and configuration repositories carry the password with them.
-        - **Better mechanisms exist:** Login paths and secret stores keep the credential out of a shared file.
+        A credential in a system-wide option file does not stay in that file. Configuration management checks it into a repository, where everyone with read access has it and where it stays in the history long after it is removed from the working tree. Backups copy it. Container images bake it into a layer that is pushed to a registry. Host snapshots taken for troubleshooting carry it wherever they are restored. Each copy is a working password rather than a hash, usable directly against the database with nothing to crack.
 
-        **Risk mitigation**
+        Locally the exposure is immediate. Any account on the host that can read the file authenticates as whatever that credential names, which on a shared host is a far larger set of principals than the database team ever intended, and none of them appear anywhere in the database's own access controls as having been granted anything.
 
-        - **Prevents credential harvesting:** A local account cannot read a database password from a shared file.
-        - **Limits exposure from leaked configuration:** A copied option file does not include a working credential.
+        Keep the credential out of the shared file instead. A login path created with `mysql_config_editor` stores it in a per-user file that is scoped to one account, and a companion check in this policy covers the permissions on those files. Supplying it from a secret store at run time keeps it off disk entirely.
+
+        When one is found, remove it and rotate it. A password in a shared file has to be treated as already compromised, because the copies cannot be enumerated.
       audit: |
         ### Audit via CLI
 
@@ -4471,20 +4418,17 @@ queries:
       mysql.conf.files.all(permissions.group_writeable == false && permissions.other_readable == false && permissions.other_writeable == false)
     docs:
       desc: |
-        This check ensures that every file in the option file chain is readable only by its owner and the server account. MySQL does not refuse to start when an option file is world readable, so a permissive mode goes unnoticed.
+        This check verifies that every file the server reads configuration from is protected, not only the one at the top of the chain.
 
-        Include fragments deserve the same protection as the main file. Configuration management tooling frequently writes drop-in files under `mysql.conf.d` or `my.cnf.d` with default permissions, which leaves a fragment world readable even when the main file is correctly restricted. This check evaluates every contributing file rather than only the entry point.
+        The server follows a chain of option files, resolving each include directive, and this check requires that none of them is group writable or accessible to other accounts. That is the mode `-rw-------` or `-rw-r-----`, owned by an account the server can read as. MySQL does not refuse to start when an option file is world readable, so a permissive mode produces no warning anywhere and nothing surfaces it.
 
         **Why this matters**
 
-        - **Option files describe the server:** Data directory paths, TLS material locations, and plugin directories are all disclosed.
-        - **Write access is server control:** An account able to modify a fragment can disable authentication on the next restart.
-        - **Fragments are easy to overlook:** Drop-in files inherit whatever permissions wrote them.
+        Read access to these files is a map of the server. They name the data directory, the paths to the TLS certificate and private key, the keyring data location, the plugin directory, and the log destinations. An attacker with a foothold as any unprivileged account on the host reads them first, and everything they do afterward is aimed rather than exploratory.
 
-        **Risk mitigation**
+        Write access is worse, because it is control of the server on its next restart. An account that can modify any fragment in the chain adds `skip_grant_tables` and waits for a reboot, at which point the server starts with no privilege system at all. It could as easily repoint the keyring, disable the audit log, or widen the bind address, and each of those survives as long as nobody re-reads the file.
 
-        - **Blocks local reconnaissance:** An unprivileged account cannot learn where keys and data live.
-        - **Prevents configuration tampering:** An attacker cannot add an option that weakens the server.
+        The fragments are where this usually goes wrong. Configuration management tooling writes drop-in files under `mysql.conf.d` or `my.cnf.d` with whatever permissions were in effect at the time, so one world readable drop-in undoes a correctly restricted main file. Apply ownership and mode across the whole directory rather than to the entry point alone.
       audit: |
         ### Audit via CLI
 
@@ -4603,20 +4547,17 @@ queries:
       mysql.conf.userFiles.all(file.permissions.group_readable == false && file.permissions.other_readable == false)
     docs:
       desc: |
-        This check ensures that every per-user option file found in a home directory is readable only by its owner. These files are `.my.cnf` and the obfuscated `.mylogin.cnf` credential store written by `mysql_config_editor`, and both routinely hold the credentials a person or a service uses to reach the database.
+        This check verifies that the option files sitting in users' home directories, which hold their database credentials, are readable only by the account that owns them.
 
-        A `.my.cnf` holds its password in plain text. A `.mylogin.cnf` is obfuscated rather than encrypted, so its contents can be recovered by anyone who can read the file. In both cases the file mode is the only thing separating the credential from other accounts on the host. Servers with no per-user option files pass this check, because there is nothing to protect.
+        Two files matter. A `.my.cnf` holds its password as plain text. A `.mylogin.cnf` is the login path store written by `mysql_config_editor`, and it is obfuscated rather than encrypted: the format is documented and reversible, so anyone who can read the file can recover what is in it. A host with no such files passes, because there is nothing to protect.
 
         **Why this matters**
 
-        - **These files hold working credentials:** Their contents authenticate directly to the database.
-        - **Obfuscation is not encryption:** A readable `.mylogin.cnf` can be decoded by any account that reads it.
-        - **File mode is the only boundary:** Nothing else prevents another local account from reading them.
+        These files exist so that a person or a service does not have to supply a password, which means they contain working credentials that authenticate directly to the database. The file mode is the only thing between those credentials and the other accounts on the host. There is no second factor, no address restriction, and nothing in the database that would treat a connection using them as anything but routine.
 
-        **Risk mitigation**
+        The concrete path is lateral movement on a shared machine. An attacker who compromises an unrelated service on the host, through a web application or an exposed agent, has a local unprivileged account. If a developer's `.my.cnf` or an operator's `.mylogin.cnf` is group readable, that foothold becomes a database credential immediately, and the resulting connection is indistinguishable from the owner's own work: a real account, from a real host, landing in the audit log as ordinary activity.
 
-        - **Prevents local credential theft:** A compromised service account cannot read another user's database password.
-        - **Contains lateral movement:** A foothold on a shared host does not yield database credentials.
+        Restrict each file to its owner, then rotate any credential that was readable. A file other accounts could open has to be assumed to have been opened.
       audit: |
         ### Audit via CLI
 
