@@ -13,6 +13,11 @@ name: Validator Upstream Drift
 ## needs a person to decide whether the content or the pin is wrong. So the job
 ## writes a table into one long-lived issue and never fails the build.
 ##
+## The issue exists only on the weeks it has something to say. A quiet week
+## closes it and opens nothing; drift reopens the same issue with a fresh table.
+## An open issue therefore means a pin needs a look, which is the only reading
+## under which the label stays worth subscribing to.
+##
 ## `validation-dependency-updates.yaml` runs an hour before this and opens a
 ## pull request per *kind* of pin that moved, so most rows below have a pull
 ## request behind them -- shared with the other rows of their kind, because
@@ -48,6 +53,7 @@ jobs:
           python-version: "3.12"
 
       - name: Check pinned versions against upstream
+        id: drift
         env:
           # ~45 api.github.com calls per run. Unauthenticated that shares a
           # 60/hour budget with the whole runner IP, and a throttled run would
@@ -55,12 +61,29 @@ jobs:
           # all-clear. With this token the limit is 5,000/hour.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+          python3 content/validation/upstream/check.py \
+            --format markdown --json-out /tmp/pins.json > /tmp/table.md
+
+          # What makes this week's report worth a person's attention. `behind`
+          # is the obvious one. `unstamped` means a pin could not be read out of
+          # the file that declares it, so the checker is broken and silence
+          # would be a false all-clear. The other three states are not: an
+          # `unchecked` row is a network blip, `manual` is permanent by
+          # construction, and `current` is the whole point.
+          actionable=$(jq '[.[] | select(.state == "behind" or .state == "unstamped")] | length' /tmp/pins.json)
+          total=$(jq 'length' /tmp/pins.json)
+          echo "actionable=$actionable" >> "$GITHUB_OUTPUT"
+
           {
             echo "Each of these pins decides what the remediation and IaC-variant"
             echo "validators check against. \`BEHIND\` is not automatically a bug — it"
             echo "is a prompt to look."
             echo
-            python3 content/validation/upstream/check.py --format markdown
+            echo "**$actionable of $total pins need a look this week.** Every other row is"
+            echo "here for context: the report is the whole picture, not just the diff."
+            echo
+            cat /tmp/table.md
             echo
             echo "Most of these already have a pull request: the weekly"
             echo "\`Bump validation dependencies\` workflow opens one per *kind* of pin"
@@ -81,19 +104,49 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          ACTIONABLE: ${{ steps.drift.outputs.actionable }}
         run: |
           set -euo pipefail
           gh label create validation-drift --force \
             --color B7791F \
             --description "Remediation validation broke without a content change"
           title="Validator upstream pins: weekly drift report"
-          existing=$(gh issue list --state open --label validation-drift \
-            --search "$title in:title" --json number --jq '.[0].number // empty')
+          # `--state all`, because a week with nothing behind closes this issue
+          # rather than leaving a stale table open. Finding the closed one is
+          # what lets the next drift reopen it instead of opening a second.
+          found=$(gh issue list --state all --label validation-drift \
+            --search "$title in:title" --json number,state \
+            --jq '.[0] | if . then "\(.number) \(.state)" else "" end')
+          # `$found` is either empty or exactly "<number> <STATE>", and STATE is
+          # GitHub's `IssueState` GraphQL enum, whose only members are OPEN and
+          # CLOSED. The two branches below are therefore exhaustive rather than
+          # assuming a shape: a third value cannot appear without a breaking
+          # change to the schema gh compiles against.
+          number=${found%% *}
+          state=${found##* }
+
+          # An open issue that says nothing needs doing is worse than no issue:
+          # week after week it trains everyone to skip the label, and then the
+          # week something really is behind reads the same as the fifty before
+          # it. The all-clear is the absence of an open issue.
+          if [ "$ACTIONABLE" -eq 0 ]; then
+            if [ -n "$found" ] && [ "$state" = "OPEN" ]; then
+              gh issue comment "$number" --body \
+                "Every watched pin is current. Closing; the weekly run reopens this issue with a fresh table the next time one falls behind."
+              gh issue close "$number"
+            fi
+            echo "nothing behind — no issue opened"
+            exit 0
+          fi
+
           # One long-lived issue whose body is replaced each week: the table is a
           # snapshot of right now, so appending weekly comments would bury the
           # current state under stale ones.
-          if [ -n "$existing" ]; then
-            gh issue edit "$existing" --body-file /tmp/drift.md
+          if [ -n "$found" ]; then
+            gh issue edit "$number" --body-file /tmp/drift.md
+            if [ "$state" = "CLOSED" ]; then
+              gh issue reopen "$number"
+            fi
           else
             gh issue create --title "$title" --body-file /tmp/drift.md --label validation-drift
           fi

@@ -20,6 +20,7 @@
 #   python3 content/validation/upstream/check.py
 #   python3 content/validation/upstream/check.py --format markdown
 #   python3 content/validation/upstream/check.py --format json
+#   python3 content/validation/upstream/check.py --format markdown --json-out pins.json
 #   python3 content/validation/upstream/check.py --exit-code   # 1 if behind
 
 import argparse
@@ -93,6 +94,12 @@ def main() -> None:
     )
     parser.add_argument("--format", choices=["text", "markdown", "json"], default="text")
     parser.add_argument(
+        "--json-out",
+        metavar="PATH",
+        help="also write the JSON form to PATH, so one run can render a report and "
+             "answer 'is anything behind' without asking every upstream twice",
+    )
+    parser.add_argument(
         "--exit-code",
         action="store_true",
         help="exit 1 when any pin is behind (default: always exit 0, this is a report)",
@@ -100,6 +107,9 @@ def main() -> None:
     args = parser.parse_args()
 
     pins = discover()
+
+    if args.json_out:
+        Path(args.json_out).write_text(render_json(pins) + "\n")
 
     if args.format == "json":
         print(render_json(pins))

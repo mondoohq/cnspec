@@ -90,6 +90,46 @@ def as_token(value: object) -> str:
     return text if UPSTREAM_TOKEN.fullmatch(text) else "unknown"
 
 
+def is_prerelease(version: str) -> bool:
+    """True for a version carrying a pre-release marker.
+
+    Semver puts the marker after a hyphen (`2.0.0-beta2`); RubyGems puts it in
+    a dotted segment (`0.27.0.beta4`). Both reduce to "something past the
+    numeric prefix contains a letter", which is also exactly how
+    `Gem::Version#prerelease?` decides. Every released version this module
+    resolves today is digits and dots, so nothing legitimate trips it.
+    """
+    return bool(re.search(r"[A-Za-z]", version.strip().lstrip("vV")))
+
+
+def stable_token(value: object) -> str:
+    """`as_token`, but a pre-release is not a version a pin may be moved to.
+
+    The registries disagree about whether "latest" hides a pre-release.
+    rubygems.org's `gems/<name>.json`, npm's `latest` dist-tag, PyPI's
+    `info.version` and GitHub's `releases/latest` all exclude one; the Terraform
+    registry's `version` field does not. Rather than remember which is which at
+    every call site, every version resolver ends here, and a pre-release comes
+    back as "unknown" -- the same fail-safe `as_token` already applies to a
+    value it cannot parse, and it reads in the report as "could not reach
+    upstream" rather than as a bump someone should make.
+    """
+    token = as_token(value)
+    return "unknown" if token != "unknown" and is_prerelease(token) else token
+
+
+def newest_stable(versions: list[str]) -> str:
+    """The highest non-pre-release entry of a registry's version list.
+
+    Ordering is by numeric component rather than by the list's own order: the
+    Terraform registry does not document a sort, and a backported patch
+    released after a newer minor would otherwise read as the newest thing
+    published and report a current pin as behind.
+    """
+    stable = [v for v in versions if v and not is_prerelease(v)]
+    return max(stable, key=lambda v: tuple(int(n) for n in re.findall(r"\d+", v)), default="")
+
+
 def fetch_json(url: str) -> dict | list | None:
     headers = {"User-Agent": USER_AGENT}
     # Compare the parsed hostname, never a substring of the URL: `"…" in url`
@@ -121,45 +161,68 @@ def latest_github_release(repo: str) -> str:
     data = fetch_json(f"https://api.github.com/repos/{repo}/releases/latest")
     if not isinstance(data, dict) or not data.get("tag_name"):
         return "unknown"
-    return as_token(str(data["tag_name"]).lstrip("v"))
+    return stable_token(str(data["tag_name"]).lstrip("v"))
 
 
 def latest_pypi(pkg: str) -> str:
     data = fetch_json(f"https://pypi.org/pypi/{pkg}/json")
     if not isinstance(data, dict):
         return "unknown"
-    return as_token(data.get("info", {}).get("version", "unknown"))
+    return stable_token(data.get("info", {}).get("version", "unknown"))
 
 
 def latest_rubygem(gem: str) -> str:
     data = fetch_json(f"https://rubygems.org/api/v1/gems/{gem}.json")
     if not isinstance(data, dict):
         return "unknown"
-    return as_token(data.get("version", "unknown"))
+    return stable_token(data.get("version", "unknown"))
 
 
 def latest_gitlab_release(project: str) -> str:
     """Latest release of a GitLab-hosted project. glab lives on gitlab.com and
-    the GitHub mirror publishes no releases, so `releases/latest` there 404s."""
-    data = fetch_json(f"https://gitlab.com/api/v4/projects/{project}/releases?per_page=1")
-    if not isinstance(data, list) or not data:
+    the GitHub mirror publishes no releases, so `releases/latest` there 404s.
+
+    GitLab has no "exclude pre-releases" flag on this endpoint and returns
+    releases newest-first, so a page is fetched and the first stable tag taken
+    rather than whatever happens to sit at the top.
+    """
+    data = fetch_json(f"https://gitlab.com/api/v4/projects/{project}/releases?per_page=20")
+    if not isinstance(data, list):
         return "unknown"
-    return as_token(str(data[0].get("tag_name", "unknown")).lstrip("v"))
+    for release in data:
+        tag = stable_token(str(release.get("tag_name", "")).lstrip("v"))
+        if tag != "unknown":
+            return tag
+    return "unknown"
 
 
 def latest_npm(pkg: str) -> str:
     data = fetch_json(f"https://registry.npmjs.org/{pkg}/latest")
     if not isinstance(data, dict):
         return "unknown"
-    return as_token(data.get("version", "unknown"))
+    return stable_token(data.get("version", "unknown"))
 
 
 def latest_terraform_provider(source: str) -> str:
-    """Latest published version of a Terraform provider, e.g. `hashicorp/aws`."""
+    """Latest *released* version of a Terraform provider, e.g. `hashicorp/aws`.
+
+    The registry's top-level `version` is the newest thing published, including
+    a pre-release, and it is the one resolver here whose upstream works that
+    way. `aliyun/alicloud` reads `2.0.0-beta2` there while its newest release is
+    `1.289.0`, which turned a perfectly current `~> 1.288` pin into a BEHIND row
+    proposing a `~> 2.0` constraint that no released provider satisfies. The
+    same response carries the full `versions` list, so the newest stable entry
+    costs no extra request.
+    """
     data = fetch_json(f"https://registry.terraform.io/v1/providers/{source}")
     if not isinstance(data, dict):
         return "unknown"
-    return as_token(data.get("version", "unknown"))
+    versions = data.get("versions")
+    if isinstance(versions, list):
+        newest = newest_stable([str(v) for v in versions])
+        if newest:
+            return stable_token(newest)
+    return stable_token(data.get("version", "unknown"))
 
 
 def latest_okta_spec_release() -> str:
@@ -422,18 +485,60 @@ def _entry_pattern(key: str, source: str) -> str:
 
 
 def constraint_for(version: str) -> str:
-    """The `~>` constraint this repo would write for a released provider version.
+    """The `~>` constraint this repo writes when a provider outgrows its pin.
 
-    `~> 5.0` floats across every 5.x release, so a provider only outgrows its
-    constraint on a *major* bump. Below 1.0 the minor is the breaking axis and
-    `~> 0.111` floats only across 0.111.x, so a 0.x provider outgrows it on a
-    minor bump. This reproduces every constraint currently in PROVIDER_MAP.
+    House style is the floor of the release's own line: `~> 6.0` for 6.60.0,
+    `~> 0.14` for a 0.14.x. It is only consulted for a provider whose current
+    constraint can no longer resolve the newest release, so what it produces is
+    always the *next* line rather than a restatement of the current one.
     """
     parts = version.split(".")
     if len(parts) < 2:
         return f"~> {version}"
     major, minor = parts[0], parts[1]
     return f"~> 0.{minor}" if major == "0" else f"~> {major}.0"
+
+
+def constraint_admits(constraint: str, version: str) -> bool:
+    """Whether a `~>` constraint already resolves to `version`.
+
+    This is the question the report needs answered, and it is not the same as
+    "is the constraint spelled the way `constraint_for` would spell it today".
+    Terraform's pessimistic operator lets only the rightmost component the
+    constraint names increment, so `~> 6.0` covers all of 6.x, `~> 1.288` covers
+    every 1.x from 1.288 up, and `~> 1.0.4` stops at 1.1.0.
+
+    `alicloud` is why the distinction matters. Its `~> 1.288` is a deliberate
+    pin with a comment in `terraform.py` explaining it: the 2.x line is
+    beta-only, and `~> 2.0` resolved to nothing at all. Comparing constraint
+    text reported that pin behind every week and had the auto-bump workflow
+    offering to reinstate the exact constraint someone had already removed for
+    cause. Asking whether the pin resolves 1.289.0 answers "no action needed".
+
+    The same rule means a 0.x provider reports current until its 1.0: `~> 0.14`
+    genuinely does resolve 0.15, so rewriting it to `~> 0.15` changes which
+    provider Terraform selects not at all.
+    """
+    m = re.fullmatch(r"~>\s*(\d+(?:\.\d+)*)", constraint.strip())
+    if not m:
+        return False
+    bound = [int(p) for p in m.group(1).split(".")]
+    actual = [int(p) for p in re.findall(r"\d+", version)]
+    if not actual:
+        return False
+
+    # Everything left of the rightmost named component is frozen, so the
+    # exclusive ceiling is that neighbour incremented. A one-component
+    # constraint freezes nothing and has no ceiling.
+    ceiling = bound[:-2] + [bound[-2] + 1] if len(bound) > 1 else None
+    width = max(len(bound), len(actual), len(ceiling or []))
+
+    def pad(v: list[int]) -> list[int]:
+        return v + [0] * (width - len(v))
+
+    if pad(actual) < pad(bound):
+        return False
+    return ceiling is None or pad(actual) < pad(ceiling)
 
 
 def check_terraform_pins() -> list[Pin]:
@@ -462,14 +567,22 @@ def check_terraform_pins() -> list[Pin]:
             files=[TERRAFORM_VALIDATOR],
         ))
 
-    # Provider entries hold a `~>` constraint, not a version, so the comparison
-    # is constraint-to-constraint: hashicorp/aws at 6.60.0 makes `~> 5.0` behind
-    # and `~> 6.0` current, while 6.61.0 leaves `~> 6.0` alone.
+    # Provider entries hold a `~>` constraint, not a version, so a pin is behind
+    # when the newest release is one the constraint cannot resolve -- not when
+    # the constraint is merely spelled differently to what this repo would write
+    # from scratch. hashicorp/aws at 6.60.0 leaves `~> 6.0` alone and makes
+    # `~> 5.0` behind; aliyun/alicloud at 1.289.0 leaves the deliberate
+    # `~> 1.288` alone, which comparing constraint text did not.
     for key, (source, constraint) in _parse_pair_map(text, "PROVIDER_MAP").items():
         version = latest_terraform_provider(source)
+        if version == "unknown":
+            latest = "unknown"
+        elif constraint_admits(constraint, version):
+            latest = constraint
+        else:
+            latest = constraint_for(version)
         out.append(Pin(
-            f"terraform-provider-{key}", "terraform-provider", constraint,
-            constraint_for(version) if version != "unknown" else "unknown",
+            f"terraform-provider-{key}", "terraform-provider", constraint, latest,
             f"{source} {version}",
             apply=make_apply(_entry_pattern(key, source)),
             files=[TERRAFORM_VALIDATOR],
