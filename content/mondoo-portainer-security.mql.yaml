@@ -4,7 +4,7 @@ policies:
   - summary: Secure Portainer authentication, RBAC, user privileges, Edge trust, and connection settings
     uid: mondoo-portainer-security
     name: Mondoo Portainer Security
-    version: 1.0.0
+    version: 1.0.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -97,18 +97,19 @@ queries:
           mondoo.com/filter-title: Terraform State
     docs:
       desc: |
-        This check ensures that non-administrator users cannot deploy privileged containers, neither through the instance-wide security settings nor through a per-environment override. A privileged container disables the kernel isolation that separates a workload from its host, granting it effectively unrestricted root access to the underlying node.
+        This check verifies that users who are not administrators cannot start containers in privileged mode.
+
+        Privileged mode hands a container the full Linux capability set, unrestricted access to every host device, and an unconfined seccomp and AppArmor profile, which together remove the kernel isolation that separates a workload from the machine it runs on. Portainer calls the restriction **Hide privileged mode for non-administrators**, in the **Docker security settings** on an environment's **Setup** page under **Host** or **Swarm**, and this check requires it to be in force on every managed environment as well as in the instance defaults. In Terraform it is `allow_privileged_mode` inside the `security_settings` block of a `portainer_endpoint_settings` resource, which must not be `true`.
 
         **Why this matters**
 
-        - **Host takeover:** A privileged container can load kernel modules, access every device, and read or modify the host filesystem — a container escape becomes a host compromise.
-        - **Tenant isolation:** On a shared Docker or Swarm host, one privileged workload can reach the data and processes of every other tenant on the node.
-        - **Least privilege:** Standard users rarely need privileged mode; restricting it keeps the capability with administrators who can reason about its blast radius.
+        An attacker who phishes any standard Portainer account does not need a container escape. They deploy a container with privileged mode set and a mount of the host root, then read `/etc/shadow`, the kubelet kubeconfig, and whatever cloud credentials the node holds, and write an SSH key into `root/.ssh/authorized_keys` or a job into `/etc/cron.d`. The account is not a container user at that point, it is root on the node.
 
-        **Risk mitigation**
+        From root on the node the rest follows without further exploitation. Every other container on the host is readable, including workloads the account was never granted access to, and the container runtime socket lets the attacker start, stop, and rewrite them. If the node is a Swarm manager or a Kubernetes control plane member, the cluster's own credentials are sitting on the local disk.
 
-        - **Blast-radius containment:** A compromised standard account cannot pivot from a container to the host kernel.
-        - **Override discipline:** Blocking the per-environment override stops an individual endpoint from silently re-enabling privileged deployments.
+        Privileged mode also erases the value of the other privilege controls. Capabilities, device mapping, and host namespaces are each subsets of what it grants, so leaving this one open makes the rest of them decorative.
+
+        Some workloads genuinely require it, such as storage drivers, in-cluster image builders, and container runtimes running inside containers. Deploy those as an administrator, or dedicate a single environment to them, rather than relaxing the restriction for standard users across the whole instance.
       audit: |
         ### Audit via Portainer UI
 
@@ -210,18 +211,19 @@ queries:
           mondoo.com/filter-title: Terraform State
     docs:
       desc: |
-        This check ensures that non-administrator users cannot bind-mount arbitrary host paths into their containers, neither instance-wide nor through a per-environment override. A bind mount exposes the host filesystem to a container, and a writable mount of a sensitive path is a direct route to host compromise.
+        This check verifies that users who are not administrators cannot mount host filesystem paths into the containers they deploy.
+
+        A bind mount attaches a path from the host directly into a container, and unlike a named volume it can point anywhere the container runtime can reach. Portainer calls the restriction **Hide bind mounts for non-administrators**, in the **Docker security settings** on an environment's **Setup** page under **Host** or **Swarm**, and this check requires it to be in force on every managed environment as well as in the instance defaults. In Terraform it is `allow_bind_mounts` inside the `security_settings` block of a `portainer_endpoint_settings` resource, which must not be `true`.
 
         **Why this matters**
 
-        - **Host filesystem exposure:** Mounting paths such as `/`, `/etc`, or `/var/run/docker.sock` lets a container read host secrets or control the Docker daemon.
-        - **Daemon takeover:** A bind mount of the Docker socket grants the container full control of the engine, equivalent to root on the host.
-        - **Least privilege:** Standard users deploying ordinary workloads do not need host bind mounts; named volumes serve their needs without exposing the host.
+        Mounting the host root read-only is already a full credential harvest: `/etc/shadow` for offline cracking, `/root/.aws/credentials` and cached instance metadata, TLS private keys, the kubelet kubeconfig, and the environment files of every other container on the node. Mounting it writable turns that into code execution, because a file dropped into `/etc/cron.d` or a key appended to `root/.ssh/authorized_keys` runs as root within minutes.
 
-        **Risk mitigation**
+        The sharpest case is a single path. A container that bind-mounts `/var/run/docker.sock` speaks to the container runtime with administrator authority, so it can start a privileged container itself. Leaving bind mounts open therefore reinstates every capability the other restrictions were meant to remove, without the user ever setting a privileged flag.
 
-        - **Containment:** A compromised standard account cannot read host credentials or escalate through the Docker socket.
-        - **Override discipline:** Blocking the per-environment override stops an endpoint from silently re-enabling host bind mounts.
+        Bind mounts break tenant separation quietly as well. `/var/lib/docker/volumes` holds the data of workloads the account has no access to in Portainer, and reading it leaves no trace in the owning application.
+
+        Named volumes cover ordinary persistence without exposing a host path, so most workloads lose nothing. Where a specific host directory really is required, an administrator should deploy that stack, or the capability should be relaxed on one dedicated environment rather than instance-wide.
       audit: |
         ### Audit via Portainer UI
 
@@ -323,18 +325,19 @@ queries:
           mondoo.com/filter-title: Terraform State
     docs:
       desc: |
-        This check ensures that non-administrator users cannot map host devices into their containers, neither instance-wide nor through a per-environment override. Device mapping grants a container direct access to host hardware, bypassing the abstraction the container runtime normally enforces.
+        This check verifies that users who are not administrators cannot expose host devices to the containers they deploy.
+
+        Device mapping passes a node from the host's `/dev` tree into a container along with permission to read it, write it, and create device nodes from it. Portainer calls the restriction **Hide device mappings for non-administrators**, in the **Docker security settings** on an environment's **Setup** page under **Host** or **Swarm**, and this check requires it to be in force on every managed environment as well as in the instance defaults. In Terraform it is `allow_device_mapping` inside the `security_settings` block of a `portainer_endpoint_settings` resource, which must not be `true`.
 
         **Why this matters**
 
-        - **Raw hardware access:** Mapping block devices such as `/dev/sda` lets a container read or overwrite the host's disks, including other tenants' data.
-        - **Isolation bypass:** Direct device access sidesteps namespace and cgroup controls, expanding what a container can reach on the node.
-        - **Least privilege:** Ordinary workloads do not need host devices; reserving the capability for administrators keeps its use deliberate.
+        Mapping a block device such as `/dev/sda` hands the container the raw disk that holds the host root filesystem and every other container's layers. File ownership and permissions are enforced by the filesystem driver, and reading the block device goes underneath all of it, so an attacker with a standard account dumps the partition, carves out `/etc/shadow` and any secret ever written to disk, and never mounts anything Portainer would display.
 
-        **Risk mitigation**
+        Writing to that device is worse than reading it. A crafted write into the host filesystem persists after the container is deleted, so the mapping becomes a way to install a backdoor that outlives the account being disabled.
 
-        - **Containment:** A compromised standard account cannot reach host storage or peripherals through a container.
-        - **Override discipline:** Blocking the per-environment override stops an endpoint from silently re-enabling device mapping.
+        Devices other than disks are just as useful to an attacker. Where they exist, `/dev/mem` and `/dev/kmem` are direct physical memory access, and mapping a hardware token, a TPM device node, or a serial console gives a container control of hardware the operator assumed only the host could touch.
+
+        GPU workloads, USB and serial peripherals, and some storage tooling do need device access. Deploy those as an administrator, or dedicate an environment to them, rather than relaxing the restriction for every standard user on the instance.
       audit: |
         ### Audit via Portainer UI
 
@@ -436,18 +439,19 @@ queries:
           mondoo.com/filter-title: Terraform State
     docs:
       desc: |
-        This check ensures that non-administrator users cannot share host namespaces (PID, network, or IPC) with their containers, neither instance-wide nor through a per-environment override. Sharing a host namespace collapses the boundary between a container and the host, exposing host processes and network interfaces.
+        This check verifies that users who are not administrators cannot run their containers inside the host's own process namespace.
+
+        A container normally receives a private PID namespace, so its main process is PID 1 and it sees nothing else running on the machine. Joining the host namespace removes that boundary and drops the container into the node's process tree. Portainer calls the restriction **Hide the use of host PID 1 for non-administrators**, in the **Docker security settings** on an environment's **Setup** page under **Host** or **Swarm**, and this check requires it to be in force on every managed environment as well as in the instance defaults. In Terraform it is `allow_host_namespace` inside the `security_settings` block of a `portainer_endpoint_settings` resource, which must not be `true`.
 
         **Why this matters**
 
-        - **Process visibility and control:** A container in the host PID namespace can see and signal every process on the node, including other tenants' workloads.
-        - **Network exposure:** Host network mode removes network isolation, letting a container bind host ports and sniff host traffic.
-        - **Least privilege:** Standard workloads do not need host namespaces; reserving them for administrators keeps the isolation boundary intact.
+        Every process on the node becomes visible, and processes leak secrets by existing. Command lines and `/proc/<pid>/environ` routinely carry database passwords, API keys, and connection strings that were handed to unrelated workloads, and an attacker with a standard Portainer account reads them by listing a directory.
 
-        **Risk mitigation**
+        The host process tree is also a filesystem. With the host namespace joined, `/proc/1/root` resolves to the root filesystem of the init process, which is the host, so an attacker reaches host files without ever declaring a mount that an operator would notice in the container definition.
 
-        - **Containment:** A compromised standard account cannot inspect or interfere with host processes and networking.
-        - **Override discipline:** Blocking the per-environment override stops an endpoint from silently re-enabling host namespace sharing.
+        It is a prerequisite for the next step as well. Signaling and tracing other processes only become possible once they are visible, so host PID is the enabling half of attacks that finish with a capability such as `CAP_SYS_PTRACE`, injecting into a privileged host process rather than escaping from the container.
+
+        Monitoring agents, profilers, and node-level exporters do legitimately need the host process namespace. Those belong to administrators or to a dedicated environment, not to the standard-user default across the instance.
       audit: |
         ### Audit via Portainer UI
 
@@ -549,18 +553,19 @@ queries:
           mondoo.com/filter-title: Terraform State
     docs:
       desc: |
-        This check ensures that non-administrator users cannot add Linux capabilities to their containers, neither instance-wide nor through a per-environment override. Added capabilities such as `SYS_ADMIN` or `NET_ADMIN` extend a container's privileges toward those of a privileged container.
+        This check verifies that users who are not administrators cannot add Linux kernel capabilities to the containers they deploy.
+
+        The container runtime starts a workload with a deliberately reduced capability set, and adding a capability puts one of the removed root privileges back. Portainer calls the restriction **Hide container capabilities for non-administrators**, in the **Docker security settings** on an environment's **Setup** page under **Host** or **Swarm**, and this check requires it to be in force on every managed environment as well as in the instance defaults. In Terraform it is `allow_container_capabilities` inside the `security_settings` block of a `portainer_endpoint_settings` resource, which must not be `true`.
 
         **Why this matters**
 
-        - **Privilege creep:** Capabilities like `SYS_ADMIN` enable mount operations and other host-level actions that approach full privileged mode.
-        - **Defense evasion:** `NET_ADMIN` and `NET_RAW` allow traffic manipulation and spoofing on the host network.
-        - **Least privilege:** Docker's default capability set is sufficient for ordinary workloads; adding capabilities should be an administrator decision.
+        Individual capabilities are not small increments. `CAP_SYS_ADMIN` permits mounting, which an attacker uses to mount the host filesystem from inside the container or to write a `release_agent` into the cgroup hierarchy so the kernel runs a chosen binary on the host. `CAP_SYS_MODULE` loads a kernel module outright, which ends any discussion of isolation. `CAP_SYS_PTRACE` reads and rewrites the memory of other processes the container can see.
 
-        **Risk mitigation**
+        Networking capabilities move the attacker onto the node's network stack. `CAP_NET_ADMIN` rewrites firewall and routing rules on the host, and `CAP_NET_RAW` allows crafting and capturing raw frames, which is enough to redirect and intercept traffic belonging to other workloads.
 
-        - **Containment:** A compromised standard account cannot grant its workloads kernel-level capabilities.
-        - **Override discipline:** Blocking the per-environment override stops an endpoint from silently re-enabling added capabilities.
+        Adding every capability is functionally privileged mode without the device access, so leaving this open is a route around the privileged-mode restriction rather than a milder version of it.
+
+        An image that genuinely needs one capability, such as a VPN client that needs `CAP_NET_ADMIN`, should be deployed by an administrator who can confirm both the image and the request. Relaxing the restriction for everyone is not a way to satisfy one image.
       audit: |
         ### Audit via Portainer UI
 
@@ -662,18 +667,19 @@ queries:
           mondoo.com/filter-title: Terraform State
     docs:
       desc: |
-        This check ensures that non-administrator users cannot browse the contents of Docker volumes, neither instance-wide nor through a per-environment override. The volume browser lets a user read and download files from any volume on an environment, regardless of which workload owns them.
+        This check verifies that users who are not administrators cannot read and download the contents of Docker volumes from the Portainer interface.
+
+        The volume browser opens a file manager over any volume on a managed environment, listing directories, downloading files, and uploading replacements, regardless of which container owns the volume or whether the user has access to that container. Portainer calls this **Enable volume management for non-administrators**, in the **Host and filesystem** section of an environment's **Setup** page under **Host** or **Swarm**, and this check requires it to be off on every managed environment as well as in the instance defaults. In Terraform it is `allow_volume_browser` inside the `security_settings` block of a `portainer_endpoint_settings` resource, which must not be `true`.
 
         **Why this matters**
 
-        - **Cross-workload data exposure:** Volumes routinely hold database files, credentials, and application data; browsing them bypasses the access controls of the owning application.
-        - **Silent exfiltration:** File downloads through the volume browser leave no application-level audit trail.
-        - **Least privilege:** Standard users managing their own workloads do not need to read every volume on a shared host.
+        Volumes are where the data actually is. Database files, TLS private keys, application configuration holding API keys, and environment files sit in them precisely because the container filesystem is ephemeral and the volume is not. A standard account with the browser copies them out through the web interface, without deploying anything and without ever running a container the operator would notice.
 
-        **Risk mitigation**
+        The browser writes as well as reads, which turns it into code execution. Replacing a configuration file, a startup script, or a job definition inside a volume means the owning workload runs the attacker's content the next time it starts or reloads, in a workload the attacker had no permission to touch.
 
-        - **Data confidentiality:** A compromised standard account cannot harvest secrets and data from unrelated volumes.
-        - **Override discipline:** Blocking the per-environment override stops an endpoint from silently re-enabling the volume browser.
+        Both directions go through Portainer's own connection to the environment, so the application whose data is being read or rewritten observes nothing. There is no failed authentication, no unfamiliar client, and no entry in its log.
+
+        Where a team genuinely needs file-level access to data it owns, relax the restriction on an environment dedicated to that team rather than instance-wide, so the reach of the capability matches the reach of the team. Note that the toggle is only available on environments running the Portainer Agent, so an environment connected directly to a container runtime socket has nothing to loosen here.
       audit: |
         ### Audit via Portainer UI
 
@@ -778,18 +784,19 @@ queries:
           mondoo.com/filter-title: Terraform State
     docs:
       desc: |
-        This check ensures that the instance delegates authentication to an external identity provider — LDAP or OAuth — rather than relying on Portainer's internal user database. External authentication centralizes identity in a system that can enforce multi-factor authentication, account lifecycle, and password policy organization-wide.
+        This check verifies that user identity is established by an external identity provider rather than by Portainer's own account database.
+
+        Portainer can authenticate users against its internal database, against LDAP or Active Directory, or against an OAuth provider. Portainer calls this **Authentication method**, under **Settings**, **Authentication**, and this check requires any option other than **Internal**. In Terraform it is `authentication_method` on a `portainer_settings` resource, where `1` selects internal authentication, `2` LDAP, and `3` OAuth.
 
         **Why this matters**
 
-        - **Multi-factor enforcement:** An external identity provider can require MFA, which Portainer's internal authentication cannot.
-        - **Centralized lifecycle:** Joiner-mover-leaver processes deprovision access in one place, so departed staff lose Portainer access automatically.
-        - **Unified policy:** Password strength, rotation, and lockout are governed by the organization's identity platform rather than per-application settings.
+        Internal accounts exist only inside Portainer, so none of the controls the organization already runs on identity apply to them. There is no second factor available, which means a password taken by a phishing page, an infostealer on a laptop, or a credential-stuffing list is by itself enough to sign in to a console that can deploy a container on every managed node.
 
-        **Risk mitigation**
+        Deprovisioning is the failure that surfaces later. When someone leaves, the directory account is disabled and the Portainer account is not, because it is on nobody's list. The credential keeps working, and it keeps working with whatever role it had, which for an operations tool is frequently administrator.
 
-        - **Orphaned-account reduction:** Disabling a user centrally removes their Portainer access without a separate manual step.
-        - **Stronger sign-in:** Federated authentication brings conditional access and MFA in front of the container control plane.
+        Detection disappears in the same way. Impossible-travel alerts, risky sign-in scoring, device compliance, and the ability to revoke every session for a person at once all live in the identity provider and never observe an internal login.
+
+        Delegating authentication is not the same as adding a second factor. LDAP centralizes the account but inherits only what the directory itself enforces, so pair it with a provider that actually requires multi-factor authentication. Keeping one internal administrator as a break-glass account for when the provider is unreachable is reasonable, provided its credential is stored properly and its use raises an alert.
       audit: |
         ### Audit via Portainer UI
 
@@ -880,17 +887,19 @@ queries:
           mondoo.com/filter-title: Terraform State
     docs:
       desc: |
-        This check ensures that internal authentication enforces a minimum password length of at least 12 characters. When Portainer manages its own user database, the required-password-length setting is the only control standing between a weak password and an account that can deploy workloads across every managed environment.
+        This check verifies that accounts held in Portainer's own user database must use a password of at least a set minimum length.
+
+        When internal authentication is in use, length is effectively the only password rule Portainer applies: there is no complexity requirement, no history, no reuse check, and no comparison against known-breached passwords. The value is a slider under **Settings**, **Authentication**, in the **Password rules** section, described there as the minimum length for user-generated passwords. This check requires at least 12 characters by default and the threshold is adjustable through the check's property. In Terraform it is `required_password_length` inside the `internal_auth_settings` block of a `portainer_settings` resource.
 
         **Why this matters**
 
-        - **Brute-force resistance:** Longer passwords raise the cost of online and offline guessing attacks against the control plane.
-        - **Baseline hygiene:** A 12-character floor aligns Portainer-managed accounts with common organizational password standards.
-        - **Control-plane stakes:** A compromised Portainer account can reach the Docker, Swarm, and Kubernetes environments it manages, so weak credentials carry outsized risk.
+        A Portainer account is not an ordinary application login. It can deploy a workload onto the hosts and clusters it has access to, which on a permissively configured instance is equivalent to a shell on those nodes. That makes the sign-in page worth attacking with password spraying, where one common password is tried against every username rather than many passwords against one.
 
-        **Risk mitigation**
+        Length is what decides whether that works. Eight-character passwords drawn from ordinary human patterns fall to a wordlist on commodity hardware if the stored hashes are ever obtained, and they fall to spraying with no hashes at all. Twelve characters moves a password out of reach of the untargeted attacks that make up almost all of the volume.
 
-        - **Credential-guessing containment:** Enforcing length reduces the success rate of password spraying against internal accounts.
+        It also matters that this is a floor rather than advice. Users who are told to pick something longer largely will not, and users who cannot save a shorter one have no choice in the matter.
+
+        Where an identity provider is available, moving off internal authentication entirely is a stronger control than tuning this number, because it brings multi-factor authentication and central deprovisioning with it. A Terraform configuration that never declares the value is not failed here, because there is nothing to read and the instance keeps whatever it already had.
       audit: |
         ### Audit via Portainer UI
 
@@ -1005,17 +1014,19 @@ queries:
           mondoo.com/filter-title: Terraform State
     docs:
       desc: |
-        This check ensures that user sessions expire after a finite idle period rather than remaining valid indefinitely. A session timeout of `0` disables expiry, so a token captured from an unattended browser or a stolen laptop stays usable until it is manually revoked.
+        This check verifies that a signed-in session eventually expires instead of staying valid indefinitely.
+
+        Portainer issues a bearer token when a user signs in, and the session lifetime decides how long that token stays acceptable. Portainer calls this **Session lifetime**, under **Settings**, **Authentication**, where it defaults to 8 hours, and a value of `0` disables expiry so the token remains usable until an administrator intervenes. This check requires anything other than `0`. In Terraform it is `user_session_timeout` on a `portainer_settings` resource, written as a duration such as `"8h"`.
 
         **Why this matters**
 
-        - **Unattended-session risk:** A finite timeout limits how long an abandoned or hijacked session can be used against the control plane.
-        - **Token theft window:** Expiry shortens the period during which a captured session token remains valid.
-        - **Reauthentication cadence:** Periodic re-login is an opportunity for the identity provider to re-evaluate MFA and account status.
+        The token is the whole credential. Whoever holds a copy is the user, with no password and no second factor asked for again, so the only question is how long a stolen copy keeps working. With expiry disabled the answer is until someone notices.
 
-        **Risk mitigation**
+        Copies are easier to obtain than passwords. The token sits in browser storage, where a cross-site scripting flaw in any page the browser can reach, a malicious or compromised browser extension, or an infostealer sweeping browser profiles will find it. None of those attacks touch the sign-in page, so none of them appear as a failed login.
 
-        - **Stale-session containment:** Sessions left open on shared or compromised devices stop working without administrator intervention.
+        Expiry is also what makes the rest of identity management take effect. Changing a role, disabling an account, or forcing a password reset only bites when the user has to present credentials again, and a session that never expires never does.
+
+        Choose a lifetime that matches how the instance is used rather than the longest value that avoids complaints. Automation needing a durable credential should hold an API token, which can be revoked on its own, instead of leaning on a browser session that never ends.
       audit: |
         ### Audit via Portainer UI
 
@@ -1109,17 +1120,19 @@ queries:
           mondoo.com/filter-title: Terraform State
     docs:
       desc: |
-        This check ensures that the instance has no more administrator accounts than the configured maximum. A Portainer administrator can reach every managed environment and change every security setting, so the administrator role should be granted to as few accounts as the organization can operate with.
+        This check verifies that full administrative control of the instance is held by no more than a set number of accounts.
+
+        The administrator role in Portainer is not scoped: it reaches every managed environment, changes every security setting, and creates and promotes other users. The role is shown in the **Role** column of the **Users** screen and granted by the **Administrator** switch on a user's own page. This check counts the accounts holding it against a configurable maximum, five by default. In Terraform it is the `role` argument of a `portainer_user` resource, where `1` is administrator and `2` is a standard user.
 
         **Why this matters**
 
-        - **Attack surface:** Each administrator account is a credential that, if compromised, yields full control of the container control plane.
-        - **Least privilege:** Most operational tasks can be performed with standard roles scoped to specific environments; broad administrator grants are rarely necessary.
-        - **Accountability:** A small, deliberate set of administrators keeps privileged actions reviewable.
+        Every administrator account is a complete compromise of the container control plane if it is taken, and taking one is a numbers problem. Phishing succeeds against a population rather than an individual, so ten administrators is closer to a guarantee than three.
 
-        **Risk mitigation**
+        An administrator can also switch off the controls that would otherwise contain them. The privileged-mode, bind-mount, device-mapping, and host-namespace restrictions are all administrator-editable, so a compromised administrator relaxes them and then deploys, using nothing but supported interface actions that look exactly like maintenance.
 
-        - **Reduced compromise paths:** Fewer administrator accounts mean fewer credentials whose theft leads to total control-plane compromise.
+        Administrator is also the role that gets handed out to unblock someone. It solves the permission problem in a minute, it is never revisited, and the count drifts upward until nobody can say why any particular person still holds it.
+
+        Most day-to-day work fits a standard user granted access to specific environments or teams, so the reduction is usually available. Where the count is genuinely driven by on-call coverage, solve it with an identity-provider group and time-bound elevation rather than by raising the threshold. Note that a Terraform configuration reveals only the users it declares, so an instance where accounts are also created by hand is fully assessed only against the running instance.
       audit: |
         ### Audit via Portainer UI
 
@@ -1214,17 +1227,19 @@ queries:
       portainer.users.all(tokenIssueAt == null || tokenIssueAt > time.now - props.mondooPortainerSecurityMaxApiTokenAge * time.day)
     docs:
       desc: |
-        This check ensures that no user's API token is older than the configured maximum age. Portainer access tokens are long-lived bearer credentials sent as the `x-api-key` header; a token that is never rotated remains a valid key to the control plane indefinitely, even after the person who created it has changed roles or left.
+        This check verifies that user API tokens are rotated rather than left in service indefinitely.
+
+        A Portainer access token is a long-lived bearer credential sent in the `x-api-key` header, and it carries the full privileges of the user who created it with no expiry of its own. Tokens are created and revoked under **My account**, **Access tokens**, or from a user's entry on the **Users** screen. This check compares each user's token issue time against a maximum age, 90 days by default and adjustable through the check's property.
 
         **Why this matters**
 
-        - **Long-lived credential risk:** A leaked token stays usable until it is rotated or revoked, so age directly bounds exposure.
-        - **Rotation hygiene:** Periodic rotation invalidates copies of a token that may have leaked into logs, scripts, or backups.
-        - **Lifecycle drift:** Old tokens often outlive the automation or person they were issued for, becoming forgotten standing access.
+        Because the token never lapses on its own, the interval between a leak and a rotation is unbounded. A token that escaped years ago is still a working key to the control plane today unless somebody happened to revoke it.
 
-        **Risk mitigation**
+        Tokens leak in ordinary ways rather than dramatic ones. They end up in CI variables printed by a debug run, in an environment file committed by accident, in shell history, in a terminal recording attached to a support ticket, and baked into container images. Rotation is what makes those copies worthless without anyone having to discover them first.
 
-        - **Exposure window:** Enforcing a maximum age caps how long any single leaked token can be abused.
+        An attacker who finds one skips the sign-in entirely. The identity provider, the multi-factor prompt, and the session lifetime all sit on the interactive path, and a token presented as a header goes nowhere near it, so every control on how humans authenticate is bypassed at once.
+
+        Treat rotation as a real reissue and revoke rather than a renewal on paper, and where the automation a token was minted for no longer exists, leave it revoked instead of replacing it. A user who has never created a token is not failed by this check.
       audit: |
         ### Audit via Portainer UI
 
@@ -1288,17 +1303,19 @@ queries:
           mondoo.com/filter-title: Terraform State
     docs:
       desc: |
-        This check ensures that, when Edge Compute is enabled, new Edge agents are not trusted automatically the first time they connect. With trust-on-first-connect enabled, any agent that reaches the Portainer instance with a valid Edge key is onboarded as a managed environment without administrator review.
+        This check verifies that a new Edge agent is not adopted as a managed environment without an administrator approving it.
+
+        Edge agents connect outward to Portainer rather than being connected to, so enrollment is initiated by the agent and not by the operator. Portainer presents the control as **Enable Edge Environment Waiting Room**, under **Settings**, **Edge Compute**: with the waiting room on, a connecting agent lands in a queue an administrator has to associate, and with it off Portainer trusts the agent the moment it first appears. This check requires the waiting room to be in use, and it also passes when Edge Compute is switched off entirely. In Terraform these are `enable_edge_compute_features` and `trust_on_first_connect` on a `portainer_settings` resource.
 
         **Why this matters**
 
-        - **Rogue agent onboarding:** Automatic trust lets an attacker who obtains or guesses an Edge key register an environment the administrator never vetted.
-        - **Supply-chain exposure:** A managed Edge environment receives Edge stack deployments, so a rogue agent can be handed workloads or used to pivot.
-        - **Deliberate enrollment:** Manual trust keeps a human in the loop for every new node joining the control plane.
+        The Edge key is a static string that travels inside the agent's deployment command, so it spreads to every place that command lives: provisioning scripts, configuration management repositories, runbooks, ticket attachments, and the shell history of everyone who has ever installed an agent. It is also recoverable from any Edge host an attacker already holds, including one that was decommissioned or resold.
 
-        **Risk mitigation**
+        With automatic trust in place, holding that string is sufficient. An attacker points an agent they control at the Portainer URL and an environment appears in the administrator's inventory, created by nobody and reviewed by nobody. That environment then behaves like any other, so an operator deploying an Edge stack to a group or to all edge environments ships the workload to the attacker's machine along with its environment variables, registry credentials, and configuration.
 
-        - **Vetted enrollment:** Administrators explicitly approve each Edge environment before it becomes manageable.
+        The rogue environment also corrupts the operator's own view of the fleet. Named to resemble a real site, it absorbs deployments intended for that site while reporting itself healthy, so the substitution is not obvious from the environment list.
+
+        Manual association is impractical for very large fleets that provision continuously. Where automatic trust has to stay on, pair it with Edge ID enforcement and per-device keys, and review new environments as they appear rather than treating the list as trusted.
       audit: |
         ### Audit via Portainer UI
 
@@ -1385,17 +1402,19 @@ queries:
           mondoo.com/filter-title: Terraform State
     docs:
       desc: |
-        This check ensures that, when Edge Compute is enabled, Portainer requires each Edge agent to present a matching Edge ID. Enforcing the Edge ID binds an agent's identity to the one Portainer issued, preventing a different agent from reusing an Edge key to impersonate a managed environment.
+        This check verifies that an Edge agent can only connect as an environment Portainer already knows about, rather than announcing an identity of its own.
+
+        Each Edge environment carries an Edge ID, and the agent presents it alongside the Edge key on every poll. Portainer calls the control **Enforce use of Portainer generated Edge ID**, under **Settings**, **Edge Compute**, and turning it on requires the Edge ID an agent supplies to already exist in Portainer's database before the connection is accepted. This check requires it to be on, and it also passes when Edge Compute is switched off entirely. In Terraform these are `enable_edge_compute_features` and `enforce_edge_id` on a `portainer_settings` resource.
 
         **Why this matters**
 
-        - **Identity binding:** Without enforcement, possession of an Edge key alone is enough to connect; enforcement also requires the correct Edge ID.
-        - **Key-reuse resistance:** A leaked Edge key cannot be replayed from an unauthorized agent that lacks the matching identifier.
-        - **Defense in depth:** Edge ID enforcement complements manual trust to keep environment enrollment controlled.
+        Without enforcement the Edge key is the entire credential, and it is a shared one. The same string is embedded in the enrollment command handed to every device in a rollout, so recovering it from one host, one script, or one backup is enough to speak for the whole fleet.
 
-        **Risk mitigation**
+        An attacker holding it then supplies whatever Edge ID they like and Portainer accepts the agent. That is how a machine the operator has never seen ends up receiving Edge stacks and Edge jobs, including their environment variables and registry credentials, while reporting back a healthy status that keeps the console quiet.
 
-        - **Impersonation resistance:** An attacker cannot register a rogue environment with a stolen key unless it also matches the expected Edge ID.
+        Requiring an identifier that Portainer generated breaks the pattern. The attacker now has to know a value tied to a specific environment record rather than reusing a key that was written into a deployment script, and an agent that invents its own identity is refused instead of onboarded.
+
+        Enforcement rejects agents that were deployed with an identifier they chose themselves, so plan the change alongside re-enrollment for any such hosts. It applies to manually created environments and complements the waiting room rather than replacing it, so use both.
       audit: |
         ### Audit via Portainer UI
 
@@ -1486,17 +1505,19 @@ queries:
           mondoo.com/filter-title: Terraform State
     docs:
       desc: |
-        This check ensures that the Kubernetes web shell (kubectl shell) is disabled. The web shell opens an in-browser terminal with kubectl access to a managed cluster, turning the Portainer UI into a direct, hard-to-audit path for executing commands against Kubernetes workloads.
+        This check verifies that the in-browser terminal into managed Kubernetes clusters is not available to users who are not administrators.
+
+        The kubectl shell opens a terminal inside the Portainer interface and runs commands against the selected cluster through the connection Portainer already holds to it. Portainer calls the section **KubeShell**, in the **Kubernetes settings** under **Settings**, **General**, where it can be turned off for non-administrator users. This check requires it to be disabled. In Terraform it is `disable_kube_shell` on a `portainer_settings` resource, which must be `true`.
 
         **Why this matters**
 
-        - **Interactive cluster access:** The web shell executes kubectl commands against the cluster from inside the browser, bypassing the controls and logging of a managed CI/CD path.
-        - **Weak audit trail:** Commands run through the shell are not captured the way pipeline-driven changes are, reducing accountability.
-        - **Reduced attack surface:** Disabling a feature that is rarely essential removes a powerful capability from anyone who reaches the UI.
+        It converts a browser session into interactive cluster access. Someone with a stolen Portainer token, or sitting at an unlocked workstation, needs no kubeconfig, no client certificate, and no network route to the API server, because the terminal is served from the Portainer instance they can already reach. Everything an operator would do with `kubectl` is available immediately, starting with reading Secrets and executing into running pods.
 
-        **Risk mitigation**
+        It is also a general-purpose path around whatever review the cluster's normal change process enforces. A change typed into the terminal is not in Git, does not pass through a pipeline, and leaves no merge history, so the cluster drifts from its declared state in ways that surface much later as an unexplained outage.
 
-        - **Containment:** A compromised UI session cannot open an interactive kubectl terminal into the cluster.
+        Attribution suffers in the same way. Commands arrive at the cluster through Portainer, so reconstructing who ran a destructive one means correlating Portainer's records against the cluster audit log rather than reading the audit log on its own.
+
+        Teams that rely on a shell for daily work should move to per-user kubeconfig access, which authenticates as the individual and lands in the cluster audit log under their name. Disabling the in-browser terminal takes away no capability those users cannot obtain in a more accountable form.
       audit: |
         ### Audit via Portainer UI
 
@@ -1586,18 +1607,19 @@ queries:
           mondoo.com/filter-title: Terraform State
     docs:
       desc: |
-        This check ensures that agent-based environments — the Docker and Kubernetes agents Portainer connects to over the network — use TLS. The Portainer-to-agent channel carries management commands and workload definitions, so an unencrypted connection exposes that traffic to interception and tampering on the network path.
+        This check verifies that the connection from Portainer to each agent-based environment is protected by TLS.
+
+        Docker Agent and Kubernetes Agent environments are ones Portainer reaches over the network to an agent listening on the node, and TLS is what protects that channel. Portainer sets it when it registers an agent environment and exposes the **TLS** switch, alongside **Skip Certification Verification** and the certificate uploads, in the **Configuration** section of an environment's page under **Environments**. In Terraform it is `tls_enabled` on a `portainer_environment` resource whose `type` is `2` for a Docker agent or `6` for a Kubernetes agent.
 
         **Why this matters**
 
-        - **Confidentiality in transit:** Management traffic between Portainer and its agents can include sensitive configuration; TLS keeps it private.
-        - **Integrity in transit:** TLS prevents an on-path attacker from altering commands or deployment payloads sent to an agent.
-        - **Mutual authentication:** Agent TLS underpins the trust that the endpoint Portainer talks to is the intended one.
+        That channel carries the management API for the node, so its contents are worth reading. Deployment definitions cross it with their environment variables intact, which is where database passwords and API keys live, and so do registry credentials, container logs, and the files the volume browser fetches. Without TLS all of it is plaintext to anyone on the path, which includes a compromised switch, a neighboring tenant on a shared network, and every transit provider between two sites.
 
-        **Risk mitigation**
+        Reading it is the smaller problem. The same position permits modification, and an attacker who rewrites a deployment in flight to add a mount of the host root or set privileged mode gets root on that node without ever authenticating to Portainer or to the agent.
 
-        - **Eavesdropping resistance:** An attacker on the network path cannot read management traffic to a TLS-protected agent.
-        - **Tampering resistance:** Commands and workload definitions cannot be modified in transit.
+        Absent TLS there is also no way to establish that the agent is the agent. Anyone who can answer for the address, through ARP or DNS manipulation or by claiming the port after a restart, receives the deployments and their secrets and returns whatever status keeps the console quiet.
+
+        Encryption alone is a floor rather than a finished job. Portainer and the Terraform provider both default certificate verification off for agent connections, so an environment that passes this check may still be encrypting to whoever answers. Pair it with the agent's CA certificate and `tls_skip_verify` set to `false`. Environments that talk to a container runtime socket directly over `tcp://` are configured through the same fields but fall outside this check, and Edge environments use an outbound tunnel instead of this connection.
       audit: |
         ### Audit via Portainer UI
 
