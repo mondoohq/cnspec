@@ -113,7 +113,6 @@ queries:
   - uid: mondoo-stackit-security-compute-server-has-security-group
     title: Ensure STACKIT servers are attached to a security group
     impact: 60
-    filters: asset.platform == "stackit-server"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -129,8 +128,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-4-1
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      stackit.server.securityGroups.length > 0
+    variants:
+      - uid: mondoo-stackit-security-compute-server-has-security-group-stackit-server
+        tags:
+          mondoo.com/filter-title: STACKIT Server
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-compute-server-has-security-group-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-compute-server-has-security-group-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-compute-server-has-security-group-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that every STACKIT server has at least one security group attached.
@@ -200,6 +214,32 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/network/network-security/
         title: STACKIT Documentation - Security Groups
+  - uid: mondoo-stackit-security-compute-server-has-security-group-stackit-server
+    filters: asset.platform == "stackit-server"
+    mql: |
+      stackit.server.securityGroups.length > 0
+  - uid: mondoo-stackit-security-compute-server-has-security-group-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_network_interface")
+    mql: |
+      terraform.resources("stackit_network_interface").all(
+        arguments["security"] != false && arguments["security_group_ids"] != empty
+      )
+  - uid: mondoo-stackit-security-compute-server-has-security-group-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_network_interface")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_network_interface").all(
+        change.after["security"] != false && change.after["security_group_ids"] != empty
+      )
+  - uid: mondoo-stackit-security-compute-server-has-security-group-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_network_interface")
+    mql: |
+      terraform.state.resources.where(type == "stackit_network_interface").all(
+        values["security"] != false && values["security_group_ids"] != empty
+      )
+  # No Terraform variant: stackit_volume.encrypted is a read-only attribute. STACKIT encrypts every
+  # volume with a platform-held key and Terraform reports the result rather than requesting it, so an
+  # author cannot express the insecure state in HCL. encryption_parameters selects a customer-managed
+  # key-encryption key, which is a different control from whether the volume is encrypted at all.
   - uid: mondoo-stackit-security-compute-volume-encrypted
     title: Ensure STACKIT block storage volumes are encrypted
     impact: 80
@@ -289,7 +329,6 @@ queries:
   - uid: mondoo-stackit-security-network-no-public-ssh
     title: Ensure no security group exposes SSH (port 22) to the internet
     impact: 90
-    filters: asset.platform == "stackit-project"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -305,8 +344,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-4-2
       compliance/soc2-2017: soc2-control-cc6-6-1
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      stackit.securityGroups.all(rules.where(direction == "ingress" && portRangeMin <= 22 && portRangeMax >= 22).none(ipRange == "0.0.0.0/0" || ipRange == "::/0"))
+    variants:
+      - uid: mondoo-stackit-security-network-no-public-ssh-stackit-project
+        tags:
+          mondoo.com/filter-title: STACKIT Project
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-network-no-public-ssh-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-network-no-public-ssh-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-network-no-public-ssh-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that no STACKIT security group allows SSH from the entire internet.
@@ -373,10 +427,46 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/network/network-security/
         title: STACKIT Documentation - Security Groups
+  - uid: mondoo-stackit-security-network-no-public-ssh-stackit-project
+    filters: asset.platform == "stackit-project"
+    mql: |
+      stackit.securityGroups.all(rules.where(direction == "ingress" && portRangeMin <= 22 && portRangeMax >= 22).none(ipRange == "0.0.0.0/0" || ipRange == "::/0"))
+  - uid: mondoo-stackit-security-network-no-public-ssh-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_security_group_rule")
+    mql: |
+      terraform.resources("stackit_security_group_rule").where(
+        arguments["direction"] == "ingress"
+      ).where(
+        arguments["ip_range"] == "0.0.0.0/0" || arguments["ip_range"] == "::/0"
+      ).none(
+        arguments["port_range"] == null ||
+        arguments["port_range"]["min"] <= 22 && arguments["port_range"]["max"] >= 22
+      )
+  - uid: mondoo-stackit-security-network-no-public-ssh-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_security_group_rule")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_security_group_rule").where(
+        change.after["direction"] == "ingress"
+      ).where(
+        change.after["ip_range"] == "0.0.0.0/0" || change.after["ip_range"] == "::/0"
+      ).none(
+        change.after["port_range"] == null ||
+        change.after["port_range"]["min"] <= 22 && change.after["port_range"]["max"] >= 22
+      )
+  - uid: mondoo-stackit-security-network-no-public-ssh-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_security_group_rule")
+    mql: |
+      terraform.state.resources.where(type == "stackit_security_group_rule").where(
+        values["direction"] == "ingress"
+      ).where(
+        values["ip_range"] == "0.0.0.0/0" || values["ip_range"] == "::/0"
+      ).none(
+        values["port_range"] == null ||
+        values["port_range"]["min"] <= 22 && values["port_range"]["max"] >= 22
+      )
   - uid: mondoo-stackit-security-network-no-public-rdp
     title: Ensure no security group exposes RDP (port 3389) to the internet
     impact: 90
-    filters: asset.platform == "stackit-project"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -392,8 +482,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-4-2
       compliance/soc2-2017: soc2-control-cc6-6-1
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      stackit.securityGroups.all(rules.where(direction == "ingress" && portRangeMin <= 3389 && portRangeMax >= 3389).none(ipRange == "0.0.0.0/0" || ipRange == "::/0"))
+    variants:
+      - uid: mondoo-stackit-security-network-no-public-rdp-stackit-project
+        tags:
+          mondoo.com/filter-title: STACKIT Project
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-network-no-public-rdp-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-network-no-public-rdp-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-network-no-public-rdp-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that no STACKIT security group allows RDP from the entire internet.
@@ -460,10 +565,46 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/network/network-security/
         title: STACKIT Documentation - Security Groups
+  - uid: mondoo-stackit-security-network-no-public-rdp-stackit-project
+    filters: asset.platform == "stackit-project"
+    mql: |
+      stackit.securityGroups.all(rules.where(direction == "ingress" && portRangeMin <= 3389 && portRangeMax >= 3389).none(ipRange == "0.0.0.0/0" || ipRange == "::/0"))
+  - uid: mondoo-stackit-security-network-no-public-rdp-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_security_group_rule")
+    mql: |
+      terraform.resources("stackit_security_group_rule").where(
+        arguments["direction"] == "ingress"
+      ).where(
+        arguments["ip_range"] == "0.0.0.0/0" || arguments["ip_range"] == "::/0"
+      ).none(
+        arguments["port_range"] == null ||
+        arguments["port_range"]["min"] <= 3389 && arguments["port_range"]["max"] >= 3389
+      )
+  - uid: mondoo-stackit-security-network-no-public-rdp-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_security_group_rule")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_security_group_rule").where(
+        change.after["direction"] == "ingress"
+      ).where(
+        change.after["ip_range"] == "0.0.0.0/0" || change.after["ip_range"] == "::/0"
+      ).none(
+        change.after["port_range"] == null ||
+        change.after["port_range"]["min"] <= 3389 && change.after["port_range"]["max"] >= 3389
+      )
+  - uid: mondoo-stackit-security-network-no-public-rdp-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_security_group_rule")
+    mql: |
+      terraform.state.resources.where(type == "stackit_security_group_rule").where(
+        values["direction"] == "ingress"
+      ).where(
+        values["ip_range"] == "0.0.0.0/0" || values["ip_range"] == "::/0"
+      ).none(
+        values["port_range"] == null ||
+        values["port_range"]["min"] <= 3389 && values["port_range"]["max"] >= 3389
+      )
   - uid: mondoo-stackit-security-network-no-unrestricted-ingress
     title: Ensure no security group exposes all ports to the internet
     impact: 85
-    filters: asset.platform == "stackit-project"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -479,8 +620,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-4-2
       compliance/soc2-2017: soc2-control-cc6-6-1
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      stackit.securityGroups.all(rules.where(direction == "ingress").where(ipRange == "0.0.0.0/0" || ipRange == "::/0").where(portRangeMin == null || portRangeMin <= 1).none(portRangeMax == null || portRangeMax >= 65535))
+    variants:
+      - uid: mondoo-stackit-security-network-no-unrestricted-ingress-stackit-project
+        tags:
+          mondoo.com/filter-title: STACKIT Project
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-network-no-unrestricted-ingress-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-network-no-unrestricted-ingress-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-network-no-unrestricted-ingress-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that no STACKIT security group opens the entire port range to the entire internet.
@@ -547,10 +703,46 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/network/network-security/
         title: STACKIT Documentation - Security Groups
+  - uid: mondoo-stackit-security-network-no-unrestricted-ingress-stackit-project
+    filters: asset.platform == "stackit-project"
+    mql: |
+      stackit.securityGroups.all(rules.where(direction == "ingress").where(ipRange == "0.0.0.0/0" || ipRange == "::/0").where(portRangeMin == null || portRangeMin <= 1).none(portRangeMax == null || portRangeMax >= 65535))
+  - uid: mondoo-stackit-security-network-no-unrestricted-ingress-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_security_group_rule")
+    mql: |
+      terraform.resources("stackit_security_group_rule").where(
+        arguments["direction"] == "ingress"
+      ).where(
+        arguments["ip_range"] == "0.0.0.0/0" || arguments["ip_range"] == "::/0"
+      ).none(
+        arguments["port_range"] == null ||
+        arguments["port_range"]["min"] <= 1 && arguments["port_range"]["max"] >= 65535
+      )
+  - uid: mondoo-stackit-security-network-no-unrestricted-ingress-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_security_group_rule")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_security_group_rule").where(
+        change.after["direction"] == "ingress"
+      ).where(
+        change.after["ip_range"] == "0.0.0.0/0" || change.after["ip_range"] == "::/0"
+      ).none(
+        change.after["port_range"] == null ||
+        change.after["port_range"]["min"] <= 1 && change.after["port_range"]["max"] >= 65535
+      )
+  - uid: mondoo-stackit-security-network-no-unrestricted-ingress-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_security_group_rule")
+    mql: |
+      terraform.state.resources.where(type == "stackit_security_group_rule").where(
+        values["direction"] == "ingress"
+      ).where(
+        values["ip_range"] == "0.0.0.0/0" || values["ip_range"] == "::/0"
+      ).none(
+        values["port_range"] == null ||
+        values["port_range"]["min"] <= 1 && values["port_range"]["max"] >= 65535
+      )
   - uid: mondoo-stackit-security-network-alb-target-security-groups
     title: Ensure STACKIT application load balancers assign target security groups
     impact: 60
-    filters: asset.platform == "stackit-project"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -566,8 +758,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-4-1
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      stackit.albLoadBalancers.all(disableTargetSecurityGroupAssignment == false)
+    variants:
+      - uid: mondoo-stackit-security-network-alb-target-security-groups-stackit-project
+        tags:
+          mondoo.com/filter-title: STACKIT Project
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-network-alb-target-security-groups-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-network-alb-target-security-groups-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-network-alb-target-security-groups-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT application load balancers assign security groups to their targets.
@@ -664,11 +871,32 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/network/load-balancing-and-content-delivery/application-load-balancer/
         title: STACKIT Documentation - Application Load Balancer
+  - uid: mondoo-stackit-security-network-alb-target-security-groups-stackit-project
+    filters: asset.platform == "stackit-project"
+    mql: |
+      stackit.albLoadBalancers.all(disableTargetSecurityGroupAssignment == false)
+  - uid: mondoo-stackit-security-network-alb-target-security-groups-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_application_load_balancer")
+    mql: |
+      terraform.resources("stackit_application_load_balancer").all(
+        arguments["disable_target_security_group_assignment"] != true
+      )
+  - uid: mondoo-stackit-security-network-alb-target-security-groups-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_application_load_balancer")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_application_load_balancer").all(
+        change.after["disable_target_security_group_assignment"] != true
+      )
+  - uid: mondoo-stackit-security-network-alb-target-security-groups-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_application_load_balancer")
+    mql: |
+      terraform.state.resources.where(type == "stackit_application_load_balancer").all(
+        values["disable_target_security_group_assignment"] != true
+      )
   # ----------------------------- STACKIT Object Storage -----------------------------
   - uid: mondoo-stackit-security-objectstorage-bucket-object-lock
     title: Ensure STACKIT Object Storage buckets have Object Lock enabled
     impact: 70
-    filters: asset.platform == "stackit-object-storage-bucket"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-dsp-16
@@ -684,8 +912,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: false
       compliance/vda-isa-5: false
-    mql: |
-      stackit.objectStorage.bucket.objectLockEnabled == true
+    variants:
+      - uid: mondoo-stackit-security-objectstorage-bucket-object-lock-stackit-object-storage-bucket
+        tags:
+          mondoo.com/filter-title: STACKIT Object Storage Bucket
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-objectstorage-bucket-object-lock-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-objectstorage-bucket-object-lock-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-objectstorage-bucket-object-lock-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT Object Storage buckets have Object Lock enabled.
@@ -743,10 +986,29 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/storage/object-storage/
         title: STACKIT Documentation - Object Storage
+  - uid: mondoo-stackit-security-objectstorage-bucket-object-lock-stackit-object-storage-bucket
+    filters: asset.platform == "stackit-object-storage-bucket"
+    mql: |
+      stackit.objectStorage.bucket.objectLockEnabled == true
+  - uid: mondoo-stackit-security-objectstorage-bucket-object-lock-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_objectstorage_bucket")
+    mql: |
+      terraform.resources("stackit_objectstorage_bucket").all(arguments["object_lock"] == true)
+  - uid: mondoo-stackit-security-objectstorage-bucket-object-lock-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_objectstorage_bucket")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_objectstorage_bucket").all(
+        change.after["object_lock"] == true
+      )
+  - uid: mondoo-stackit-security-objectstorage-bucket-object-lock-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_objectstorage_bucket")
+    mql: |
+      terraform.state.resources.where(type == "stackit_objectstorage_bucket").all(
+        values["object_lock"] == true
+      )
   - uid: mondoo-stackit-security-objectstorage-bucket-retention
     title: Ensure Object-Locked buckets define a default retention period
     impact: 60
-    filters: asset.platform == "stackit-object-storage-bucket"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-dsp-16
@@ -762,8 +1024,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: false
       compliance/vda-isa-5: false
-    mql: |
-      stackit.objectStorage.bucket.objectLockEnabled == false || stackit.objectStorage.bucket.defaultRetentionDays > 0
+    variants:
+      - uid: mondoo-stackit-security-objectstorage-bucket-retention-stackit-object-storage-bucket
+        tags:
+          mondoo.com/filter-title: STACKIT Object Storage Bucket
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-objectstorage-bucket-retention-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-objectstorage-bucket-retention-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-objectstorage-bucket-retention-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT Object Storage buckets with Object Lock enabled also define a default retention period.
@@ -827,11 +1104,37 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/storage/object-storage/
         title: STACKIT Documentation - Object Storage
+  - uid: mondoo-stackit-security-objectstorage-bucket-retention-stackit-object-storage-bucket
+    filters: asset.platform == "stackit-object-storage-bucket"
+    mql: |
+      stackit.objectStorage.bucket.objectLockEnabled == false || stackit.objectStorage.bucket.defaultRetentionDays > 0
+  - uid: mondoo-stackit-security-objectstorage-bucket-retention-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_objectstorage_bucket")
+    mql: |
+      terraform.resources("stackit_objectstorage_bucket").none(arguments["object_lock"] == true) ||
+      terraform.resources("stackit_objectstorage_default_retention").any(arguments["days"] > 0)
+  - uid: mondoo-stackit-security-objectstorage-bucket-retention-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_objectstorage_bucket")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_objectstorage_bucket").none(
+        change.after["object_lock"] == true
+      ) ||
+      terraform.plan.resourceChanges.where(type == "stackit_objectstorage_default_retention").any(
+        change.after["days"] > 0
+      )
+  - uid: mondoo-stackit-security-objectstorage-bucket-retention-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_objectstorage_bucket")
+    mql: |
+      terraform.state.resources.where(type == "stackit_objectstorage_bucket").none(
+        values["object_lock"] == true
+      ) ||
+      terraform.state.resources.where(type == "stackit_objectstorage_default_retention").any(
+        values["days"] > 0
+      )
   # ----------------------------- STACKIT File Storage -----------------------------
   - uid: mondoo-stackit-security-sfs-resourcepool-restricted-ipacl
     title: Ensure STACKIT SFS resource pools restrict their mount IP allow-list
     impact: 85
-    filters: asset.platform == "stackit-project"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -847,8 +1150,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-4-2
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      stackit.sfs.resourcePools.all(ipAcl.none(_ == "0.0.0.0/0" || _ == "::/0"))
+    variants:
+      - uid: mondoo-stackit-security-sfs-resourcepool-restricted-ipacl-stackit-project
+        tags:
+          mondoo.com/filter-title: STACKIT Project
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-sfs-resourcepool-restricted-ipacl-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-sfs-resourcepool-restricted-ipacl-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-sfs-resourcepool-restricted-ipacl-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT SFS resource pools do not allow mounts from the entire internet.
@@ -906,10 +1224,31 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/storage/file-storage/
         title: STACKIT Documentation - File Storage (SFS)
+  - uid: mondoo-stackit-security-sfs-resourcepool-restricted-ipacl-stackit-project
+    filters: asset.platform == "stackit-project"
+    mql: |
+      stackit.sfs.resourcePools.all(ipAcl.none(_ == "0.0.0.0/0" || _ == "::/0"))
+  - uid: mondoo-stackit-security-sfs-resourcepool-restricted-ipacl-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_sfs_resource_pool")
+    mql: |
+      terraform.resources("stackit_sfs_resource_pool").all(
+        arguments["ip_acl"].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+  - uid: mondoo-stackit-security-sfs-resourcepool-restricted-ipacl-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_sfs_resource_pool")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_sfs_resource_pool").all(
+        change.after["ip_acl"].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+  - uid: mondoo-stackit-security-sfs-resourcepool-restricted-ipacl-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_sfs_resource_pool")
+    mql: |
+      terraform.state.resources.where(type == "stackit_sfs_resource_pool").all(
+        values["ip_acl"].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
   - uid: mondoo-stackit-security-sfs-export-policy-restricted
     title: Ensure STACKIT SFS export policies do not allow world-open NFS access
     impact: 85
-    filters: asset.platform == "stackit-project"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -925,8 +1264,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-4-2
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      stackit.sfs.exportPolicies.all(rules.all(ipAcl.none(_ == "0.0.0.0/0" || _ == "::/0")))
+    variants:
+      - uid: mondoo-stackit-security-sfs-export-policy-restricted-stackit-project
+        tags:
+          mondoo.com/filter-title: STACKIT Project
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-sfs-export-policy-restricted-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-sfs-export-policy-restricted-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-sfs-export-policy-restricted-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT SFS export policies do not grant NFS access to the entire internet.
@@ -983,10 +1337,35 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/storage/file-storage/
         title: STACKIT Documentation - File Storage (SFS)
+  - uid: mondoo-stackit-security-sfs-export-policy-restricted-stackit-project
+    filters: asset.platform == "stackit-project"
+    mql: |
+      stackit.sfs.exportPolicies.all(rules.all(ipAcl.none(_ == "0.0.0.0/0" || _ == "::/0")))
+  - uid: mondoo-stackit-security-sfs-export-policy-restricted-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_sfs_export_policy")
+    mql: |
+      terraform.resources("stackit_sfs_export_policy").where(arguments["rules"] != empty).all(
+        arguments["rules"].all(_["ip_acl"].none(_ == "0.0.0.0/0" || _ == "::/0"))
+      )
+  - uid: mondoo-stackit-security-sfs-export-policy-restricted-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_sfs_export_policy")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_sfs_export_policy").where(
+        change.after["rules"] != empty
+      ).all(
+        change.after["rules"].all(_["ip_acl"].none(_ == "0.0.0.0/0" || _ == "::/0"))
+      )
+  - uid: mondoo-stackit-security-sfs-export-policy-restricted-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_sfs_export_policy")
+    mql: |
+      terraform.state.resources.where(type == "stackit_sfs_export_policy").where(
+        values["rules"] != empty
+      ).all(
+        values["rules"].all(_["ip_acl"].none(_ == "0.0.0.0/0" || _ == "::/0"))
+      )
   - uid: mondoo-stackit-security-sfs-resourcepool-snapshot-policy
     title: Ensure STACKIT SFS resource pools have a snapshot policy attached
     impact: 50
-    filters: asset.platform == "stackit-project"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
@@ -1002,8 +1381,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: false
       compliance/vda-isa-5: vda-isa-5-3-1-2
-    mql: |
-      stackit.sfs.resourcePools.all(snapshotPolicyId != "")
+    variants:
+      - uid: mondoo-stackit-security-sfs-resourcepool-snapshot-policy-stackit-project
+        tags:
+          mondoo.com/filter-title: STACKIT Project
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-sfs-resourcepool-snapshot-policy-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-sfs-resourcepool-snapshot-policy-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-sfs-resourcepool-snapshot-policy-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT SFS resource pools have a snapshot policy attached.
@@ -1067,11 +1461,32 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/storage/file-storage/
         title: STACKIT Documentation - File Storage (SFS)
+  - uid: mondoo-stackit-security-sfs-resourcepool-snapshot-policy-stackit-project
+    filters: asset.platform == "stackit-project"
+    mql: |
+      stackit.sfs.resourcePools.all(snapshotPolicyId != "")
+  - uid: mondoo-stackit-security-sfs-resourcepool-snapshot-policy-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_sfs_resource_pool")
+    mql: |
+      terraform.resources("stackit_sfs_resource_pool").all(
+        arguments["snapshot_policy"]["id"] != empty
+      )
+  - uid: mondoo-stackit-security-sfs-resourcepool-snapshot-policy-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_sfs_resource_pool")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_sfs_resource_pool").all(
+        change.after["snapshot_policy"]["id"] != empty
+      )
+  - uid: mondoo-stackit-security-sfs-resourcepool-snapshot-policy-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_sfs_resource_pool")
+    mql: |
+      terraform.state.resources.where(type == "stackit_sfs_resource_pool").all(
+        values["snapshot_policy"]["id"] != empty
+      )
   # ----------------------------- STACKIT Managed Databases -----------------------------
   - uid: mondoo-stackit-security-db-postgres-acl-restricted
     title: Ensure PostgreSQL Flex instances do not allow access from the internet
     impact: 90
-    filters: asset.platform == "stackit-postgres-flex-instance"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -1087,8 +1502,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-4-4
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      stackit.postgresFlex.instance.acl.none(_ == "0.0.0.0/0" || _ == "::/0")
+    variants:
+      - uid: mondoo-stackit-security-db-postgres-acl-restricted-stackit-postgres-flex-instance
+        tags:
+          mondoo.com/filter-title: STACKIT PostgreSQL Flex Instance
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-db-postgres-acl-restricted-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-db-postgres-acl-restricted-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-db-postgres-acl-restricted-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT PostgreSQL Flex instances do not accept connections from the entire internet.
@@ -1147,10 +1577,40 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/databases/postgresql-flex/
         title: STACKIT Documentation - PostgreSQL Flex
+  - uid: mondoo-stackit-security-db-postgres-acl-restricted-stackit-postgres-flex-instance
+    filters: asset.platform == "stackit-postgres-flex-instance"
+    mql: |
+      stackit.postgresFlex.instance.acl.none(_ == "0.0.0.0/0" || _ == "::/0")
+  - uid: mondoo-stackit-security-db-postgres-acl-restricted-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_postgresflex_instance")
+    mql: |
+      terraform.resources("stackit_postgresflex_instance").where(arguments["acl"] != empty).all(
+        arguments["acl"].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+      terraform.resources("stackit_postgresflex_instance").where(arguments["network"]["acl"] != empty).all(
+        arguments["network"]["acl"].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+  - uid: mondoo-stackit-security-db-postgres-acl-restricted-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_postgresflex_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_postgresflex_instance").where(
+        change.after["acl"] != empty
+      ).all(change.after["acl"].none(_ == "0.0.0.0/0" || _ == "::/0"))
+      terraform.plan.resourceChanges.where(type == "stackit_postgresflex_instance").where(
+        change.after["network"]["acl"] != empty
+      ).all(change.after["network"]["acl"].none(_ == "0.0.0.0/0" || _ == "::/0"))
+  - uid: mondoo-stackit-security-db-postgres-acl-restricted-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_postgresflex_instance")
+    mql: |
+      terraform.state.resources.where(type == "stackit_postgresflex_instance").where(
+        values["acl"] != empty
+      ).all(values["acl"].none(_ == "0.0.0.0/0" || _ == "::/0"))
+      terraform.state.resources.where(type == "stackit_postgresflex_instance").where(
+        values["network"]["acl"] != empty
+      ).all(values["network"]["acl"].none(_ == "0.0.0.0/0" || _ == "::/0"))
   - uid: mondoo-stackit-security-db-postgres-backups
     title: Ensure PostgreSQL Flex instances have a backup schedule configured
     impact: 60
-    filters: asset.platform == "stackit-postgres-flex-instance"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
@@ -1166,8 +1626,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: false
       compliance/vda-isa-5: vda-isa-5-3-1-2
-    mql: |
-      stackit.postgresFlex.instance.backupSchedule != ""
+    variants:
+      - uid: mondoo-stackit-security-db-postgres-backups-stackit-postgres-flex-instance
+        tags:
+          mondoo.com/filter-title: STACKIT PostgreSQL Flex Instance
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-db-postgres-backups-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-db-postgres-backups-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-db-postgres-backups-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT PostgreSQL Flex instances have a backup schedule configured.
@@ -1226,10 +1701,29 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/databases/postgresql-flex/
         title: STACKIT Documentation - PostgreSQL Flex
+  - uid: mondoo-stackit-security-db-postgres-backups-stackit-postgres-flex-instance
+    filters: asset.platform == "stackit-postgres-flex-instance"
+    mql: |
+      stackit.postgresFlex.instance.backupSchedule != ""
+  - uid: mondoo-stackit-security-db-postgres-backups-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_postgresflex_instance")
+    mql: |
+      terraform.resources("stackit_postgresflex_instance").all(arguments["backup_schedule"] != empty)
+  - uid: mondoo-stackit-security-db-postgres-backups-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_postgresflex_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_postgresflex_instance").all(
+        change.after["backup_schedule"] != empty
+      )
+  - uid: mondoo-stackit-security-db-postgres-backups-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_postgresflex_instance")
+    mql: |
+      terraform.state.resources.where(type == "stackit_postgresflex_instance").all(
+        values["backup_schedule"] != empty
+      )
   - uid: mondoo-stackit-security-db-mongodb-acl-restricted
     title: Ensure MongoDB Flex instances do not allow access from the internet
     impact: 90
-    filters: asset.platform == "stackit-mongodb-flex-instance"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -1245,8 +1739,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-4-4
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      stackit.mongoDbFlex.instance.acl.none(_ == "0.0.0.0/0" || _ == "::/0")
+    variants:
+      - uid: mondoo-stackit-security-db-mongodb-acl-restricted-stackit-mongodb-flex-instance
+        tags:
+          mondoo.com/filter-title: STACKIT MongoDB Flex Instance
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-db-mongodb-acl-restricted-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-db-mongodb-acl-restricted-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-db-mongodb-acl-restricted-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT MongoDB Flex instances do not accept connections from the entire internet.
@@ -1313,10 +1822,31 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/databases/mongodb-flex/
         title: STACKIT Documentation - MongoDB Flex
+  - uid: mondoo-stackit-security-db-mongodb-acl-restricted-stackit-mongodb-flex-instance
+    filters: asset.platform == "stackit-mongodb-flex-instance"
+    mql: |
+      stackit.mongoDbFlex.instance.acl.none(_ == "0.0.0.0/0" || _ == "::/0")
+  - uid: mondoo-stackit-security-db-mongodb-acl-restricted-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_mongodbflex_instance")
+    mql: |
+      terraform.resources("stackit_mongodbflex_instance").all(
+        arguments["acl"].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+  - uid: mondoo-stackit-security-db-mongodb-acl-restricted-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_mongodbflex_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_mongodbflex_instance").all(
+        change.after["acl"].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+  - uid: mondoo-stackit-security-db-mongodb-acl-restricted-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_mongodbflex_instance")
+    mql: |
+      terraform.state.resources.where(type == "stackit_mongodbflex_instance").all(
+        values["acl"].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
   - uid: mondoo-stackit-security-db-mongodb-backups
     title: Ensure MongoDB Flex instances have a backup schedule configured
     impact: 60
-    filters: asset.platform == "stackit-mongodb-flex-instance"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
@@ -1332,8 +1862,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: false
       compliance/vda-isa-5: vda-isa-5-3-1-2
-    mql: |
-      stackit.mongoDbFlex.instance.backupSchedule != ""
+    variants:
+      - uid: mondoo-stackit-security-db-mongodb-backups-stackit-mongodb-flex-instance
+        tags:
+          mondoo.com/filter-title: STACKIT MongoDB Flex Instance
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-db-mongodb-backups-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-db-mongodb-backups-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-db-mongodb-backups-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT MongoDB Flex instances have a backup schedule configured.
@@ -1400,10 +1945,29 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/databases/mongodb-flex/
         title: STACKIT Documentation - MongoDB Flex
+  - uid: mondoo-stackit-security-db-mongodb-backups-stackit-mongodb-flex-instance
+    filters: asset.platform == "stackit-mongodb-flex-instance"
+    mql: |
+      stackit.mongoDbFlex.instance.backupSchedule != ""
+  - uid: mondoo-stackit-security-db-mongodb-backups-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_mongodbflex_instance")
+    mql: |
+      terraform.resources("stackit_mongodbflex_instance").all(arguments["backup_schedule"] != empty)
+  - uid: mondoo-stackit-security-db-mongodb-backups-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_mongodbflex_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_mongodbflex_instance").all(
+        change.after["backup_schedule"] != empty
+      )
+  - uid: mondoo-stackit-security-db-mongodb-backups-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_mongodbflex_instance")
+    mql: |
+      terraform.state.resources.where(type == "stackit_mongodbflex_instance").all(
+        values["backup_schedule"] != empty
+      )
   - uid: mondoo-stackit-security-db-sqlserver-acl-restricted
     title: Ensure SQLServer Flex instances do not allow access from the internet
     impact: 90
-    filters: asset.platform == "stackit-sqlserver-flex-instance"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -1419,8 +1983,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-4-4
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      stackit.sqlServerFlex.instance.acl.none(_ == "0.0.0.0/0" || _ == "::/0")
+    variants:
+      - uid: mondoo-stackit-security-db-sqlserver-acl-restricted-stackit-sqlserver-flex-instance
+        tags:
+          mondoo.com/filter-title: STACKIT SQLServer Flex Instance
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-db-sqlserver-acl-restricted-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-db-sqlserver-acl-restricted-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-db-sqlserver-acl-restricted-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT SQLServer Flex instances do not accept connections from the entire internet.
@@ -1481,10 +2060,40 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/databases/sqlserver-flex/
         title: STACKIT Documentation - SQLServer Flex
+  - uid: mondoo-stackit-security-db-sqlserver-acl-restricted-stackit-sqlserver-flex-instance
+    filters: asset.platform == "stackit-sqlserver-flex-instance"
+    mql: |
+      stackit.sqlServerFlex.instance.acl.none(_ == "0.0.0.0/0" || _ == "::/0")
+  - uid: mondoo-stackit-security-db-sqlserver-acl-restricted-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_sqlserverflex_instance")
+    mql: |
+      terraform.resources("stackit_sqlserverflex_instance").where(arguments["acl"] != empty).all(
+        arguments["acl"].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+      terraform.resources("stackit_sqlserverflex_instance").where(arguments["network"]["acl"] != empty).all(
+        arguments["network"]["acl"].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+  - uid: mondoo-stackit-security-db-sqlserver-acl-restricted-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_sqlserverflex_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_sqlserverflex_instance").where(
+        change.after["acl"] != empty
+      ).all(change.after["acl"].none(_ == "0.0.0.0/0" || _ == "::/0"))
+      terraform.plan.resourceChanges.where(type == "stackit_sqlserverflex_instance").where(
+        change.after["network"]["acl"] != empty
+      ).all(change.after["network"]["acl"].none(_ == "0.0.0.0/0" || _ == "::/0"))
+  - uid: mondoo-stackit-security-db-sqlserver-acl-restricted-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_sqlserverflex_instance")
+    mql: |
+      terraform.state.resources.where(type == "stackit_sqlserverflex_instance").where(
+        values["acl"] != empty
+      ).all(values["acl"].none(_ == "0.0.0.0/0" || _ == "::/0"))
+      terraform.state.resources.where(type == "stackit_sqlserverflex_instance").where(
+        values["network"]["acl"] != empty
+      ).all(values["network"]["acl"].none(_ == "0.0.0.0/0" || _ == "::/0"))
   - uid: mondoo-stackit-security-db-sqlserver-backups
     title: Ensure SQLServer Flex instances have a backup schedule configured
     impact: 60
-    filters: asset.platform == "stackit-sqlserver-flex-instance"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
@@ -1500,8 +2109,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: false
       compliance/vda-isa-5: vda-isa-5-3-1-2
-    mql: |
-      stackit.sqlServerFlex.instance.backupSchedule != ""
+    variants:
+      - uid: mondoo-stackit-security-db-sqlserver-backups-stackit-sqlserver-flex-instance
+        tags:
+          mondoo.com/filter-title: STACKIT SQLServer Flex Instance
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-db-sqlserver-backups-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-db-sqlserver-backups-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-db-sqlserver-backups-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT SQLServer Flex instances have a backup schedule configured.
@@ -1563,10 +2187,34 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/databases/sqlserver-flex/
         title: STACKIT Documentation - SQLServer Flex
+  - uid: mondoo-stackit-security-db-sqlserver-backups-stackit-sqlserver-flex-instance
+    filters: asset.platform == "stackit-sqlserver-flex-instance"
+    mql: |
+      stackit.sqlServerFlex.instance.backupSchedule != ""
+  # backup_schedule is optional on stackit_sqlserverflex_instance, unlike its required PostgreSQL
+  # and MongoDB Flex counterparts, and the provider plans "0 0 * * *" when the argument is absent.
+  # An omitted schedule is therefore a daily backup, not a missing one, so these variants compare
+  # against "" rather than empty: null is the provider default and passes, and only an explicitly
+  # blank schedule leaves the instance without one.
+  - uid: mondoo-stackit-security-db-sqlserver-backups-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_sqlserverflex_instance")
+    mql: |
+      terraform.resources("stackit_sqlserverflex_instance").all(arguments["backup_schedule"] != "")
+  - uid: mondoo-stackit-security-db-sqlserver-backups-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_sqlserverflex_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_sqlserverflex_instance").all(
+        change.after["backup_schedule"] != ""
+      )
+  - uid: mondoo-stackit-security-db-sqlserver-backups-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_sqlserverflex_instance")
+    mql: |
+      terraform.state.resources.where(type == "stackit_sqlserverflex_instance").all(
+        values["backup_schedule"] != ""
+      )
   - uid: mondoo-stackit-security-db-postgres-high-availability
     title: Ensure PostgreSQL Flex instances run with multiple replicas
     impact: 40
-    filters: asset.platform == "stackit-postgres-flex-instance"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-11
@@ -1582,8 +2230,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: false
       compliance/vda-isa-5: vda-isa-5-3-1-2
-    mql: |
-      stackit.postgresFlex.instance.replicas >= 2
+    variants:
+      - uid: mondoo-stackit-security-db-postgres-high-availability-stackit-postgres-flex-instance
+        tags:
+          mondoo.com/filter-title: STACKIT PostgreSQL Flex Instance
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-db-postgres-high-availability-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-db-postgres-high-availability-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-db-postgres-high-availability-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT PostgreSQL Flex instances run with more than one replica.
@@ -1646,10 +2309,29 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/databases/postgresql-flex/
         title: STACKIT Documentation - PostgreSQL Flex
+  - uid: mondoo-stackit-security-db-postgres-high-availability-stackit-postgres-flex-instance
+    filters: asset.platform == "stackit-postgres-flex-instance"
+    mql: |
+      stackit.postgresFlex.instance.replicas >= 2
+  - uid: mondoo-stackit-security-db-postgres-high-availability-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_postgresflex_instance")
+    mql: |
+      terraform.resources("stackit_postgresflex_instance").all(arguments["replicas"] >= 2)
+  - uid: mondoo-stackit-security-db-postgres-high-availability-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_postgresflex_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_postgresflex_instance").all(
+        change.after["replicas"] >= 2
+      )
+  - uid: mondoo-stackit-security-db-postgres-high-availability-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_postgresflex_instance")
+    mql: |
+      terraform.state.resources.where(type == "stackit_postgresflex_instance").all(
+        values["replicas"] >= 2
+      )
   - uid: mondoo-stackit-security-db-mongodb-high-availability
     title: Ensure MongoDB Flex instances run with multiple replicas
     impact: 40
-    filters: asset.platform == "stackit-mongodb-flex-instance"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-11
@@ -1665,8 +2347,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: false
       compliance/vda-isa-5: vda-isa-5-3-1-2
-    mql: |
-      stackit.mongoDbFlex.instance.replicas >= 2
+    variants:
+      - uid: mondoo-stackit-security-db-mongodb-high-availability-stackit-mongodb-flex-instance
+        tags:
+          mondoo.com/filter-title: STACKIT MongoDB Flex Instance
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-db-mongodb-high-availability-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-db-mongodb-high-availability-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-db-mongodb-high-availability-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT MongoDB Flex instances run with more than one replica.
@@ -1733,6 +2430,29 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/databases/mongodb-flex/
         title: STACKIT Documentation - MongoDB Flex
+  - uid: mondoo-stackit-security-db-mongodb-high-availability-stackit-mongodb-flex-instance
+    filters: asset.platform == "stackit-mongodb-flex-instance"
+    mql: |
+      stackit.mongoDbFlex.instance.replicas >= 2
+  - uid: mondoo-stackit-security-db-mongodb-high-availability-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_mongodbflex_instance")
+    mql: |
+      terraform.resources("stackit_mongodbflex_instance").all(arguments["replicas"] >= 2)
+  - uid: mondoo-stackit-security-db-mongodb-high-availability-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_mongodbflex_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_mongodbflex_instance").all(
+        change.after["replicas"] >= 2
+      )
+  - uid: mondoo-stackit-security-db-mongodb-high-availability-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_mongodbflex_instance")
+    mql: |
+      terraform.state.resources.where(type == "stackit_mongodbflex_instance").all(
+        values["replicas"] >= 2
+      )
+  # No Terraform variant: stackit_sqlserverflex_instance.replicas is read-only. The SQLServer Flex API
+  # derives the replica count from the selected flavor rather than accepting it, so unlike the PostgreSQL
+  # and MongoDB Flex resources there is no argument an author can set or get wrong.
   - uid: mondoo-stackit-security-db-sqlserver-high-availability
     title: Ensure SQLServer Flex instances run with multiple replicas
     impact: 40
@@ -1799,7 +2519,6 @@ queries:
   - uid: mondoo-stackit-security-secretsmanager-acl-restricted
     title: Ensure Secrets Manager instances do not allow access from the internet
     impact: 85
-    filters: asset.platform == "stackit-secrets-manager-instance"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -1815,8 +2534,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-4-2
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      stackit.secretsManager.instance.acls.none(_ == "0.0.0.0/0" || _ == "::/0")
+    variants:
+      - uid: mondoo-stackit-security-secretsmanager-acl-restricted-stackit-secrets-manager-instance
+        tags:
+          mondoo.com/filter-title: STACKIT Secrets Manager Instance
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-secretsmanager-acl-restricted-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-secretsmanager-acl-restricted-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-secretsmanager-acl-restricted-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT Secrets Manager instances do not accept connections from the entire internet.
@@ -1868,11 +2602,32 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/security/secrets-manager/
         title: STACKIT Documentation - Secrets Manager
+  - uid: mondoo-stackit-security-secretsmanager-acl-restricted-stackit-secrets-manager-instance
+    filters: asset.platform == "stackit-secrets-manager-instance"
+    mql: |
+      stackit.secretsManager.instance.acls.none(_ == "0.0.0.0/0" || _ == "::/0")
+  - uid: mondoo-stackit-security-secretsmanager-acl-restricted-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_secretsmanager_instance")
+    mql: |
+      terraform.resources("stackit_secretsmanager_instance").where(arguments["acls"] != empty).all(
+        arguments["acls"].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+  - uid: mondoo-stackit-security-secretsmanager-acl-restricted-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_secretsmanager_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_secretsmanager_instance").where(
+        change.after["acls"] != empty
+      ).all(change.after["acls"].none(_ == "0.0.0.0/0" || _ == "::/0"))
+  - uid: mondoo-stackit-security-secretsmanager-acl-restricted-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_secretsmanager_instance")
+    mql: |
+      terraform.state.resources.where(type == "stackit_secretsmanager_instance").where(
+        values["acls"] != empty
+      ).all(values["acls"].none(_ == "0.0.0.0/0" || _ == "::/0"))
   # ----------------------------- STACKIT Identity & Access -----------------------------
   - uid: mondoo-stackit-security-serviceaccount-key-bounded-validity
     title: Ensure active service account keys have a bounded validity
     impact: 70
-    filters: asset.platform == "stackit-project"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: false
@@ -1888,8 +2643,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-6-3
       compliance/soc2-2017: soc2-control-cc6-1-9
       compliance/vda-isa-5: false
-    mql: |
-      stackit.serviceAccounts.all(keys.where(_['active'] == true).all(_['validUntil'] != null))
+    variants:
+      - uid: mondoo-stackit-security-serviceaccount-key-bounded-validity-stackit-project
+        tags:
+          mondoo.com/filter-title: STACKIT Project
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-serviceaccount-key-bounded-validity-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-serviceaccount-key-bounded-validity-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-serviceaccount-key-bounded-validity-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that active STACKIT service account keys have an expiry date.
@@ -1947,6 +2717,29 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/platform/access-and-identity/service-accounts/
         title: STACKIT Documentation - Service Accounts
+  - uid: mondoo-stackit-security-serviceaccount-key-bounded-validity-stackit-project
+    filters: asset.platform == "stackit-project"
+    mql: |
+      stackit.serviceAccounts.all(keys.where(_['active'] == true).all(_['validUntil'] != null))
+  - uid: mondoo-stackit-security-serviceaccount-key-bounded-validity-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_service_account_key")
+    mql: |
+      terraform.resources("stackit_service_account_key").all(arguments["ttl_days"] != null)
+  - uid: mondoo-stackit-security-serviceaccount-key-bounded-validity-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_service_account_key")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_service_account_key").all(
+        change.after["ttl_days"] != null
+      )
+  - uid: mondoo-stackit-security-serviceaccount-key-bounded-validity-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_service_account_key")
+    mql: |
+      terraform.state.resources.where(type == "stackit_service_account_key").all(
+        values["ttl_days"] != null
+      )
+  # No Terraform variant: the provider declares no service account access token resource. It reaches
+  # service account credentials only through stackit_service_account_key, which the key validity check
+  # covers, so an access token's lifetime is not expressible in HCL.
   - uid: mondoo-stackit-security-serviceaccount-token-bounded-validity
     title: Ensure active service account access tokens have a bounded validity
     impact: 70
@@ -2016,6 +2809,9 @@ queries:
       - url: https://docs.stackit.cloud/platform/access-and-identity/service-accounts/
         title: STACKIT Documentation - Service Accounts
   # ----------------------------- STACKIT Key Management -----------------------------
+  # No Terraform variant: a key's deletion date is lifecycle state the KMS API reports, not an argument
+  # on stackit_kms_key. Scheduling a key for deletion is a destroy in Terraform's model, which leaves
+  # nothing in the configuration to read.
   - uid: mondoo-stackit-security-kms-key-not-pending-deletion
     title: Ensure STACKIT KMS keys are not scheduled for deletion
     impact: 60
@@ -2084,6 +2880,8 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/security/kms/
         title: STACKIT Documentation - Key Management Service (KMS)
+  # No Terraform variant: key state is reported by the KMS API and stackit_kms_key exposes no argument
+  # that sets it.
   - uid: mondoo-stackit-security-kms-key-healthy-state
     title: Ensure STACKIT KMS keys are in a healthy state
     impact: 50
@@ -2153,6 +2951,8 @@ queries:
       - url: https://docs.stackit.cloud/products/security/kms/
         title: STACKIT Documentation - Key Management Service (KMS)
   # ----------------------------- STACKIT Kubernetes (SKE) -----------------------------
+  # No Terraform variant: cluster health is reported by the SKE API and stackit_ske_cluster exposes no
+  # argument that sets it.
   - uid: mondoo-stackit-security-ske-cluster-healthy
     title: Ensure STACKIT SKE clusters are not in an unhealthy state
     impact: 40
@@ -2218,7 +3018,6 @@ queries:
   - uid: mondoo-stackit-security-ske-cluster-auto-update
     title: Ensure STACKIT SKE clusters enable Kubernetes version auto-update
     impact: 50
-    filters: asset.platform == "stackit-ske-cluster"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-03
@@ -2234,8 +3033,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-4-8
       compliance/vda-isa-5: vda-isa-5-5-2-5
-    mql: |
-      stackit.ske.cluster.maintenance['autoUpdate']['kubernetesVersion'] == true
+    variants:
+      - uid: mondoo-stackit-security-ske-cluster-auto-update-stackit-ske-cluster
+        tags:
+          mondoo.com/filter-title: STACKIT Kubernetes Cluster
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-ske-cluster-auto-update-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-ske-cluster-auto-update-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-ske-cluster-auto-update-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT Kubernetes Engine clusters have Kubernetes version auto-update enabled.
@@ -2300,10 +3114,31 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/runtime/kubernetes-engine/
         title: STACKIT Documentation - Kubernetes Engine (SKE)
+  - uid: mondoo-stackit-security-ske-cluster-auto-update-stackit-ske-cluster
+    filters: asset.platform == "stackit-ske-cluster"
+    mql: |
+      stackit.ske.cluster.maintenance['autoUpdate']['kubernetesVersion'] == true
+  - uid: mondoo-stackit-security-ske-cluster-auto-update-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_ske_cluster")
+    mql: |
+      terraform.resources("stackit_ske_cluster").all(
+        arguments["maintenance"]["enable_kubernetes_version_updates"] == true
+      )
+  - uid: mondoo-stackit-security-ske-cluster-auto-update-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_ske_cluster")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_ske_cluster").all(
+        change.after["maintenance"]["enable_kubernetes_version_updates"] == true
+      )
+  - uid: mondoo-stackit-security-ske-cluster-auto-update-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_ske_cluster")
+    mql: |
+      terraform.state.resources.where(type == "stackit_ske_cluster").all(
+        values["maintenance"]["enable_kubernetes_version_updates"] == true
+      )
   - uid: mondoo-stackit-security-ske-apiserver-acl-enabled
     title: Ensure STACKIT SKE clusters restrict Kubernetes API server access
     impact: 80
-    filters: asset.platform == "stackit-ske-cluster"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -2319,10 +3154,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-4-2
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      stackit.ske.cluster.controlPlaneAccessScope == "SNA" ||
-      stackit.ske.cluster.apiServerAclEnabled == true &&
-      stackit.ske.cluster.apiServerAclAllowedCidrs.none(_ == "0.0.0.0/0" || _ == "::/0")
+    variants:
+      - uid: mondoo-stackit-security-ske-apiserver-acl-enabled-stackit-ske-cluster
+        tags:
+          mondoo.com/filter-title: STACKIT Kubernetes Cluster
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-ske-apiserver-acl-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-ske-apiserver-acl-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-ske-apiserver-acl-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT Kubernetes Engine clusters restrict access to their Kubernetes API server.
@@ -2388,10 +3236,42 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/runtime/kubernetes-engine/
         title: STACKIT Documentation - Kubernetes Engine (SKE)
+  - uid: mondoo-stackit-security-ske-apiserver-acl-enabled-stackit-ske-cluster
+    filters: asset.platform == "stackit-ske-cluster"
+    mql: |
+      stackit.ske.cluster.controlPlaneAccessScope == "SNA" ||
+      stackit.ske.cluster.apiServerAclEnabled == true &&
+      stackit.ske.cluster.apiServerAclAllowedCidrs.none(_ == "0.0.0.0/0" || _ == "::/0")
+  - uid: mondoo-stackit-security-ske-apiserver-acl-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_ske_cluster")
+    mql: |
+      terraform.resources("stackit_ske_cluster").all(
+        arguments["network"]["control_plane"]["access_scope"] == "SNA" ||
+        arguments["extensions"]["acl"]["enabled"] == true &&
+        arguments["extensions"]["acl"]["allowed_cidrs"] != empty &&
+        arguments["extensions"]["acl"]["allowed_cidrs"].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+  - uid: mondoo-stackit-security-ske-apiserver-acl-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_ske_cluster")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_ske_cluster").all(
+        change.after["network"]["control_plane"]["access_scope"] == "SNA" ||
+        change.after["extensions"]["acl"]["enabled"] == true &&
+        change.after["extensions"]["acl"]["allowed_cidrs"] != empty &&
+        change.after["extensions"]["acl"]["allowed_cidrs"].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+  - uid: mondoo-stackit-security-ske-apiserver-acl-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_ske_cluster")
+    mql: |
+      terraform.state.resources.where(type == "stackit_ske_cluster").all(
+        values["network"]["control_plane"]["access_scope"] == "SNA" ||
+        values["extensions"]["acl"]["enabled"] == true &&
+        values["extensions"]["acl"]["allowed_cidrs"] != empty &&
+        values["extensions"]["acl"]["allowed_cidrs"].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
   - uid: mondoo-stackit-security-ske-apiserver-acl-restricted
     title: Ensure STACKIT SKE API server ACL is not open to the internet
     impact: 85
-    filters: asset.platform == "stackit-ske-cluster"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -2407,8 +3287,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-4-2
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      stackit.ske.cluster.apiServerAclAllowedCidrs.none(_ == "0.0.0.0/0" || _ == "::/0")
+    variants:
+      - uid: mondoo-stackit-security-ske-apiserver-acl-restricted-stackit-ske-cluster
+        tags:
+          mondoo.com/filter-title: STACKIT Kubernetes Cluster
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-ske-apiserver-acl-restricted-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-ske-apiserver-acl-restricted-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-ske-apiserver-acl-restricted-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that the STACKIT Kubernetes Engine API server allow-list does not include the entire internet.
@@ -2474,11 +3369,38 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/runtime/kubernetes-engine/
         title: STACKIT Documentation - Kubernetes Engine (SKE)
+  - uid: mondoo-stackit-security-ske-apiserver-acl-restricted-stackit-ske-cluster
+    filters: asset.platform == "stackit-ske-cluster"
+    mql: |
+      stackit.ske.cluster.apiServerAclAllowedCidrs.none(_ == "0.0.0.0/0" || _ == "::/0")
+  - uid: mondoo-stackit-security-ske-apiserver-acl-restricted-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_ske_cluster")
+    mql: |
+      terraform.resources("stackit_ske_cluster").where(
+        arguments["extensions"]["acl"]["allowed_cidrs"] != empty
+      ).all(
+        arguments["extensions"]["acl"]["allowed_cidrs"].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+  - uid: mondoo-stackit-security-ske-apiserver-acl-restricted-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_ske_cluster")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_ske_cluster").where(
+        change.after["extensions"]["acl"]["allowed_cidrs"] != empty
+      ).all(
+        change.after["extensions"]["acl"]["allowed_cidrs"].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+  - uid: mondoo-stackit-security-ske-apiserver-acl-restricted-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_ske_cluster")
+    mql: |
+      terraform.state.resources.where(type == "stackit_ske_cluster").where(
+        values["extensions"]["acl"]["allowed_cidrs"] != empty
+      ).all(
+        values["extensions"]["acl"]["allowed_cidrs"].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
   # ----------------------------- STACKIT Telemetry -----------------------------
   - uid: mondoo-stackit-security-telemetry-token-expiry-set
     title: Ensure STACKIT telemetry router access tokens have an expiry
     impact: 50
-    filters: asset.platform == "stackit-project"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: false
@@ -2494,8 +3416,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-6-3
       compliance/soc2-2017: soc2-control-cc6-1-9
       compliance/vda-isa-5: false
-    mql: |
-      stackit.telemetry.routers.all(accessTokens.all(expiresAt != null))
+    variants:
+      - uid: mondoo-stackit-security-telemetry-token-expiry-set-stackit-project
+        tags:
+          mondoo.com/filter-title: STACKIT Project
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-telemetry-token-expiry-set-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-telemetry-token-expiry-set-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-telemetry-token-expiry-set-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT telemetry router access tokens have an expiry set.
@@ -2539,6 +3476,28 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/logging-and-monitoring/telemetry-router/
         title: STACKIT Documentation - Telemetry Router
+  - uid: mondoo-stackit-security-telemetry-token-expiry-set-stackit-project
+    filters: asset.platform == "stackit-project"
+    mql: |
+      stackit.telemetry.routers.all(accessTokens.all(expiresAt != null))
+  - uid: mondoo-stackit-security-telemetry-token-expiry-set-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_telemetryrouter_access_token")
+    mql: |
+      terraform.resources("stackit_telemetryrouter_access_token").all(arguments["ttl"] != null)
+  - uid: mondoo-stackit-security-telemetry-token-expiry-set-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_telemetryrouter_access_token")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_telemetryrouter_access_token").all(
+        change.after["ttl"] != null
+      )
+  - uid: mondoo-stackit-security-telemetry-token-expiry-set-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_telemetryrouter_access_token")
+    mql: |
+      terraform.state.resources.where(type == "stackit_telemetryrouter_access_token").all(
+        values["ttl"] != null
+      )
+  # No Terraform variant: whether a token has passed its expiry is a function of the current time, not
+  # of the configuration. The Terraform surface is the ttl argument, which the expiry check covers.
   - uid: mondoo-stackit-security-telemetry-token-not-expired
     title: Ensure STACKIT telemetry router access tokens are not expired
     impact: 60
@@ -2595,7 +3554,6 @@ queries:
   - uid: mondoo-stackit-security-modelserving-token-expiry-set
     title: Ensure STACKIT Model Serving tokens have a bounded validity
     impact: 50
-    filters: asset.platform == "stackit-project"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: false
@@ -2612,8 +3570,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-6-3
       compliance/soc2-2017: soc2-control-cc6-1-9
       compliance/vda-isa-5: false
-    mql: |
-      stackit.modelServing.tokens.all(validUntil != null)
+    variants:
+      - uid: mondoo-stackit-security-modelserving-token-expiry-set-stackit-project
+        tags:
+          mondoo.com/filter-title: STACKIT Project
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-modelserving-token-expiry-set-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-modelserving-token-expiry-set-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-modelserving-token-expiry-set-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that STACKIT Model Serving tokens have a validity end date set.
@@ -2657,6 +3630,28 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/data-and-ai/ai-model-serving/
         title: STACKIT Documentation - Model Serving
+  - uid: mondoo-stackit-security-modelserving-token-expiry-set-stackit-project
+    filters: asset.platform == "stackit-project"
+    mql: |
+      stackit.modelServing.tokens.all(validUntil != null)
+  - uid: mondoo-stackit-security-modelserving-token-expiry-set-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_modelserving_token")
+    mql: |
+      terraform.resources("stackit_modelserving_token").all(arguments["ttl_duration"] != empty)
+  - uid: mondoo-stackit-security-modelserving-token-expiry-set-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_modelserving_token")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_modelserving_token").all(
+        change.after["ttl_duration"] != empty
+      )
+  - uid: mondoo-stackit-security-modelserving-token-expiry-set-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_modelserving_token")
+    mql: |
+      terraform.state.resources.where(type == "stackit_modelserving_token").all(
+        values["ttl_duration"] != empty
+      )
+  # No Terraform variant: valid_until is reported by the AI Model Serving API after the token is issued.
+  # The Terraform surface is the ttl_duration argument, which the expiry check covers.
   - uid: mondoo-stackit-security-modelserving-token-not-expired
     title: Ensure STACKIT Model Serving tokens are not expired
     impact: 60
@@ -2711,7 +3706,9 @@ queries:
       - url: https://docs.stackit.cloud/products/data-and-ai/ai-model-serving/
         title: STACKIT Documentation - Model Serving
   # ----------------------------- STACKIT Kubernetes (SKE) -----------------------------
-  # No Terraform variants: the end-of-support date is runtime schedule metadata STACKIT reports per Kubernetes and node-image version; it has no configuration analog on the stackit_ske_cluster resource.
+  # No Terraform variant: the expiration dates for a cluster's Kubernetes version and node pool machine
+  # images come from the SKE API's version catalog. The configuration names a version, and whether that
+  # version has reached end of support changes without the configuration changing.
   - uid: mondoo-stackit-security-ske-not-end-of-support
     title: Ensure SKE clusters and node pools are within their support window
     impact: 80
@@ -2777,7 +3774,10 @@ queries:
       - url: https://docs.stackit.cloud/products/runtime/kubernetes-engine/
         title: STACKIT Documentation - Kubernetes Engine (SKE)
   # ----------------------------- STACKIT Identity & Access -----------------------------
-  # No Terraform variants: federated identity providers for service accounts are managed through the STACKIT portal and API; the stackit Terraform provider does not expose a resource for their claim assertions.
+  # No Terraform variant: stackit_service_account_federated_identity_provider declares assertions as
+  # a required list and rejects one that carries no "aud" claim, so a provider without assertions is
+  # not a configuration terraform will plan. The insecure state this check looks for cannot be
+  # written in HCL, which is why the check stays on the API surface alone.
   - uid: mondoo-stackit-security-serviceaccount-federated-identity-scoped
     title: Ensure federated identity providers restrict tokens with assertions
     impact: 85
@@ -2836,12 +3836,37 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, open the service account's federated identity providers and add assertions that pin accepted tokens to the specific subject, repository, or environment claims of the intended workload. Remove any provider that cannot be scoped to a known workload.
-        # No Terraform remediation: service-account federated identity providers are managed through the STACKIT portal and API; the stackit Terraform provider exposes no resource for their claim assertions.
+        - id: terraform
+          desc: |
+            Declare the provider's `assertions` on the `stackit_service_account_federated_identity_provider` resource, pinning the accepted audience and the subject of the intended workload:
+
+            ```hcl
+            resource "stackit_service_account_federated_identity_provider" "github" {
+              project_id            = var.project_id
+              service_account_email = var.service_account_email
+              name                  = "github-actions"
+              issuer                = "https://token.actions.githubusercontent.com"
+
+              assertions = [
+                {
+                  item     = "aud"
+                  operator = "equals"
+                  value    = "https://token.actions.githubusercontent.com"
+                },
+                {
+                  item     = "sub"
+                  operator = "equals"
+                  value    = "repo:example-org/example-repo:ref:refs/heads/main"
+                },
+              ]
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/iam/service-accounts/
         title: STACKIT Documentation - Service Accounts
   # ----------------------------- STACKIT Key Management -----------------------------
-  # No Terraform variants: key-version age is runtime state produced by rotation over time; it has no configuration analog on the stackit_kms_key resource.
+  # No Terraform variant: key versions are created by the KMS rotation API and stackit_kms_key declares
+  # neither the versions nor a rotation interval, so the age of the active version has no HCL surface.
   - uid: mondoo-stackit-security-kms-key-recently-rotated
     title: Ensure KMS keys have an active version rotated within the last year
     impact: 50
