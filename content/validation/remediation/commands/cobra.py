@@ -1,6 +1,6 @@
 # Copyright Mondoo, Inc. 2024, 2026
 # SPDX-License-Identifier: BUSL-1.1
-# Generic validation for Cobra-based CLIs (kubectl, gh, glab, hcloud).
+# Generic validation for Cobra-based CLIs (kubectl, gh, glab, hcloud, stackit).
 #
 # Like doctl, these are Go binaries with no Python introspection surface.
 # Unlike doctl, their --help layouts differ wildly (gh and glab render
@@ -107,6 +107,15 @@ COBRA_CLIS = {
             "  All platforms:    https://docs.databricks.com/dev-tools/cli/install.html"
         ),
     },
+    "stackit": {
+        "cli": "stackit",
+        "policies": ["mondoo-stackit-security.mql.yaml"],
+        "include_audit": True,
+        "install": (
+            "  macOS (Homebrew): brew install stackitcloud/tap/stackit\n"
+            "  All platforms:    https://github.com/stackitcloud/stackit-cli/releases"
+        ),
+    },
 }
 
 
@@ -119,6 +128,9 @@ def _walk_env() -> dict:
     # Keep the databricks CLI from loading a ~/.databrickscfg profile and
     # reaching a live workspace/account during completion.
     env["DATABRICKS_CONFIG_FILE"] = "/dev/null"
+    # Same for the STACKIT CLI's credentials file, which it reads from
+    # $HOME/.stackit/credentials.json unless this points elsewhere.
+    env["STACKIT_CREDENTIALS_PATH"] = "/dev/null"
     for var in (
         "GH_TOKEN", "GITHUB_TOKEN",
         "GITLAB_TOKEN", "GLAB_TOKEN",
@@ -126,6 +138,11 @@ def _walk_env() -> dict:
         "DATABRICKS_HOST", "DATABRICKS_TOKEN",
         "DATABRICKS_CLIENT_ID", "DATABRICKS_CLIENT_SECRET",
         "DATABRICKS_ACCOUNT_ID",
+        "STACKIT_SERVICE_ACCOUNT_TOKEN", "STACKIT_SERVICE_ACCOUNT_KEY",
+        "STACKIT_SERVICE_ACCOUNT_KEY_PATH", "STACKIT_PRIVATE_KEY",
+        "STACKIT_PRIVATE_KEY_PATH", "STACKIT_ACCESS_TOKEN",
+        "STACKIT_USE_OIDC", "STACKIT_SERVICE_ACCOUNT_EMAIL",
+        "STACKIT_SERVICE_ACCOUNT_FEDERATED_TOKEN", "STACKIT_FEDERATED_TOKEN_FILE",
     ):
         env.pop(var, None)
     return env

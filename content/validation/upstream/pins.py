@@ -336,6 +336,7 @@ WORKFLOW_CHECKSUMMED = [
     ("glab", "GLAB", lambda: latest_gitlab_release("gitlab-org%2Fcli")),
     ("hcloud", "HCLOUD", lambda: latest_github_release("hetznercloud/cli")),
     ("databricks", "DATABRICKS", lambda: latest_github_release("databricks/cli")),
+    ("stackit", "STACKIT", lambda: latest_github_release("stackitcloud/stackit-cli")),
 ]
 
 
