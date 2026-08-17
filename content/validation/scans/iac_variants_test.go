@@ -54,7 +54,7 @@ func init() {
 		"bicep", "os",
 		"alicloud", "oci", "vsphere", "okta", "openstack", "gitlab", "cloudflare",
 		"github", "digitalocean", "unifi", "portainer", "snowflake",
-		"hetzner", "tailscale", "ms365",
+		"hetzner", "tailscale", "ms365", "databricks",
 	)
 }
 
@@ -99,6 +99,7 @@ var tfVariantPolicies = []tfVariantPolicy{
 	{"mondoo-clickhousecloud-security-", "mondoo-clickhousecloud-security.mql.yaml", ""},
 	{"mondoo-hcp-security-", "mondoo-hcp-security.mql.yaml", ""},
 	{"mondoo-neon-security-", "mondoo-neon-security.mql.yaml", ""},
+	{"mondoo-databricks-security-", "mondoo-databricks-security.mql.yaml", ""},
 }
 
 // checkOutcome distinguishes a check that ran and passed, ran and failed, or was
