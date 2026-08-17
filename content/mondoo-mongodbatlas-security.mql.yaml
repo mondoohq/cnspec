@@ -121,18 +121,17 @@ queries:
       mongodbatlas.multiFactorAuthRequired == true
     docs:
       desc: |
-        Atlas can require every member of the organization to authenticate with a second factor. When multi-factor authentication is not required, an attacker who steals or guesses a single password can sign in and reach every project, cluster, and database in the organization.
+        This check verifies that every member of the Atlas organization must present a second authentication factor before they can sign in.
+
+        MongoDB Atlas exposes this as "Require Multi-Factor Authentication" in Organization Settings, reachable from the organization menu at cloud.mongodb.com. The Atlas Administration API reports the same control as `multiFactorAuthRequired` on the organization settings resource, and this check requires it to be enabled. The requirement is set once for the organization and applies to every member regardless of which projects they belong to.
 
         **Why this matters**
 
-        - **Credential theft is common:** passwords alone are exposed to phishing, reuse across sites, and breach dumps.
-        - **Broad blast radius:** organization members can reach production data and configuration across all projects.
-        - **Low-friction control:** MFA is a built-in setting that stops most automated account takeover attempts.
+        Without the requirement, a password is the only thing standing between an attacker and the organization. Atlas credentials show up in phishing kits, in breach dumps from unrelated sites where the same password was reused, and in browser credential stores on compromised laptops. An attacker with a working password signs in at cloud.mongodb.com and lands in the console as a full member.
 
-        **Risk mitigation**
+        From there the path to data is short and needs no exploit. The attacker opens Network Access, adds their own address to the project IP access list, opens Database Access, creates a database user with broad roles, and connects to the cluster with an ordinary MongoDB driver. Every step is a supported administrative action, so nothing looks anomalous except the source address. If the stolen account holds the Organization Owner role, the attacker can also disable other controls, remove members, and delete deployments outright.
 
-        - **Require MFA:** enable the organization setting so no member can sign in with a password alone.
-        - **Enroll members first:** confirm each member has registered an authenticator before enforcement takes effect.
+        Enroll members in an authenticator before turning the requirement on, because members who have not registered a factor will be prompted at their next sign-in and an unprepared team can lock itself out. Organizations that authenticate through a federated identity provider may enforce the second factor there instead, in which case confirm the provider actually requires it rather than assuming it does.
       audit: |
         ### Audit via Dashboard
 
@@ -193,18 +192,17 @@ queries:
       mongodbatlas.apiAccessListRequired == true
     docs:
       desc: |
-        Atlas can require that every organization API key and service account define an API access list before it can be used, so requests are only accepted from approved source addresses. Without this requirement, a leaked key or service account secret can be replayed from anywhere on the internet.
+        This check verifies that every organization API key and service account must define a list of approved source addresses before it can be used.
+
+        MongoDB Atlas exposes this as "Require IP Access List for the Atlas Administration API" in Organization Settings, and the Atlas Administration API reports it as `apiAccessListRequired` on the organization settings resource. When the requirement is on, a programmatic credential only works from the addresses recorded on that credential, and requests from anywhere else are rejected before authentication is even considered.
 
         **Why this matters**
 
-        - **Programmatic access is powerful:** API keys and service accounts hold the same administrative reach as human members.
-        - **Secrets leak:** keys committed to code, logs, or CI systems are usable from any network when no allowlist binds them.
-        - **Defense in depth:** source restrictions limit where a stolen credential can be used even if the secret is exposed.
+        API keys and service account secrets carry the same administrative reach as a human member but none of the protections around one. They are pasted into CI configuration, baked into container images, echoed into build logs, and committed to repositories. A secret that reaches any of those places can be read by anyone with access to the log, the image layer, or the repository history.
 
-        **Risk mitigation**
+        Without a source restriction, that leaked secret is usable from a coffee shop or a rented server anywhere on the internet. An attacker replays it against the Atlas Administration API, adds an address to the project IP access list, creates a database user, and reads the cluster, all without touching the console or triggering an interactive sign-in. With the requirement in place the same secret is inert from an unapproved address, which converts a full compromise into a failed request.
 
-        - **Require the access list:** enable the organization setting so new keys and service accounts cannot operate without an allowlist.
-        - **Scope entries tightly:** allow only the specific egress addresses that need Atlas Administration API access.
+        Turning the requirement on breaks any existing key or service account that has no entries, so record the required egress addresses on each credential before enabling it. Keep those entries as narrow as the network allows, since an entry that covers a whole provider region grants nearly as much reach as no entry at all.
       audit: |
         ### Audit via Dashboard
 
@@ -266,18 +264,17 @@ queries:
       mongodbatlas.restrictEmployeeAccess == true
     docs:
       desc: |
-        Atlas lets you block MongoDB support employees from accessing your organization's infrastructure unless you grant time-bound access for a specific support case. When employee access is not restricted, provider staff can reach your clusters and configuration without an explicit, temporary grant.
+        This check verifies that MongoDB support staff cannot reach the organization's infrastructure unless someone grants access for a specific support case.
+
+        The control lives in Organization Settings at cloud.mongodb.com and the Atlas Administration API reports it as `restrictEmployeeAccess` on the organization settings resource. With the restriction enabled, provider personnel have no standing path into your clusters and configuration; access must be opened deliberately for a support interaction and expires afterward.
 
         **Why this matters**
 
-        - **Third-party exposure:** provider personnel access widens the set of people who can touch your data.
-        - **Least privilege:** standing access that is not tied to an open request violates need-to-know.
-        - **Auditability:** on-demand, time-boxed grants leave a clearer trail than always-on access.
+        Standing provider access widens the set of accounts that can reach your data to include people your organization does not employ, does not onboard, and cannot offboard. That set is invisible from your side. You cannot enumerate it, you do not learn when a member of it leaves, and you have no way to require a particular authentication posture from it.
 
-        **Risk mitigation**
+        The attacker does not have to be a support engineer. An attacker who phishes a support employee, or who compromises the workstation or the internal tooling that support staff use, inherits whatever standing reach that account has. If the reach includes your clusters, the intrusion crosses from the provider's environment into your data without ever going through your own authentication or your own network controls. With the restriction on, the same compromised account finds nothing to use until an authorized person in your organization opens a time-boxed grant, and that grant leaves a record naming who opened it and when.
 
-        - **Restrict employee access:** enable the setting so support staff must be granted access per case.
-        - **Grant only when needed:** open access for a specific support interaction and let it expire afterward.
+        The trade-off is response time on support cases. An engineer investigating an urgent problem cannot begin until someone with the right role grants access, so name in advance who is expected to approve those grants and how they are reached out of hours.
       audit: |
         ### Audit via Dashboard
 
@@ -338,18 +335,17 @@ queries:
       mongodbatlas.securityContact != empty
     docs:
       desc: |
-        Atlas lets you record a security contact address for the organization so security notifications reach a monitored destination. When no security contact is set, provider security notices and account alerts may go unnoticed until damage is done.
+        This check verifies that the organization records an address where security notifications are delivered.
+
+        The Security Contact field sits in Organization Settings at cloud.mongodb.com, and the Atlas Administration API reports it as `securityContact` on the organization settings resource. This check requires the field to hold a value rather than being left empty. The address is where MongoDB sends security advisories and account notices for the organization.
 
         **Why this matters**
 
-        - **Timely notice:** security advisories and account alerts need to reach someone who will act on them.
-        - **Accountability:** a named contact establishes who owns security communications for the organization.
-        - **Incident readiness:** a monitored address shortens the time from notification to response.
+        Notification is often the first and sometimes the only signal that something has gone wrong. MongoDB uses this channel to report a credential it has found exposed in public code, a vulnerability affecting the version your clusters run, or suspicious activity on the account. Every one of those messages is time-sensitive, and its value decays quickly.
 
-        **Risk mitigation**
+        When the field is empty, that message is not delivered to anyone whose job it is to act on it. An attacker who is already using a leaked key keeps using it, because the warning that would have prompted a rotation never arrived. A vulnerability advisory that would have triggered an upgrade sits unread while the cluster stays exploitable. The gap is not a matter of hours; unreported exposures routinely persist for months because nobody was told.
 
-        - **Set a security contact:** record a monitored security address for the organization.
-        - **Use a shared mailbox:** point the contact at a team inbox rather than a single person, so notices are never missed.
+        Point the field at a monitored team mailbox or ticket queue rather than one person's address, so notices survive vacations, role changes, and departures. Confirm the destination is actually watched, since an address that routes into an unread distribution list produces the same outcome as leaving the field blank, while looking correct in an audit.
       audit: |
         ### Audit via Dashboard
 
@@ -410,18 +406,17 @@ queries:
       mongodbatlas.orgUsers.where(orgMembershipStatus == "ACTIVE").all(lastAuth != null && lastAuth > time.now - 90*time.day)
     docs:
       desc: |
-        This check confirms that every active organization member has authenticated within the last 90 days. Accounts that sit unused for long periods are prime targets for takeover because their owners are unlikely to notice suspicious sign-ins.
+        This check verifies that every active member of the Atlas organization has authenticated within the last 90 days.
+
+        Atlas records the last authentication time for each member and shows it in the Last Active column under Access Manager for the organization at cloud.mongodb.com. The Atlas Administration API returns the same value as `lastAuth` on the organization users resource alongside the membership status. This check looks only at members whose status is active, and requires each of them to have signed in within 90 days.
 
         **Why this matters**
 
-        - **Dormant accounts:** unused logins often belong to people who changed roles or left the organization.
-        - **Reduced monitoring:** nobody watches an account they no longer use, so misuse goes undetected.
-        - **Attack surface:** every active member is another credential that can be phished or reused.
+        A member who has not signed in for three months usually changed roles, moved to a different team, or left the company without the Atlas membership being revoked. The account still works, still holds whatever organization and project roles it was granted, and still counts as an authorized identity.
 
-        **Risk mitigation**
+        Those are the accounts an attacker prefers. Nobody notices a sign-in they did not make on an account they no longer use, and no password change or session invalidation is triggered by a departure that was never processed. An attacker who recovers the password from a breach dump, or who takes over the personal mailbox behind the account and runs a password reset, gets a working member session that raises no alarm. From that session they reach every project the member could reach, and can add themselves to the network access list and create database credentials from there.
 
-        - **Review inactive members:** confirm each stale account is still needed.
-        - **Remove or downgrade:** deactivate members who no longer require access to the organization.
+        Removing a member is usually the right response, but confirm first that the account is not a rarely used break-glass identity that is deliberately dormant. Where the organization uses a federated identity provider, offboarding in the provider closes this gap at the source and this check becomes a way of confirming that the offboarding actually worked.
       audit: |
         ### Audit via Dashboard
 
@@ -480,18 +475,19 @@ queries:
       mongodbatlas.orgUsers.none(orgMembershipStatus == "PENDING")
     docs:
       desc: |
-        This check confirms there are no organization members left in a pending, unaccepted invitation state. Invitations that are never accepted linger as outstanding grants and obscure who actually has access.
+        This check verifies that no organization membership is sitting in an unaccepted, pending state.
+
+        Invitations appear under Access Manager for the organization at cloud.mongodb.com, where an invited person shows with a Pending status until they accept. The Atlas Administration API reports the same state as a pending membership status on the organization users resource. This check requires the pending set to be empty.
 
         **Why this matters**
 
-        - **Stale grants:** unaccepted invitations represent access that was offered but never confirmed.
-        - **Access hygiene:** outstanding invites clutter the access model and make review harder.
-        - **Wrong recipients:** an invite sent to a mistyped or former address may still be redeemable by the wrong person.
+        A pending invitation is a grant of access that has been issued but not yet claimed, and it stays claimable. It carries whatever organization roles were selected when it was sent, so whoever redeems it enters the organization with those roles already attached.
 
-        **Risk mitigation**
+        That makes a mistyped or outdated address dangerous. An invitation sent to a former colleague's address that the company has since released, or to a personal address that has been abandoned and later re-registered by someone else, hands organization membership to whoever controls that mailbox now. The recipient does not need to attack anything; they accept an invitation that was addressed to them and are admitted as a legitimate member. Invitations sent to a domain that is not yours have the same problem, because you have no control over who holds that address next.
 
-        - **Cancel stale invitations:** withdraw invites that were never accepted.
-        - **Reissue deliberately:** send a fresh invitation only when the access is still intended.
+        Pending entries also distort access reviews. A reviewer reading the member list sees names that may never have joined and cannot tell which entries represent real, current access.
+
+        Cancel invitations that were never accepted and reissue them deliberately when the access is still wanted. A short-lived pending state is normal right after someone is invited, so treat this check as a way of catching invitations that have been outstanding long enough to be forgotten.
       audit: |
         ### Audit via Dashboard
 
@@ -550,18 +546,19 @@ queries:
       mongodbatlas.orgUsers.where(orgRoles.contains("ORG_OWNER")).length <= 3
     docs:
       desc: |
-        This check confirms the organization has no more than three Organization Owners. Organization Owner is the highest-privilege role in Atlas, so a large set of owners multiplies the number of accounts that can change any security setting or delete any project.
+        This check verifies that no more than three members hold the Organization Owner role.
+
+        Organization Owner is the highest-privilege role in Atlas. It carries control over billing, membership, security settings, and every project in the organization, including the ability to delete deployments. Role assignments are visible under Access Manager for the organization at cloud.mongodb.com, and the Atlas Administration API returns each member's organization roles on the organization users resource.
 
         **Why this matters**
 
-        - **Highest privilege:** owners can modify billing, security settings, and every project in the organization.
-        - **Blast radius:** each extra owner is another full-control account an attacker could target.
-        - **Least privilege:** most administrative tasks can be performed with narrower project-level roles.
+        Every account holding this role is an independent route to total control of the organization, and the routes are not equally well defended. One owner may use a hardware security key while another reuses a password and reads mail on an unmanaged laptop. An attacker does not have to defeat the strongest of them; they pick the weakest owner and get the same reach.
 
-        **Risk mitigation**
+        What that reach permits is worth stating plainly. An owner can turn off the organization multi-factor requirement, lift the source address requirement on programmatic credentials, mint an API key for themselves that survives a password reset, add their own address to a project network access list, and create a database user with broad roles. The account they compromised then becomes optional, because the persistence they planted no longer depends on it.
 
-        - **Reduce owner count:** downgrade members who do not need organization-wide control.
-        - **Use scoped roles:** assign project-level roles for day-to-day administration instead of owner.
+        Keeping the count small also keeps the audit meaningful. When three people hold the role, an unexplained owner action can be traced to a person; when fifteen do, it cannot.
+
+        Most administrative work does not need this role. Assign project-level roles for day-to-day cluster and user administration and reserve Organization Owner for the small set of people who genuinely manage the organization itself. Keep at least two so a single unavailable person cannot strand the organization.
       audit: |
         ### Audit via Dashboard
 
@@ -622,18 +619,17 @@ queries:
       mongodbatlas.maxServiceAccountSecretValidityInHours > 0 && mongodbatlas.maxServiceAccountSecretValidityInHours <= 168
     docs:
       desc: |
-        This check verifies that the organization caps how long a service account secret can remain valid, with a ceiling of 168 hours (7 days). Service accounts are OAuth machine identities whose secrets grant automated access to the Atlas Administration API. When no maximum validity is enforced, secrets can be issued that never expire, so a leaked or forgotten secret stays usable indefinitely.
+        This check verifies that the organization caps how long a service account secret stays valid, at no more than 168 hours.
+
+        Service accounts are the OAuth machine identities that authenticate automated access to the Atlas Administration API, and each one is used through a secret. Organization Settings at cloud.mongodb.com carries a maximum validity for those secrets, reported by the Atlas Administration API as `maxServiceAccountSecretValidityInHours`. This check requires the value to be set above zero and no higher than 168 hours, which is 7 days. A value of zero or an unset field means no ceiling is enforced at all.
 
         **Why this matters**
 
-        - **Long-lived secrets widen the exposure window:** A secret that never expires remains a valid credential long after it leaks into logs, source control, or a compromised workstation.
-        - **Bounded lifetimes force rotation:** A short maximum validity guarantees that secrets are replaced on a predictable cadence, limiting how long any single credential is useful to an attacker.
-        - **Machine identities are easy to overlook:** Service account secrets are rarely tied to a departing employee or an access review, so an org-wide ceiling is often the only control that ages them out.
+        Without a ceiling, a secret issued once keeps working forever. Automation credentials are exactly the kind of secret that leaks quietly: they are written into pipeline configuration, printed by a debug build, copied into a shared password note, and left on a laptop that later changes hands. None of those events produces an alert, and none of them is discovered on the day it happens.
 
-        **Risk mitigation**
+        The ceiling decides how long that quiet leak stays useful. An attacker who recovers a secret from a two-year-old build log against an organization with no maximum validity has a live administrative credential to the Atlas Administration API today, and can use it to enumerate projects, add network access entries, and create database users. Against an organization with a 168 hour ceiling, the same recovered secret expired long before they found it, and the intrusion ends at the first API call.
 
-        - **Set a short ceiling:** Configure the maximum service account secret validity to 168 hours or less so every secret expires within a week.
-        - **Automate secret rotation:** Have automation request fresh secrets before the ceiling is reached rather than relying on manual renewal.
+        Automation has to request a fresh secret before the ceiling is reached, so put the renewal in the pipeline rather than in someone's calendar. A short ceiling with manual renewal produces outages, and outages produce pressure to raise the ceiling back.
       audit: |
         ### Audit via Dashboard
 
@@ -694,19 +690,17 @@ queries:
       mongodbatlas.serviceAccounts.all(secrets.all(_['expiresAt'] == null || parse.date(_['expiresAt']) > time.now))
     docs:
       desc: |
-        This check verifies that no service account retains a secret whose expiration timestamp is already in the past. Service accounts are OAuth machine identities, and each secret carries an expiration date. Expired secrets that are never deleted accumulate as stale credential records that clutter the access surface and signal weak credential hygiene.
+        This check verifies that no service account still carries a secret whose expiration date has already passed.
+
+        Service accounts are the OAuth machine identities used for automated access to the Atlas Administration API, and each secret carries an expiration timestamp. They are listed under Access Manager for the organization at cloud.mongodb.com by selecting Applications, and the Atlas Administration API returns each secret with its expiration on the service accounts resource. This check requires every listed secret to be either open-ended or dated in the future.
 
         **Why this matters**
 
-        - **Stale credentials hide active risk:** Leftover expired secrets make it harder to see which credentials are genuinely in use and which should have been removed.
-        - **Rotation is only complete when the old secret is gone:** Generating a replacement without deleting the expired secret leaves an unmanaged record behind and defeats the purpose of rotation.
-        - **Clean inventory supports review:** Removing expired secrets keeps the service account inventory accurate so access reviews reflect reality.
-        - **Audit clarity:** A service account list free of expired secrets demonstrates that credential lifecycle management is actually enforced.
+        An expired secret that is still attached to its service account is evidence that a rotation was started and never finished. Somebody issued a replacement, pointed the workload at it, and left the old record in place. That pattern matters because the same incomplete rotation is what leaves the old secret sitting in the configuration store, the pipeline variable, or the notes file it was originally copied into.
 
-        **Risk mitigation**
+        The stale records also make the credential inventory lie. During an incident, a responder trying to answer which machine identities can reach the Atlas Administration API has to work out which of the listed secrets are live and which are dead, and that ambiguity costs time at exactly the moment it is most expensive. During an access review, an expired secret pads the list and hides the one live secret nobody can account for.
 
-        - **Delete expired secrets promptly:** Remove any secret whose expiration date has passed so it no longer appears in the inventory.
-        - **Rotate before expiry:** Issue and adopt a replacement secret ahead of the expiration date, then delete the old one.
+        Delete each secret whose expiration has passed, and create the replacement before removing anything if the service account is still in use. Where an automated rotation is meant to clean up after itself, treat a failing result as a signal that the cleanup step is broken rather than as a one-time tidy-up.
       audit: |
         ### Audit via Dashboard
 
@@ -765,18 +759,17 @@ queries:
       mongodbatlas.apiKeys.all(roleAssignments.none(orgLevel == true && roleName == "ORG_OWNER"))
     docs:
       desc: |
-        This check verifies that no programmatic API key holds the Organization Owner role at the organization level. A programmatic API key is a public and private key pair that authenticates automated access and can be granted organization or project roles. Organization Owner is the highest privilege in an Atlas organization, granting full control over billing, membership, projects, and security settings.
+        This check verifies that no programmatic API key is assigned the Organization Owner role.
+
+        A programmatic API key is a public and private key pair that authenticates automated access to the Atlas Administration API and can be granted organization or project roles. Keys and their roles are listed under Access Manager for the organization at cloud.mongodb.com by selecting API Keys, and the Atlas Administration API returns the assigned roles on the organization API keys resource. This check requires that no key holds the organization-level Organization Owner role.
 
         **Why this matters**
 
-        - **Organization Owner is unrestricted:** A key with this role can change any setting, add or remove members, and reach every project, so its compromise means full organization takeover.
-        - **Keys are non-interactive and hard to protect:** API keys live in scripts, pipelines, and configuration stores where they are easy to leak and where multi-factor authentication cannot intervene.
-        - **Least privilege limits blast radius:** Scoping keys to the specific project or read-only roles they need contains the damage if a key is exposed.
+        Organization Owner is unrestricted. A key holding it can change any organization setting, add or remove members, reach every project, and delete deployments. Attaching that role to a key rather than a person removes the two protections that normally guard it: there is no second factor to present and no interactive sign-in to notice.
 
-        **Risk mitigation**
+        Keys live where secrets leak. They sit in pipeline variables, deployment manifests, container images, and configuration repositories, and a single overly verbose build log can expose one to anyone who can read the build. An attacker who finds such a key does not need to phish anybody. They call the Atlas Administration API directly, lift the organization requirement for a source access list so their own address works, create a second key for persistence, add themselves to a project network access list, and create a database user with broad roles. The original leak may be months old and the key still works.
 
-        - **Grant only the roles the workload needs:** Replace Organization Owner with the narrowest project or organization role that lets the automation function.
-        - **Separate human and machine privilege:** Reserve high-privilege administrative actions for interactive users protected by multi-factor authentication rather than standing keys.
+        Grant automation the narrowest role that lets it function, which for most tooling is a read-only organization role or a project-scoped role. Where a task genuinely needs owner-level authority, run it as a person who authenticates interactively with a second factor rather than as a standing key.
       audit: |
         ### Audit via Dashboard
 
@@ -837,18 +830,17 @@ queries:
       mongodbatlas.federationSettings != empty
     docs:
       desc: |
-        This check verifies that the organization has identity federation configured. Identity federation connects the Atlas organization to a SAML or OIDC identity provider so that authentication is delegated to a central directory. Without federation, each member authenticates with a standalone Atlas login that the organization cannot govern through its own identity lifecycle.
+        This check verifies that the Atlas organization delegates authentication to an external identity provider.
+
+        Identity federation connects the organization to a SAML or OIDC provider so members authenticate against a central directory instead of a standalone Atlas login. It is set up under Federated Authentication Settings, reached from Organization Settings at cloud.mongodb.com, and the Atlas Administration API exposes the resulting configuration through the organization federation settings resource. This check requires a federation configuration to exist for the organization.
 
         **Why this matters**
 
-        - **Centralized control of access:** Federation lets the identity provider enforce password policy, multi-factor authentication, and conditional access for every Atlas member from one place.
-        - **Immediate deprovisioning:** When a person leaves, disabling their account in the identity provider removes their Atlas access at once, closing a common offboarding gap.
-        - **Consistent identity assertion:** Members are authenticated against the corporate directory rather than a separate set of credentials that live only in Atlas.
+        Without federation, each member holds a separate Atlas credential that your organization does not control. You cannot set its password policy, you cannot require a particular authentication method, you cannot force a reset after a breach, and most importantly you cannot revoke it. Disabling somebody in the corporate directory has no effect on an Atlas login that was never connected to that directory.
 
-        **Risk mitigation**
+        That gap is the one attackers use after a departure. A former employee's Atlas password still works weeks after their laptop was collected and their mail account was closed, because nothing in the offboarding process touched Atlas. The same gap makes credential reuse worse: a password that was also used on a site that got breached remains valid on Atlas indefinitely, since no central policy ever expired it. With federation in place, a single disable in the identity provider ends the session and blocks the next sign-in.
 
-        - **Connect an identity provider:** Set up SAML or OIDC federation and link the organization to it.
-        - **Route members through the identity provider:** Ensure members sign in through the federated login so their access follows the central identity lifecycle.
+        Federation is only effective once the organization's email domains are federated as well, so pair this with the companion check in this policy that looks for federated domains. Keep one break-glass Atlas login outside the federation and protect it strongly, so an identity provider outage does not lock the organization out of its own console.
       audit: |
         ### Audit via Dashboard
 
@@ -909,18 +901,17 @@ queries:
       mongodbatlas.federationSettings != empty && mongodbatlas.federationSettings.federatedDomains != empty
     docs:
       desc: |
-        This check verifies that identity federation is configured and that at least one domain has been federated. A federated and verified domain tells Atlas which email domains are governed by the identity provider, so that users with those addresses are forced through federated authentication. Federation without any federated domain leaves users free to keep authenticating outside the identity provider.
+        This check verifies that identity federation exists for the organization and that at least one email domain has been federated to it.
+
+        Federating a domain tells Atlas which email addresses are governed by the identity provider. It is done under Federated Authentication Settings, reached from Organization Settings at cloud.mongodb.com, and requires a verification step that proves you control the domain. The Atlas Administration API returns the current list on the organization federation settings resource. This check requires that list to be non-empty.
 
         **Why this matters**
 
-        - **Domain federation enforces the login path:** Only when a domain is federated does Atlas require users from that domain to sign in through the identity provider instead of a standalone Atlas password.
-        - **Prevents bypass accounts:** Without a federated domain, members can register or retain local credentials that escape the central identity controls.
-        - **Completes the federation setup:** Connecting an identity provider has little effect until the organization's domains are actually associated with it.
+        Connecting an identity provider decides how members can sign in; federating a domain decides that they must. Until a domain is federated, Atlas has no reason to route an address at that domain through the provider, so members keep whatever standalone Atlas password they already had and can continue signing in with it. The federation looks configured on the settings page while none of its controls are actually reached.
 
-        **Risk mitigation**
+        That leaves the exact bypass federation was bought to close. A member who leaves is disabled in the directory, their federated login stops working, and their old Atlas password still signs them in. An attacker who phishes that password gets a working session that the identity provider never sees and never evaluates, so conditional access rules, device checks, and any second factor enforced at the provider are all skipped.
 
-        - **Federate your corporate domains:** Add and verify each email domain your members use so authentication is routed through the identity provider.
-        - **Confirm coverage:** Review the federated domain list against the domains in active use to ensure none are left unmanaged.
+        Federate every email domain your members actually use, not just the primary one, since acquisitions and regional domains are the ones that get missed. Compare the federated domain list against the addresses in the organization member list and follow up on any domain that appears in the second list but not the first. Contractors on external addresses cannot be federated, so grant them narrow roles and review them separately.
       audit: |
         ### Audit via Dashboard
 
@@ -982,18 +973,17 @@ queries:
       mongodbatlas.federationSettings == empty || mongodbatlas.federationSettings.identityProviders.where(protocol == "SAML").all(responseSignatureAlgorithm == "SHA-256")
     docs:
       desc: |
-        This check verifies that every SAML identity provider configured for the organization signs its responses with SHA-256. The response signature algorithm determines the cryptographic strength that protects the integrity and authenticity of the SAML assertion Atlas relies on to authenticate a user. A weak algorithm such as SHA-1 is vulnerable to collision attacks that can let an attacker forge a valid-looking assertion.
+        This check verifies that every SAML identity provider configured for the organization signs its responses with SHA-256.
+
+        Atlas accepts the identity asserted in a SAML response because a signature proves the response came from the identity provider. The algorithm behind that signature is set per provider under Federated Authentication Settings, reached from Organization Settings at cloud.mongodb.com, and the Atlas Administration API reports it as `responseSignatureAlgorithm` on the identity providers resource. This check requires SHA-256 on every SAML provider and fails on weaker choices such as SHA-1.
 
         **Why this matters**
 
-        - **The signature is what Atlas trusts:** Atlas accepts the identity in a SAML response because the signature proves it came from the identity provider, so a weak algorithm undermines the entire federated login.
-        - **SHA-1 is broken for signatures:** Practical collision attacks against SHA-1 mean a signature over it can no longer be treated as tamper-evident.
-        - **Forged assertions grant real access:** If an attacker can forge an assertion, they can impersonate any federated user without ever knowing a password.
+        The signature is the whole basis of trust in federated login. Atlas performs no independent verification of who the user is; it reads the assertion, checks the signature, and admits whoever the assertion names. Weaken the signature and you weaken the only thing keeping an attacker from naming themselves.
 
-        **Risk mitigation**
+        SHA-1 is no longer safe for that job. Practical collision attacks against it mean an attacker who can influence any part of the signed content can construct a second document with the same digest, so a valid signature no longer proves the document was not altered. An attacker who forges an assertion naming an Organization Owner does not need a password, does not encounter a second factor, and does not appear in the identity provider's logs at all, because the identity provider was never involved in the sign-in they performed.
 
-        - **Require SHA-256 signatures:** Configure each SAML identity provider so its response signature algorithm is SHA-256.
-        - **Align both sides:** Ensure the identity provider itself signs with SHA-256 so its responses match the algorithm Atlas expects.
+        Both sides have to agree, so set the algorithm on the identity provider as well as in Atlas; changing only the Atlas side produces rejected logins rather than stronger ones. Organizations with no SAML provider configured pass this check without action, and OIDC providers are governed by their own signing configuration rather than this setting.
       audit: |
         ### Audit via Dashboard
 
@@ -1054,18 +1044,17 @@ queries:
       mongodbatlas.clusters.all(minimumEnabledTlsProtocol == "TLS1_2" || minimumEnabledTlsProtocol == "TLS1_3")
     docs:
       desc: |
-        This check verifies that every database deployment in the project sets its minimum enabled TLS protocol to TLS 1.2 or TLS 1.3. The `minimumEnabledTlsProtocol` value defines the lowest TLS version a client may negotiate when connecting to the cluster. Allowing TLS 1.0 or TLS 1.1 exposes client connections to known cryptographic weaknesses and downgrade attacks that can lead to interception of data in transit.
+        This check verifies that every database deployment in the project refuses connections negotiated below TLS 1.2.
+
+        The protocol floor is set per cluster under Set Minimum TLS Protocol Version, reached by opening the cluster from Database Deployments, choosing Edit Configuration, then Additional Settings and Advanced Configuration Options. The Atlas Administration API reports it as `minimumEnabledTlsProtocol` on the cluster process arguments resource. This check accepts TLS 1.2 or TLS 1.3 and fails on TLS 1.0 or TLS 1.1.
 
         **Why this matters**
 
-        - **Legacy TLS is broken:** TLS 1.0 and TLS 1.1 rely on weak cipher constructions and are vulnerable to attacks such as BEAST and POODLE, so traffic protected only by these versions cannot be considered confidential.
-        - **Downgrade exposure:** When a cluster accepts an older protocol floor, an attacker positioned on the network can force clients to negotiate the weakest allowed version rather than the strongest available.
-        - **Data in motion carries sensitive records:** Application queries and their results frequently include credentials, personal data, and business records that must remain protected while traversing the network.
+        A protocol floor is a floor, not a preference. Setting it to TLS 1.0 does not mean old clients occasionally use TLS 1.0; it means the server will accept TLS 1.0 from anything that asks, including an attacker who controls the client half of the handshake.
 
-        **Risk mitigation**
+        That is the practical attack. An attacker positioned between an application and the cluster, on a shared network segment or a compromised load balancer, tampers with the handshake so the strongest mutually acceptable version appears to be the weakest one the server allows. The session then runs over TLS 1.0 or TLS 1.1, whose cipher constructions are broken by well-published attacks including BEAST and POODLE, and the attacker recovers plaintext from a connection both ends believe is encrypted. What travels over that connection is query arguments and returned documents, which routinely include authentication material, personal data, and business records.
 
-        - **Raise the protocol floor:** Set the minimum enabled TLS protocol to TLS 1.2 or TLS 1.3 on every cluster so that no client can negotiate a weaker version.
-        - **Confirm client compatibility:** Verify that drivers and applications support TLS 1.2 or higher before enforcing the floor, and update any legacy clients that still rely on older protocols.
+        Confirm that drivers and applications support TLS 1.2 before raising the floor, because a client that cannot negotiate it will fail to connect rather than fall back. Legacy clients that cannot be upgraded should be replaced or fronted by something that can, rather than being accommodated by lowering the floor.
       audit: |
         ### Audit via Dashboard
 
@@ -1127,18 +1116,17 @@ queries:
       mongodbatlas.clusters.all(encryptionAtRestProvider != "NONE")
     docs:
       desc: |
-        This check verifies that every database deployment uses a customer-managed key provider for encryption at rest rather than the default Atlas-managed encryption. An `encryptionAtRestProvider` of `NONE` means the cluster relies only on the built-in Atlas storage encryption, with keys held entirely by the provider. Configuring a customer-managed key through AWS KMS, Azure Key Vault, or Google Cloud KMS gives the organization control over the key lifecycle and the ability to revoke access to stored data.
+        This check verifies that every database deployment in the project encrypts its stored data under a key your organization controls.
+
+        Atlas always encrypts storage with keys it manages, but a cluster can additionally be bound to a customer-managed key held in AWS KMS, Azure Key Vault, or Google Cloud KMS. The cluster-side setting is Encryption at Rest using your Key Management, found by opening the cluster from Database Deployments, choosing Edit Configuration, then Additional Settings. The Atlas Administration API reports it as `encryptionAtRestProvider` on the clusters resource, and a value of `NONE` means the cluster relies on provider-held keys alone. This check requires a real provider instead.
 
         **Why this matters**
 
-        - **Key custody determines control:** With Atlas-managed encryption alone, the organization cannot independently rotate or revoke the keys that protect its data, so it cannot cut off access on its own terms.
-        - **Regulatory expectations:** Many data protection regimes expect the data owner to control the cryptographic keys that render stored records unreadable.
-        - **Defense in depth:** A customer-managed key adds a second, independently controlled layer on top of the default storage encryption, limiting the blast radius if provider-side controls are bypassed.
+        Whoever holds the key decides who can read the data. With provider-held keys only, that decision is not yours to make. You cannot rotate the key on your own schedule, you cannot disable it, and you have no way to render the stored copies unreadable if you conclude they are exposed.
 
-        **Risk mitigation**
+        That matters most on the day something goes wrong. If a backup snapshot ends up somewhere it should not be, or a support process reaches storage it should not have reached, a customer-managed key lets you revoke access and cut the data off at the storage layer within minutes. Without it, your only recourse is to ask the provider and wait. The same key gives you a hard answer for decommissioning: destroy the key and the ciphertext left behind anywhere is inert.
 
-        - **Enable a customer-managed key:** Configure encryption at rest with a key from AWS KMS, Azure Key Vault, or Google Cloud KMS for every cluster that holds sensitive data.
-        - **Govern the key lifecycle:** Establish rotation, access control, and revocation procedures for the external key so that control over the data remains with the organization.
+        Configure the project encryption settings before enabling the cluster-side option, since the cluster has nothing to bind to otherwise. Govern the external key as carefully as the data it protects, because losing access to it makes the cluster unreadable to you as well, and revoking it in error is an outage.
       audit: |
         ### Audit via Dashboard
 
@@ -1201,20 +1189,17 @@ queries:
       mongodbatlas.flexClusters.all(backupEnabled == true)
     docs:
       desc: |
-        This check verifies that cloud backup is enabled on every database deployment in the project, covering both standard clusters and Flex clusters. When `backupEnabled` is false, Atlas takes no managed snapshots of the deployment, so there is no restore point if data is corrupted, deleted, or lost. Enabling cloud backup lets the team recover a deployment to a recent snapshot and is a foundational control for data availability and resilience.
+        This check verifies that cloud backup is turned on for every database deployment in the project, covering both standard clusters and Flex clusters.
 
-        Flex clusters are a separate deployment type from standard clusters and are reported through their own collection, so a deployment left as Flex is only evaluated when Flex clusters are checked explicitly.
+        Cloud backup is enabled per deployment through Turn on Backup, found by opening the cluster from Database Deployments, choosing Edit Configuration, then Additional Settings. The Atlas Administration API reports it as `backupEnabled` on the clusters resource. Flex clusters are a separate deployment type reported through their own collection, so this check evaluates both collections to avoid passing a project whose only unprotected deployment happens to be a Flex cluster.
 
         **Why this matters**
 
-        - **No snapshots means no recovery:** Without backups, accidental deletion, application defects, or ransomware can result in permanent data loss with no way to restore.
-        - **Resilience obligations:** Continuity and resilience requirements expect critical data stores to have tested, recoverable backups.
-        - **Fast recovery reduces impact:** Managed snapshots let the team restore quickly, shortening downtime and limiting the operational and reputational cost of an incident.
+        With backup off, Atlas takes no managed snapshots, which means there is no restore point at all. Recovery is not slow in that state; it is impossible. A dropped collection, an application defect that rewrites the wrong documents, or a migration that runs against production instead of staging leaves nothing to go back to.
 
-        **Risk mitigation**
+        It is also what makes destructive intrusions permanent. An attacker who reaches a cluster with a database user holding broad roles can drop collections outright or encrypt the contents and demand payment. Against a deployment with backups, that is an outage measured in hours and a decision not to pay. Against a deployment without them, the data is gone, and the only remaining copy is whatever the attacker kept.
 
-        - **Enable cloud backup:** Turn on Atlas cloud backup for every cluster that stores data the business depends on.
-        - **Validate restores:** Periodically test restoring from a snapshot so that recovery works when it is actually needed.
+        Enable backup on every deployment that holds data the business depends on, and restore from a snapshot periodically so you learn whether recovery works before you need it. Deployments that hold nothing but reproducible scratch data are a reasonable exception, but confirm that claim rather than assuming it, since scratch environments accumulate real data over time.
       audit: |
         ### Audit via Dashboard
 
@@ -1276,18 +1261,17 @@ queries:
       mongodbatlas.clusters.all(pitEnabled == true)
     docs:
       desc: |
-        This check verifies that continuous point-in-time recovery is enabled on every database deployment. When `pitEnabled` is true, Atlas continuously captures the oplog so a cluster can be restored to any moment within the retention window, not just to the time of a scheduled snapshot. Without it, recovery is limited to discrete snapshots, and any writes made between snapshots are unrecoverable.
+        This check verifies that continuous point-in-time recovery is turned on for every database deployment in the project.
+
+        Continuous Cloud Backup, also labeled point-in-time recovery, is enabled per cluster by opening it from Database Deployments, choosing Edit Configuration, then Additional Settings. It requires cloud backup to be on first. The Atlas Administration API reports it as `pitEnabled` on the clusters resource. With it enabled, Atlas continuously captures the oplog so the deployment can be restored to any moment inside the retention window rather than only to the times snapshots were taken.
 
         **Why this matters**
 
-        - **Narrows the recovery gap:** Snapshot-only backups can leave hours of writes at risk, while point-in-time recovery lets the team restore to just before a corruption or deletion event.
-        - **Precise incident response:** Recovering to a specific timestamp limits data loss and avoids rolling back more data than necessary when responding to an incident.
-        - **Continuity expectations:** Resilience requirements favor recovery capabilities that minimize the amount of data lost during a disruption.
+        Snapshot-only backup sets the size of the hole you accept. Restoring to the last snapshot discards every write made since it was taken, which for a busy cluster can mean hours of orders, payments, or messages that no longer exist after recovery.
 
-        **Risk mitigation**
+        The gap also forces a bad choice during an incident. When an attacker with database access modifies or deletes records at a known moment, or an application defect starts corrupting documents at a known deploy time, point-in-time recovery lets you restore to the second before that moment and lose almost nothing. With snapshots alone, the nearest clean restore point may sit well before the event, so recovering from the damage means throwing away a large amount of legitimate work along with it, and teams under pressure often decide to keep the corruption instead.
 
-        - **Enable continuous recovery:** Turn on point-in-time recovery for every cluster that holds important data, which also requires cloud backup to be enabled.
-        - **Set an appropriate window:** Configure a retention window that matches the organization's recovery objectives and periodically confirm restores succeed.
+        Set a retention window that matches how long it realistically takes your team to notice a problem, since a window shorter than your detection time provides no usable restore point. Confirm restores succeed periodically rather than assuming the capability works, and note that this control needs cloud backup enabled alongside it.
       audit: |
         ### Audit via Dashboard
 
@@ -1350,20 +1334,17 @@ queries:
       mongodbatlas.flexClusters.all(terminationProtectionEnabled == true)
     docs:
       desc: |
-        This check verifies that termination protection is enabled on every database deployment, covering both standard clusters and Flex clusters. When `terminationProtectionEnabled` is true, Atlas blocks a delete request for the deployment until protection is explicitly removed first, which prevents accidental or unauthorized destruction of a live data store. Without this guardrail, a single mistaken action or a compromised credential can permanently remove a deployment and its data.
+        This check verifies that termination protection is turned on for every database deployment in the project, covering both standard clusters and Flex clusters.
 
-        Flex clusters are a separate deployment type from standard clusters and are reported through their own collection, so a deployment left as Flex is only evaluated when Flex clusters are checked explicitly.
+        Termination Protection is set per deployment by opening the cluster from Database Deployments, choosing Edit Configuration, then Additional Settings. The Atlas Administration API reports it as `terminationProtectionEnabled` on the clusters resource. Flex clusters are a separate deployment type reported through their own collection, so this check evaluates both so that a Flex deployment cannot be left unprotected while the project still passes. With protection on, Atlas refuses a delete request until protection is explicitly removed in a separate operation.
 
         **Why this matters**
 
-        - **Deletion is destructive:** Removing a cluster tears down the data store, and recovery then depends entirely on backups that may not capture the most recent writes.
-        - **Guards against mistakes:** Termination protection forces a deliberate two-step action before deletion, reducing the chance of an accidental removal in the console or through automation.
-        - **Limits abuse of access:** An extra required step raises the bar for an attacker or a misconfigured pipeline attempting to delete production infrastructure.
+        Deleting a deployment destroys the data store. What survives is whatever backups exist, and restoring from them costs downtime and loses the writes made since the last recovery point, so a single unintended delete is a genuine incident rather than a minor mistake.
 
-        **Risk mitigation**
+        The two-step requirement is what makes it hard to do by accident and hard to do quickly on purpose. Automation that names the wrong deployment, a script whose target variable is empty, or a console click on the row above the one intended all stop at the first step. So does an attacker. A credential that reaches the Atlas Administration API cannot destroy a protected deployment in one call; it must first disable protection, which is a second authenticated request that can be alerted on and that gives you a window to notice.
 
-        - **Enable termination protection:** Turn on termination protection for every cluster that hosts production or otherwise important data.
-        - **Control who can disable it:** Restrict the project roles that can remove termination protection so that deletion remains a controlled, authorized operation.
+        Restrict which project roles can remove protection so disabling it stays a deliberate, authorized act. Short-lived deployments that are created and destroyed by automation are the reasonable exception, provided the automation is the only thing that can reach them and no production data ever lands there.
       audit: |
         ### Audit via Dashboard
 
@@ -1425,18 +1406,17 @@ queries:
       mongodbatlas.clusters.all(redactClientLogData == true)
     docs:
       desc: |
-        This check verifies that client log redaction is enabled on every database deployment. When `redactClientLogData` is true, MongoDB strips the data portion of queries and operations from diagnostic and profiler logs, leaving metadata such as operation type and shape but not the actual field values. Without redaction, log entries can capture literal query arguments and returned document values, which frequently include personal data, credentials, and other sensitive records.
+        This check verifies that client log redaction is turned on for every database deployment in the project.
+
+        Redact Client Log Data is set per cluster by opening it from Database Deployments, choosing Edit Configuration, then Additional Settings, and the Atlas Administration API reports it as `redactClientLogData` on the clusters resource. With redaction on, MongoDB strips the data portion of queries and operations from diagnostic and profiler output, leaving the operation type and shape but not the field values.
 
         **Why this matters**
 
-        - **Logs can leak sensitive data:** Diagnostic logs that record query literals may expose the very data the database is meant to protect, widening the set of places sensitive records live.
-        - **Broader access to logs:** Operations and support staff who read diagnostic output should not automatically gain access to the underlying data values.
-        - **Support and diagnostics workflows:** Logs are frequently shared with support or exported to external systems, and unredacted data increases exposure at each hop.
+        Diagnostic logs record the literal arguments of slow queries and the documents they touched. That means the log becomes a second copy of the data, held in a place with none of the protections the database has. It is not covered by the database roles that decide who can read a collection, it is not scoped by cluster, and it is not encrypted under the key that protects storage.
 
-        **Risk mitigation**
+        The copy then travels. Logs get exported to an observability platform, attached to support tickets, pasted into chat while somebody debugs a slow endpoint, and shipped to a bucket that a much wider group can read. An attacker who never gets database credentials at all can reach the log destination instead and read the same account numbers, tokens, and personal records straight out of the query text, along with a precise map of which collections hold what.
 
-        - **Enable log redaction:** Turn on client log redaction for every cluster so that query data values are removed from diagnostic logs.
-        - **Pair with encryption:** Combine redaction with encryption at rest so that any sensitive data that must be retained elsewhere stays protected.
+        Redaction removes the values but keeps the operation shape, so query performance work still functions and you lose only the literals. Where an investigation genuinely needs the values, retrieve them from the database under the access controls that govern it rather than turning redaction off, and pair this with encryption at rest so any sensitive data that must be retained elsewhere stays protected.
       audit: |
         ### Audit via Dashboard
 
@@ -1498,18 +1478,19 @@ queries:
       mongodbatlas.clusters.all(mongoDBMajorVersion >= "7.0")
     docs:
       desc: |
-        This check verifies that every database deployment runs a supported MongoDB major version of 7.0 or newer. MongoDB provides security fixes only for supported major releases, so a cluster on an end-of-life version stops receiving patches for newly discovered vulnerabilities. Running current major versions keeps the deployment eligible for security updates and reduces exposure to known defects.
+        This check verifies that every database deployment in the project runs MongoDB 7.0 or newer.
+
+        The major version of a deployment is shown on Database Deployments and can be changed through Edit Configuration and Additional Settings, and the Atlas Administration API reports it on the clusters resource. This check requires 7.0 or a later major release, which is the boundary between versions MongoDB still ships security fixes for and versions it does not.
 
         **Why this matters**
 
-        - **End-of-life releases stop getting fixes:** Once a major version reaches end of life, security vulnerabilities discovered afterward are never patched, leaving the cluster permanently exposed.
-        - **Known vulnerabilities accumulate:** Older releases carry a growing list of publicly documented issues that attackers can target.
-        - **Upgrade paths get harder over time:** Deferring major upgrades increases the eventual migration effort and the window during which the cluster runs unsupported software.
+        Support status decides whether a vulnerability in your database ever gets fixed. Once a major release passes end of life, a defect found in it afterward is patched in the current releases and left in place in yours, permanently. The gap widens every month, because the supported branches keep receiving fixes while the retired one stays where it was.
 
-        **Risk mitigation**
+        Those fixes are public, and that is what makes the position dangerous. Release notes and advisories describe exactly what was wrong and in which versions, so an attacker who fingerprints the version a cluster reports has a documented list of what to try, with no research required. Running an unsupported release turns a query about your version into a working attack plan.
 
-        - **Upgrade to a supported version:** Move clusters to MongoDB 7.0 or a newer supported major version and plan upgrades before a release reaches end of life.
-        - **Track the release calendar:** Monitor MongoDB support timelines so upgrades are scheduled ahead of end-of-life dates rather than after support ends.
+        The upgrade also gets harder the longer it waits, since major version jumps must generally be taken in order and each one carries its own driver and behavior changes.
+
+        Check application and driver compatibility with the target version before upgrading, because the change applies to a live deployment. Track MongoDB's release calendar so upgrades are scheduled before a release reaches end of life rather than after an advisory arrives naming a version you are still running.
       audit: |
         ### Audit via Dashboard
 
@@ -1571,18 +1552,17 @@ queries:
       mongodbatlas.clusters.all(versionReleaseSystem == "CONTINUOUS")
     docs:
       desc: |
-        This check verifies that every database deployment uses the CONTINUOUS release track so that MongoDB patch and minor releases are applied automatically. On the CONTINUOUS track, Atlas rolls out security and maintenance releases as they become available, which closes vulnerability windows without manual intervention. The LTS track instead pins a major version, which gives the team predictable version stability but places the responsibility for tracking and scheduling patch releases on the team.
+        This check verifies that every database deployment in the project is on the continuous release track so patch and minor releases are applied automatically.
+
+        The choice is made per cluster through Version Release System, found by opening the cluster from Database Deployments, choosing Edit Configuration, then Additional Settings, where it appears as Continuous Delivery or as a pinned major version. The Atlas Administration API reports the same field on the clusters resource. On the continuous track Atlas rolls out maintenance and security releases as they become available; the alternative pins a major version and leaves patch adoption to you.
 
         **Why this matters**
 
-        - **Timely patching without manual effort:** The CONTINUOUS track applies fixes automatically, so newly released security patches reach the cluster promptly rather than waiting for a manual upgrade cycle.
-        - **Reduced operational burden:** Automatic updates remove the need to individually monitor and schedule each patch release, lowering the chance a fix is missed.
-        - **Predictable exposure window:** Deployments that defer patches remain exposed to known issues for as long as the fix is outstanding, so an automatic track shortens that window.
+        The interval between a fix being published and being installed is the interval during which the fix is a public description of how to attack your cluster. Advisories name the affected versions and the release that corrects them, so an attacker who can determine which version a deployment reports knows both that it is vulnerable and what to send. On the continuous track that interval is short and requires nobody to act. Pinned to a major version, it lasts until someone notices the release, schedules a maintenance window, and executes it, which in practice is often measured in months.
 
-        **Risk mitigation**
+        Pinning is not automatically wrong. Teams pin deliberately for stability, for a certification requirement, or because a driver has a known incompatibility. It becomes wrong when the pin is chosen for those reasons and then nobody owns the patch process that pinning made their responsibility.
 
-        - **Prefer the continuous track:** Set clusters to the CONTINUOUS release system so patch and minor releases apply automatically for timely security coverage.
-        - **If using LTS, own the patch process:** When a cluster is intentionally pinned to an LTS major version for stability, establish a process to track and apply patch releases so the deployment does not fall behind on security fixes.
+        If a deployment is pinned on purpose, put someone on the release notes and schedule patch upgrades on a defined cadence, and confirm the pinned major version is still supported at all, which the companion check in this policy on supported major versions evaluates.
       audit: |
         ### Audit via Dashboard
 
@@ -1644,18 +1624,17 @@ queries:
       mongodbatlas.databaseUsers.all(databaseName == "$external")
     docs:
       desc: |
-        MongoDB Atlas database users authenticate either with a SCRAM password stored in the admin database or with a federated or certificate-based mechanism such as an X.509 certificate, AWS IAM, LDAP, or OIDC. A user that authenticates through one of the federated or certificate-based methods is defined against the `$external` authentication database. This check verifies that every database user in the project uses `$external` rather than a locally stored password. Password-based accounts are far more exposed to credential theft, password reuse, and brute-force attacks, and they are difficult to tie back to a central identity source.
+        This check verifies that every database user in the project authenticates through a federated or certificate-based mechanism rather than a stored password.
+
+        Atlas database users authenticate either with a SCRAM password held in the admin database or with an external mechanism such as an X.509 certificate, AWS IAM, LDAP, or OIDC. Users on an external mechanism are defined against the `$external` authentication database, which is what the Authentication Method column reflects under Security and Database Access for the project. The Atlas Administration API reports the same distinction on the database users resource, and this check requires `$external` for every user.
 
         **Why this matters**
 
-        - **Centralized identity:** Federated mechanisms such as AWS IAM, LDAP, and OIDC let you manage database access through an existing identity provider, so joiner and leaver events are handled in one place instead of being scattered across per-database credentials.
-        - **Stronger credentials:** X.509 certificates and short-lived federated tokens remove long-lived static passwords that can be leaked, shared, or discovered in source control and configuration files.
-        - **Accountability:** Authentication backed by a central directory makes it possible to trace database activity to a real corporate identity rather than to an anonymous shared account.
+        A SCRAM password is a long-lived static secret that has to be readable by whatever connects. It lives in an application configuration file, an environment variable, a deployment manifest, and usually a shared note somewhere as well. Every one of those is a place an attacker reads without touching the database: a leaked repository, a container image layer, a misconfigured secrets store, or a crash dump that captured the environment.
 
-        **Risk mitigation**
+        Once read, it works from anywhere the network permits, for as long as nobody rotates it, which for database passwords is frequently never. Certificates and federated tokens change that. Tokens issued by AWS IAM or OIDC are short-lived and tied to a workload identity, so a captured one expires on its own, and an X.509 certificate can be revoked centrally the moment it is suspected. Both also tie database activity back to a real identity instead of an anonymous shared account.
 
-        - **Migrate to federated authentication:** Recreate database users so they authenticate with X.509, AWS IAM, LDAP, or OIDC against the `$external` database and retire SCRAM password users.
-        - **Integrate an identity provider:** Configure LDAP or federated authentication for the Atlas project so database access follows the same lifecycle as the rest of your identities.
+        Create the replacement user against `$external`, move the application to it, then delete the password user it replaces, since removing the old credential is the step that actually closes the exposure. Break-glass access may still warrant a password user, which should be tightly scoped and monitored.
       audit: |
         ### Audit via Dashboard
 
@@ -1723,18 +1702,17 @@ queries:
       mongodbatlas.databaseUsers.all(roles.none(_['roleName'] == "atlasAdmin"))
     docs:
       desc: |
-        The `atlasAdmin` role is the project-wide database superuser in MongoDB Atlas. It grants full administrative privileges across every cluster in the project, including the ability to read and modify all data, manage other users, and run destructive administrative commands. This check verifies that no database user is assigned the `atlasAdmin` role. Applications and day-to-day database users almost never need superuser access, and every account that holds it widens the blast radius of a compromised credential.
+        This check verifies that no database user in the project is assigned the `atlasAdmin` role.
+
+        The role is the project-wide database superuser. It grants full administrative privilege across every cluster in the project, including reading and modifying all data, managing other database users, and running destructive administrative commands. Role assignments are visible under Security and Database Access for the project at cloud.mongodb.com by selecting Edit on a user, and the Atlas Administration API returns them on the database users resource.
 
         **Why this matters**
 
-        - **Excessive blast radius:** A single compromised `atlasAdmin` credential exposes all data and all clusters in the project, turning a limited incident into a full project takeover.
-        - **Violates least privilege:** Superuser access handed to application accounts or routine operators contradicts the principle of granting only the privileges a task requires.
-        - **Weak separation of duties:** When many users share the highest privilege level, it becomes impossible to distinguish administrative actions from normal workload activity.
+        The role converts any compromise of a single credential into control of the whole project. An attacker who obtains it does not need to move laterally, because there is nowhere left to move to; every cluster, every database, and every collection in the project is already reachable from the connection they hold.
 
-        **Risk mitigation**
+        That credential is usually easier to obtain than the privilege deserves, because superuser roles get handed to application accounts during setup and never narrowed afterward. The application's connection string then sits in the same configuration files, images, and pipeline variables as everything else, and a leak that would otherwise have exposed one database's contents exposes all of them instead. The role also lets the attacker create additional database users, so their access survives the rotation of the credential that let them in.
 
-        - **Assign scoped built-in roles:** Replace `atlasAdmin` with narrower roles such as `readWrite` or `read` on the specific databases each user needs.
-        - **Reserve administration for named operators:** Limit any elevated project administration to a small, audited set of human operators rather than shared or application accounts.
+        Replace it with the specific built-in roles each user needs, such as `readWrite` on the one database an application writes to, or `read` where the workload only queries. Keep genuine administrative work with a small, named set of human operators rather than with shared or application accounts, so an administrative action can always be traced to a person.
       audit: |
         ### Audit via Dashboard
 
@@ -1798,18 +1776,17 @@ queries:
       mongodbatlas.databaseUsers.all(scopes != empty)
     docs:
       desc: |
-        By default a MongoDB Atlas database user can authenticate to every cluster in the project. Scopes restrict a user so it can connect only to the named clusters or data lakes it is meant to use. This check verifies that every database user has at least one scope defined. A user without scopes has a broader reach than any single workload requires, so a leaked credential can be used against clusters that the account was never intended to touch.
+        This check verifies that every database user in the project is restricted to named clusters rather than being able to connect to all of them.
+
+        By default an Atlas database user can authenticate to every deployment in the project. Restrict Access to Specific Clusters/Data Lakes, found by selecting Edit on a user under Security and Database Access, limits that reach to the deployments you list. The Atlas Administration API reports the same restriction as the scopes array on the database users resource, and this check requires it to be non-empty for every user.
 
         **Why this matters**
 
-        - **Limits lateral movement:** Scoping a credential to one cluster stops an attacker from reusing it to reach unrelated clusters in the same project.
-        - **Enforces least privilege at the connection layer:** Access is confined to the exact clusters a workload depends on rather than the whole project.
-        - **Clarifies ownership:** Explicit scopes document which service is expected to connect to which cluster, which simplifies review and incident response.
+        Without a scope, a credential's reach has nothing to do with what the workload it belongs to actually uses. A reporting service that reads one analytics cluster can authenticate to the production cluster next to it using the very same credential, because nothing in the account says otherwise.
 
-        **Risk mitigation**
+        That is what turns a small leak into a large one. An attacker who recovers the connection string from the least protected service in the project, typically a batch job or an internal tool with looser deployment practices, does not get that service's data. They get every cluster in the project, and they enumerate them from the console or the Atlas Administration API to find the one worth taking. Scoping the credential ends that path at the first cluster, so the blast radius matches the workload rather than the project.
 
-        - **Add cluster scopes:** Edit each database user to restrict it to the specific clusters it needs.
-        - **Separate credentials per workload:** Give each application its own scoped user rather than sharing a broad, unscoped account across clusters.
+        Give each workload its own scoped user instead of sharing one broad account, since a shared credential cannot be scoped to anything narrower than the union of everything that uses it. The scopes also document which service is expected to connect where, which shortens the work of deciding what a leaked credential could have reached.
       audit: |
         ### Audit via Dashboard
 
@@ -1873,18 +1850,17 @@ queries:
       mongodbatlas.databaseUsers.where(deleteAfterDate != null).all(deleteAfterDate > time.now)
     docs:
       desc: |
-        MongoDB Atlas lets you assign a `deleteAfterDate` to a database user so the credential is automatically removed once that time passes. This is commonly used for temporary or break-glass access. This check inspects only the users that carry a deletion date and verifies that the date is still in the future. A user whose `deleteAfterDate` has already passed but who still appears in the project indicates that the intended removal has not taken effect, leaving a credential active beyond its planned lifetime.
+        This check verifies that any database user with a scheduled deletion time still has that time in the future.
+
+        Atlas lets a database user carry a `deleteAfterDate` so the credential is removed automatically once the moment passes, which is how temporary and break-glass access is normally granted. Users with a scheduled expiration are visible under Security and Database Access for the project, and the Atlas Administration API returns the field on the database users resource. This check looks only at users that carry the field and requires the date to be later than now.
 
         **Why this matters**
 
-        - **Temporary access should expire:** Time-limited credentials exist precisely so access ends on schedule, and a lingering account defeats that control.
-        - **Stale accounts are attractive targets:** Credentials that outlive their purpose are often unmonitored, making them a low-risk foothold for an attacker.
-        - **Access reviews stay accurate:** Removing expired users keeps the roster of who can reach the database aligned with who is actually authorized.
+        A user whose deletion time has passed but who is still listed means the expiry did not take effect. The access that was deliberately time-boxed is still live, and it is live in the worst possible way, because everyone involved believes it ended.
 
-        **Risk mitigation**
+        Temporary credentials are granted with less scrutiny precisely because they expire. A contractor is given access for a two-week engagement, a vendor is given access for a migration, an engineer is given elevated access for one incident. The password ends up in a chat message, an email, or a laptop that leaves with them, and nobody rotates it afterward because the account was supposed to be gone. An attacker who obtains it later, from that mailbox or that laptop, has a working database credential against an account nobody is watching and that appears on no current access review.
 
-        - **Remove expired users:** Delete any database user whose deletion date has already passed.
-        - **Verify automatic cleanup:** Confirm that expiring users are actually removed on schedule and investigate why a past-due account still exists.
+        Delete the past-due user, or set a new valid expiration if the access is genuinely still needed rather than letting it drift with no end date. A failing result also points at the automation: find out why the scheduled removal did not run, because the same failure is likely affecting other expiring accounts.
       audit: |
         ### Audit via Dashboard
 
@@ -1943,18 +1919,17 @@ queries:
       mongodbatlas.customDatabaseRoles.all(actions.none(_['action'] == "DROP_DATABASE" || _['action'] == "DROP_COLLECTION" || _['action'] == "SHUTDOWN"))
     docs:
       desc: |
-        Custom database roles in MongoDB Atlas define granular privilege actions that can be assigned to database users. Some actions are destructive: `DROP_DATABASE` and `DROP_COLLECTION` permanently delete data, and `SHUTDOWN` can stop a database process. This check verifies that no custom role grants these destructive actions. Routine application and reporting roles have no legitimate need to drop data or halt the service, and granting such actions turns an ordinary compromised account into a means of data destruction or denial of service.
+        This check verifies that no custom database role in the project grants a destructive privilege action.
+
+        Custom roles let you assemble granular privilege actions and assign them to database users. Three of the available actions destroy or halt rather than read or write: `DROP_DATABASE` and `DROP_COLLECTION` delete data permanently, and `SHUTDOWN` stops a database process. Roles are defined on the Custom Roles tab under Security and Database Access for the project, and the Atlas Administration API returns each role's action list on the custom database roles resource. This check requires none of the three to appear.
 
         **Why this matters**
 
-        - **Irreversible data loss:** `DROP_DATABASE` and `DROP_COLLECTION` delete data outright, so a role that grants them lets a single misuse or compromise destroy production data.
-        - **Availability risk:** `SHUTDOWN` can take a database process offline, giving an attacker a direct denial-of-service capability.
-        - **Least privilege:** Custom roles should express only the actions a workload actually performs, and destructive administrative actions rarely belong in that set.
+        These actions give an ordinary compromised account the ability to destroy rather than merely to read. An attacker holding a credential for a role that can only find and insert has to exfiltrate data to do damage, which takes time and leaves traffic to notice. An attacker holding a credential that can drop a collection ends the business process in one command, and if backups are weak the data does not come back.
 
-        **Risk mitigation**
+        That is also the mechanism behind extortion against databases. The attacker copies what they want, drops the collections, and leaves a note. The drop is what creates the pressure to pay, and it was authorized by a role somebody assembled for an application that never needed it. `SHUTDOWN` gives the same leverage without touching the data, by taking the process offline on demand.
 
-        - **Remove destructive actions:** Edit custom roles to drop `DROP_DATABASE`, `DROP_COLLECTION`, and `SHUTDOWN` from their action lists.
-        - **Isolate administrative operations:** Where destructive maintenance is genuinely required, perform it under a separate, tightly controlled and audited role rather than embedding it in general-purpose roles.
+        Application and reporting roles have no legitimate use for any of the three, so remove them and confirm the workloads still function. Where destructive maintenance is genuinely required, put it in a separate role that a named operator assumes for the task, rather than leaving it in the role an application authenticates with every day.
       audit: |
         ### Audit via Dashboard
 
@@ -2021,18 +1996,17 @@ queries:
       mongodbatlas.customDatabaseRoles.all(inheritedRoles.none(_['role'] == "atlasAdmin" || _['role'] == "dbAdminAnyDatabase" || _['role'] == "readWriteAnyDatabase" || _['role'] == "root"))
     docs:
       desc: |
-        A custom database role in MongoDB Atlas can inherit built-in roles in addition to defining its own actions. When a custom role inherits a broad administrative role such as `atlasAdmin`, `dbAdminAnyDatabase`, `readWriteAnyDatabase`, or `root`, every user assigned that custom role silently gains sweeping privileges across all databases. This check verifies that no custom role inherits one of these administrative roles. Inheritance of a superuser or any-database role hides the true reach of a custom role and undermines the least-privilege intent of defining a custom role in the first place.
+        This check verifies that no custom database role in the project inherits a broad administrative built-in role.
+
+        A custom role can define its own actions and also inherit built-in roles. Inheriting `atlasAdmin`, `root`, `readWriteAnyDatabase`, or `dbAdminAnyDatabase` gives every user assigned that custom role sweeping privilege across all databases, whatever the role's own action list says. Inherited roles are shown when you open a role on the Custom Roles tab under Security and Database Access, and the Atlas Administration API returns them on the custom database roles resource. This check requires that none of the four appear.
 
         **Why this matters**
 
-        - **Hidden privilege escalation:** A custom role that looks narrow can grant project-wide or any-database access through inheritance, so its real scope is easy to overlook during review.
-        - **Any-database reach:** Roles such as `readWriteAnyDatabase` and `dbAdminAnyDatabase` apply to every database, defeating attempts to confine a workload to the data it owns.
-        - **Superuser inheritance:** Inheriting `atlasAdmin` or `root` gives full administrative control and the widest possible blast radius if the role is misused or compromised.
+        The danger is that the privilege is invisible at the point where people look for it. A role named for a single reporting job, with a short and unremarkable action list, can carry full administrative reach through one inherited entry further down the page. Reviewers approve it because the name and the actions look proportionate, and the users assigned to it inherit far more than anyone intended.
 
-        **Risk mitigation**
+        An attacker benefits from exactly the same blind spot. The credential they compromise belongs to a modest-looking service, so it attracts no particular attention, and yet it reads and writes every database in the project. Where the inheritance is `atlasAdmin` or `root` it also manages other database users, which lets the attacker create a second credential and keep access after the first is rotated.
 
-        - **Remove administrative inheritance:** Edit custom roles so they no longer inherit `atlasAdmin`, `dbAdminAnyDatabase`, `readWriteAnyDatabase`, or `root`.
-        - **Inherit only scoped roles:** Build custom roles from database-specific built-in roles such as `readWrite` on a named database, and add only the individual actions required.
+        Build custom roles from database-scoped built-in roles instead, such as `readWrite` on one named database, and add the individual actions the workload needs on top. Where a role genuinely requires any-database reach, make that explicit in its name and treat it as an administrative role rather than an application one.
       audit: |
         ### Audit via Dashboard
 
@@ -2096,18 +2070,17 @@ queries:
       mongodbatlas.ipAccessList.none(cidrBlock == "0.0.0.0/0")
     docs:
       desc: |
-        The project IP access list controls which source addresses can reach the clusters in a MongoDB Atlas project. An entry of 0.0.0.0/0 allows connections from every address on the public internet, so the only barrier left is database authentication. This check verifies that no access list entry opens the project to the entire internet.
+        This check verifies that the project IP access list contains no entry opening the clusters to the entire internet.
+
+        The IP access list decides which source addresses may reach the deployments in a project. It is managed under Security and Network Access at cloud.mongodb.com, and the Atlas Administration API returns the entries on the project access list resource. An entry of 0.0.0.0/0 matches every address there is, and this check requires that no such entry exists.
 
         **Why this matters**
 
-        - **Full internet exposure:** A 0.0.0.0/0 entry lets any host on the internet attempt to connect, dramatically expanding the attack surface for credential stuffing, brute force, and exploitation of any authentication weakness.
-        - **Defense in depth is lost:** Network allowlisting is the first control that stops unauthorized traffic before it reaches the database engine. Removing that layer leaves authentication as a single point of failure.
-        - **Data exposure risk:** Clusters frequently hold sensitive or regulated data. Broad exposure increases the likelihood and impact of unauthorized access or data exfiltration.
+        With that entry present, the network control is gone and database authentication is the only thing left. Every scanner on the internet reaches the cluster, and Atlas endpoints are found continuously by automated scanning that catalogues open MongoDB deployments by hostname pattern.
 
-        **Risk mitigation**
+        What those scanners then do is cheap and constant. They attempt credentials from breach dumps against the exposed deployment, try default and guessable database user names, and probe for any authentication weakness in the version reported. None of it requires a target list, since the target advertised itself. One reused password on one database user is enough, and there is no second control to stop the connection once the password is right. The same open entry lets an attacker who already stole a credential elsewhere use it from their own infrastructure rather than having to first gain a foothold inside your network.
 
-        - **Allow only known sources:** Replace any 0.0.0.0/0 entry with the specific addresses or ranges that legitimately need database access.
-        - **Prefer private connectivity:** Use private endpoints or network peering so application traffic never traverses the public internet.
+        Replace the entry with the specific addresses or ranges that legitimately need to connect, and prefer private endpoints or network peering so application traffic never crosses the public internet at all. If the entry was added temporarily during a migration or a debugging session, remove it now rather than at the end of the project, because those entries are the ones that survive for years.
       audit: |
         ### Audit via Dashboard
 
@@ -2176,18 +2149,19 @@ queries:
       mongodbatlas.ipAccessList.where(cidrBlock != empty).all(cidrBlock.split("/")[1] == /^(2[4-9]|3[0-2])$/)
     docs:
       desc: |
-        Every entry in the project IP access list should grant access to as few source addresses as possible. This check verifies that each CIDR entry uses a prefix length between 24 and 32, which limits the entry to at most 256 addresses. Broad ranges such as a /8 or /16 authorize thousands or millions of hosts, many of which have no legitimate need to reach the database.
+        This check verifies that every CIDR entry in the project IP access list covers a narrow range of addresses.
+
+        Entries are managed under Security and Network Access at cloud.mongodb.com, and the Atlas Administration API returns each one on the project access list resource. This check requires every CIDR entry to carry a prefix length between 24 and 32, which limits a single entry to at most 256 addresses. A /8 authorizes millions of hosts and a /16 authorizes tens of thousands, and this check fails on both.
 
         **Why this matters**
 
-        - **Least privilege for the network:** A wide CIDR range grants standing access to hosts that will never connect legitimately, and any one of them could be used to attack the database.
-        - **Larger blast radius:** If an attacker gains a foothold anywhere inside a broadly allowed range, the network control no longer stops them from reaching the clusters.
-        - **Harder to reason about:** Narrow ranges make the access list auditable, so reviewers can tie each entry to a known office, gateway, or service.
+        A broad entry grants standing network reach to every host inside it, and almost none of those hosts is the application you meant to allow. The access list stops meaning "our service can connect" and starts meaning "anything in this part of the network can connect".
 
-        **Risk mitigation**
+        That distinction decides what happens after an unrelated compromise. An attacker who takes over any machine inside an allowed /16, a developer laptop on the corporate range, a forgotten test instance, a printer, reaches the cluster from it and meets only database authentication. They do not need to be on the application host, and they do not need to defeat the network control, because the network control already includes them. Where the broad range belongs to a cloud provider, the problem is worse still, since an attacker can rent an address inside it.
 
-        - **Scope entries tightly:** Grant access using the smallest range that covers the legitimate source, ideally a single host as a /32.
-        - **Consolidate egress:** Route application traffic through a small set of known egress addresses so the access list stays short and specific.
+        Narrow entries also make the list reviewable. A /32 or a /24 can be tied to a named office, gateway, or service, so a reviewer can decide whether it still belongs; a /8 cannot be attributed to anything.
+
+        Route application traffic through a small set of known egress addresses so the list stays short and specific, and prefer private endpoints where the workload supports them.
       audit: |
         ### Audit via Dashboard
 
@@ -2252,18 +2226,17 @@ queries:
       mongodbatlas.ipAccessList.where(deleteAfterDate != null).all(deleteAfterDate > time.now)
     docs:
       desc: |
-        MongoDB Atlas lets you create temporary IP access list entries that carry a deletion date. Atlas removes these entries automatically, but a stale entry whose deletion date has already passed indicates that the access list is not being maintained as expected. This check verifies that every entry with a deletion date is still in the future.
+        This check verifies that every temporary IP access list entry still has a deletion time in the future.
+
+        Atlas lets an access list entry carry a deletion date so short-lived network access removes itself, which is how access for a maintenance window, a contractor engagement, or a one-off debugging session is normally granted. Temporary entries are visible under Security and Network Access at cloud.mongodb.com, and the Atlas Administration API returns the deletion date alongside each entry. This check inspects only entries that carry a date and requires it to be later than now.
 
         **Why this matters**
 
-        - **Temporary access should not linger:** Entries created for short-lived tasks such as a maintenance window or a contractor engagement should not remain active past their intended lifetime.
-        - **Stale rules erode least privilege:** An access list that accumulates outdated entries grants network reach to sources that no longer need it, quietly widening the attack surface.
-        - **Audit clarity:** Confirming that time-boxed entries expire on schedule shows the access list reflects current, approved access.
+        An entry whose deletion time has passed while the entry is still listed means the removal did not happen. Network access that was granted on the understanding that it would end has quietly become permanent, and it is permanent without anyone deciding that it should be.
 
-        **Risk mitigation**
+        Temporary entries are granted with less scrutiny than standing ones for exactly that reason, and they tend to point at the least controlled places: a contractor's home address, a laptop on a hotel network, a jump host built for one migration and never rebuilt. When the entry outlives its purpose, whoever holds that address next inherits network reach to your clusters. Residential and cloud addresses are reassigned constantly, so the host on the other end of an old entry is frequently no longer the one you approved.
 
-        - **Remove past-due entries:** Delete any access list entry whose deletion date has already passed.
-        - **Review temporary access:** Periodically review time-boxed entries so access is granted only for as long as it is needed.
+        Delete past-due entries rather than extending them by default. A failing result also says something about the process: find out why the scheduled removal did not take effect, since the same gap will apply to the next temporary entry somebody creates.
       audit: |
         ### Audit via Dashboard
 
@@ -2322,18 +2295,17 @@ queries:
       mongodbatlas.privateEndpoints.where(status == "AVAILABLE") != empty
     docs:
       desc: |
-        Private endpoints let applications reach Atlas clusters over a cloud provider private network such as AWS PrivateLink, Azure Private Link, or Google Cloud Private Service Connect, instead of over the public internet. This check verifies that the project has at least one private endpoint in the AVAILABLE state, confirming that private connectivity is provisioned and ready to serve traffic.
+        This check verifies that the project has at least one private endpoint provisioned and available for cluster connectivity.
+
+        A private endpoint lets applications reach Atlas deployments across the cloud provider's own network using AWS PrivateLink, Azure Private Link, or Google Cloud Private Service Connect, instead of over the public internet. Endpoints are created and monitored on the Private Endpoint tab under Security and Network Access at cloud.mongodb.com, and the Atlas Administration API reports each one with its status. This check requires at least one endpoint reporting as available, which is the state in which it can actually carry traffic.
 
         **Why this matters**
 
-        - **Traffic stays off the public internet:** Private endpoints keep application-to-database traffic inside the cloud provider network, removing exposure to internet-based reconnaissance and interception.
-        - **Reduced reliance on IP allowlisting:** With private connectivity, access no longer depends on maintaining public IP access list entries that are easy to leave too broad.
-        - **Stronger tenancy isolation:** Private endpoints bind connectivity to a specific virtual network, limiting which environments can reach the clusters.
+        Public connectivity means the cluster has a resolvable, reachable address that anything on the internet can attempt to open a connection to. Everything protecting it from there is a control you have to keep correct: an access list that has to stay narrow, credentials that have to stay secret, a TLS floor that has to stay high. Private connectivity removes the attempt itself, because there is no route from the public internet to the endpoint at all.
 
-        **Risk mitigation**
+        That changes what an attacker can do with a stolen credential. Against a publicly reachable cluster, a leaked connection string is enough on its own. Against a private endpoint, the same credential is useless until they first obtain a foothold inside the specific virtual network the endpoint is bound to, which is a substantially harder and noisier step.
 
-        - **Provision private endpoints:** Configure a private endpoint for each cloud provider and region that hosts the project clusters.
-        - **Route applications privately:** Point application connection strings at the private endpoint so production traffic uses the private path.
+        Point application connection strings at the private endpoint after provisioning it, since an endpoint that exists while traffic still flows over the public path provides no protection. Provision an endpoint for each provider and region hosting the project's deployments, and tighten the public access list once private routing is carrying the load.
       audit: |
         ### Audit via Dashboard
 
@@ -2394,18 +2366,19 @@ queries:
       mongodbatlas.networkPeerings.none(status == "FAILED")
     docs:
       desc: |
-        Network peering connects an Atlas project virtual network to a virtual network in your own cloud account so clusters can be reached privately. A peering connection in the FAILED state means that private path is broken, which can interrupt application connectivity or push traffic onto less secure routes. This check verifies that no peering connection is in a failed state.
+        This check verifies that no network peering connection in the project is reporting a failed state.
+
+        Network peering joins the Atlas project's virtual network to one in your own cloud account so applications can reach the deployments privately. Peering connections and their status are shown on the Peering tab under Security and Network Access at cloud.mongodb.com, and the Atlas Administration API returns the status of each connection on the project peers resource. This check requires that none of them is failed.
 
         **Why this matters**
 
-        - **Private routing depends on healthy peering:** A failed peering breaks the private network path that applications rely on to reach the clusters securely.
-        - **Insecure fallback risk:** When the intended private route fails, teams may work around the outage by opening broad public access, weakening the network posture.
-        - **Operational blind spot:** A peering left in a failed state signals that the network configuration is drifting from its intended, reviewed design.
+        A failed peering means the private path an application was built to use is not carrying traffic. The immediate effect is an outage, but the security consequence comes from how outages get resolved. Under pressure to restore a service, the fastest workaround is to add a wide entry to the public IP access list and let the application connect over the internet instead. That change is made in minutes, restores the service, and then stays, because nobody reverts a fix that is working.
 
-        **Risk mitigation**
+        The project is then exposed on the public path with a broad allowance, and the peering that was supposed to keep traffic private sits broken in the console where it is easy to stop noticing. An attacker gains a route that the network design said did not exist.
 
-        - **Repair failed peerings:** Investigate and re-establish any peering connection that reports a failed state.
-        - **Validate both sides:** Confirm the route tables, security groups, and CIDR settings match on the Atlas side and in your cloud account.
+        A failed peering is also a signal in its own right. It usually means a route table, security group, or CIDR assignment changed on your side without the Atlas configuration being updated, so the network is drifting from the design that was reviewed.
+
+        Investigate the reported error, correct the mismatched settings in your cloud account, and delete and recreate the connection if it cannot recover. Verify both ends after the repair rather than only the Atlas side.
       audit: |
         ### Audit via Dashboard
 
@@ -2470,18 +2443,17 @@ queries:
       mongodbatlas.encryptionAtRest.awsKmsEnabled == true || mongodbatlas.encryptionAtRest.azureKeyVaultEnabled == true || mongodbatlas.encryptionAtRest.googleCloudKmsEnabled == true
     docs:
       desc: |
-        Atlas always encrypts data at rest with keys it manages, but sensitive workloads often require encryption under a customer-managed key held in AWS KMS, Azure Key Vault, or Google Cloud KMS. Customer-managed keys give your organization direct control over key lifecycle and revocation. This check verifies that at least one of these providers is enabled for the project.
+        This check verifies that the project has a customer-managed key provider enabled for encryption at rest.
+
+        Atlas always encrypts stored data with keys it manages. On top of that, a project can be bound to a key you hold in AWS KMS, Azure Key Vault, or Google Cloud KMS, configured under Encryption at Rest using your Key Management in the project settings at cloud.mongodb.com. The Atlas Administration API reports whether each provider is enabled on the project encryption at rest resource, and this check requires at least one of the three to be on.
 
         **Why this matters**
 
-        - **Control over the key:** A customer-managed key lets your organization rotate, disable, or revoke access to the encryption key independently, so you can cut off data access even at the storage layer.
-        - **Separation of duties:** Holding the key in your own cloud key management service separates key custody from the database service provider.
-        - **Regulatory alignment:** Many data protection regimes expect encryption at rest under keys that the data owner controls.
+        Key custody is what turns encryption at rest into a control you can exercise. With provider-held keys alone, the data is encrypted but you have no lever attached to it: you cannot rotate the key when a rotation is warranted, you cannot disable it when you suspect exposure, and you cannot prove that a copy left somewhere is unreadable.
 
-        **Risk mitigation**
+        The lever matters at two moments in particular. When you learn that stored data or a snapshot has reached somewhere it should not have, revoking the key in your own key management service renders every copy protected by it inert within minutes, without depending on anyone else's process or timeline. When a system is decommissioned, destroying the key gives a defensible answer about the residual copies rather than a promise that they were deleted.
 
-        - **Enable a customer-managed key:** Configure encryption at rest with AWS KMS, Azure Key Vault, or Google Cloud KMS for the project.
-        - **Protect the key material:** Restrict and monitor access to the key in your cloud key management service.
+        Enabling the provider at the project level is the prerequisite; deployments still have to be bound to it individually, which the companion check in this policy on cluster encryption evaluates. Restrict and monitor access to the key in your key management service as tightly as access to the data, because whoever can use the key can read what it protects, and whoever can delete it can make the data unrecoverable.
       audit: |
         ### Audit via Dashboard
 
@@ -2544,18 +2516,17 @@ queries:
       mongodbatlas.encryptionAtRest.googleCloudKmsEnabled == false || mongodbatlas.encryptionAtRest.googleCloudKmsValid == true
     docs:
       desc: |
-        When customer-managed encryption at rest is enabled, Atlas continuously checks that it can still reach and use the configured key. If the key is deleted, disabled, or the credentials Atlas uses lose permission, the provider configuration becomes invalid and encryption operations can fail. This check verifies that for each enabled provider, AWS KMS, Azure Key Vault, and Google Cloud KMS, the configuration reports as valid.
+        This check verifies that every customer-managed key provider enabled for the project is reporting as valid.
+
+        When encryption at rest is bound to AWS KMS, Azure Key Vault, or Google Cloud KMS, Atlas continuously confirms it can still reach and use the configured key and records the result on the project encryption at rest resource. The state is visible under Encryption at Rest using your Key Management in the project settings at cloud.mongodb.com. This check evaluates each provider independently and requires that any provider which is enabled also reports as valid, so a provider you deliberately leave disabled is not treated as a failure.
 
         **Why this matters**
 
-        - **Invalid keys break protection:** An enabled but invalid key configuration means Atlas can no longer perform the encryption operations the key was meant to provide.
-        - **Silent operational risk:** A revoked or unreachable key can disrupt cluster availability and leave the encryption control in an unknown state.
-        - **Key management hygiene:** Confirming validity proves that key rotation, permission changes, and lifecycle events in your cloud key management service have not broken the integration.
+        An enabled but invalid provider is the worst of both states. The configuration says the data is protected by a key you control, so it passes a casual review and satisfies whoever asked for customer-managed encryption, while Atlas cannot actually perform the operations that key was there to provide.
 
-        **Risk mitigation**
+        The usual causes are ordinary key management events with no visible connection to Atlas: the key was disabled or scheduled for deletion, the role Atlas assumes lost a permission during a policy cleanup, the credential behind the integration expired, or a key policy was rewritten by automation. None of those produces an obvious signal in Atlas, so the break is discovered later, often when an operation that needs the key fails and takes cluster availability with it.
 
-        - **Restore key access:** Re-enable the key or repair the credentials and permissions Atlas uses so the provider reports as valid.
-        - **Coordinate key changes:** Before rotating or disabling a key, update the Atlas configuration so the integration stays valid.
+        Repair the key or the permissions in the key management service first, then update the provider configuration in Atlas and confirm it reports as valid again. Coordinate deliberate key rotations and permission changes with the Atlas configuration in advance, so the integration is updated in the same change rather than after it breaks.
       audit: |
         ### Audit via Dashboard
 
@@ -2616,18 +2587,17 @@ queries:
       mongodbatlas.encryptionAtRest.enabledForSearchNodes == true
     docs:
       desc: |
-        Atlas Search runs on dedicated search nodes that hold copies of indexed data drawn from the cluster. Customer-managed encryption at rest can be extended to these search nodes so the indexed data receives the same key protection as the database. This check verifies that encryption at rest is enabled for search nodes in the project.
+        This check verifies that encryption at rest under your own key extends to the project's search nodes.
+
+        Atlas Search runs on dedicated search nodes that hold indexed copies of data drawn from the cluster. Customer-managed encryption at rest can be applied to those nodes as well, through the option to extend encryption to search nodes under Encryption at Rest using your Key Management in the project settings at cloud.mongodb.com. The Atlas Administration API reports it as `enabledForSearchNodes` on the project encryption at rest resource, and this check requires it to be on.
 
         **Why this matters**
 
-        - **Indexed data is still sensitive:** Search nodes store searchable copies of cluster data, so leaving them unencrypted under your key creates a gap in coverage.
-        - **Consistent protection:** Applying the customer-managed key to search nodes ensures a single, revocable key protects the data everywhere it lives.
-        - **Complete key control:** Extending encryption to search nodes means your organization can revoke access to indexed data along with the primary data.
+        A search index is not a summary of the data; it contains the field values it indexes, and for many designs it stores the retrievable content as well. Names, addresses, message bodies, and identifiers that are protected by your key on the cluster exist a second time on the search nodes, in a form built specifically to be read quickly.
 
-        **Risk mitigation**
+        If that second copy is not covered by the same key, the protection you configured has a hole exactly where the data is most conveniently arranged. Revoking the key would render the cluster's storage unreadable while leaving the indexed copy under provider-held keys alone, so the control you rely on to cut off access does not actually cut off all of it. Anything that reaches the search node storage reads the values directly.
 
-        - **Enable encryption for search nodes:** Turn on encryption at rest for search nodes in the project encryption configuration.
-        - **Verify after changes:** Recheck the setting after enabling search nodes or changing the key configuration so coverage stays complete.
+        The project needs a customer-managed key enabled before this option is available, so configure that first. Recheck the setting after enabling search nodes on a new deployment or changing the key configuration, since coverage is easy to lose when the search tier is added later than the cluster it serves.
       audit: |
         ### Audit via Dashboard
 
@@ -2688,18 +2658,19 @@ queries:
       mongodbatlas.auditing.enabled == true
     docs:
       desc: |
-        Database auditing records authentication and data-access events across the clusters in a MongoDB Atlas project. This check verifies that auditing is turned on so that operator and application activity leaves a durable trail. When auditing is disabled, there is no record of who connected, what data was read or changed, or when, which prevents incident investigation and undermines accountability.
+        This check verifies that database auditing is turned on for the project.
+
+        Database Auditing is enabled under Security and then Advanced in the project navigation at cloud.mongodb.com, and the Atlas Administration API reports its state on the project audit log resource. With auditing on, Atlas records authentication and data-access events across the project's deployments so activity leaves a durable trail attributable to the account that produced it.
 
         **Why this matters**
 
-        - **Accountability:** Audit records tie database actions to the accounts that performed them, so misuse and mistakes can be traced back to a responsible party.
-        - **Incident response:** Without an audit trail, responders cannot reconstruct what an attacker or a compromised account did, which slows containment and recovery.
-        - **Regulatory evidence:** Many frameworks require recorded and reviewable activity for systems that store sensitive or regulated data, and disabled auditing leaves that requirement unmet.
+        Without auditing there is no record of who connected, from where, or what they read and changed. That absence does not slow an investigation down; it ends it. A responder who learns that a database credential leaked has no way to determine whether it was used, which collections were touched, or how much data left, so the honest answer to every question is that it is unknown.
 
-        **Risk mitigation**
+        That answer has consequences beyond the incident. Breach notification obligations turn on what was accessed, and an organization that cannot demonstrate the scope of an intrusion generally has to assume the worst case and disclose accordingly. Meanwhile the attacker benefits directly: with no trail, a compromised credential can be used repeatedly over months, and each use looks exactly like the last one, which is to say invisible.
 
-        - **Enable auditing:** Turn on database auditing for the project so that authentication and data-access events are captured.
-        - **Protect the trail:** Combine auditing with log export so records are retained outside the platform and are available for review.
+        Auditing also deters and detects insider misuse, which is the category least likely to trigger any other control, because the account involved is authorized and its traffic is ordinary.
+
+        Turn auditing on, then pair it with an audit filter that captures the events you care about and with log export so records are retained off the platform, which companion checks in this policy evaluate. Auditing enabled with no filter and no export produces very little usable evidence.
       audit: |
         ### Audit via Dashboard
 
@@ -2760,22 +2731,19 @@ queries:
       mongodbatlas.auditing.auditAuthorizationSuccess == true
     docs:
       desc: |
-        By default, database auditing records authorization failures but not successful authorization events. This check verifies that auditAuthorizationSuccess is enabled so that successful reads and writes are also recorded, not only denied attempts. Without it, a compromised or abusive account that holds legitimate privileges can access data without leaving any audit trail, because every one of its actions is authorized and therefore unlogged.
+        This check verifies that database auditing records successful authorization events, not only denied ones.
+
+        By default the audit trail captures authorization failures. Auditing successful authorizations is a separate option, shown as "Audit authorization successes" under Database Auditing in Security and then Advanced for the project, and reported by the Atlas Administration API as `auditAuthorizationSuccess` on the project audit log resource. This check requires it to be enabled.
 
         **Why this matters**
 
-        - **Insider and credential abuse:** The most damaging access often comes from accounts that are authorized, so recording successful events is essential to detect misuse.
-        - **Complete forensics:** Investigating a breach requires knowing what data was actually read or modified, which only successful-event records can show.
-        - **Detection coverage:** Logging only failures leaves a blind spot around normal-looking activity that hides malicious data access.
+        Failure-only auditing records the attacks that did not work and nothing about the ones that did. An attacker who obtains a valid database credential performs no unauthorized action at all, because every read they issue is permitted by the roles that credential holds. Their entire operation, connecting, enumerating collections, and reading every document in them, generates zero audit entries, while a mistyped collection name by a legitimate developer generates one.
 
-        **Why disabling can be a trade-off**
+        The same blind spot covers insider misuse, which is the case failure logs are least able to see. An employee reading customer records they have no business reason to open is exercising exactly the privilege they were granted, so nothing is denied and nothing is recorded.
 
-        - **Log volume:** Recording every successful authorization increases audit volume, so retention and export capacity should be sized accordingly.
+        The cost of the answer during an incident is what makes this concrete. With successful events recorded, you can state which collections a compromised credential opened and roughly how much it read. Without them, you know only that the credential existed and worked, and every downstream decision about notification and scope has to assume the maximum.
 
-        **Risk mitigation**
-
-        - **Enable success auditing:** Set auditAuthorizationSuccess so successful authorization events are captured alongside failures.
-        - **Ship the records:** Pair this with log export so the higher-volume records are retained and searchable off the platform.
+        Recording every successful authorization increases audit volume substantially, so size retention and export capacity for it and pair this with push-based log export, which a companion check in this policy evaluates. Narrow the audit filter rather than turning success auditing off when volume becomes a problem.
       audit: |
         ### Audit via Dashboard
 
@@ -2836,18 +2804,17 @@ queries:
       mongodbatlas.auditing.enabled == true && mongodbatlas.auditing.configurationType != "NONE"
     docs:
       desc: |
-        An audit filter defines which events database auditing captures. This check verifies that auditing is enabled and that a filter is actually set, meaning the configuration type is something other than NONE. When the configuration type is NONE, no filter is in place and the auditing feature records nothing meaningful, so the project has the appearance of auditing without any usable trail.
+        This check verifies that database auditing is enabled for the project and that a filter defining what to capture has actually been set.
+
+        The audit filter decides which events the audit trail records. It is defined under Database Auditing in Security and then Advanced for the project at cloud.mongodb.com, and the Atlas Administration API reports the configuration type alongside the enabled flag on the project audit log resource. A configuration type of NONE means no filter is in place. This check requires auditing to be on and the configuration type to be anything other than NONE.
 
         **Why this matters**
 
-        - **Effective coverage:** Enabling auditing without a filter leaves the scope undefined, so critical events may never be recorded.
-        - **Meaningful evidence:** A configured filter ensures the events that matter for security and compliance are the ones being captured.
-        - **False assurance:** A configuration type of NONE can look compliant at a glance while producing no actionable audit data.
+        Auditing that is switched on with no filter is the most expensive kind of gap, because it produces the appearance of a control without the evidence one. The setting reads as enabled on the page, it satisfies a checklist, and it reassures everyone who looks at it, while the events an investigation would need were never selected for capture.
 
-        **Risk mitigation**
+        The cost lands during an incident, at the point where it can no longer be fixed. A responder asks which accounts authenticated to the cluster in the days around a suspected compromise and finds that the question cannot be answered from the trail that exists. Nothing can be done about it retroactively; audit data not captured at the time does not become available later.
 
-        - **Define a filter:** Configure an audit filter that captures authentication, authorization, and data-access events relevant to your risk profile.
-        - **Review the scope:** Revisit the filter as data sensitivity and threats change so coverage stays adequate.
+        Define a filter that captures at least authentication and authorization events, and extend it to the data-access events that matter for the sensitivity of what the project holds. Revisit it as the data and the threat model change, because a filter written for one application's risk profile quietly stops matching once the project grows to hold something more sensitive.
       audit: |
         ### Audit via Dashboard
 
@@ -2908,18 +2875,17 @@ queries:
       mongodbatlas.pushBasedLogExport != empty && mongodbatlas.pushBasedLogExport.state == "ACTIVE"
     docs:
       desc: |
-        Push-based log export streams a project's audit and access logs to a customer-owned AWS S3 bucket. This check verifies that the feature is configured and that its state is ACTIVE, meaning logs are actually being delivered. When export is missing or not active, logs remain only on the platform under Atlas retention limits, so they can age out or be lost before an investigation and cannot be correlated with other security telemetry.
+        This check verifies that push-based log export is configured for the project and is actively delivering.
+
+        Push-based log export streams the project's audit and access logs to an S3 bucket you own. It is set up under Push-Based Log Export in the project settings at cloud.mongodb.com, using a bucket name and the role that grants Atlas write access, and the Atlas Administration API reports the resulting state on the project push-based log export resource. This check requires the configuration to exist and its state to be active, which is the state in which records are genuinely being delivered.
 
         **Why this matters**
 
-        - **Durable retention:** Delivering logs to your own bucket keeps them beyond the platform's built-in retention window so they survive long enough for investigations and audits.
-        - **Tamper resistance:** An independent, customer-owned store protects log records from being altered or deleted through the database platform.
-        - **Central analysis:** Exported logs can be fed into your own monitoring and detection pipelines alongside the rest of your environment.
+        Logs that stay on the platform live under the platform's retention window, and intrusions are routinely discovered long after that window closes. By the time a leaked credential surfaces in a scan of a public repository, or a partner reports data appearing where it should not, the records covering the period an investigator needs have already aged out. The evidence did not survive long enough to be read.
 
-        **Risk mitigation**
+        Keeping the records in your own account also removes them from the reach of whoever compromised the platform account. An attacker with sufficient Atlas privilege can change audit settings and remove what points at them; they cannot reach into your bucket to do the same. Delivered records are the copy that outlives their cleanup.
 
-        - **Activate export:** Configure push-based log export and confirm the state reaches ACTIVE so delivery is ongoing.
-        - **Monitor delivery:** Watch the export state so a stalled or failed configuration is noticed and corrected quickly.
+        A configuration that exists but is not active provides none of this while appearing to. Watch the state so a stalled or failed export is noticed and corrected rather than discovered during an investigation. Apply restrictive access controls and retention rules on the destination, and pair this with a configured audit filter so the records being shipped are the ones worth keeping.
       audit: |
         ### Audit via Dashboard
 
@@ -2980,18 +2946,17 @@ queries:
       mongodbatlas.pushBasedLogExport != empty && mongodbatlas.pushBasedLogExport.bucketName != empty
     docs:
       desc: |
-        Push-based log export must name the destination AWS S3 bucket that receives the project's audit and access logs. This check verifies that the export configuration exists and that its bucket name is set. When the bucket name is missing, the export has no destination, so log records have nowhere to land and cannot be retained or reviewed off the platform.
+        This check verifies that push-based log export for the project names the destination bucket it delivers to.
+
+        The export is configured under Push-Based Log Export in the project settings at cloud.mongodb.com, where the destination S3 bucket is entered along with the role that grants Atlas permission to write to it. The Atlas Administration API reports the bucket name on the project push-based log export resource. This check requires the export configuration to exist and the bucket name to be set rather than empty.
 
         **Why this matters**
 
-        - **Delivery target:** A named bucket is what makes export functional, since without a destination no records are stored outside the platform.
-        - **Retention ownership:** Logs held in a bucket you control let you apply your own retention, access, and protection policies to the records.
-        - **Investigation readiness:** A configured destination ensures the records are in a known location when responders need them.
+        The destination is the part of the export that determines who controls the records once they leave the platform. A bucket in your own cloud account means the retention period, the access policy, the object lock settings, and the encryption are yours to set, and none of them can be altered by anyone acting through Atlas.
 
-        **Risk mitigation**
+        With no bucket named, the export has nowhere to send anything, so no copy of the audit and access logs exists outside the platform at all. Every consequence follows from that single omission: records age out on the platform's schedule rather than yours, an attacker with enough Atlas privilege can reach the only surviving copy, and responders looking for the trail during an incident find that the export they were told about never had a target.
 
-        - **Set the bucket:** Configure the S3 bucket that receives exported logs so delivery has a valid destination.
-        - **Secure the destination:** Apply restrictive access controls and retention rules on the bucket so the exported records stay protected.
+        Name the bucket, confirm the role permits Atlas to write to it, and verify that objects actually arrive rather than trusting the saved configuration. Treat the destination as security-relevant storage: restrict who can read and delete from it, apply retention that matches how long you may need to look back, and keep it in an account that is not administered by the same people whose activity the logs record.
       audit: |
         ### Audit via Dashboard
 
