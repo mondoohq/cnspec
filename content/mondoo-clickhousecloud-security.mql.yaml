@@ -66,19 +66,20 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that no ClickHouse Cloud service is reachable from any IP address. A service is open to all IPs when its IP access list contains a wildcard entry such as `0.0.0.0/0` or `::/0`, which exposes the database endpoint to the entire internet.
+      desc: |
+        This check verifies that no ClickHouse Cloud service accepts connections from every address on the internet.
+
+        Each service carries an IP access list, edited in the ClickHouse Cloud console by opening the service, then Settings, then Security, then IP access list, and set through the `ipAccessList` field of the services API. An entry of `0.0.0.0/0` or `::/0` in that list means any source may open a connection. This check requires the list to name specific ranges instead, and the `clickhouse_service` Terraform resource expresses the same thing as an explicit `ip_access` list of approved CIDR blocks.
 
         **Why this matters**
 
-        - **Reduced exposure:** Restricting source IPs means only approved networks can even attempt to connect.
-        - **Credential-theft containment:** A leaked password cannot be used from outside the approved ranges.
-        - **Defense in depth:** Network restrictions complement authentication rather than replacing it.
+        A wildcard entry is usually added during setup to get a first client connected and then never removed, so a service opened for an afternoon of testing stays open to the internet for the life of the deployment. ClickHouse Cloud endpoints follow a predictable hostname pattern and answer on well-known ports, so finding them takes scanning rather than inside knowledge.
 
-        **Risk mitigation**
+        Once found, the only thing between an attacker and the tables is the service password, and passwords for managed databases leak through entirely ordinary means: a connection string in a repository, a value pasted into a chat thread, an environment file on a stolen laptop, a CI job that prints its configuration on failure. With a wildcard access list, any one of those is usable the moment it is found, from anywhere. With the list restricted to office, VPN, and application ranges, the same leaked password is useless from the attacker's address, which buys the time needed to notice and rotate it.
 
-        - **Blocked off-network access:** Connection attempts from unapproved addresses are rejected.
-        - **Smaller attack surface:** Only approved networks can reach the service endpoint.
+        The open list also removes the rate limit that network scoping provides for free. Password guessing runs from as many source addresses as an attacker cares to rent, continuously, against an endpoint with no application in front of it to slow the attempts down or record them.
+
+        Restricting the list will break anything connecting from an address nobody enumerated, so collect the egress ranges for the application, the analytics and BI tools, and the operators before removing the wildcard entry.
       audit: |-
         ### Audit via the ClickHouse Cloud console
 
@@ -185,19 +186,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that every ClickHouse Cloud service has transparent data encryption enabled, so data stored on disk is encrypted at rest. Transparent data encryption protects the stored data if the underlying storage is ever accessed outside the service.
+      desc: |
+        This check verifies that every ClickHouse Cloud service encrypts the data it holds on disk.
+
+        Transparent data encryption is selected when a service is created on the tiers that support it, and it appears in the ClickHouse Cloud console by opening the service, then Settings, then Security. The `clickhouse_service` Terraform resource carries it as a `transparent_data_encryption` block with `enabled = true`. Two further arguments, `encryption_key` and `encryption_assumed_role_identifier`, choose a customer-managed key in place of a ClickHouse-managed one; they select which key is used and do not switch the feature on by themselves. This check requires the feature to be enabled.
 
         **Why this matters**
 
-        - **Data-at-rest protection:** Encrypted storage is unreadable without the keys, limiting exposure from storage-layer compromise.
-        - **Compliance:** Many frameworks require sensitive data to be encrypted at rest.
-        - **Key management:** Transparent data encryption integrates key management with the service rather than leaving data in cleartext.
+        Encryption at rest defends the copy of the data that leaves the running service. The service's own access controls apply to queries; they do not apply to a snapshot, a backup file, or a block volume once something other than the service reads it. An attacker who reaches the storage layer, through a backup destination that was left readable, a credential for the underlying cloud account, or a support path they should not have had, gets the tables in whatever form they were written. Unencrypted, that is the data itself. Encrypted, it is ciphertext they also need a key for, and the key is held apart from the storage.
 
-        **Risk mitigation**
+        Customer-managed keys extend that separation in a way worth choosing deliberately. When the key lives in your own cloud key service, revoking it makes every stored copy unreadable no matter who holds the storage, which is the only form of deletion that reaches snapshots you cannot enumerate.
 
-        - **Neutralized storage theft:** A copy of the underlying storage is useless without the encryption keys.
-        - **Consistent coverage:** Every service, not just some, protects its stored data.
+        The setting is fixed when the service is created, so a service running without it cannot be updated in place. Bringing one into line means provisioning a replacement on a supporting tier and migrating the data across. That is worth scheduling rather than deferring, because the exposure covers not only the service as it stands but every backup taken of it in the meantime, and those backups outlive the decision to postpone.
       audit: |-
         ### Audit via the ClickHouse Cloud console
 

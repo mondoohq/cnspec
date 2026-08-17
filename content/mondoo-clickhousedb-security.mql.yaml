@@ -54,19 +54,20 @@ queries:
     mql: |
       clickhousedb.instance.users.all(hasPassword == true)
     docs:
-      desc: |-
-        This check ensures that every ClickHouse account requires a password to authenticate. An account with no password can be reached with no credential at all, so anyone who can connect to the server is served as that account.
+      desc: |
+        This check verifies that every ClickHouse account requires a credential to authenticate.
+
+        ClickHouse accounts come from two places and both can define an account with none. A SQL-managed account is created with a `CREATE USER` or `ALTER USER` statement, and one written without an `IDENTIFIED WITH` clause authenticates with nothing at all. A file-managed account is defined under `users.xml` or a file in `users.d/`, and an entry carrying an empty password element does the same. Both forms report an authentication type of `no_password` in the `system.users` table, and this check requires that no account is in that state.
 
         **Why this matters**
 
-        - **No unauthenticated access:** Requiring a password stops anonymous connections from acting as a real account.
-        - **Attributable activity:** Authenticated sessions tie queries to a known identity.
-        - **Defense against network exposure:** If the port is reachable, a password is the control that still stands.
+        A password-less account makes network reachability the whole of the authentication control. Anyone who can open a connection to the native port, or send a request to the HTTP interface, is served as that account and runs queries as it. That includes the `default` account, which exists on a fresh install and is routinely left open on the reasoning that the server sits on a private network, right up until a security group change, a bridged container port, or a new bastion route makes it reachable.
 
-        **Risk mitigation**
+        What the caller can then do follows the account's grants, and grants on analytics servers are wide by habit. Reading is a select against any table the account can see, which on a ClickHouse cluster usually means event and clickstream data covering the entire user base. Destruction is a truncate or a drop against the same tables, and ClickHouse will not ask twice.
 
-        - **Blocked anonymous use:** A client that reaches the port cannot operate without valid credentials.
-        - **Reduced blast radius:** Compromise requires a credential rather than mere network reachability.
+        The account is also a foothold beyond the data. ClickHouse table engines reach outward, so an account with the right grants defines a table backed by a URL, an object store, or another database, and turns the server into a relay into networks the attacker cannot address directly.
+
+        Setting a password with `sha256_password`, or a `password_sha256_hex` element for file-managed accounts, closes the account but does not restrict where connections may come from. Pair this with the companion check in this policy that requires the secure native port, so the credential is not handed to the network in the clear once it exists.
       audit: |-
         ### Audit via clickhouse-client
 
@@ -121,19 +122,20 @@ queries:
     mql: |
       clickhousedb.instance.serverSettings.where(name == "tcp_port_secure").any(value != "0" && value != "")
     docs:
-      desc: |-
-        This check ensures that the secure (TLS) native TCP port is configured, so native-protocol clients can connect over an encrypted channel. When `tcp_port_secure` is set, credentials and query data are protected in transit rather than crossing the network in cleartext on the plain `tcp_port`.
+      desc: |
+        This check verifies that ClickHouse offers its native protocol over TLS.
+
+        The native protocol has two listeners. `tcp_port` is the plain one, conventionally 9000, and `tcp_port_secure` is the encrypted one, conventionally 9440. Setting `tcp_port_secure` to a non-zero port in `config.xml` or a file in `config.d/`, alongside an `openSSL` block naming a `certificateFile` and a `privateKeyFile`, brings the encrypted listener up. This check reads the effective value from the `system.server_settings` table and requires it to name a port rather than being zero or unset.
 
         **Why this matters**
 
-        - **Confidentiality in transit:** TLS protects credentials and result sets from network eavesdropping.
-        - **Integrity:** An encrypted channel resists tampering and session hijacking.
-        - **Compliance:** Frameworks require sensitive database traffic to be encrypted in transit.
+        Without the secure listener, native clients have nowhere to connect except the plain port, and the native protocol sends the credential at the start of the session. An attacker positioned anywhere on that path, on a compromised host in the same subnet, at a mirrored switch port, or on any hop between an application in one region and a cluster in another, captures the username and password from the handshake of a single connection and then authenticates as that account whenever they like, from wherever they like.
 
-        **Risk mitigation**
+        The same capture yields the data without the credential being used at all. Query text and result blocks travel in the clear on the plain port, so an observer reads exactly the rows the legitimate application is reading, for as long as they hold the position.
 
-        - **No cleartext credentials:** Login credentials are not exposed to anyone on the network path.
-        - **Man-in-the-middle resistance:** With a trusted certificate, TLS prevents interception and impersonation.
+        Cleartext also permits modification rather than only observation. An on-path attacker who can rewrite packets alters a query before it reaches the server or alters the result on its way back, which is the difference between someone who learns what a dashboard says and someone who decides what it says.
+
+        Bringing up `tcp_port_secure` does not stop clients using the plain listener. Once the secure port is serving and clients have moved to it, remove or zero `tcp_port` as well. Use a certificate from an authority the clients actually verify rather than a self-signed one they are configured to ignore, because an unverified certificate encrypts the session while leaving impersonation wide open.
       audit: |-
         ### Audit via clickhouse-client
 
