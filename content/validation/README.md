@@ -45,7 +45,7 @@ content/validation/
 │   └── commands/              CLI and REST API call validation
 │       ├── validate.py           entry point and dispatch
 │       ├── common.py             shared extraction and reporting
-│       ├── cobra.py              kubectl / gh / glab / hcloud / databricks
+│       ├── cobra.py              kubectl / gh / glab / hcloud / databricks / stackit
 │       ├── openapi.py            every REST API provider
 │       └── aws.py azure.py gcloud.py alicloud.py digitalocean.py nutanix.py
 │           oci.py openstack.py vercel.py
@@ -257,7 +257,7 @@ python3 content/validation/remediation/commands/validate.py            # everyth
 python3 content/validation/remediation/commands/validate.py aws        # one target
 ```
 
-Targets: `aws`, `azure`, `oci`, `gcp`, `digitalocean`, `nutanix`, `alicloud`, `openstack`, `vercel`, the Cobra CLIs (`kubernetes`, `github`, `gitlab`, `hetzner`, `databricks`), and the REST APIs (`cloudflare`, `tailscale`, `slack`, `atlassian`, `grafana`, `mongodbatlas`, `okta`, `portainer`).
+Targets: `aws`, `azure`, `oci`, `gcp`, `digitalocean`, `nutanix`, `alicloud`, `openstack`, `vercel`, the Cobra CLIs (`kubernetes`, `github`, `gitlab`, `hetzner`, `databricks`, `stackit`), and the REST APIs (`cloudflare`, `tailscale`, `slack`, `atlassian`, `grafana`, `mongodbatlas`, `okta`, `portainer`).
 
 A provider whose fixes are all UI click-through still belongs here. `okta` and `portainer` have no CLI for the settings their checks target, so their entire API surface is `audit:` steps — and a wrong audit command is exactly as misleading as a wrong remediation.
 
