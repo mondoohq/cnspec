@@ -126,19 +126,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that each virtual machine has a virtual Trusted Platform Module (vTPM) attached. A vTPM is a software-based TPM 2.0 device that gives the guest operating system a hardware-rooted store for cryptographic keys and platform measurements, which modern guest security features depend on.
+      desc: |
+        This check verifies that each virtual machine has a virtual Trusted Platform Module attached.
+
+        A vTPM is a software implementation of a TPM 2.0 device presented to the guest, giving it a sealed store for keys and a place to record boot measurements. Adding one requires the virtual machine to use EFI firmware and requires a key provider configured in vCenter under Configure and Key Providers, either the Native Key Provider or a registered external key server. With the machine powered off, add the device through Edit Settings and ADD NEW DEVICE, choosing Trusted Platform Module.
 
         **Why this matters**
 
-        - **Key protection:** A vTPM provides the guest with a tamper-resistant store for disk-encryption keys such as those used by Windows BitLocker.
-        - **Trusted boot:** It supports Measured Boot and remote attestation, so the guest can prove its boot integrity.
-        - **Credential defense:** It backs Windows Credential Guard and Device Guard, protecting domain credentials from theft.
+        Without a vTPM, the guest's own protections fall back on secrets held in ordinary memory or on disk. Full disk encryption in the guest has to keep its key somewhere the operating system can read at boot, so an attacker who obtains a copy of the virtual disk, from a backup, a snapshot, or a datastore they can read, recovers the key from the image and decrypts everything on it offline. The encryption was never protecting the data against the person holding the files.
 
-        **Risk mitigation**
+        A vTPM changes that arithmetic. The key is sealed to the module, the module's own state is protected by the key provider, and a copied disk is not enough to unlock it. It is also the prerequisite for measured boot and remote attestation, so a guest can prove what it booted rather than assert it.
 
-        - **Hardware-rooted trust:** Cryptographic secrets are bound to the vTPM rather than held in guest memory or on disk in the clear.
-        - **Encrypted secrets:** The vTPM's contents are protected by VM encryption and the configured key provider, keeping keys safe even if VM files are copied.
+        Adding a vTPM binds the virtual machine to the key provider, so plan key provider availability and backup before rolling this out, since a machine whose provider is unreachable will not power on.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -222,19 +221,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that automatic login is disabled for each virtual machine through the `isolation.tools.ghi.autologon.disable` parameter. Autologon lets a guest operating system sign in a user at startup without authentication, and disabling it ensures only authenticated users can reach an interactive session.
+      desc: |
+        This check verifies that a guest operating system cannot be signed in automatically through the VMware Tools guest and host interaction interface.
+
+        VMware Tools exposes a call that lets the host request an automatic logon inside the guest, which desktop virtualization products use to bring a user straight to a session. Setting `isolation.tools.ghi.autologon.disable` to `TRUE` refuses that request at the VMX process. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. This check fails when the parameter is absent as well as when it is set to any other value.
 
         **Why this matters**
 
-        - **Access control:** Autologon bypasses credential checks, so anyone who can reach the VM console gains a logged-in session.
-        - **Privilege exposure:** An autologon account often has standing privileges that an attacker inherits without authenticating.
-        - **Accountability:** Individual logins tie console activity to a named user, which autologon removes.
+        An automatic logon means a working, credentialed session exists on the guest console without anyone proving who they are. Anyone who can open the remote console for that virtual machine inherits it, and console access is a permission held by more people than the guest's own administrator group. The attacker never touches a password, so nothing in the guest authentication log marks the moment they arrived.
 
-        **Risk mitigation**
+        The account behind an automatic logon is also rarely a minimal one. It is usually the account the application was installed under, with standing rights to the data the machine exists to serve, which is exactly what the attacker inherits.
 
-        - **Authenticated sessions:** Console and guest access requires valid credentials, closing an unauthenticated entry path.
-        - **Auditability:** Requiring per-user logins preserves an accurate trail of who accessed the virtual machine.
+        Disabling the feature costs nothing on server workloads, which have no reason to sign anyone in unattended. Where a desktop product genuinely relies on it, keep that use on a separate pool with its own console permissions rather than leaving the capability enabled across the general estate.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -330,19 +328,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the BIOS Boot Specification (BBS) is disabled for each virtual machine through the `isolation.bios.bbs.disable` parameter. BBS lets the virtual firmware enumerate and prioritize bootable devices, and disabling it prevents the guest from being booted from unauthorized or removable media.
+      desc: |
+        This check verifies that guest access to the BIOS Boot Specification interface is disabled on each virtual machine.
+
+        The BIOS Boot Specification lets software enumerate and reorder the bootable devices the virtual firmware knows about. Setting `isolation.bios.bbs.disable` to `TRUE` stops the guest from reaching that interface through VMware Tools, leaving boot order under the control of the virtual machine's own boot options in vCenter. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. An absent parameter is a failing result.
 
         **Why this matters**
 
-        - **Boot integrity:** BBS can allow a VM to boot from removable media that bypasses normal bootloader integrity checks.
-        - **Alternate OS risk:** An attacker with low-level access could use BBS to boot recovery tools or an alternate operating system.
-        - **Legacy exposure:** BBS boot paths predate Secure Boot, leaving the VM open to bootkits and rootkits.
+        Boot order decides which code runs before any operating system control exists. An attacker with execution inside a guest who can influence it arranges for the next reboot to come up from attached media or a network source of their choosing instead of the system disk. What starts then is not the hardened operating system with its disk encryption and endpoint agent; it is an environment where the virtual disk is a block device with no access control on it, and where credential stores are read directly.
 
-        **Risk mitigation**
+        That persists across the reboot the defender uses to recover, which is what makes boot-path tampering worth an attacker's effort in the first place.
 
-        - **Predictable boot:** The virtual machine boots only from its intended disk, removing rogue boot sources.
-        - **Chain of trust:** Limiting boot media to verified sources keeps the guest startup process trustworthy.
+        Disabling the interface is one layer. The stronger control is UEFI firmware with Secure Boot, covered by a companion check in this policy, which validates the signature of what actually loads rather than only limiting who may reorder the list.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -435,19 +432,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the Drag and Drop Version Get feature is disabled for each virtual machine through the `isolation.tools.vmxDnDVersionGet.disable` parameter. The feature lets the guest query the host's drag-and-drop capability version, and disabling it removes an unnecessary guest-to-host communication path.
+      desc: |
+        This check verifies that the guest cannot query the host's drag-and-drop protocol version.
+
+        VMware Tools carries a set of remote procedure calls between the guest and the VMX process that runs on the ESXi host, and the drag-and-drop version handler is one of them. Setting `isolation.tools.vmxDnDVersionGet.disable` to `TRUE` removes the handler from the set a guest can invoke. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. The check fails when the parameter is absent as well as when it holds another value.
 
         **Why this matters**
 
-        - **Feature enumeration:** The guest can probe host drag-and-drop versions, aiding compatibility fingerprinting of the platform.
-        - **Communication channel:** It opens a host-to-guest interaction path that is rarely needed for server workloads.
-        - **Attack chaining:** Combined with other VMware Tools features, it can serve as a stepping stone for guest-to-host movement.
+        Every one of these handlers is code that runs in the VMX process, on the host, on input a guest controls. That is the surface a virtual machine escape is written against, and drag-and-drop handling in particular has a history of parsing guest-supplied structures. An attacker who owns a guest cannot reach the hypervisor over the network, but they can reach it through this interface, which is precisely why it is worth shutting the parts nobody uses.
 
-        **Risk mitigation**
+        The version query is also reconnaissance. It tells code inside the guest which VMware build it is running on, which narrows the choice of which escape to attempt before making any noisy attempt at all.
 
-        - **Reduced surface:** Disabling an unused integration feature removes a path an attacker could exploit.
-        - **Stronger isolation:** The guest cannot enumerate host-side capabilities, preserving the boundary between VM and hypervisor.
+        Nothing in a server workload needs drag and drop, since there is no host desktop to drag anything to. Some management tooling that automates guest interaction touches this interface, so verify such tooling still works after applying the change to a template.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -544,19 +540,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the Drag and Drop Version Set feature is disabled for each virtual machine through the `isolation.tools.guestDnDVersionSet.disable` parameter. The feature lets the guest set the drag-and-drop protocol version, and disabling it prevents the guest from initiating host-side drag-and-drop interaction.
+      desc: |
+        This check verifies that the guest cannot set the drag-and-drop protocol version used with the host.
+
+        Where the companion query handler only reads a version, this one lets the guest choose it. Setting `isolation.tools.guestDnDVersionSet.disable` to `TRUE` refuses the request at the VMX process. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. An absent parameter fails the check, because the interface is available when nothing disables it.
 
         **Why this matters**
 
-        - **Guest-initiated contact:** The guest can reach into the host environment by setting drag-and-drop parameters.
-        - **Channel escalation:** Combined with other integration features, it can extend or escalate unintended data exchange paths.
-        - **Abuse potential:** A compromised guest could use it to enumerate or influence host-side functionality.
+        A handler that accepts a value from the guest and changes host-side behavior with it is more dangerous than one that only answers a question. The guest is choosing which code path in the VMX process handles the rest of the exchange, and a negotiated-down version is the classic way to reach an older, less-reviewed implementation on purpose. That process runs on the ESXi host with the privileges needed to serve every virtual machine on it, so a defect reached this way is a defect in the boundary between tenants.
 
-        **Risk mitigation**
+        Because the VMX process is shared infrastructure, the consequence of an escape is not limited to the compromised guest. It reaches the host, and through the host the memory and disks of every other virtual machine running there.
 
-        - **Boundary enforcement:** The guest cannot alter host drag-and-drop protocols, keeping VM and hypervisor separated.
-        - **Reduced surface:** Disabling an unused VMware Tools feature limits what a compromised guest can misuse.
+        Server workloads never negotiate drag and drop, so the setting is free. Apply it in the templates that new virtual machines are cloned from, so the state is inherited rather than remediated one machine at a time.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -653,19 +648,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the GetCreds feature is disabled for each virtual machine through the `isolation.tools.getCreds.disable` parameter. GetCreds lets a guest request credential-related operations from the host through VMware Tools, and disabling it removes a guest-accessible path to sensitive credential data.
+      desc: |
+        This check verifies that the guest cannot ask the host for credentials through VMware Tools.
+
+        The GetCreds handler exists so that host-side tooling can hand credential material to a guest during automated provisioning. Setting `isolation.tools.getCreds.disable` to `TRUE` refuses those requests at the VMX process. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. The check fails when the parameter is absent, since the handler is reachable unless something disables it.
 
         **Why this matters**
 
-        - **Credential exposure:** The guest can request authentication information intended for host or service use.
-        - **Improper scoping:** A misconfigured or abused request could grant access to data or services it should not reach.
-        - **Privilege escalation:** A compromised guest could attempt to harvest host credentials and escalate.
+        This is the one handler in the set whose entire purpose is to move secrets across the guest and host boundary, so it is the first one an attacker inside a guest will try. Code running as an unprivileged user in the guest asks the interface for credential material and gets an answer that the guest operating system's own access controls never see, because the exchange happens beneath them. Whatever comes back is likely to be a provisioning or automation identity, and those are rarely scoped to one machine.
 
-        **Risk mitigation**
+        From there the path is short. An automation credential that works on one virtual machine usually works on the rest of the fleet, so a foothold in the least important guest becomes access to all of them, and the hypervisor never recorded a single authentication event.
 
-        - **Separation of duties:** Guest VMs cannot retrieve host-level credentials, keeping access cleanly divided.
-        - **Least privilege:** Removing the credential path enforces secure handling between guest and host services.
+        No steady-state workload needs this handler. Where a provisioning pipeline used it historically, move the secret delivery to a mechanism with its own authentication and audit trail, then disable the handler in the template so freshly cloned machines start without it.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -762,19 +756,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the Guest Host Interaction Launch Menu feature is disabled for each virtual machine through the `isolation.tools.ghi.launchmenu.change` parameter. The feature lets a guest trigger host-side actions or launchable menu items, and disabling it keeps the guest from invoking host functionality.
+      desc: |
+        This check verifies that a guest cannot change the host's guest and host interaction launch menu.
+
+        The launch menu is part of the desktop integration that hosted VMware products offer, letting applications inside a guest register entries that appear and can be started on the host side. Setting `isolation.tools.ghi.launchmenu.change` to `TRUE` blocks the guest from modifying it. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. An absent parameter is a failing result.
 
         **Why this matters**
 
-        - **Host operations:** The guest can request host-side operations that may expose administrative interfaces or run host processes.
-        - **Pivot point:** An attacker could use it as an entry point to reach the hypervisor or host-managed services.
-        - **Trust violation:** Guest-initiated host actions contradict the principle of minimal trust between VM and host.
+        The interface takes strings and paths chosen by the guest and stores them where host-side software will act on them. That is guest-controlled input crossing into the trust domain that is supposed to contain the guest, and it is handled by the VMX process, which serves every virtual machine on the ESXi host. A parsing defect reached this way is not a bug in one tenant's machine; it is a bug in the wall between tenants.
 
-        **Risk mitigation**
+        The intended behavior is already enough of a problem. An attacker inside a guest registers an entry that looks routine and points somewhere of their choosing, waiting for something on the other side to launch it.
 
-        - **Blocked invocation:** Guest VMs cannot invoke host-side launch menus or UI-driven actions.
-        - **Stronger boundary:** The guest operates in isolation, removing an attack vector that relies on VMware Tools integration.
+        On ESXi there is no host desktop for the menu to appear on, so the capability delivers nothing and the setting costs nothing. Setting it explicitly is what makes the state auditable, rather than leaving it to depend on which build of VMware Tools the guest happens to be running.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -871,19 +864,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the Guest Host Interaction Protocol Handler feature is disabled for each virtual machine through the `isolation.tools.ghi.protocolhandler.info.disable` parameter. The feature lets a guest interact with URI-based protocol handlers on the host, and disabling it keeps the guest from triggering or registering them.
+      desc: |
+        This check verifies that a guest cannot register or query host-side URI protocol handlers.
+
+        Guest and host interaction includes a facility for exchanging information about protocol handlers, the registrations that decide which application opens a given URI scheme. Setting `isolation.tools.ghi.protocolhandler.info.disable` to `TRUE` closes that facility off. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. The check fails when the parameter is absent as well as when it is set to another value.
 
         **Why this matters**
 
-        - **Host-side actions:** The guest can initiate host operations through registered protocol handlers such as vmware URIs.
-        - **Control bypass:** Attackers can misuse the channel to run host-side behaviors that bypass intended access controls.
-        - **Escalation vector:** Host-level integration abuse can lead to code execution, information disclosure, or privilege escalation.
+        Protocol handler registration is a well-worn technique for turning a click into code execution, because it decides which binary receives a URI and with what arguments. An interface that lets a guest influence those registrations on the other side of the virtualization boundary hands that technique to whoever controls the guest, and control of a guest is a far lower bar than control of the host.
 
-        **Risk mitigation**
+        Even the read direction is useful to an attacker. Enumerating which handlers exist on the host side tells them what software is installed there, which is the reconnaissance step that precedes choosing an exploit.
 
-        - **Channel removal:** Guest VMs cannot trigger or register host-level protocol handlers.
-        - **Separation:** Guest behavior stays isolated from host system functions, closing a lateral-movement path.
+        The handler runs inside the VMX process on the ESXi host, alongside the memory of every other guest that host is running, so the blast radius of a defect here is the whole host rather than one workload. Server virtual machines have no use for the capability, which makes disabling it a cheap reduction of reachable host-side code.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -980,19 +972,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the Guest Host Interaction Tray Icon feature is disabled for each virtual machine through the `isolation.tools.ghi.trayicon.disable` parameter. The tray icon surfaces host-integration shortcuts inside the guest, and disabling it limits guest-side visibility into host functionality.
+      desc: |
+        This check verifies that the guest and host interaction tray icon is disabled on each virtual machine.
+
+        The tray icon is the VMware Tools indicator that appears inside a guest desktop session and offers shortcuts into host integration features. Setting `isolation.tools.ghi.trayicon.disable` to `TRUE` removes it. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. The check fails when the parameter is absent, because the icon is present unless something suppresses it.
 
         **Why this matters**
 
-        - **User-driven actions:** The icon lets guest users initiate actions that interface with the host.
-        - **Capability exposure:** It reveals virtualization tooling and host integration features to anyone inside the guest.
-        - **Isolation erosion:** Surfacing host shortcuts undermines the separation between guest and host.
+        The icon is a discovery aid for anyone sitting in the guest, including an attacker who has just landed there. It tells them the machine is virtualized, which product and roughly which version is running underneath, and which integration features the administrator left enabled. That is the information that decides whether they attempt a hypervisor escape at all and, if so, which one.
 
-        **Risk mitigation**
+        It also puts host integration actions one click away for any interactive user of the guest, including users whose accounts were never meant to influence anything outside their own session.
 
-        - **Reduced visibility:** Removing the guest-facing indicator limits end-user interaction vectors with the host.
-        - **Clean separation:** Host management stays independent of the guest user experience.
+        Server workloads have no interactive desktop for the icon to appear in, so removing it costs nothing and is worth doing in the template rather than machine by machine. Treat it as a housekeeping layer rather than a boundary: the features it exposes should also be disabled individually by the companion checks in this policy, since suppressing the shortcut does not disable what it points at.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1089,19 +1080,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that hardware-based 3D acceleration is disabled for each virtual machine through the `mks.enable3d` parameter. The feature lets a VM use physical GPU resources, and disabling it where 3D graphics are not required removes avoidable virtual-hardware exposure.
+      desc: |
+        This check verifies that hardware-based 3D acceleration is disabled on each virtual machine.
+
+        The `mks.enable3d` parameter controls whether a guest's virtual graphics device is backed by physical GPU capability on the host rather than by software rendering alone. This check requires it to be `FALSE`. Set it under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or write it with `New-AdvancedSetting` from PowerCLI. An absent parameter is a failing result, since the value has to be present for the state to be deliberate and auditable.
 
         **Why this matters**
 
-        - **GPU vulnerabilities:** Passthrough and shared-GPU features have historically been prone to escape and denial-of-service conditions.
-        - **Configuration complexity:** Enabling 3D hardware expands the virtual hardware surface that can be misconfigured or exploited.
-        - **Tenant interference:** Workloads sharing GPU resources may see performance interference or information leakage across boundaries.
+        Graphics acceleration means guest-supplied command streams and shader programs are processed by host-side rendering code and, ultimately, by a GPU driver. That is a large, performance-tuned, complex parser sitting directly on the boundary between a virtual machine and the hypervisor, and it has a long track record of memory safety defects. An attacker with code in a guest submits malformed graphics work and gets execution outside the guest, which on a shared host means access to the other tenants' memory and disks.
 
-        **Risk mitigation**
+        Where a GPU is shared between machines, there is also the question of whether one workload's frame data is fully cleared before another workload uses the same resources.
 
-        - **Driver exposure removed:** The VM is not exposed to graphics driver or passthrough vulnerabilities it does not need.
-        - **Predictable isolation:** Workloads without 3D requirements get consistent performance and a smaller attack surface.
+        Virtual desktops, visualization, and GPU compute genuinely need acceleration. The right pattern is to concentrate those workloads on hosts built for them, keep general-purpose server virtual machines rendering in software, and record the exemption for the machines that need the hardware rather than enabling it broadly by default.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1197,19 +1187,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the Host Guest File System (HGFS) Server is disabled for each virtual machine through the `isolation.tools.hgfsServerSet.disable` parameter. HGFS provides shared folders between the guest and the host, and disabling it removes a direct file-sharing path that bypasses normal access controls.
+      desc: |
+        This check verifies that the Host Guest File System server is not registered for any virtual machine.
+
+        The Host Guest File System, or HGFS, is the transport that shared folders and several file transfer APIs use to move files between a guest and the host. Setting `isolation.tools.hgfsServerSet.disable` to `TRUE` stops the guest from registering its HGFS server with the host. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. An absent parameter fails the check.
 
         **Why this matters**
 
-        - **Control bypass:** HGFS opens a direct path between the guest and the host file system without traditional access checks.
-        - **Host file access:** A compromised guest could use HGFS to read or modify host files and shared data.
-        - **Weak auditability:** File access through HGFS is often not logged, leaving activity unmonitored.
+        HGFS is a file server whose protocol is spoken across the virtualization boundary, and it has been implicated in guest to host escapes precisely because a file server parses a great deal of attacker-shaped input. An attacker with code in a guest speaks it at the host side, and a defect there yields execution in the VMX process, which holds the memory of every virtual machine on that ESXi host.
 
-        **Risk mitigation**
+        Where the transport works as designed, it still moves files between a guest and the host without appearing in the guest's own audit log or in the network controls that would govern any other file transfer out of that workload.
 
-        - **No shared path:** Guest VMs cannot access or share files with the host or other VMs.
-        - **Reinforced isolation:** Removing the integration feature reduces the risk of data exposure and lateral movement.
+        Disabling registration also disables the tooling that rides on this transport, including some file operations through the guest APIs and the automatic upgrade path for VMware Tools. Confirm which of those a given estate depends on and move them to a mechanism with its own authentication before applying the setting broadly.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1306,19 +1295,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that host system information is not sent to each virtual machine through the `tools.guestlib.enableHostInfo` parameter. VMware Tools can expose host details such as hostname, CPU model, and memory capacity to the guest, and disabling that sharing keeps host metadata out of the guest unless it is genuinely needed.
+      desc: |
+        This check verifies that host information is not published into each virtual machine.
+
+        The guest library in VMware Tools can report details about the ESXi host a machine is running on, including its identity, CPU model, memory capacity, and current utilization. The `tools.guestlib.enableHostInfo` parameter controls that, and this check requires it to be `FALSE`. Set it under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or write it with `New-AdvancedSetting` from PowerCLI. An absent parameter is a failing result.
 
         **Why this matters**
 
-        - **Reconnaissance:** Host metadata lets an attacker inside the guest learn about the underlying infrastructure.
-        - **Environment fingerprinting:** Exposed details help identify targets and coordinate lateral movement.
-        - **Least knowledge:** In shared environments, sharing host data violates the principle of least knowledge between tenants.
+        An attacker who lands in a low-value guest has to work out where they are before they can decide what to attack. This interface answers that for them, from inside the machine, with no scanning and nothing to detect: which host they are on, how large it is, what generation of hardware it runs, and how loaded it is. Combined across several compromised guests, that maps the cluster and identifies which hosts carry the workloads worth pursuing.
 
-        **Risk mitigation**
+        In a multi-tenant environment it is worse than reconnaissance. Host utilization figures reveal the behavior of the neighboring tenants sharing the hardware, since load that one tenant did not generate came from someone else, and that is a side channel a customer should not have.
 
-        - **Restricted metadata:** Guest VMs no longer see sensitive host details unless explicitly enabled.
-        - **Stronger separation:** Reducing hypervisor visibility from within the guest enforces a clean host-to-guest boundary.
+        The information is occasionally used by licence managers and by capacity agents inside guests. Confirm which of those an estate actually depends on and grant the exception to those machines, rather than leaving host details readable from every guest by default.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1414,19 +1402,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that informational messages written from each virtual machine to its VMX configuration file are capped at 1 MB through the `tools.setInfo.sizeLimit` parameter. The VMX file holds the VM's hardware and runtime configuration, and bounding guest-generated data keeps it from growing without limit.
+      desc: |
+        This check verifies that each virtual machine caps how much information its guest may write into the VMX configuration file.
+
+        VMware Tools lets a guest publish name and value pairs back to the hypervisor, and those values land in the virtual machine's VMX configuration file on the datastore. The `tools.setInfo.sizeLimit` parameter bounds how much data the guest can push through that channel. Set it in the vSphere Client under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION with a value of `1048576`, which is 1 MB, or write the same value with `New-AdvancedSetting` in PowerCLI.
 
         **Why this matters**
 
-        - **Datastore exhaustion:** Unbounded VMX growth can fill shared datastores, degrading service or preventing VMs from powering on.
-        - **Configuration integrity:** An oversized or overused VMX file risks corruption and loss of critical configuration state.
-        - **Operational bloat:** Excessive VMX content inflates backups and snapshots, raising time and storage cost.
+        Without the limit, code inside one guest decides how large a host-side file becomes. An attacker who has any execution inside a low-value virtual machine loops on the guest info channel and writes until the shared datastore is full. Every other virtual machine backed by that datastore then fails to power on, cannot grow a thin-provisioned disk, and stalls on its next write. One tenant has taken down the neighbors it was supposed to be isolated from without ever leaving its own guest.
 
-        **Risk mitigation**
+        A VMX file inflated this way is also fragile. It holds the hardware layout and runtime state the hypervisor needs to start the machine, so truncation or corruption costs the virtual machine its configuration, and the bloated file is then copied into every backup and snapshot taken of it.
 
-        - **Bounded growth:** A fixed size limit caps guest-generated data written to the configuration file.
-        - **Denial-of-service prevention:** Capping the file avoids storage-exhaustion conditions that would affect other VMs.
+        The 1 MB cap is generous for legitimate use, since normal VMware Tools reporting stays far below it. Raise it only for a workload with a documented need to publish more, and record that decision alongside the exception.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1522,19 +1509,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the memSchedFakeSampleStats feature is disabled for each virtual machine through the `isolation.tools.memSchedFakeSampleStats.disable` parameter. The setting is an internal debugging aid that fabricates memory scheduler statistics, and disabling it ensures the guest sees only real memory telemetry.
+      desc: |
+        This check verifies that the memory scheduler is not reporting fabricated sampling statistics to a virtual machine.
+
+        The `isolation.tools.memSchedFakeSampleStats.disable` parameter, set to `TRUE`, stops the VMX process from feeding synthetic memory scheduler sample data through the VMware Tools interface. The mechanism exists for testing and debugging the balloon driver and the sampling that estimates a guest's working set. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. The check fails when the parameter is absent as well as when it holds another value.
 
         **Why this matters**
 
-        - **Skewed data:** Fabricated statistics misrepresent memory behavior and hide real resource bottlenecks.
-        - **Bad decisions:** Capacity planning, troubleshooting, and automated policy tools act on false telemetry.
-        - **Reporting discrepancies:** Memory-based alerting or chargeback models report incorrect usage.
+        Memory sampling drives real decisions. It tells the hypervisor how much of a virtual machine's assigned memory is genuinely in use, which in turn drives ballooning, swapping, and the admission decisions a cluster makes when it places workloads. Feeding that machinery fabricated numbers makes the host act on a picture of memory pressure that does not exist, and the resulting swap activity lands on virtual machines that were behaving correctly.
 
-        **Risk mitigation**
+        Fabricated telemetry is also a way to hide. Memory growth is one of the observable signals of a runaway or malicious process inside a guest, and an interface that lets the reported figures diverge from reality removes that signal from the monitoring and capacity systems that consume it.
 
-        - **Accurate telemetry:** Memory scheduler statistics reflect actual VM usage and contention.
-        - **Trustworthy monitoring:** Disabling a debugging feature keeps observability and automation systems reliable.
+        Nothing in production needs a debugging aid enabled. Set the parameter in the templates that new virtual machines are cloned from so that the state is inherited rather than remediated on each machine after the fact.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1625,19 +1611,18 @@ queries:
           )
         )
     docs:
-      desc: |-
-        This check ensures that no virtual machine disk is configured in independent nonpersistent mode. In nonpersistent mode all disk changes are discarded when the VM powers off or reboots, so it should be reserved for disposable workloads and avoided where data must persist.
+      desc: |
+        This check verifies that no virtual machine has a disk running in independent nonpersistent mode.
+
+        A disk in that mode discards every write when the machine powers off, returning to the state it had at power on. The mode is read from Disk Mode on each hard disk in Edit Settings, and PowerCLI reports the same thing as a persistence of IndependentNonPersistent through `Get-HardDisk`. Changing it requires the machine to be powered off, after which `Set-HardDisk` moves the disk to persistent mode.
 
         **Why this matters**
 
-        - **Data loss:** Configuration changes, logs, and user data written during runtime are discarded on shutdown.
-        - **Inconsistent recovery:** Backup and recovery processes can miss critical data when the disk resets each reboot.
-        - **Lost audit trails:** Regulated systems that must retain logs and persistent state cannot do so on a nonpersistent disk.
+        A nonpersistent disk destroys evidence on a schedule the attacker controls. Everything an intrusion leaves behind on that machine, the authentication records, the shell history, the dropped tooling, the log lines the endpoint agent wrote, is gone the moment the machine restarts, and restarting a virtual machine is not a privileged act. An investigator arriving afterward finds a clean system and no way to establish what happened, and any indicator of compromise that existed only on that disk is unrecoverable.
 
-        **Risk mitigation**
+        The same behavior loses ordinary operational state. Configuration changes made after provisioning, application data, and rotated credentials all revert, which produces failures that are hard to attribute because the machine looks correct immediately after each reboot.
 
-        - **Durable state:** Persistent or snapshot-compatible disk modes keep runtime data across restarts.
-        - **Recoverable systems:** Consistent disk state aligns virtual machines with disaster recovery and retention requirements.
+        Nonpersistent mode has legitimate uses in kiosks, lab images, and deliberately disposable workloads. Where it is intentional, make sure the logs from those machines are shipped off the host to a central collector as they are produced, so that the record survives even though the disk does not.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1709,19 +1694,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that each virtual machine permits only one remote console connection at a time through the `RemoteDisplay.maxConnections` parameter. The remote console grants display, keyboard, and mouse access to a VM, and limiting it to a single session keeps administrative access controlled.
+      desc: |
+        This check verifies that each virtual machine accepts only one remote console session at a time.
+
+        The VM remote console delivers display, keyboard, and mouse access to a guest as though the operator were standing at its screen, ahead of anything the guest itself enforces. The `RemoteDisplay.maxConnections` parameter sets how many console sessions the VMX process will serve at once. Add it with a value of `1` in the vSphere Client under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION, or set it with `New-AdvancedSetting` from PowerCLI.
 
         **Why this matters**
 
-        - **Session conflicts:** Concurrent users can interfere with each other's actions and cause configuration errors.
-        - **Unmonitored observation:** Extra sessions let unauthorized users watch or control the VM console.
-        - **Weak attribution:** Concurrent sessions blur audit trails and make it hard to tie changes to a user.
+        When more than one session is permitted, an attacker who holds console permission on a virtual machine can attach silently to a console an administrator is already using. They watch the administrator type a domain password into the guest, then keep the session open after the administrator disconnects. The guest sees no second login because there is no second login; both sessions drive the same virtual keyboard and see the same framebuffer.
 
-        **Risk mitigation**
+        The same property makes concurrent access an operational hazard. A second operator moving the mouse or sending keystrokes during a maintenance window corrupts what the first one is doing, and the resulting audit trail ties the activity to a virtual machine rather than to a person.
 
-        - **Exclusive access:** Only one administrator can interact with the console at a time.
-        - **Clear auditing:** Single-session access keeps console activity attributable to a named user.
+        Capping the console at one connection turns attaching into a visible act, because the second session is refused while the first is live. Pair the limit with tight console permissions in vCenter, since it governs how many people can watch at once and not who is entitled to connect in the first place.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1801,19 +1785,18 @@ queries:
     mql: |
       vsphere.datacenters.all( vms.all( advancedSettings.none( key.contains('pciPassthru') ) ) )
     docs:
-      desc: |-
-        This check ensures that no virtual machine has PCI or PCIe device pass-through configured, verified by the absence of any `pciPassthru` advanced parameter. Pass-through lets a VM access physical PCI hardware directly by bypassing the hypervisor, and it should be reserved for trusted workloads with a documented need.
+      desc: |
+        This check verifies that no virtual machine has PCI or PCIe device pass-through configured.
+
+        Pass-through assigns a physical PCI device to a single guest, and that guest then drives the hardware directly with the hypervisor out of the data path. vSphere records the assignment as advanced parameters whose names begin with `pciPassthru`, alongside a PCI device entry on the Virtual Hardware tab of Edit Settings. The check reads the advanced parameters of every virtual machine and fails when any such key is defined. Clearing it means removing both the parameters and the PCI device entries in the vSphere Client.
 
         **Why this matters**
 
-        - **Control bypass:** Pass-through devices skip hypervisor scheduling, isolation, and introspection.
-        - **Hardware-level attacks:** A compromised VM can interact directly with hardware, raising the risk of host compromise or denial-of-service.
-        - **Lost portability:** Direct hardware assignment blocks live migration, high availability, and backup.
+        A pass-through device is DMA-capable hardware handed to guest code. An attacker who reaches kernel execution inside that guest programs the device to read and write host physical memory outside the ranges the virtual machine owns, which is the classic route out of a guest and into the hypervisor. From the hypervisor, every other guest on the host is readable, and the isolation the other tenants depend on was never enforced along that path.
 
-        **Risk mitigation**
+        Pass-through also strands the workload. The virtual machine cannot be live-migrated, cannot be restarted by high availability, and cannot be snapshotted in the usual way, so it accumulates uptime and misses the maintenance windows that would have patched it.
 
-        - **Hypervisor oversight:** I/O operations stay visible to and controlled by the hypervisor.
-        - **Preserved isolation:** Guest VMs cannot reach physical hardware directly, protecting host integrity.
+        Some workloads genuinely need direct hardware, GPU compute and certain appliances among them. Keep those on dedicated hosts with an IOMMU enforcing device isolation, treat the guest as though it sat on the host trust boundary, and record the exemption rather than leaving pass-through scattered across general-purpose clusters.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1896,19 +1879,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the Request Disk Topology feature is disabled for each virtual machine through the `isolation.tools.dispTopoRequest.disable` parameter. The feature lets a guest query the physical layout of its backing storage, and disabling it keeps host storage details hidden from the guest.
+      desc: |
+        This check verifies that a guest cannot request the display and disk topology information the host holds about it.
+
+        The topology request handler reports layout details of the backing devices back into the guest through VMware Tools. Setting `isolation.tools.dispTopoRequest.disable` to `TRUE` refuses those requests at the VMX process. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. The check fails when the parameter is absent, since the handler answers unless something disables it.
 
         **Why this matters**
 
-        - **Storage disclosure:** The guest can read physical sector size, alignment, and other topology details of the host storage.
-        - **Fingerprinting:** An attacker in the guest can use that data to identify the underlying infrastructure for targeted exploits.
-        - **Lost abstraction:** Exposing topology undermines the virtualization layer's role in concealing hardware from guests.
+        Virtualization works by giving a guest an abstract view of hardware it does not own. A handler that reports the real topology underneath punches a hole in that abstraction, and what comes through is reconnaissance: sector sizes, alignment, and layout characteristics that identify the storage platform the host is sitting on. An attacker who has landed in a guest uses that to work out what the datacenter is built from before choosing what to attack next, and they get it without sending a single packet.
 
-        **Risk mitigation**
+        The handler is also code in the VMX process operating on guest-supplied requests, and the VMX process serves every virtual machine on the ESXi host. Removing handlers no workload uses is the cheapest way to shrink that surface.
 
-        - **Hidden layout:** Guest VMs cannot read detailed physical storage characteristics.
-        - **Reduced reconnaissance:** Maintaining the abstraction boundary limits what a compromised guest can learn about the host.
+        Very little inside a guest has a reason to ask. Where a storage or backup agent turns out to depend on the information, verify that dependency against the vendor rather than leaving the handler enabled across the whole estate to satisfy one product.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -2005,19 +1987,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the Shell Action feature is disabled for each virtual machine through the `isolation.ghi.host.shellAction.disable` parameter. The feature lets a guest initiate shell commands or scripts on the host, and disabling it removes a direct control path from the guest to the hypervisor.
+      desc: |
+        This check verifies that a guest cannot invoke shell actions on the host.
+
+        The shell action handler is part of guest and host interaction and lets a guest ask the host side to open or run something. Setting `isolation.ghi.host.shellAction.disable` to `TRUE` refuses the request at the VMX process. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. The check fails when the parameter is absent as well as when it is set to another value.
 
         **Why this matters**
 
-        - **Least privilege violation:** Shell Action lets a VM influence host behavior it should never reach.
-        - **Host compromise:** A compromised guest could run arbitrary commands on the host and take over the system.
-        - **Isolation breakdown:** Guest-to-host command execution undermines hypervisor hardening and expands the attack surface.
+        This is the most direct guest-to-host request in the whole interaction interface, because its stated purpose is to make the other side execute something. Anything short of a complete refusal is a channel by which code inside a virtual machine influences code outside it, and the hypervisor is the one component whose compromise costs every guest at once, not just the one that was breached.
 
-        **Risk mitigation**
+        The asymmetry is what makes it worth the highest impact rating in this family. An attacker only needs to reach an unprivileged user in the least important virtual machine on the host. If that guest can ask the host to run something, the reward for the cheapest possible foothold is the platform underneath every workload on that hardware, along with their disks and their memory.
 
-        - **No host commands:** Guest VMs cannot initiate shell commands on the hypervisor.
-        - **Enforced boundary:** Removing the control path keeps virtual machines separated from the hypervisor control plane.
+        No server workload needs to launch anything outside itself. Set the parameter in the template so that every cloned machine starts with the handler closed, and treat any request to re-enable it as a request to make the guest part of the management plane.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -2114,19 +2095,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that each virtual machine retains 10 log files through the `log.keepOld` parameter. Setting a defined retention count balances diagnostic history against storage use, so logs stay useful without filling the datastore.
+      desc: |
+        This check verifies that each virtual machine keeps a defined number of rotated log files.
+
+        The `log.keepOld` parameter sets how many rotated copies of a machine's log are retained on the datastore alongside it, and this check requires a value of `10`. Set it under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or write it with `New-AdvancedSetting` from PowerCLI. An absent parameter fails the check, because the retention then depends on the platform default rather than on a decision anyone made.
 
         **Why this matters**
 
-        - **Forensic visibility:** Retaining 10 rotated logs preserves enough history for root cause analysis and incident response.
-        - **Storage control:** A fixed retention count keeps log files from accumulating without bound across many VMs.
-        - **Operational performance:** Bounded log data avoids slowing backup, snapshot, and replication operations.
+        The virtual machine log is the record of what the hypervisor did with the machine: power operations, device changes, reconfigurations, migrations, and the guest interaction the other checks in this policy govern. It is written by the host, which means it survives a guest an attacker has fully compromised and cleaned up inside.
 
-        **Risk mitigation**
+        Retention decides whether that record still exists when it is needed. Too few files, and a burst of routine events rotates the interesting period away before anyone notices there was an incident, which is a result an attacker can produce on purpose by generating noise. Too many, and the files accumulate across thousands of machines on shared datastores.
 
-        - **Bounded retention:** A defined log count prevents both storage exhaustion and premature loss of diagnostic data.
-        - **Reliable auditing:** The right amount of historical log data stays available for troubleshooting and audits.
+        Ten rotated files is the balance this baseline settles on, alongside the companion check that bounds the size of each one. Do not meet this control by turning logging off. That removes the record entirely and leaves both incident response and vendor support with nothing to work from.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -2221,19 +2201,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the Trash Folder State feature is disabled for each virtual machine through the `isolation.tools.trashFolderState.disable` parameter. The feature keeps deleted files in a recycle-like state, and disabling it ensures deletions are final and immediate.
+      desc: |
+        This check verifies that the guest cannot exchange trash folder state with the host.
+
+        The trash folder state handler is part of the desktop integration in VMware Tools, reporting the state of the guest's recycle bin or trash so that a host-side desktop can reflect it. Setting `isolation.tools.trashFolderState.disable` to `TRUE` stops the guest from participating. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. The check fails when the parameter is absent, since the handler is reachable unless something disables it.
 
         **Why this matters**
 
-        - **Residual data:** Deleted files kept in a trash state remain recoverable beyond their intended lifecycle.
-        - **Storage sprawl:** Retained deleted files consume datastore space, especially in high-churn workloads.
-        - **Disposal policy:** Retaining deleted data conflicts with secure data sanitization requirements.
+        The value of this control is not the trash folder; it is that the handler is one more entry point into the VMX process that a guest can reach. Every enabled handler is host-side code parsing structures a compromised guest chooses, and the VMX process is where the memory of that host's virtual machines lives. The set of enabled handlers is the guest-to-hypervisor attack surface, so the ones no workload calls should be closed.
 
-        **Risk mitigation**
+        Where it does work as designed, it leaks a small amount of guest activity outward, describing what a user inside the machine deleted and when to software running outside the machine's own boundary.
 
-        - **Final deletion:** File deletions from the guest are immediate, minimizing recoverable residual data.
-        - **Efficient storage:** Removing deleted files promptly keeps datastore usage predictable.
+        Server workloads have no host desktop to synchronize with, so nothing is lost by disabling it. Apply this alongside the other desktop integration parameters in this policy rather than individually, since they are useful as a set and an estate that disabled only some of them still exposes the rest.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -2330,19 +2309,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that each virtual machine uses EFI firmware with UEFI Secure Boot enabled. Secure Boot validates the cryptographic signature of the guest bootloader, kernel, and drivers at every start, so code that is unsigned or signed by an untrusted authority is blocked from running.
+      desc: |
+        This check verifies that each virtual machine boots with EFI firmware and UEFI Secure Boot enabled.
+
+        Secure Boot has the virtual firmware validate the signature of the bootloader, and the bootloader in turn validate the kernel and its drivers, so unsigned code and code signed by an untrusted authority is refused before it runs. Both conditions are read from the virtual machine's boot options in the vSphere Client under Edit Settings, VM Options, Boot Options, where Firmware must be set to EFI and the Secure Boot checkbox must be selected.
 
         **Why this matters**
 
-        - **Bootkit defense:** Secure Boot stops bootkits and rootkits that try to load before the guest operating system.
-        - **Verified code:** Only signed bootloader, kernel, and driver code is allowed to execute.
-        - **Firmware baseline:** Secure Boot requires EFI firmware, replacing legacy BIOS boot paths that lack signature checks.
+        An attacker who reaches administrative privilege inside a guest wants to survive the rebuild. The durable way to do that is to modify what loads before the operating system does, because code at that layer runs ahead of the endpoint agent, ahead of the integrity checks, and ahead of anything an investigator will inspect from within the running system. A bootkit installed that way stays through reboots, through patching, and through most incident response.
 
-        **Risk mitigation**
+        Secure Boot removes that option by refusing to execute the modified component at all. The machine fails to start rather than starting compromised, which is a far better outcome than the alternative and a far more visible one.
 
-        - **Trusted startup:** Each VM boots only verified code, keeping the early boot chain trustworthy.
-        - **Tamper resistance:** Unsigned modifications to the guest boot path are rejected before they can run.
+        Converting an existing virtual machine from BIOS to EFI firmware can leave the installed guest operating system unbootable, so this belongs in the build process for new machines rather than as a bulk change to running ones. Enable it in templates, and stage conversions of existing workloads with a tested rollback.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -2428,19 +2406,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that unauthorized device connections are blocked for each virtual machine through the `isolation.device.connectable.disable` parameter. The setting prevents a guest from dynamically connecting devices such as USB drives or CD/DVD images, removing a path for data leakage or malware introduction.
+      desc: |
+        This check verifies that a guest operating system cannot connect virtual devices to itself.
+
+        By default a user inside a guest can use VMware Tools to attach devices the virtual machine's hardware list already defines, such as a CD/DVD drive backed by a datastore ISO or a network adapter an administrator deliberately left disconnected. Setting `isolation.device.connectable.disable` to `TRUE` removes that ability and leaves device connection to whoever holds the corresponding vCenter privilege. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI.
 
         **Why this matters**
 
-        - **Removable media:** Connected media can carry malicious payloads or be used to exfiltrate sensitive data.
-        - **Passthrough exposure:** Device passthrough opens direct communication with the host or external hardware, bypassing controls.
-        - **Least privilege:** Uncontrolled device connection lets a guest reach hardware it has no need for.
+        Guest privilege and vCenter privilege are meant to be separate, and this parameter is what keeps them that way for virtual hardware. Someone who has compromised a low-value guest should not be able to change that guest's hardware, but without the setting they can. They reconnect the network adapter an administrator disconnected to keep the machine off the production segment, and the workload they now control is on that segment. Or they connect the CD/DVD drive to an ISO sitting on the shared datastore and read its contents from inside the guest.
 
-        **Risk mitigation**
+        The absent parameter is as much a failure as an explicit false, because the platform permits the connection when nothing says otherwise. The check treats a missing key that way for exactly that reason.
 
-        - **Restricted attachment:** Devices cannot be connected dynamically unless explicitly authorized for the workload.
-        - **Protected hypervisor:** Blocking passthrough connections keeps a guest from interfacing with host hardware.
+        Where an application really does require an operator inside the guest to attach media, drive the attachment through vCenter instead, so that the action is authorized and logged in the same place as the rest of the virtual machine's lifecycle.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -2524,19 +2501,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that unauthorized modification and disconnection of virtual devices is blocked for each virtual machine through the `isolation.device.edit.disable` parameter. The setting prevents a guest from editing or disconnecting attached hardware such as network adapters and disks, protecting the VM from disruption or tampering.
+      desc: |
+        This check verifies that a guest operating system cannot edit or disconnect its own virtual devices.
+
+        VMware Tools exposes controls that let a user inside the guest change how attached hardware is configured and disconnect it outright, including network adapters, disks, and removable media. Setting `isolation.device.edit.disable` to `TRUE` blocks those requests at the VMX process, so virtual hardware changes have to come from vCenter. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI.
 
         **Why this matters**
 
-        - **Service disruption:** Disconnecting critical hardware like network adapters or system disks can take a VM offline.
-        - **Control bypass:** Altering device configuration can reroute traffic, disable logging, or evade security controls.
-        - **Configuration drift:** Improper modifications leave VMs inconsistent with security baselines and templates.
+        The first thing an attacker wants after landing in a guest is to stop being watched. If the guest can disconnect its own network adapter, they drop the interface that carries endpoint agent and log traffic to the collector, finish their work unobserved, and reconnect it afterward. Nothing in the guest logs the change, because the change happened below the guest operating system.
 
-        **Risk mitigation**
+        The same control is an availability lever. Detaching the adapter or the disk of a virtual machine takes that service offline, and doing it from inside a guest an attacker already owns is far quieter than doing it from vCenter, where the action would be attributed to an account.
 
-        - **Stable hardware:** Only authorized changes to virtual hardware are possible, keeping the VM running as intended.
-        - **Preserved integrity:** Locking device configuration keeps VMs aligned with their secure baseline.
+        Locking device edits does not stop a legitimate hardware change; it moves the change to vCenter, where the privilege model and the task log already apply. Pair this with the companion check in this policy that blocks guest-initiated device connection, since editing and connecting are separately gated.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -2620,19 +2596,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the Unity Active feature is disabled for each virtual machine through the `isolation.tools.unityActive.disable` parameter. Unity mode lets guest applications appear on the host desktop, and disabling it preserves a clear boundary between guest and host.
+      desc: |
+        This check verifies that Unity active state reporting is disabled on each virtual machine.
+
+        Unity is the VMware Tools mode that presents individual guest application windows on a host desktop instead of inside a single console window. The active-state handler is the part that tracks whether Unity is currently in use. Setting `isolation.tools.unityActive.disable` to `TRUE` disables it. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. The check fails when the parameter is absent.
 
         **Why this matters**
 
-        - **Blurred boundary:** Unity integration merges guest and host, making separation of duties harder to enforce.
-        - **UI manipulation:** A compromised guest could interact with or manipulate host UI components.
-        - **Data leakage:** Shared windows and input handling create a path for data to cross between guest and host.
+        Unity is a whole subsystem for shuttling window geometry, contents, and input events across the boundary between a guest and the software running it, which makes it one of the larger pieces of host-side code a guest can drive. Handlers in that subsystem take structures the guest fills in, and they run in the VMX process, which holds the memory of every virtual machine on the ESXi host. An attacker with code in one guest is reaching for exactly this kind of interface when they try to break out of it.
 
-        **Risk mitigation**
+        Server workloads never enter Unity, so the handler answers nothing useful and only widens what a compromised guest can call.
 
-        - **Host-guest separation:** Disabling Unity reduces the risk of UI-based or interaction-driven exploits.
-        - **Secure boundary:** Guest applications cannot present themselves on the host desktop.
+        This is one of several Unity parameters, and disabling one does not disable the others. Apply the full set together, ideally in the templates new machines are cloned from, so a machine is not left with most of the subsystem closed and one handler still open.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -2729,19 +2704,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the Unity Interlock feature is disabled for each virtual machine through the `isolation.tools.unityInterlockOperation.disable` parameter. Unity Interlock supports deep UI integration between guest applications and the host desktop, and disabling it strengthens guest-host isolation.
+      desc: |
+        This check verifies that Unity interlock operations are disabled on each virtual machine.
+
+        The interlock is the part of Unity that coordinates window operations between the guest and the software presenting them, sequencing the requests that move, raise, and resize application windows across the boundary. Setting `isolation.tools.unityInterlockOperation.disable` to `TRUE` turns those operations off. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. An absent parameter is a failing result.
 
         **Why this matters**
 
-        - **UI integration:** Unity Interlock allows guest windows to operate as if they were native host applications, weakening boundaries.
-        - **Host resource exposure:** On a shared or sensitive host, the feature can expose host resources to untrusted guests.
-        - **Input capture:** Guest applications may interfere with host UI elements or capture user input.
+        Coordination protocols are stateful, and stateful host-side code driven by guest-supplied sequences is a productive place to look for memory corruption. That is the concern here: not what the interlock does when used correctly, but that it is reachable at all from inside a guest, and that the process implementing it serves every virtual machine on the host. An attacker who breaks it does not gain a better position in the guest they already own; they gain the hypervisor and, through it, the other tenants.
 
-        **Risk mitigation**
+        Where the feature works as intended, it lets a guest influence window behavior in the environment presenting it, blurring which side of the boundary an interaction belongs to.
 
-        - **No UI integration:** Guest VMs cannot initiate UI-level integration with the host desktop.
-        - **Reduced surface:** Disabling an unneeded desktop feature shrinks the guest-host attack surface.
+        There is no host desktop on ESXi for these operations to coordinate with, so disabling them removes reachable code without removing capability. Do it together with the other Unity parameters in this policy and record it in the template, since the subsystem is only meaningfully closed when all of its entry points are.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -2838,19 +2812,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the Unity feature is fully disabled for each virtual machine through the `isolation.tools.unity.disable` parameter. Unity mode lets guest applications appear as native windows on the host desktop, and disabling it enforces a clean separation between guest and host.
+      desc: |
+        This check verifies that Unity mode is disabled outright on each virtual machine.
+
+        Where the other Unity parameters in this policy each close one piece of the subsystem, `isolation.tools.unity.disable` set to `TRUE` refuses the mode itself, so a guest cannot enter it at all. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. The check fails when the parameter is absent, because a guest with VMware Tools installed can request the mode unless something refuses it.
 
         **Why this matters**
 
-        - **Shared interface layer:** Unity creates an interface bridge between guest and host that violates workload isolation.
-        - **Host UI exposure:** Combined with shared clipboard or drag-and-drop, Unity can expose host UI components or input to the guest.
-        - **Leakage risk:** Guest-host UI integration raises the chance of data leakage and unauthorized access.
+        Unity exists to erase the visible boundary between a guest and the machine running it, presenting applications from inside the virtual machine as though they were local. That is a useful property on a laptop and a liability everywhere else, because the whole reason a workload runs in a virtual machine is that its processes are supposed to stay inside it.
 
-        **Risk mitigation**
+        The security weight, though, is the code. Entering Unity activates a broad set of host-side handlers that take window, input, and rendering data from the guest, and those handlers run in the VMX process alongside the state of every other virtual machine on the ESXi host. Refusing the mode keeps the whole set unreachable rather than closing them one at a time.
 
-        - **No desktop integration:** Guest VMs cannot present windows or applications on the host desktop.
-        - **Spoofing prevention:** Removing the integration eliminates input-redirection and UI-spoofing paths.
+        Server workloads never use it, so this is free. Set it in the template and apply the companion Unity parameters as well, so that a machine cloned from an older image is not left with the subsystem half open.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -2947,19 +2920,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the Unity Push Update feature is disabled for each virtual machine through the `isolation.tools.unity.push.update.disable` parameter. The feature lets the host push Unity-related settings to the guest, and disabling it removes an unnecessary host-to-guest channel.
+      desc: |
+        This check verifies that Unity push updates are disabled on each virtual machine.
+
+        The push update path is the direction in which the software presenting a guest sends Unity state changes into it, rather than the guest reporting outward. Setting `isolation.tools.unity.push.update.disable` to `TRUE` closes that path. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. The check fails when the parameter is absent as well as when it holds another value.
 
         **Why this matters**
 
-        - **Extra channel:** Unity Push Update opens a host-to-guest path that could be misused if the guest is compromised.
-        - **Unsolicited changes:** Pushed updates can alter guest behavior or UI unexpectedly, causing misconfiguration.
-        - **Reduced auditability:** Configuration changes arrive outside standard management workflows.
+        Most of the concern in this family runs from guest to host, because that is the direction that threatens the boundary between tenants. This handler runs the other way, and it matters for a different reason: it lets state changes arrive inside a guest from outside it, without passing through the guest's own authentication or appearing in its logs. Anything that can influence the hypervisor side therefore has a channel into the workload, which is a useful second step for an attacker who has already reached the management plane.
 
-        **Risk mitigation**
+        The inbound direction also means the guest's VMware Tools process parses data it did not ask for, so a defect there is exploitable from the host side against a guest that was otherwise well maintained.
 
-        - **No remote updates:** The host cannot transmit Unity integration settings to guest VMs.
-        - **Predictable behavior:** Blocking unsolicited updates keeps the guest configuration stable.
+        Nothing on a server workload consumes Unity updates. Disable this alongside the other Unity parameters in this policy so the subsystem is closed in both directions rather than only in the one that gets the most attention.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -3056,19 +3028,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the Unity Taskbar feature is disabled for each virtual machine through the `isolation.tools.unity.taskbar.disable` parameter. The feature surfaces guest applications in the host taskbar, and disabling it keeps guest processes out of the host interface.
+      desc: |
+        This check verifies that the Unity taskbar integration is disabled on each virtual machine.
+
+        The taskbar handler is the part of Unity that surfaces a guest's running applications in the task list of the desktop presenting it. Setting `isolation.tools.unity.taskbar.disable` to `TRUE` stops the guest from publishing that list. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. The check fails when the parameter is absent, since the guest publishes unless something stops it.
 
         **Why this matters**
 
-        - **Blurred separation:** Surfacing guest applications in the host taskbar makes guest processes visible from the host.
-        - **Metadata leakage:** Taskbar entries expose application names, icons, and activity from the guest.
-        - **Cross-boundary control:** The host taskbar may allow input or control of guest applications, breaking isolation.
+        What crosses the boundary here is an inventory of what is running inside the guest, with window titles attached. Window titles are unusually revealing: they carry document names, customer names, ticket numbers, and hostnames of systems an operator is connected to. Sending that stream outward means a workload's activity is legible from outside the workload, to anyone who can see the presenting side.
 
-        **Risk mitigation**
+        The handler is also one more piece of host-side code that a compromised guest can feed, and the process that implements it holds the memory of every other virtual machine on that ESXi host. Closing the entry points no workload uses is the point of this whole family of parameters.
 
-        - **Hidden processes:** Guest applications are not displayed in the host system taskbar.
-        - **Enforced boundary:** Guest application visibility stays within its intended scope.
+        Server virtual machines have no desktop publishing a task list, so nothing is lost. Set it with the other Unity parameters rather than on its own; a machine that disabled the mode but left individual handlers reachable has not really reduced what a guest can call.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -3165,19 +3136,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the Unity Window Contents feature is disabled for each virtual machine through the `isolation.tools.unity.windowContents.disable` parameter. The feature lets the host render the visual content of guest application windows, and disabling it keeps guest window data off the host.
+      desc: |
+        This check verifies that Unity window contents transfer is disabled on each virtual machine.
+
+        This handler is the one that actually moves pixels. In Unity mode the rendered contents of guest application windows are handed outward so they can be drawn on the presenting desktop. Setting `isolation.tools.unity.windowContents.disable` to `TRUE` stops that transfer. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. An absent parameter is a failing result.
 
         **Why this matters**
 
-        - **Visual bridge:** Rendering guest windows on the host exposes sensitive application content outside the VM.
-        - **Data leakage:** In multi-tenant environments, host-rendered windows can reveal guest activity to other parties.
-        - **Confidentiality breach:** An attacker with host access could view or capture guest application data.
+        Of everything in the Unity family, this is the handler that carries the data itself rather than metadata about it. What leaves the guest is a live image of what is on its screens, which is to say the records the application has open, the credentials being typed into a form, and the contents of any console session running inside it. That crosses the boundary continuously, with nothing in the guest recording that it happened.
 
-        **Risk mitigation**
+        The transfer path is also large, hot, host-side code driven by guest-supplied buffers, which is the shape of code that virtual machine escapes are written against. The process handling it serves every virtual machine on the ESXi host.
 
-        - **No host rendering:** Guest application visuals are not drawn on the host system.
-        - **Strict separation:** Removing the shared rendering path keeps guest window data confidential.
+        No server workload renders to a host desktop, so there is nothing to lose by disabling it. Apply it with the other Unity parameters in this policy, since blocking the contents transfer while leaving the mode reachable still exposes the rest of the subsystem to a compromised guest.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -3262,19 +3232,18 @@ queries:
       vsphere.datacenters.all( vms.all( properties['config']['hardware']['device'].where ( _['deviceInfo']['label'].contains('CD') ).all( _['connectable']['connected'] == false ) ) )
       vsphere.datacenters.all( vms.all( properties['config']['hardware']['device'].where ( _['deviceInfo']['label'].contains('CD') ).all( _['connectable']['startConnected'] == false ) ) )
     docs:
-      desc: |-
-        This check ensures that virtual CD/DVD drives on each virtual machine are disconnected and not set to connect at power on. These drives are needed during installation or provisioning but often stay attached afterward, so unused ones should be disconnected.
+      desc: |
+        This check verifies that virtual CD/DVD drives are disconnected and not set to connect when the virtual machine powers on.
+
+        A CD/DVD drive is nearly always added for installation or provisioning and then forgotten, still pointing at an ISO on a shared datastore or at a client device. On the Virtual Hardware tab of Edit Settings each drive carries a Connected checkbox and a Connect At Power On checkbox, and this check requires both to be clear on every drive. PowerCLI reports the same state through `Get-CDDrive`, and `Remove-CDDrive` removes the device entirely once the virtual machine is powered off.
 
         **Why this matters**
 
-        - **Persistent attack vector:** A connected drive linked to remote or user-controlled media stays exploitable long after its purpose.
-        - **Malicious media:** A tampered or auto-mounted ISO can be used to compromise the guest operating system.
-        - **Boot interference:** Connected bootable media can alter boot order and cause unintended boot scenarios.
+        A connected drive is a live file path from a datastore into a running guest. An attacker who can write to that datastore, or who can replace the ISO the drive points at, has a way to place content inside a virtual machine they have no login for. If the guest auto-mounts and auto-runs removable media, that content executes without anyone typing anything.
 
-        **Risk mitigation**
+        Connected bootable media is also a way to change what the machine is. A guest that reboots with an attacker-supplied ISO attached can be steered into a rescue environment where the disk is mounted without the operating system's access controls, and local credential stores are read straight off it.
 
-        - **Reduced surface:** Disconnecting unused drives removes media-based device paths into the VM.
-        - **Predictable boot:** Without attached bootable media, the VM boots from its intended, validated disk.
+        Removing unused drives is preferable to merely disconnecting them, because a disconnected drive can be reconnected later by anyone with the privilege. Keep a drive only where an application genuinely reads from optical media, and point it at a controlled ISO rather than a client device.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -3333,19 +3302,18 @@ queries:
       vsphere.datacenters.all( vms.all( properties['config']['hardware']['device'].where( _['deviceInfo']['label'].contains('Floppy') ).all( _['connectable']['connected'] == false ) ) )
       vsphere.datacenters.all( vms.all( properties['config']['hardware']['device'].where( _['deviceInfo']['label'].contains('Floppy') ).all( _['connectable']['startConnected'] == false ) ) )
     docs:
-      desc: |-
-        This check ensures that virtual floppy drives on each virtual machine are disconnected and not set to connect at power on. Floppy drives are a legacy interface rarely needed by modern workloads, so unused ones should be disconnected.
+      desc: |
+        This check verifies that virtual floppy drives are disconnected and not set to connect when the virtual machine powers on.
+
+        Floppy devices survive in virtual machine templates long after any workload needs them, usually because a driver injection step during a Windows installation required one. Each drive appears on the Virtual Hardware tab of Edit Settings with Connected and Connect At Power On checkboxes, and this check requires both to be clear. `Get-FloppyDrive` lists them from PowerCLI and `Remove-FloppyDrive` removes the device once the virtual machine is powered off.
 
         **Why this matters**
 
-        - **Malicious media:** A floppy drive linked to a remote or user-supplied image can carry outdated or malicious software.
-        - **Configuration complexity:** Unused legacy hardware complicates auditing and adds avoidable virtual hardware.
-        - **Boot interference:** Connected floppy devices can affect boot behavior when boot order is misconfigured.
+        A connected floppy device is backed by an image file on a datastore or by a device on the client, so it is a writable path from outside the guest into a machine an attacker may not otherwise be able to log into. Anyone who can replace that image controls the contents the guest sees, and legacy guest software that reads the device does so with no signature checking at all.
 
-        **Risk mitigation**
+        The device also affects boot. A machine with attached floppy media can be steered into booting from it, which puts an attacker on the console of an environment where the virtual disk is just a block device with no operating system enforcing permissions on it.
 
-        - **Reduced surface:** Disconnecting obsolete interfaces removes a legacy media-based threat vector.
-        - **Minimal configuration:** VMs carry only the hardware they need, simplifying management.
+        Practically no modern workload needs the device, so the right end state is removal rather than disconnection. Removing it also shortens the hardware inventory an operator has to reason about when reviewing a virtual machine, which makes a genuinely unusual device stand out.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -3404,19 +3372,18 @@ queries:
       vsphere.datacenters.all( vms.all( properties['config']['hardware']['device'].where ( _['deviceInfo']['label'].contains('Parallel') ).all( _['connectable']['connected'] == false ) ) )
       vsphere.datacenters.all( vms.all( properties['config']['hardware']['device'].where ( _['deviceInfo']['label'].contains('Parallel') ).all( _['connectable']['startConnected'] == false ) ) )
     docs:
-      desc: |-
-        This check ensures that parallel ports on each virtual machine are disconnected and not set to connect at power on. Parallel ports are a legacy interface rarely needed by modern workloads, so unused ones should be disconnected.
+      desc: |
+        This check verifies that virtual parallel ports are disconnected and not set to connect when the virtual machine powers on.
+
+        A virtual parallel port is backed by a file on a datastore or by a physical port on the host, and it appears on the Virtual Hardware tab of Edit Settings with Connected and Connect At Power On checkboxes. This check requires both to be clear on every port, and a virtual machine with no parallel port at all satisfies it. Removing the device takes a reconfigure call, which PowerCLI issues through the VM configuration spec while the machine is powered off.
 
         **Why this matters**
 
-        - **Unmonitored interface:** An unused parallel port exposes a device interface that malicious software or users could exploit.
-        - **Configuration complexity:** Legacy hardware in VM definitions complicates auditing and management.
-        - **Boot issues:** A misconfigured or improperly mapped parallel port can create compatibility or boot problems.
+        When the port is backed by a file, everything the guest writes to it lands in that file on shared storage, and everything placed in the file is readable from inside the guest. That is an unlogged, bidirectional path between a virtual machine and a datastore that other machines and other administrators can reach, and it exists outside the network controls that would normally govern data leaving a workload.
 
-        **Risk mitigation**
+        When the port is backed by host hardware, the guest is talking to a physical device on the hypervisor. The point of running the workload in a virtual machine was that it could not do that.
 
-        - **Reduced surface:** Disconnecting legacy device interfaces removes an unneeded attack vector.
-        - **Minimal configuration:** VMs include only the hardware required for their workload.
+        Legacy applications tied to licence dongles or industrial equipment are the realistic exception. Where one exists, keep the port on a dedicated virtual machine, back it explicitly rather than leaving the backing to whatever the template inherited, and record the exemption instead of leaving stray ports across the estate.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -3487,19 +3454,18 @@ queries:
       vsphere.datacenters.all( vms.all( properties['config']['hardware']['device'].where ( _['deviceInfo']['label'].contains('Serial') ).all( _['connectable']['connected'] == false ) ) )
       vsphere.datacenters.all( vms.all( properties['config']['hardware']['device'].where ( _['deviceInfo']['label'].contains('Serial') ).all( _['connectable']['startConnected'] == false ) ) )
     docs:
-      desc: |-
-        This check ensures that serial ports on each virtual machine are disconnected and not set to connect at power on. Serial ports are a legacy interface rarely needed by modern workloads, so unused ones should be disconnected.
+      desc: |
+        This check verifies that virtual serial ports are disconnected and not set to connect when the virtual machine powers on.
+
+        A virtual serial port can be backed by a file on a datastore, by a named pipe on the host, by a physical port, or by a network socket that reaches across the management network. It appears on the Virtual Hardware tab of Edit Settings with Connected and Connect At Power On checkboxes, and this check requires both to be clear on every port. A virtual machine with no serial port defined satisfies it.
 
         **Why this matters**
 
-        - **Exposed interfaces:** A connected serial port mapped to a file, socket, or device can expose internal or external interfaces.
-        - **Covert channels:** An attacker inside the guest could abuse a serial port to exfiltrate data or communicate covertly.
-        - **Configuration complexity:** Legacy serial hardware is easily overlooked in audits, allowing drift from secure baselines.
+        The network-backed form is the one that matters most. A serial port configured over a socket gives anything that can reach that address a raw console-grade channel into or out of the guest, with no authentication of its own and no record in vCenter of what crossed it. An attacker inside a guest uses it as a covert egress path that no firewall rule on the guest's virtual adapter will see, because the traffic never touches that adapter.
 
-        **Risk mitigation**
+        The pipe-backed and file-backed forms are quieter but similar: they let a guest exchange data with the host or with a datastore other machines can read, outside every control built for network traffic.
 
-        - **Reduced surface:** Disconnecting unused serial interfaces removes an unnecessary data path.
-        - **No rogue connections:** VMs cannot establish connections through mapped serial devices.
+        Serial ports are legitimately used for kernel debugging, appliance consoles, and some clustering products. Where one is required, back it deliberately, restrict what can reach the backing endpoint, and exempt that virtual machine rather than leaving ports connected across the estate by inheritance from a template.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -3570,19 +3536,18 @@ queries:
       vsphere.datacenters.all( vms.all( properties['config']['hardware']['device'].where ( _['deviceInfo']['label'].contains('USB') ).all( _['connectable']['connected'] == false || _['connectable']['connected'] == null ) ) )
       vsphere.datacenters.all( vms.all( properties['config']['hardware']['device'].where ( _['deviceInfo']['label'].contains('USB') ).all( _['connectable']['startConnected'] == false || _['connectable']['startConnected'] == null ) ) )
     docs:
-      desc: |-
-        This check ensures that USB devices on each virtual machine are disconnected and not set to connect at power on. USB passthrough connects a VM directly to physical USB hardware and is unnecessary for most server workloads, so unused devices should be disconnected.
+      desc: |
+        This check verifies that USB devices are disconnected and not set to connect when the virtual machine powers on.
+
+        USB pass-through attaches a physical device plugged into the ESXi host, or a device on the client running the remote console, to a guest. The devices appear on the Virtual Hardware tab of Edit Settings with Connected and Connect At Power On checkboxes, and this check requires both to be clear. `Get-UsbDevice` lists them from PowerCLI and `Remove-UsbDevice` detaches them once the virtual machine is powered off. A virtual machine with no USB devices satisfies the check.
 
         **Why this matters**
 
-        - **Malware vector:** USB devices can carry ransomware, rootkits, or keyloggers into the guest.
-        - **Data exfiltration:** A guest with USB access can move sensitive data to removable media or external systems.
-        - **Weak auditability:** USB passthrough complicates access control, especially in shared environments.
+        A connected USB device is removable storage inside a server workload. It carries data out of the guest with no proxy, no data loss inspection, and no record in vCenter of what moved, and it carries content in the same way, which is how autorun payloads and unsigned drivers reach machines that are otherwise well isolated from user endpoints.
 
-        **Risk mitigation**
+        Client-side pass-through extends that to the operator's own laptop. The device is physically nowhere near the datacenter, yet the guest treats it as locally attached, so the trust boundary now runs through whatever the operator plugged in that morning.
 
-        - **No removable media:** Guest VMs cannot reach removable storage or peripherals that could introduce vulnerabilities.
-        - **Controlled hardware:** Disconnecting unused USB devices keeps virtual hardware minimal and predictable.
+        Very few server workloads need USB. Licence dongles and hardware security modules are the usual real cases; for those, use host-side attachment on a specific host, keep the virtual machine pinned there, and note the exemption. Everything else should have the device removed rather than left attached and merely disconnected.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -3653,19 +3618,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that virtual disk shrinking is disabled for each virtual machine through the `isolation.tools.diskShrink.disable` parameter. Disk shrinking lets a guest reduce the size of a virtual disk, and disabling it protects disk integrity and availability.
+      desc: |
+        This check verifies that guest-initiated virtual disk shrinking is disabled on each virtual machine.
+
+        VMware Tools offers a shrink operation that reclaims unused space in a virtual disk, and it can be started from inside the guest. Setting `isolation.tools.diskShrink.disable` to `TRUE` refuses those requests. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. The check fails when the parameter is absent, because the operation is available unless something disables it.
 
         **Why this matters**
 
-        - **Disk corruption:** Repeated shrink operations cause fragmentation, performance degradation, and eventually corruption.
-        - **Denial-of-service:** A shrink operation can render the virtual disk unavailable and take the VM offline.
-        - **Policy bypass:** Guest users or scripts that invoke shrinking sidestep centralized storage management.
+        Shrinking is a long, heavily I/O-bound rewrite of the disk, and it is available to a user inside the guest who does not need to be an administrator. That makes it a denial-of-service primitive that requires almost no privilege: whoever holds it can saturate the datastore's I/O path from inside a single guest, and the machines sharing that datastore, which are not the attacker's machines, slow down or stall.
 
-        **Risk mitigation**
+        The disk being rewritten is also unavailable while the operation runs, so the workload that owns it goes down as well, and repeated cycles leave the file fragmented in ways that degrade it afterward.
 
-        - **Preserved availability:** Disabling guest-initiated shrinking keeps the virtual disk intact and the VM online.
-        - **Centralized control:** Storage management stays with hypervisor-level tools rather than the guest.
+        Storage reclamation is a legitimate need, but it belongs to the administrator who can see the datastore's total load rather than to a user inside one guest. Where space needs to be recovered, do it from the hypervisor side during a maintenance window; the setting only removes the guest's ability to start it unilaterally.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -3762,19 +3726,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that virtual disk wiping is disabled for each virtual machine through the `isolation.tools.diskWiper.disable` parameter. Disk wiping lets a guest zero out unused disk space, and disabling it prevents I/O-intensive operations that can disrupt availability.
+      desc: |
+        This check verifies that guest-initiated virtual disk wiping is disabled on each virtual machine.
+
+        The disk wiper in VMware Tools zeroes the unused blocks of a virtual disk so that a subsequent shrink can reclaim them, and like the shrink operation it can be started from inside the guest. Setting `isolation.tools.diskWiper.disable` to `TRUE` refuses those requests. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. An absent parameter fails the check.
 
         **Why this matters**
 
-        - **Disk unavailability:** Wiping is I/O-intensive and can make the virtual disk temporarily inaccessible.
-        - **Low-privilege trigger:** Even non-administrative users or processes can start a wipe when the feature is enabled.
-        - **Host impact:** Uncontrolled wiping can degrade host performance and disrupt other workloads.
+        A wipe writes zeroes across every free block of the disk, which is one of the most expensive things a guest can ask a datastore to do. Any user inside the guest can start it, so a single low-privilege foothold turns into sustained write amplification against shared storage. The virtual machines that suffer are the other ones on that datastore, whose latency climbs and whose own writes queue behind a workload their owners have no visibility into and no control over.
 
-        **Risk mitigation**
+        On thin-provisioned storage the effect is worse than slow. Zeroing free space can cause the backing file to inflate, consuming datastore capacity that other machines were counting on and, in the worst case, filling it.
 
-        - **No guest-initiated wipes:** Guest users and processes cannot start disk wipe operations.
-        - **Controlled sanitization:** Storage reclamation stays with authorized administrators.
+        Space reclamation is still worth doing; it belongs to an administrator working from the hypervisor side with a view of the whole datastore's load, in a window chosen for it. Apply this alongside the companion disk shrinking check, since the two operations are gated separately.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -3854,19 +3817,18 @@ queries:
     mql: |
       vsphere.datacenters.all( vms.all( encrypted == true ) )
     docs:
-      desc: |-
-        This check ensures that each virtual machine is encrypted. When a VM is encrypted, vSphere encrypts its configuration files, virtual disk files, and swap and suspend files using keys supplied by a configured key provider, protecting guest data at rest.
+      desc: |
+        This check verifies that each virtual machine is encrypted.
+
+        With VM encryption enabled, vSphere encrypts the virtual disks, the configuration files, and the swap and suspend files using a key supplied by a configured key provider, so the files that make up the machine are unreadable without the provider. It is applied through a storage policy: in the vSphere Client, with the machine powered off, use VM Policies and Edit VM Storage Policies, then select the VM Encryption Policy. A key provider, either the Native Key Provider or a registered external key server, must exist first under Configure and Key Providers.
 
         **Why this matters**
 
-        - **Data confidentiality:** Encryption keeps virtual disks and configuration unreadable if VM files are copied or stolen.
-        - **Storage protection:** Data stays protected on shared, replicated, or backed-up datastores.
-        - **vTPM foundation:** A vTPM depends on VM encryption to protect the secrets it stores.
+        A virtual machine is a set of files on shared storage, and everyone who can read that storage can read those files. That set is larger than the set of people who can log into the guest: it includes storage administrators, backup operators, anyone with access to a replica at a second site, and anyone who obtains a decommissioned array. Without encryption, copying the files is equivalent to having root on the workload, because the disk can be mounted elsewhere and read at leisure with none of the guest's access controls in the way.
 
-        **Risk mitigation**
+        Encryption moves the boundary to the key provider. Copying files gains nothing without a key the provider will only release to an authorized host.
 
-        - **Theft resistance:** Copying the datastore or backup media does not expose guest data.
-        - **Tamper resistance:** Encryption protects the VM's contents against offline modification.
+        Encrypted machines cannot run on a host that cannot reach the key provider, which constrains migration and disaster recovery, and a lost key provider means lost data. Make provider availability and key backup part of the rollout rather than an afterthought.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -3940,19 +3902,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that Virtualization-Based Security (VBS) is enabled for each virtual machine. VBS is a Windows feature that uses hardware virtualization to create an isolated, hypervisor-protected region of memory for sensitive security functions, and vSphere must expose the required virtualization extensions for the guest to use it.
+      desc: |
+        This check verifies that Virtualization-Based Security is enabled on each virtual machine.
+
+        VBS is a Windows feature that uses hardware virtualization to hold sensitive security functions in a memory region the guest kernel itself cannot reach. For a guest to use it, vSphere has to expose the required virtualization extensions, which is what the Enable checkbox next to Virtualization Based Security on the VM Options tab of Edit Settings does. The machine must be powered off, must use EFI firmware with Secure Boot, and the feature must then be turned on inside the Windows guest as well.
 
         **Why this matters**
 
-        - **Credential isolation:** VBS isolates Windows Credential Guard, protecting domain credentials from theft.
-        - **Kernel integrity:** It enables Hypervisor-Protected Code Integrity for the guest kernel.
-        - **Attack surface:** It reduces exposure to pass-the-hash and kernel-mode attacks.
+        The attack this defeats is credential theft after a compromise. An attacker who reaches administrative privilege on a Windows machine reads cached credentials and Kerberos tickets straight out of the memory of the authentication process, then replays them against every other system that trusts them. That is how a single compromised server becomes a domain, and it works because the attacker and the secrets are in the same address space.
 
-        **Risk mitigation**
+        VBS moves those secrets into an isolated region enforced by the hypervisor, so kernel-level code in the guest cannot read them. It also enforces code integrity for the guest kernel, which blocks the unsigned drivers that attackers load to reach that memory in the first place.
 
-        - **Protected secrets:** Sensitive credentials run in a memory region the guest OS itself cannot reach.
-        - **Hardened kernel:** Code integrity enforcement blocks unsigned kernel-mode malware in the guest.
+        Enabling the exposure in vSphere is only half the control, since the guest must be configured to use it. Verify Credential Guard is actually running inside Windows after the change rather than treating the vSphere checkbox as the finished state.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -4038,19 +3999,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that copy operations from the VM console are disabled for each virtual machine through the `isolation.tools.copy.disable` parameter. Console copy lets data move from the guest to the administrator's client clipboard, and disabling it removes a data-exfiltration path.
+      desc: |
+        This check verifies that copying out of the VM console is disabled on each virtual machine.
+
+        When copy and paste is enabled, the clipboard of the guest and the clipboard of the machine running the remote console are joined, so text selected inside the guest becomes available on the operator's own desktop. Setting `isolation.tools.copy.disable` to `TRUE` breaks that link in the outbound direction. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. The check fails when the parameter is absent.
 
         **Why this matters**
 
-        - **Data leakage:** Copy operations let data leave the VM through the console clipboard without logging.
-        - **Policy violation:** In regulated environments, console copy can breach data handling rules.
-        - **Insider abuse:** A malicious insider or compromised account can use copy to extract confidential data.
+        Console clipboard traffic is data leaving a workload along a route none of the controls built for that purpose can see. It does not cross the guest's virtual network adapter, so no firewall rule applies, no proxy inspects it, and no data loss tooling on the network records it. A database extract, a private key, or a block of customer records copied out of a console arrives on an operator laptop with no trace on either side.
 
-        **Risk mitigation**
+        That makes it attractive both to an insider with legitimate console access and to an attacker who has taken over an administrator's session, since it is the quietest available way to move data off a machine that is otherwise well contained.
 
-        - **Blocked exfiltration:** Clipboard copy from the guest console is disabled.
-        - **Auditable transfers:** Data movement must use approved, traceable methods such as secure file transfer.
+        The cost is real: operators lose a convenience they use constantly. Pair the change with a supported file transfer path so that moving data out of a guest remains possible through a route that authenticates and records it, and apply the companion paste check as well, since the two directions are gated separately.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -4143,19 +4103,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that drag and drop operations through the VM console are disabled for each virtual machine through the `isolation.tools.dnd.disable` parameter. Console drag and drop lets files move between the administrator's client and the guest, and disabling it removes an unmanaged file-transfer path.
+      desc: |
+        This check verifies that drag and drop through the VM console is disabled on each virtual machine.
+
+        Drag and drop moves whole files between the machine running the remote console and the guest, in both directions, without either endpoint treating it as a file transfer. Setting `isolation.tools.dnd.disable` to `TRUE` turns it off. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. An absent parameter is a failing result, since the capability is available unless something disables it.
 
         **Why this matters**
 
-        - **Unaudited transfers:** Drag and drop moves files without logging, bypassing established security controls.
-        - **Bidirectional path:** It creates a two-way data channel that can be used for malware injection or data leakage.
-        - **No monitoring:** The functionality is not tracked by default, making misuse hard to detect.
+        The inbound direction is the one that matters most. It is a way to place a file inside a virtual machine that bypasses every control an organization has built for getting software onto servers: no package repository, no signature check, no change record, no network path that a proxy or an endpoint agent would examine. An operator whose own laptop is compromised carries the payload in without knowing it, and an attacker who has taken over an operator's console session does it deliberately.
 
-        **Risk mitigation**
+        The outbound direction is bulk data exfiltration with the same absence of monitoring, and unlike the clipboard it moves entire files rather than a selection.
 
-        - **No direct transfers:** Files cannot move directly between the client and the guest console.
-        - **Auditable movement:** Data transfer must use approved, traceable mechanisms.
+        Because both directions rely on the same handler, disabling it closes both. Operators who used drag and drop to stage installers need a replacement, so provide a supported transfer path first, then apply the setting in the template so newly cloned machines inherit it.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -4248,19 +4207,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that VM Console GUI options are disabled for each virtual machine through the `isolation.tools.setGUIOptions.enable` parameter. These options expose console menu actions such as mounting media or toggling devices, and disabling them keeps console interaction tightly controlled.
+      desc: |
+        This check verifies that the guest cannot set console GUI options on each virtual machine.
+
+        The `isolation.tools.setGUIOptions.enable` parameter controls whether a guest may change options of the console interface presenting it. This is the one parameter in the family that is required to be `FALSE` rather than `TRUE`, because it names an enable rather than a disable. Set it under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or write it with `New-AdvancedSetting` from PowerCLI. The check fails when the parameter is absent as well as when it is set to anything other than false.
 
         **Why this matters**
 
-        - **Control bypass:** GUI options let users attach devices or media without authorization.
-        - **Integration exposure:** Some options surface host-guest integration points that weaken VM isolation.
-        - **Unaudited actions:** These features are rarely restricted or tracked, raising the chance of misconfiguration or abuse.
+        Console GUI options govern the behavior of the interface an administrator uses to interact with the machine, including how copy, paste, and device controls behave in that session. Letting the guest set them inverts the relationship: the workload is configuring the tool used to manage it, and the person on the other side has no indication that the machine changed what their interface will do.
 
-        **Risk mitigation**
+        An attacker who owns the guest uses that to re-enable a transfer path an administrator had disabled, or to make console interaction behave in a way that helps them, and the change persists for the next operator who connects.
 
-        - **Restricted interaction:** Console-based GUI actions are removed, keeping VM changes intentional.
-        - **Governed administration:** VM operations must go through approved tools and workflows.
+        Note the polarity when remediating, because setting this one to the value used by the neighboring parameters leaves the capability enabled rather than disabled. Verify the effective value after the change instead of assuming the pattern from the surrounding settings holds.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -4353,19 +4311,20 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that paste operations into the VM console are disabled for each virtual machine through the `isolation.tools.paste.disable` parameter. Console paste lets clipboard contents move from the administrator's client into the guest, and disabling it removes an unmanaged data-injection path.
+      desc: |
+        This check verifies that pasting into the VM console is disabled on each virtual machine.
+
+        Paste is the inbound half of the console clipboard link, carrying whatever is on the operator's own clipboard into the guest. Setting `isolation.tools.paste.disable` to `TRUE` refuses it. Add the parameter under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or set it with `New-AdvancedSetting` from PowerCLI. The check fails when the parameter is absent, and it is gated separately from the outbound copy direction.
 
         **Why this matters**
 
-        - **Injection path:** Paste lets data flow from the client into the VM without audit or access controls.
-        - **Privileged sessions:** Malicious or unintended clipboard content pasted into a privileged session can cause command execution or corruption.
-        - **Data spillage:** Sensitive data on the client could be inadvertently transferred into the guest.
+        Paste puts content that originated outside the datacenter into a privileged session inside it. The console session is usually running as root or as a domain administrator, and whatever arrives is executed the moment the operator presses return, with no package manager, no signature check, and no record of where the text came from.
 
-        **Risk mitigation**
+        That is the mechanism behind clipboard hijacking: malware on the operator's own workstation replaces what they copied with a command of its own, and the operator pastes it into a production shell without reading it closely. The organization's server hardening is irrelevant, because the command was typed by an authorized administrator.
 
-        - **Blocked injection:** Clipboard paste into the guest console is disabled.
-        - **Controlled entry:** Configuration and data entry must use secure, deliberate methods.
+        It also brings data the wrong way, letting content from a lower trust environment land inside a regulated workload with no record of the transfer.
+
+        Operators rely on paste heavily, so removing it needs a replacement. Provide a supported way to get configuration and scripts onto a host, and apply the companion copy check as well, since disabling one direction leaves the other open.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -4458,19 +4417,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that each virtual machine caps its log file size through the `log.rotateSize` parameter set to 1024000 bytes. Without a size limit, a log file on a long-running VM grows without bound, so capping it triggers rotation at a manageable size.
+      desc: |
+        This check verifies that each virtual machine rotates its log at a bounded size.
+
+        The `log.rotateSize` parameter sets the size in bytes at which a machine's log is rotated, and this check requires `1024000`. Set it under Edit Settings, VM Options, Advanced, EDIT CONFIGURATION in the vSphere Client, or write it with `New-AdvancedSetting` from PowerCLI. An absent parameter is a failing result, since a machine with no configured rotation size lets a single file grow without a bound anyone chose.
 
         **Why this matters**
 
-        - **Datastore exhaustion:** Unbounded log growth consumes datastore space and can fill shared storage.
-        - **Operational delays:** Oversized logs slow backup, migration, and snapshot operations.
-        - **Manageable analysis:** Bounded log files keep log data practical to review and retain.
+        The log is written by the host to the datastore holding the virtual machine, and a guest can influence how fast it fills. Noisy device activity or repeated failed operations from inside a machine generate entries, so an unbounded file is a way for one workload to consume shared storage, and a full datastore stops the virtual machines that share it from powering on or growing their disks.
 
-        **Risk mitigation**
+        A bounded rotation size also keeps the record usable. Investigators reach for these files after an incident, and a single enormous file is slower to move, slower to search, and more likely to be truncated by whatever tooling handles it.
 
-        - **Bounded growth:** A fixed rotation size keeps each log file from growing uncontrolled.
-        - **Preserved storage:** Capping cumulative log size protects shared datastore resources.
+        Pair this with the companion check that fixes the number of rotated files, since size and count together determine both the storage a machine's logs can consume and the window of history they preserve. As with that check, do not satisfy this by disabling logging; the point is to keep the record and make it manageable.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -5458,18 +5416,19 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that vSAN data-at-rest encryption is enabled on every vSAN-enabled cluster. vSAN data-at-rest encryption encrypts all objects in the vSAN datastore using keys supplied by a configured key provider, protecting guest data, swap, and metadata on the physical capacity devices.
+        This check verifies that data-at-rest encryption is enabled on every vSAN-enabled cluster.
+
+        vSAN data-at-rest encryption encrypts everything written to the vSAN datastore, including guest data, swap, and metadata, using keys from a configured key provider. Enable it in the vSphere Client by selecting the cluster and using Configure, vSAN, Services, then editing the Data-At-Rest Encryption service and selecting the key provider. A key provider must exist first under Configure and Key Providers. Enabling it triggers a rolling reformat of the disk groups, so plan for the resynchronization it causes.
 
         **Why this matters**
 
-        - **Data confidentiality:** Encryption keeps vSAN datastore contents unreadable if a capacity device is removed, decommissioned, or stolen.
-        - **Key custody:** A configured key provider (Native Key Provider or an external KMS) gives the organization control over the keys that protect cluster storage.
-        - **Regulatory alignment:** Frameworks that mandate encryption of data at rest expect storage-tier encryption for sensitive virtualized workloads.
+        vSAN stores data on drives inside the hosts themselves, which means the drives are physically handled far more often than an array in a locked cabinet. They are swapped on failure, returned to a vendor under warranty, pulled during a hardware refresh, and eventually disposed of. Every one of those drives holds fragments of guest disks written in the clear if the cluster is unencrypted, and a single recovered drive yields whatever objects happened to live on it.
 
-        **Risk mitigation**
+        Encryption ties readability to the key provider instead of to possession of the hardware, which is what makes a failed drive returnable and a decommissioned host disposable.
 
-        - **Theft resistance:** Removing or copying a capacity disk does not expose guest data once the disk groups are encrypted.
-        - **Verifiable destruction:** Retiring the encryption key cryptographically shreds the data the cluster stored.
+        It also gives a clean end to data lifecycle. Retiring the key renders what the cluster stored unrecoverable without touching any of the drives.
+
+        Losing the key provider means losing the data, so treat provider availability and key backup as part of the design. Note that this is a separate control from data-in-transit encryption, which a companion check in this policy covers.
       audit: |
         ### Audit via the vSphere Client
 
@@ -5556,18 +5515,17 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that vSAN data-in-transit encryption is enabled on every vSAN-enabled cluster. Data-in-transit encryption encrypts vSAN traffic as it moves between hosts in the cluster over the vSAN network, protecting replica writes and resync traffic from interception on the storage fabric.
+        This check verifies that data-in-transit encryption is enabled on every vSAN-enabled cluster.
+
+        vSAN writes each object to more than one host, so guest data is constantly crossing the vSAN network between hosts as writes are mirrored and as objects are resynchronized after a failure. Data-in-transit encryption protects that traffic. Enable it in the vSphere Client by selecting the cluster and using Configure, vSAN, Services, then editing the Data-In-Transit Encryption service. It manages its own keys and needs no external key provider, and the rekey interval is set in the same place.
 
         **Why this matters**
 
-        - **Confidentiality on the wire:** vSAN replicates and resyncs object data between hosts; without in-transit encryption that traffic crosses the network in cleartext.
-        - **Defense-in-depth:** Encrypting the vSAN network protects data even when the storage fabric is shared or not fully physically isolated.
-        - **Independent of at-rest:** Data-at-rest and data-in-transit encryption are separate controls; enabling one does not enable the other.
+        Without it, an attacker who gets onto the vSAN network segment reads guest disk contents off the wire as they are replicated. They do not need credentials on any virtual machine, on vCenter, or on a host; they need a port on the storage fabric. The vSAN network is often treated as an internal, trusted segment carried on shared physical switches, which makes that a realistic position for someone who has compromised any other system on the same fabric.
 
-        **Risk mitigation**
+        The same position allows modification, not just reading. Encrypted transport protects replica and resynchronization traffic from being altered on the path between hosts.
 
-        - **Eavesdropping resistance:** An attacker with access to the vSAN network segment cannot read intercepted host-to-host traffic.
-        - **Tamper resistance:** Encrypted transport protects replica and resync traffic from on-path modification.
+        Enabling data-at-rest encryption does not enable this, and enabling this does not encrypt what is stored; they are independent controls covering different exposures, and a cluster needs both. Because encryption and decryption run on the hosts, benchmark a representative workload before enabling it across a latency-sensitive cluster.
       audit: |
         ### Audit via the vSphere Client
 
@@ -5666,19 +5624,18 @@ queries:
     mql: |
       vsphere.permissions.where( role.name == "Admin" ).all( group == true )
     docs:
-      desc: |-
-        This check ensures that every vCenter permission granting the built-in Administrator role is assigned to a group rather than to an individual user account. Administrative access should be delegated through directory groups so that membership, and therefore privilege, is managed centrally.
+      desc: |
+        This check verifies that the vCenter Administrator role is granted to groups rather than to individual user accounts.
+
+        Every permission in vCenter binds a principal to a role on an inventory object, and the principal can be a user or a group. This check reads the permissions that carry the Administrator role and requires each to name a group. Review them in the vSphere Client under Administration, Access Control, Global Permissions, along with the Permissions tab of individual inventory objects, and grant the role to a directory group whose membership is managed in the identity provider instead.
 
         **Why this matters**
 
-        - **Centralized access governance:** Granting admin through a group means joiner/mover/leaver changes in the identity provider immediately adjust who holds full control, with no per-vCenter cleanup.
-        - **Least privilege and accountability:** Individually assigned Administrator permissions accumulate silently and are easy to overlook during access reviews, widening the set of accounts that can fully control the environment.
-        - **Reduced attack surface:** Fewer standing individual admin grants means fewer credentials whose compromise yields unrestricted control of vCenter.
+        vCenter Administrator is the highest privilege in the environment. It can read and modify every virtual machine, attach their disks elsewhere, and change the hosts running them, so a compromise of any account holding it is a compromise of every workload at once.
 
-        **Risk mitigation**
+        Direct user grants are how that privilege quietly spreads. They are made during an incident or a project, scattered across inventory objects rather than held in one place, and never removed. When the person leaves, disabling their directory account is assumed to be enough, but a permission bound to a principal that still resolves, or to a local account outside the directory, keeps working. Nobody notices, because nobody enumerates every object's permission list.
 
-        - **Auditable membership:** Group-based admin access is reviewed in one place instead of scattered across inventory objects.
-        - **Faster revocation:** Removing a user from a group revokes admin everywhere it was inherited, closing the window after offboarding.
+        Group-based grants collapse that to one question: who is in the group. Offboarding revokes access everywhere it was inherited, and an access review has one list to read. Keep the group small, exclude break-glass accounts deliberately, and check the per-object permissions as well as the global ones, since a stray grant deep in the inventory is exactly what this control exists to find.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -5743,19 +5700,18 @@ queries:
     mql: |
       vsphere.ssoLockoutPolicy.maxFailedAttempts >= 1 && vsphere.ssoLockoutPolicy.maxFailedAttempts <= 5
     docs:
-      desc: |-
-        This check ensures that the vCenter Single Sign-On (SSO) account lockout policy locks an account after a small number of consecutive failed authentication attempts (between one and five). A bounded, non-zero threshold guarantees that lockout is actually enforced rather than disabled or set so high that it never triggers.
+      desc: |
+        This check verifies that the vCenter Single Sign-On lockout policy locks an account after a small, non-zero number of failed sign-in attempts.
+
+        The policy lives in the vSphere Client under Administration, Single Sign On, Configuration, Local Accounts, Lockout Policy, and the field that matters is the maximum number of failed login attempts. This check requires a value between 1 and 5. A value of 0 means unlimited attempts, and a high value means an attacker exhausts a large password list before anything stops them, so both fail. The same policy also sets the interval failures are counted over and how long the lock lasts, and both should be set deliberately.
 
         **Why this matters**
 
-        - **Brute-force resistance:** Locking accounts after a few failed attempts stops password-guessing and credential-stuffing against the SSO domain, which controls access to the entire virtual environment.
-        - **Enforced, not just present:** A threshold of zero (or a very large value) leaves accounts open to unlimited guessing; requiring a low positive value confirms the control is effective.
-        - **Consistent identity policy:** The SSO domain is the root of trust for vCenter administration, so its lockout behavior underpins every downstream authorization decision.
+        The SSO domain is the root of trust for the whole environment. An account that authenticates there can reach vCenter, and vCenter can reach every virtual machine on every host it manages, so password guessing against SSO is guessing at the keys to the entire estate rather than to one system.
 
-        **Risk mitigation**
+        Online guessing is cheap and quiet when nothing stops it. An attacker with a list of common passwords and a valid username works through it at whatever rate the service will answer, and without a lockout the only limit is patience. A threshold of five failures makes that impractical and, just as importantly, turns the attempt into a visible event: repeated lockouts on an administrator account are one of the clearest signals available that someone is working on the environment.
 
-        - **Slows online attacks:** Automated guessing is throttled by repeated lockouts, buying time for detection and response.
-        - **Protects privileged accounts:** SSO administrator accounts are high-value targets; lockout limits the number of attempts an attacker gets.
+        Set the unlock time so that legitimate operators recover on their own, and make sure service accounts using SSO have their credentials rotated properly, since a stale credential in an automated job is the usual cause of unexplained lockouts.
       audit: |-
         ### Audit via the vSphere Client
 
