@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-vercel-security
     name: Mondoo Vercel Security
-    version: 1.1.0
+    version: 1.1.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -109,18 +109,19 @@ queries:
       vercel.project.ssoProtectionDeploymentType != empty
     docs:
       desc: |
-        This check ensures that Vercel Authentication (SSO) is enabled for the project so that viewing a deployment requires logging in to Vercel. When it is disabled, every generated deployment URL, including preview builds of unreleased features, is reachable by anyone who has the link.
+        This check verifies that Vercel Authentication is enabled for the project, so that loading any of its deployments requires signing in to Vercel first.
+
+        Vercel Authentication, which Vercel also calls SSO protection, puts a Vercel login in front of a deployment URL. It is administered under **Settings > Deployment Protection** in the project, and the REST API exposes it as the project's `ssoProtection` object. The check requires that object to be present with a `deploymentType`, which is what Vercel records once protection is turned on for either **Standard Protection** or **All Deployments**. A null value means every generated deployment URL, including preview builds of unreleased features, is reachable by anyone who has the link.
 
         **Why this matters**
 
-        - **Preview URLs leak easily:** Preview links are posted in pull requests, chat, and CI logs, and they index in search engines when left open.
-        - **Pre-production code is sensitive:** Unreleased features, debug output, and test data are often exposed in preview builds before they are hardened.
-        - **Link secrecy is not access control:** A hard-to-guess URL is not a security boundary; only authentication gates who can load the deployment.
+        Preview URLs leak easily. They are posted into pull requests, chat threads, and CI logs as a matter of routine, and once one escapes that circle it can be crawled and indexed by search engines, because nothing about an open deployment tells a crawler to stay away.
 
-        **Risk mitigation**
+        Pre-production code is exactly the code least ready to be public. Preview builds carry unreleased features, debug output, verbose error pages, and test data that has not been hardened, and they are frequently wired to production-like backends. An attacker who reads a preview build learns what is coming, and often reaches data the released application never exposes.
 
-        - **Require a Vercel login:** Force viewers to authenticate before any protected deployment renders.
-        - **Scope protection broadly:** Apply protection to all deployments, not only previews, when production must stay private.
+        Link secrecy is not access control. A long, hard-to-guess URL is an obscurity measure, not a security boundary; only authentication decides who can load the deployment. Requiring a Vercel login forces every viewer to prove an identity before anything renders.
+
+        Scope the protection to the deployments that need it. Standard protection gates previews while leaving production public, which is right for a public site; choose all deployments when production must stay private as well. A project whose whole purpose is to serve anonymous traffic, such as a marketing site, is the case where this should not be applied, and it should be exempted deliberately rather than left unprotected by default. Where reviewers do not hold Vercel accounts, pair this with password protection instead of turning authentication off.
       audit: |
         ### Audit via Dashboard
 
@@ -197,18 +198,19 @@ queries:
       vercel.project.passwordProtectionDeploymentType != empty
     docs:
       desc: |
-        This check ensures that password protection is enabled for the project so that viewing a deployment requires a shared password. It provides an access gate for teams and reviewers who do not have Vercel accounts, and layers defense in depth on top of Vercel Authentication.
+        This check verifies that password protection is enabled for the project, so that viewing a deployment requires entering a shared password.
+
+        Password protection gates a deployment behind a single shared secret rather than a Vercel identity. Enable it under **Settings > Deployment Protection** in the project, where you set the password and the deployment scope; the REST API exposes it as the project's `passwordProtection` object, and the check requires that object to be present rather than null.
 
         **Why this matters**
 
-        - **Covers non-Vercel viewers:** External reviewers and stakeholders without Vercel logins can still be gated behind a password instead of an open URL.
-        - **Adds a second barrier:** A password requirement keeps deployments private even if a link is shared more widely than intended.
-        - **Protects staging content:** Password gates keep marketing previews and staging environments out of public and crawler reach.
+        Not every viewer has a Vercel account. External reviewers, agency partners, and stakeholders outside the team cannot pass Vercel Authentication, and the usual workaround is to leave the deployment open to everyone holding the link. A shared password gates those viewers without granting any of them access to the team itself.
 
-        **Risk mitigation**
+        It also layers defense in depth on top of Vercel Authentication. A link shared more widely than intended still lands on a password prompt, so a forwarded URL, a pasted screenshot, or a stale bookmark does not become an open door into the deployment.
 
-        - **Require a shared password:** Force viewers to enter a password before a protected deployment renders.
-        - **Rotate the password:** Change the shared password periodically and after any suspected exposure.
+        Staging content is what this most often protects. Unreleased campaigns, pricing changes, and staging environments stay out of public and crawler reach while they are still drafts, which matters commercially as well as technically.
+
+        A shared password is a shared secret, so treat it as one. Rotate it periodically, and immediately after anyone who held it leaves or after any suspected exposure, because there is no per-person revocation for a value everyone uses. Where every viewer does have a Vercel account, make Vercel Authentication the primary gate and keep the password as the second barrier rather than the only one.
       audit: |
         ### Audit via Dashboard
 
@@ -286,18 +288,19 @@ queries:
       vercel.project.trustedIpsProtectionMode == empty || vercel.project.trustedIpsProtectionMode == "additional"
     docs:
       desc: |
-        This check ensures that when Trusted IPs protection is configured for the project, it is set to the required mode rather than the optional mode. In optional mode a request from outside the allowlist can still reach the deployment by satisfying another protection method, which weakens the network boundary the allowlist is meant to enforce.
+        This check verifies that when Trusted IPs protection is configured for the project, it is set to the mode that requires a trusted address rather than the mode that merely offers one.
+
+        Trusted IPs restricts which source networks may reach a project's deployments. It is configured under **Settings > Deployment Protection** in the project, and the REST API exposes the enforcement mode as `trustedIps.protectionMode`. The check accepts a null value, meaning Trusted IPs is not configured at all, and it accepts `additional`, the mode in which a trusted IP is required alongside whatever other protection is in force. It fails on `exclusive`, the optional mode. The Terraform provider spells the required mode `trusted_ip_required` on the `trusted_ips` block of `vercel_project`.
 
         **Why this matters**
 
-        - **Optional mode is bypassable:** In optional mode an off-allowlist client can still load the deployment through another protection method, defeating the IP restriction.
-        - **Network boundaries should be strict:** An allowlist only limits exposure if requests from outside it are rejected outright.
-        - **Least privilege for reach:** Required mode confines who can reach the deployment to the networks you explicitly trust.
+        An optional allowlist is not a boundary. In the optional mode a request from outside the trusted ranges still reaches the deployment by satisfying another protection method, and a request from inside them is admitted on its address alone without satisfying any other. Both directions weaken the control: the restriction you configured constrains nobody, while an address match quietly becomes a credential.
 
-        **Risk mitigation**
+        Network restrictions only reduce exposure when requests from outside them are rejected outright. The whole value of naming a set of trusted networks is that everything else is refused. Make the match optional and the allowlist degrades into a record of who you expected rather than a limit on who arrives.
 
-        - **Set required mode:** Configure Trusted IPs so that only allowlisted addresses can reach protected deployments.
-        - **Review the allowlist:** Keep the trusted ranges current and remove networks that no longer need access.
+        Required mode confines reach to the networks you deliberately trust, which is what least privilege means for a deployment. Office ranges, VPN egress addresses, and CI runners get in; the rest of the internet does not.
+
+        Keep the trusted ranges current, because office and VPN egress addresses change and CI providers rotate their pools. A stale range either locks out the people who need access or leaves a network trusted long after it stopped being yours. This check passes when Trusted IPs is not configured at all, since such a project relies on Vercel Authentication or password protection instead; where the audience is a fixed set of networks, configure it and set it to the required mode.
       audit: |
         ### Audit via Dashboard
 
@@ -378,18 +381,19 @@ queries:
       vercel.project.trustedIpsProtectionMode == empty || vercel.project.trustedIpsAddresses != empty
     docs:
       desc: |
-        This check ensures that when Trusted IPs protection is enabled for the project, at least one address range is present in the allowlist. A protection mode with an empty allowlist either blocks all traffic or, depending on configuration, enforces nothing, leaving the control misconfigured rather than protective.
+        This check verifies that when Trusted IPs protection is enabled for the project, the allowlist actually names at least one address range.
+
+        The allowlist is the set of CIDR ranges permitted to reach protected deployments. It is maintained under **Settings > Deployment Protection** in the project and returned by the REST API as `trustedIps.addresses`. The check passes when `trustedIps.protectionMode` is null, meaning the protection is off, or when the address list holds at least one entry. It fails when the protection is configured while that list is empty.
 
         **Why this matters**
 
-        - **An empty allowlist is not a control:** Trusted IPs only restrict reach when the allowlist names the networks permitted to connect.
-        - **Misconfiguration hides as protection:** An enabled-but-empty allowlist can read as protected in a settings overview while enforcing nothing meaningful.
-        - **Explicit trust is required:** Every network permitted to reach protected deployments should be declared deliberately.
+        An empty allowlist is not a control. Trusted IPs limits reach only when the list names the networks permitted to connect. With nothing in it, the feature either blocks all traffic or, depending on how the rest of the protection is configured, enforces nothing at all, and neither outcome is what the person who enabled it intended.
 
-        **Risk mitigation**
+        A misconfiguration of this shape hides as protection. A settings overview or a compliance screenshot shows Trusted IPs enabled and reads as a network restriction in place, while the enforcement behind it is empty. That gap survives review precisely because the toggle looks correct.
 
-        - **Populate the allowlist:** Add the specific CIDR ranges that must reach protected deployments.
-        - **Audit the ranges:** Keep the entries scoped to current office, VPN, and CI networks.
+        Every network permitted to reach protected deployments should be declared deliberately. Populate the list with the specific CIDR ranges that need access, label each one with what it is, and keep the entries scoped to current office, VPN, and CI networks so the list stays a statement about who should reach the deployments today rather than an accumulation of everyone who ever did.
+
+        If the project does not need a network restriction, turn Trusted IPs off rather than leaving it enabled and empty. An unconfigured protection is at least honest about enforcing nothing, and this check passes on it.
       audit: |
         ### Audit via Dashboard
 
@@ -473,18 +477,19 @@ queries:
       vercel.project.gitForkProtection == true
     docs:
       desc: |
-        This check ensures that the project requires authorization before it builds pull requests opened from forked repositories. Without fork protection, a pull request from any fork can trigger a deployment that runs the project's build with access to its environment variables, letting an outside contributor exfiltrate secrets or run arbitrary build steps.
+        This check verifies that the project requires authorization before it builds a pull request opened from a forked repository.
+
+        Fork protection holds deployments from forks until a maintainer approves them. Vercel labels it **Fork Protection** under **Settings > Git** in the project, the REST API exposes it as `gitForkProtection`, and the Terraform provider sets it as `git_fork_protection` on `vercel_project`. The check requires the value to be true.
 
         **Why this matters**
 
-        - **Forks run your build with your secrets:** An auto-deployed fork PR executes untrusted code in a build that can read the project's environment variables.
-        - **Secret exfiltration is trivial:** A malicious build step can print or POST environment variables to an attacker-controlled endpoint.
-        - **Anyone can open a fork PR:** On public repositories the pool of potential contributors is unbounded.
+        On Vercel a Git push is a deploy, so without fork protection anyone who can open a pull request can cause the project's build to run. That build executes the code in the fork with the project's environment variables available to it, which hands an outside contributor arbitrary code execution inside your build with your secrets in reach.
 
-        **Risk mitigation**
+        Exfiltration from there is trivial. One added line in a build script can print the environment to the build log or POST the environment variables to an attacker-controlled endpoint, and the deployment then succeeds normally, so nothing about the run looks wrong. Tokens taken this way stay valid until somebody notices and rotates them.
 
-        - **Require authorization for fork PRs:** Hold deployments from forks until a maintainer approves them.
-        - **Scope build secrets:** Keep sensitive environment variables out of the preview environment that fork builds run in.
+        On a public repository the pool of potential contributors is unbounded. That is the point of a public repository, and it is precisely why the build must not trust the contents of a fork. Fork protection restores the review step, so a maintainer decides that this particular change is safe to build before it runs.
+
+        Pair it with scoping the secrets themselves. Keep sensitive environment variables out of the preview environment that fork builds run in, so an approval mistake costs a preview-scoped value rather than production access. A project on a private repository where every contributor already has write access gains less from the setting, but leaving it enabled costs only a click per external contribution.
       audit: |
         ### Audit via Dashboard
 
@@ -557,18 +562,19 @@ queries:
       vercel.project.publicSource == false
     docs:
       desc: |
-        This check ensures that the project's source code is not exposed through the public deployment inspector. When public source is enabled, anyone with a deployment URL can browse the build's source, output, and logs, which can reveal secrets, internal logic, and infrastructure details.
+        This check verifies that the project's build source is not exposed through the public deployment inspector.
+
+        The deployment inspector shows a deployment's source, build output, and logs. Vercel labels the visibility setting **Publicly viewable source** under **Settings > General** in the project, the REST API exposes it as `publicSource`, and the Terraform provider sets it as `public_source` on `vercel_project`. When it is on, anyone holding a deployment URL can open the inspector for that deployment and read all three. The check requires the value to be false.
 
         **Why this matters**
 
-        - **Source exposure reveals secrets:** Build source and logs frequently contain tokens, endpoints, and configuration that were never meant to be public.
-        - **Attackers map your app:** Readable source and output make it easy to find weak points and undocumented endpoints.
-        - **The default is convenience, not privacy:** Public source is meant for open collaboration, not for private applications.
+        Source and logs are where secrets end up in practice. Build source and output frequently contain tokens, internal endpoints, and configuration that were never meant to leave the team, and build logs print values nobody expected an outsider to read. Public source turns all of it into a URL that needs no credentials.
 
-        **Risk mitigation**
+        Readable source also hands an attacker a map. Route definitions, undocumented endpoints, feature flags, and client-side checks that the server does not repeat all become visible, so probing the application stops being guesswork and becomes reading. Finding the weak point is the expensive part of an attack, and this removes that cost.
 
-        - **Disable public source:** Keep the deployment inspector's source and logs private to team members.
-        - **Review what builds emit:** Ensure build logs do not print secrets even when source visibility is restricted.
+        The setting exists for open collaboration, not for privacy. It is the right choice for a demo or an open source project whose code is already public, and the wrong default for a private application. Repository visibility and inspector visibility are configured independently, so a private repository can still be serving a public inspector without anyone having chosen that.
+
+        Turning it off is not a substitute for keeping secrets out of builds. Review what the build emits regardless, since those same logs remain readable by everyone with team access and by anyone who later flips the setting back on.
       audit: |
         ### Audit via Dashboard
 
@@ -641,18 +647,19 @@ queries:
       vercel.project.nodeVersion == empty || ["14.x", "16.x", "18.x"].contains(vercel.project.nodeVersion) == false
     docs:
       desc: |
-        This check ensures that the project is not pinned to a Node.js major version that has reached end of life. End-of-life runtimes stop receiving security patches, so builds and serverless functions running on them accumulate unfixed vulnerabilities in the runtime itself.
+        This check verifies that the project is not pinned to a Node.js major version that has reached end of life.
+
+        The runtime is selected as **Node.js Version** under **Settings > General** in the project, exposed as `nodeVersion` on the REST API and as `node_version` on the `vercel_project` Terraform resource. The check fails when the value is `14.x`, `16.x`, or `18.x`, each of which is past its end-of-life date, and passes when the field is unset, in which case the project builds on the platform default.
 
         **Why this matters**
 
-        - **End-of-life runtimes are unpatched:** Once a Node.js major line reaches end of life it receives no further security fixes.
-        - **Functions inherit the runtime's flaws:** Serverless functions execute on the selected runtime, so a vulnerable runtime is a vulnerable function.
-        - **Upgrades get harder over time:** Staying current avoids a large, risky jump across several major versions later.
+        An end-of-life runtime receives no further security fixes. Once a Node.js major line leaves maintenance, vulnerabilities found in the runtime itself, in the TLS library it bundles, or in its HTTP parsing stay unpatched for everyone still pinned to it, and the published advisories tell an attacker exactly what to try.
 
-        **Risk mitigation**
+        Serverless functions inherit whatever the runtime carries, so this is not confined to build time. Every request the project serves executes on the selected runtime, which makes a vulnerable runtime a vulnerable request path for the whole application rather than a build-only concern.
 
-        - **Pin a supported version:** Move the project to a Node.js major line that is still in maintenance.
-        - **Track the release schedule:** Plan upgrades ahead of each version's end-of-life date.
+        Delay compounds the cost. Each release the project sits out widens the jump it eventually has to make, and a migration across several major versions at once, together with the dependency upgrades that come with it, is far riskier than moving one line at a time.
+
+        Track the Node.js release schedule and plan each move ahead of the end-of-life date rather than after it, then redeploy so the new runtime takes effect, since the setting applies to the next build rather than retroactively. Note that the check names specific expired versions, so a version that leaves maintenance after this policy was written will keep passing until that list is updated.
       audit: |
         ### Audit via Dashboard
 
@@ -728,18 +735,19 @@ queries:
       vercel.project.environmentVariables.all(type != "plain")
     docs:
       desc: |
-        This check ensures that the project has no environment variables stored with the plaintext type. Plaintext values are stored and returned in clear text through the API and dashboard, so any secret held that way is readable by anyone with project access and is exposed in API responses. Secrets should use the encrypted, sensitive, or secret types instead.
+        This check verifies that the project stores no environment variable with the plaintext type.
+
+        Vercel records a type on every environment variable, shown under **Settings > Environment Variables** in the project, listed by `vercel env ls`, and returned as `type` by the REST API. A variable of the `plain` type is stored and returned in clear text, so its value is readable by anyone with project access and is exposed in API responses. The check requires every variable on the project to use a protected type instead: encrypted, sensitive, or secret.
 
         **Why this matters**
 
-        - **Plaintext values are readable:** A plaintext variable is returned in clear text to anyone who can read the project, including through the API.
-        - **Secrets end up in the wrong hands:** Tokens, database URLs, and API keys stored as plaintext are exposed far more widely than intended.
-        - **Sensitive types hide values after creation:** The sensitive and secret types prevent the stored value from being read back.
+        A plaintext value is readable by everyone who can read the project. That includes every team member with project access, every token scoped to the project, and anything that has ever called the environment variable endpoint, which in practice means CI systems and local tooling as well as people.
 
-        **Risk mitigation**
+        Secrets stored that way spread far beyond their intended audience. Database URLs, API keys, and third-party tokens are exactly the values that end up as plaintext, because plaintext is the path of least resistance at creation time, and once a value can be retrieved it gets copied into local environment files, support tickets, and screenshots.
 
-        - **Use encrypted or sensitive types:** Store secrets so their values cannot be retrieved after they are set.
-        - **Reserve plaintext for non-secrets:** Only use plaintext for values that are genuinely public, and treat any plaintext secret as compromised and rotate it.
+        The protected types close the read path rather than the write path. A sensitive or secret variable can still be set and injected into builds and functions, but its value cannot be read back afterward, so a compromised account or a leaked read-scoped token no longer yields the secret itself.
+
+        Plaintext remains the correct type for values that are genuinely public, such as a public API base URL or a feature flag name, and hiding those buys nothing. Treat any secret that was stored as plaintext as already compromised: convert the variable and rotate the underlying credential, because converting alone does not undo the reads that already happened.
       audit: |
         ### Audit via CLI
 
@@ -822,18 +830,19 @@ queries:
       vercel.project.firewall.enabled == true
     docs:
       desc: |
-        This check ensures that the Vercel Web Application Firewall (WAF) is enabled for the project. With the firewall off, custom rules, managed rulesets, and IP rules are not evaluated, so the project has no application-layer filtering in front of its deployments.
+        This check verifies that the Vercel Web Application Firewall is enabled for the project.
+
+        The WAF is Vercel's request-filtering layer in front of a project's deployments. It is administered from the project's **Firewall** tab in the dashboard and exposed as `firewallEnabled` on the firewall configuration API, and the Terraform provider sets it as `enabled` on `vercel_firewall_config`. The check requires the value to be true, because custom rules, managed rulesets, and IP rules are evaluated only while the firewall is on.
 
         **Why this matters**
 
-        - **No firewall means no filtering:** Custom and managed rules only take effect while the firewall is enabled.
-        - **Application-layer attacks reach the app:** Without the WAF, injection and bot traffic hit the deployment directly.
-        - **Defense in depth starts at the edge:** Filtering malicious requests before they reach functions reduces both risk and cost.
+        Rules that are not evaluated do nothing. A project can carry a carefully written rule set and still filter no traffic at all, because the master switch governs whether any of it runs. That failure mode is quiet: the rules are still listed, still look correct, and still read as protection during a review.
 
-        **Risk mitigation**
+        With no filtering, application-layer traffic arrives at the deployment unmodified. Injection attempts, credential stuffing, scrapers, and automated vulnerability scanners reach the functions directly, where the only thing between them and the application is the application's own input handling.
 
-        - **Enable the firewall:** Turn on the WAF so rules are enforced at the edge.
-        - **Adopt managed rulesets:** Enable managed protections such as the OWASP ruleset for baseline coverage.
+        Filtering at the edge also bounds cost, not only risk. A request blocked before it reaches a function is a request that never invokes one, which matters when the traffic is a bot flood rather than a targeted attack.
+
+        Enabling the firewall is the first step rather than the whole control. Turn on the managed rulesets, including the OWASP ruleset, for baseline coverage, and add custom rules for the paths specific to the application. Where the false-positive rate is unknown, start a rule in a logging or challenge action and move it to deny once the traffic is understood.
       audit: |
         ### Audit via Dashboard
 
@@ -909,19 +918,21 @@ queries:
       vercel.project.firewall.bypassRules.none(action == "bypass" && ip == "::/0")
     docs:
       desc: |
-        This check ensures that the project's firewall has no IP rule or system bypass rule that applies to every source address. An IP allow rule matching `0.0.0.0/0` or `::/0` waves through all traffic from that address family, which can override deny rules and managed protections. A system bypass rule is even stronger: it short-circuits every firewall rule for the traffic it matches, so a bypass entry covering all addresses neutralizes the firewall regardless of how the rest of it is configured.
+        This check verifies that the project's firewall carries no IP rule and no system bypass rule matching every source address.
+
+        IP rules and system bypass rules are managed on the project's **Firewall** tab in the dashboard and returned by the firewall configuration API. The check fails on any IP rule whose action is `allow` at `0.0.0.0/0` or `::/0`, and on any system bypass rule whose action is `bypass` at those same addresses. The IP rule actions the Terraform provider accepts on `vercel_firewall_config` are `bypass`, `log`, `challenge`, and `deny`, so an exception that skips filtering is a `bypass` rule and belongs on a narrow range.
 
         **Why this matters**
 
-        - **An allow-all rule bypasses protections:** A rule that permits every address can take precedence over deny rules and rulesets.
-        - **A broad bypass entry disables the firewall:** A system bypass rule skips all rule evaluation for matching traffic, so one covering every address exempts everyone from filtering.
-        - **It hides as a specific exception:** A broad allow or bypass entry looks like a scoped exception in a rule list but matches everyone.
-        - **Attack traffic is explicitly welcomed:** Allowing or exempting all sources removes the firewall's ability to block known-bad clients by IP.
+        An allow rule covering an entire address family waves through all traffic from it, and it can take precedence over the deny rules and managed rulesets configured alongside it. The firewall is still enabled and still evaluating, and it still admits everyone.
 
-        **Risk mitigation**
+        A system bypass rule is stronger still. It short-circuits rule evaluation entirely for the traffic it matches, so a bypass entry at `0.0.0.0/0` or `::/0` exempts every client from filtering no matter how carefully the rest of the firewall is written. A single entry neutralizes the whole configuration.
 
-        - **Remove blanket allow and bypass rules:** Delete any IP allow rule or system bypass rule matching `0.0.0.0/0` or `::/0`.
-        - **Scope exceptions narrowly:** Replace broad entries with the specific ranges that genuinely need to bypass filtering.
+        Both hide as scoped exceptions. In a rule list an entry reads as a specific carve-out for a partner or a monitoring service, and only the address column distinguishes a narrow exception from one matching the entire internet. Reviewers read the intent and skim past the mask.
+
+        The practical loss is the firewall's ability to act on source address at all. Blocking a known-bad client, rate limiting an abusive network, or denying a region stops working the moment an allow-all or bypass-all rule sits above those rules.
+
+        Replace blanket entries with the specific ranges that genuinely need to skip filtering, such as an uptime monitor's published addresses or a payment provider's callback ranges. Note that `0.0.0.0/0` and `::/0` cover separate address families, so removing one while leaving the other still exempts every client that reaches the deployment over that protocol.
       audit: |
         ### Audit via Dashboard
 
@@ -1005,18 +1016,19 @@ queries:
       vercel.accessTokens.none(expiresAt == empty)
     docs:
       desc: |
-        This check ensures that every API token owned by the authenticated account has an expiration date. A non-expiring token is a permanent credential: if it leaks in a commit, log, or CI job, it grants access indefinitely until someone notices and revokes it by hand.
+        This check verifies that every API token owned by the authenticated account carries an expiration date.
+
+        Tokens are created and reviewed under **Account Settings > Tokens** in the Vercel dashboard, where the expiration is chosen at creation time. The REST API returns it as `expiresAt` on each token, and the Terraform provider sets it as `expires_at` on `vercel_user_token`, as a Unix timestamp in milliseconds. The check fails on any token whose expiration is null, meaning the token never expires.
 
         **Why this matters**
 
-        - **Non-expiring tokens never self-heal:** A leaked permanent token stays valid until it is manually revoked.
-        - **Long-lived credentials spread:** Tokens without an expiry accumulate in scripts, pipelines, and developer machines over time.
-        - **Rotation is not enforced:** Without an expiry there is no built-in prompt to replace an aging credential.
+        A non-expiring token is a permanent credential. If it leaks into a commit, a build log, a CI job's environment, or a laptop backup, it grants access for as long as nobody notices, and noticing requires somebody to go looking rather than the credential simply lapsing on its own.
 
-        **Risk mitigation**
+        Permanent tokens also spread. A credential with no end date is copied into scripts, pipelines, container images, and developer machines over months and years, so by the time it is questioned nobody can enumerate where it lives. Revoking it then becomes a service-disruption decision instead of a cleanup task, which is how permanent tokens survive review after review.
 
-        - **Set an expiration on every token:** Create tokens with the shortest practical lifetime.
-        - **Rotate before expiry:** Replace tokens on a schedule so automation never depends on a permanent credential.
+        Without an expiry there is nothing prompting rotation. Expiration dates are what turn credential rotation into a scheduled, rehearsed operation rather than a step performed under pressure during an incident.
+
+        Give every token the shortest lifetime its consumer can work with, and rotate before expiry rather than after, so automation never depends on a permanent credential and the rotation path stays exercised. Where a long-lived integration genuinely needs continuous access, a short-lived token refreshed by automation is still safer than one that never ends.
       audit: |
         ### Audit via Dashboard
 
@@ -1091,18 +1103,19 @@ queries:
       vercel.accessTokens.all(lastUsedAt != empty && time.now - lastUsedAt < 90 * time.day || lastUsedAt == empty && time.now - createdAt < 90 * time.day)
     docs:
       desc: |
-        This check ensures that the account holds no stale API tokens: tokens that have not been used in the last 90 days, and tokens that were created more than 90 days ago and have never been used. Every unused token is standing attack surface that grants access but is not being watched, so a leak may go unnoticed indefinitely.
+        This check verifies that the account holds no stale API tokens.
+
+        Token activity is shown under **Account Settings > Tokens** in the Vercel dashboard, listed by `vercel tokens ls`, and returned by the REST API as the token's last activity time alongside its creation time. The check treats a token as stale in two cases: it was last used more than 90 days ago, or it has never been used at all and was created more than 90 days ago. Either way the fix is to remove it with `vercel tokens remove`.
 
         **Why this matters**
 
-        - **Unused tokens are unwatched tokens:** A credential nobody uses is a credential nobody notices being abused.
-        - **Abandoned tokens outlive their purpose:** Tokens for old integrations and departed staff keep granting access after the need is gone.
-        - **Fewer credentials, smaller surface:** Removing idle tokens shrinks the set of secrets that could leak.
+        An unused token is an unwatched token. Nobody is checking a credential that nothing depends on, so if somebody else is using it the activity blends into a history no one reads, and the abuse continues for as long as the token lives.
 
-        **Risk mitigation**
+        Abandoned tokens outlive their purpose. Credentials issued for a decommissioned integration, a one-off migration, or an engineer who has since left keep granting exactly the access they always did, long after the reason for issuing them ended. Nothing about the token records that its purpose expired.
 
-        - **Remove idle tokens:** Delete tokens with no recent use and tokens created long ago that were never used.
-        - **Inventory regularly:** Review the token list on a schedule and prune anything without an owner or a purpose.
+        Every credential that exists is a credential that can leak. Pruning the idle ones shrinks the set of secrets in circulation, and it keeps the remaining list short enough that an unfamiliar entry stands out rather than disappearing among dozens.
+
+        A token created recently and not yet used is not stale, which is why a never-used token is measured against its creation date instead of failing immediately. Before deleting, confirm nothing depends on the token, since a low-frequency job such as a quarterly report can legitimately go months between uses. Where that is the case, record the token's owner and purpose so the next review does not have to rediscover them.
       audit: |
         ### Audit via Dashboard
 
@@ -1169,18 +1182,19 @@ queries:
       vercel.team.stores.where(storeType == "blob").none(access == "public")
     docs:
       desc: |
-        This check ensures that the team has no Blob store configured with public access. A public Blob store serves its objects to anyone with the URL and no authentication, so any sensitive file placed in it is exposed to the internet.
+        This check verifies that the team has no Vercel Blob store configured for public access.
+
+        Blob stores are listed under the team's **Storage** tab in the dashboard and by `vercel blob list-stores`, and the storage API returns each one with a type of `blob` and an `access` level. The Terraform provider sets it as `access` on `vercel_blob_store`. The check fails on any Blob store whose access is `public`, which serves every object it holds to anyone with the URL and no authentication at all.
 
         **Why this matters**
 
-        - **Public objects need no credentials:** Anyone with a Blob URL can download the object, and Blob URLs are easy to enumerate or leak.
-        - **Sensitive data ends up public:** Uploads, exports, and user content stored in a public bucket are readable by the world.
-        - **Exposure is silent:** There is no per-request authorization to log or alert on when access is public by design.
+        A public object needs no credentials, only a URL, and URLs travel. They appear in page source, in email, in shared documents, and in browser history, and they keep working after the person who received one has left, because there is no session or token to revoke and Blob URLs are easy to enumerate or leak.
 
-        **Risk mitigation**
+        Sensitive data reaches these stores by accident more often than by decision. User uploads, generated exports, invoices, and support attachments are written to whatever store the application was pointed at, and a store originally chosen for public assets ends up holding private files as the application grows.
 
-        - **Use private Blob stores:** Keep stores private and serve objects through signed, time-limited URLs.
-        - **Audit store contents:** Confirm that anything genuinely public was intended to be, and move sensitive files to a private store.
+        Exposure is silent by design. When access is public there is no per-request authorization to evaluate, so there is nothing to deny, nothing to log, and no signal that separates an attacker enumerating objects from ordinary traffic. The first indication of a leak is usually external.
+
+        Keep stores private and serve objects through signed, time-limited URLs, which gives every download an expiry and an authorization point. A genuinely public store is a reasonable choice for static assets already served to everyone; if you keep one, separate it from the store that receives user content, and audit its contents to confirm that everything in it was meant to be public.
       audit: |
         ### Audit via Dashboard
 
@@ -1257,18 +1271,19 @@ queries:
       vercel.team.certificates.none(autoRenew == false)
     docs:
       desc: |
-        This check ensures that every TLS certificate issued for the team's domains is set to renew automatically. A certificate without auto-renewal will eventually expire, breaking HTTPS for the domains it covers and driving users toward insecure fallbacks or unreachable services.
+        This check verifies that every TLS certificate issued for the team's domains is set to renew automatically.
+
+        Certificates are listed by `vercel certs ls` and shown per domain under the team's **Domains** tab in the dashboard, and each carries an `autoRenew` setting. The check fails on any certificate where that setting is false, meaning Vercel will not reissue it before it expires.
 
         **Why this matters**
 
-        - **Expired certificates break HTTPS:** When a certificate lapses, browsers reject the connection and the site becomes unreachable over TLS.
-        - **Manual renewal is easy to miss:** Certificates that depend on a person to renew them lapse when that step is forgotten.
-        - **Outages erode trust:** A TLS error page trains users to click through warnings, undermining the protection HTTPS provides.
+        An expired certificate takes the site down over HTTPS. Browsers refuse the connection outright and present an interstitial instead of the application, so a lapsed certificate is a full outage across every domain it covers, arriving on a date nobody was watching.
 
-        **Risk mitigation**
+        Manual renewal fails the way all calendar-driven work fails. It depends on one person remembering one date, and certificates outlive the team structures meant to track them, so the step is missed during a handover, a holiday, or a reorganization rather than through carelessness.
 
-        - **Enable auto-renewal:** Let Vercel reissue certificates before they expire.
-        - **Monitor expiry dates:** Track certificate expiration so a renewal failure is caught before the certificate lapses.
+        The security cost outlasts the outage. A TLS warning that users are told to click through teaches them that warnings are noise, and a workforce trained to bypass certificate errors will bypass a genuine interception exactly the same way.
+
+        Let Vercel reissue certificates for the domains it manages, and monitor expiry dates independently so that a renewal which fails, usually because DNS or domain configuration changed underneath it, is caught while there is still time to fix it. A certificate uploaded by hand for a domain served elsewhere is the case where this legitimately does not apply, and those need their own renewal automation rather than a permanent exception.
       audit: |
         ### Audit via CLI
 
@@ -1338,18 +1353,19 @@ queries:
       vercel.team.domains.none(verified == false)
     docs:
       desc: |
-        This check ensures that every domain registered to the team is verified. An unverified domain is not fully controlled by the team in Vercel, which can indicate a pending misconfiguration or a stale entry, and unverified or dangling domain configurations are a common path to subdomain takeover.
+        This check verifies that every domain registered to the team has completed ownership verification.
+
+        Domains are listed by `vercel domains ls` and under the team's **Domains** tab in the dashboard, and the REST API returns a `verified` flag on each one. Verification is completed by adding the DNS records that `vercel domains inspect` reports and then running `vercel domains verify`. The check fails on any domain that is still unverified.
 
         **Why this matters**
 
-        - **Unverified means unproven control:** Vercel cannot confirm the team owns an unverified domain, so its routing and certificates are not fully established.
-        - **Dangling domains get taken over:** A configured-but-unverified domain pointing at Vercel can be claimed by an attacker who completes the verification.
-        - **Stale entries hide problems:** Long-unverified domains often signal an abandoned or broken setup that should be cleaned up.
+        An unverified domain is one whose control Vercel has not been able to confirm. Routing and certificate issuance for it are not fully established, so the domain may be serving nothing, serving the wrong project, or failing TLS, and the team's own configuration cannot be trusted to describe what is actually live.
 
-        **Risk mitigation**
+        Dangling domain configurations are a well-worn path to subdomain takeover. A name that points at Vercel but has never been claimed there can be added and verified by whoever completes the handshake first, and an attacker who does so serves content from your name, collects cookies scoped to it, and passes any domain validation that relies on it.
 
-        - **Complete verification:** Add the required DNS records so every domain resolves to a verified state.
-        - **Remove unused domains:** Delete domains the team no longer controls or intends to use.
+        A long-unverified entry is usually evidence of something abandoned. A migration that stalled, a domain moved to another provider, or a project deleted without cleaning up its hostnames all leave the same trace, and each is a loose end that outlives the person who created it.
+
+        Complete verification for the domains the team intends to keep, and delete the entries for domains it no longer controls or plans to use. A domain added moments ago and waiting on DNS propagation will fail this check briefly, which is expected; one that has been unverified for weeks is not waiting on propagation, it is an unfinished setup.
       audit: |
         ### Audit via CLI
 
@@ -1421,18 +1437,19 @@ queries:
       vercel.team.domains.where(boughtAt != empty).none(renewAutomatically == false)
     docs:
       desc: |
-        This check ensures that every domain purchased through Vercel is set to renew automatically. A purchased domain without auto-renewal expires at the end of its term, at which point it can be registered by anyone, letting an attacker take over the name along with any service, email, or trust attached to it.
+        This check verifies that every domain purchased through Vercel is set to renew automatically.
+
+        The check looks only at registered domains, meaning the ones the REST API returns with a `boughtAt` timestamp, and it fails when `renewAutomatically` is false on any of them. The setting is administered per domain under the team's **Domains** tab in the dashboard, and `vercel domains inspect` reports the current state.
 
         **Why this matters**
 
-        - **Expired domains are up for grabs:** Once a domain lapses, a third party can register it and impersonate the service.
-        - **Takeover follows expiry:** An attacker who registers a lapsed domain inherits its traffic, links, and any residual DNS trust.
-        - **Renewal deadlines are easy to miss:** Manual renewal depends on someone acting before the expiry date every term.
+        A domain that lapses becomes available to anyone. Expiry is not a quiet internal event: dropped names are tracked and registered within minutes by speculators, and there is no mechanism to reclaim one afterward beyond negotiating with whoever now holds it.
 
-        **Risk mitigation**
+        Whoever registers it inherits everything attached to the name. Inbound links, bookmarks, OAuth redirect URIs, mail addressed to the domain, and any residual DNS trust now belong to a third party, who can serve content as you, receive password resets sent to addresses at the domain, and pass domain-validated certificate issuance for it.
 
-        - **Enable auto-renewal:** Let Vercel renew purchased domains before they expire.
-        - **Keep billing current:** Ensure a valid payment method is on file so auto-renewal does not fail.
+        Renewal deadlines are missed by exactly the organizations least able to absorb it. Manual renewal requires somebody to act before a date that recurs once a year or less, and the domains most likely to be forgotten are the older, peripheral ones that nonetheless still resolve and still carry trust.
+
+        Enable automatic renewal and keep a valid payment method on file, since auto-renewal fails silently when the card on file has expired and the outcome is indistinguishable from never having enabled it. Domains registered elsewhere and only pointed at Vercel fall outside this check, and they need the same renewal guarantee at their own registrar.
       audit: |
         ### Audit via CLI
 
@@ -1506,18 +1523,19 @@ queries:
       vercel.project.protectionBypassCount == 0
     docs:
       desc: |
-        This check ensures that the project carries no deployment-protection bypass secrets. A bypass secret lets any request that presents it reach the project's deployments without satisfying Vercel Authentication, password protection, or Trusted IPs. Each secret is standing access: it keeps working until it is revoked, so a single bypass quietly negates the protection configured for every hostname the project serves.
+        This check verifies that the project carries no deployment-protection bypass secrets.
+
+        Protection Bypass for Automation issues a secret that lets any request presenting it reach the project's deployments without satisfying Vercel Authentication, password protection, or Trusted IPs. Registered secrets appear under **Settings > Deployment Protection** in the project, in the **Protection Bypass for Automation** section, and the REST API returns them in the project's `protectionBypass` object. The check requires the count of registered secrets to be zero.
 
         **Why this matters**
 
-        - **Bypass secrets defeat deployment protection:** A request carrying the secret skips authentication entirely, so the protection configured on the project no longer gates who can load its deployments.
-        - **They are long-lived by default:** A bypass secret does not expire on its own; once issued it grants access until someone revokes it.
-        - **The blast radius is the whole project:** A bypass is registered against the project, so it covers production and preview deployments alike, not just one ephemeral URL.
+        A bypass secret defeats the deployment protection configured on the project. A request carrying it skips authentication entirely, so whichever protection method the team chose no longer gates who can load a deployment. The secret does.
 
-        **Risk mitigation**
+        Bypass secrets are long-lived by default. They do not expire on their own, so once issued one grants access until somebody revokes it deliberately, and they live wherever the automation that uses them lives, typically a CI configuration or a synthetic monitoring tool, which is where secret hygiene is weakest.
 
-        - **Revoke unneeded bypass secrets:** Remove protection-bypass secrets from projects that do not require automated, unauthenticated access.
-        - **Scope and rotate what remains:** Where automation genuinely needs a bypass, keep the count minimal and rotate the secret regularly.
+        The blast radius is the whole project rather than a single URL. A bypass is registered against the project, so it covers production and preview deployments alike and every hostname the project serves, which makes a leaked bypass equivalent to turning protection off for all of them at once.
+
+        Automation does sometimes need unauthenticated access, for end-to-end tests or uptime probes against protected previews. Where that is genuinely the case, keep the number of outstanding secrets minimal, rotate them on a schedule, and store them as sensitive credentials rather than plain configuration. Where it is not, revoke them, because a bypass left over from an experiment is indistinguishable from one still in use.
       audit: |
         ### Audit via Dashboard
 
@@ -1590,18 +1608,19 @@ queries:
       vercel.team.strictPasswordProtectionSettings == true
     docs:
       desc: |
-        This check ensures that the team requires the owner role to change deployment protection and password protection settings. When strict settings are off, any team member can weaken or disable the protection on a project's deployments, so the guardrail is only as strong as the least privileged member who can turn it off. Restricting protection changes to owners keeps the control in the hands of the few accountable for it.
+        This check verifies that the team requires the owner role to change deployment protection and password protection settings.
+
+        Both restrictions live under **Team Settings > Security & Privacy** in the Vercel dashboard, and the teams API returns them as `strictDeploymentProtectionSettings` and `strictPasswordProtectionSettings`. The check requires both to be true, so that changing either protection is an owner-only action.
 
         **Why this matters**
 
-        - **Protection is only as strong as who can weaken it:** If any member can disable deployment or password protection, a single compromised or careless account can expose deployments.
-        - **Owner-only changes enforce accountability:** Limiting the change to the owner role narrows who can lower protection and makes the action auditable.
-        - **Defends the controls other checks rely on:** Vercel Authentication and password protection only hold if members cannot silently turn them off.
+        A protection is only as strong as the least privileged account that can switch it off. With strict settings disabled, any team member can disable Vercel Authentication or remove a password from a project, so a single compromised session, a phished contractor, or an ordinary mistake made while debugging exposes deployments the organization believes are gated.
 
-        **Risk mitigation**
+        Restricting the change to owners narrows the set of accounts that can lower protection and makes the action accountable. The people who can weaken the control become a short, known list rather than everyone with project access, and loosening protection becomes a request that has to be made rather than something quietly performed.
 
-        - **Require the owner role:** Turn on strict deployment protection and strict password protection settings so only owners can change them.
-        - **Keep the owner set small:** Limit the number of team owners so the pool that can weaken protection stays minimal.
+        This is the setting the other deployment protection checks rest on. Vercel Authentication, password protection, and Trusted IPs each hold only while nobody can silently turn them off, so without owner-only enforcement a passing protection check describes the configuration at scan time rather than a guarantee about tomorrow.
+
+        Keep the owner set itself small, for the same reason: the restriction moves risk into the owner role rather than eliminating it, and a team where most members are owners has enabled the setting without changing who can weaken protection. A team that deliberately delegates deployment protection to project maintainers should expect this check to fail and record that as an accepted exception.
       audit: |
         ### Audit via Dashboard
 
@@ -1668,18 +1687,19 @@ queries:
       vercel.team.sharedEnvironmentVariables.all(type != "plain")
     docs:
       desc: |
-        This check ensures that the team has no shared environment variable stored with the plaintext type. Shared variables are injected across many projects, so a plaintext secret held at the team level is readable in clear text through the API and dashboard by everyone with team access and is exposed across every project it targets. Secrets should use the encrypted or sensitive types instead.
+        This check verifies that the team stores no shared environment variable with the plaintext type.
+
+        Shared environment variables are defined once at the team level under **Team Settings > Environment Variables** and injected into the projects they target. Each carries a type, and a value of `plain` is stored and returned in clear text through the API and the dashboard. The check requires every shared variable to use a protected type instead, encrypted or sensitive, which the Terraform provider expresses as `sensitive = true` on `vercel_shared_environment_variable`.
 
         **Why this matters**
 
-        - **Plaintext values are readable:** A plaintext shared variable is returned in clear text to anyone who can read the team, including through the API.
-        - **Team scope multiplies exposure:** A shared variable is injected into many projects at once, so a plaintext secret leaks across all of them, not just one.
-        - **Sensitive types hide values after creation:** The encrypted and sensitive types prevent the stored value from being read back.
+        A plaintext shared variable is readable in clear text by anyone who can read the team, including through the API. That audience is larger than the audience for a project variable by definition, because team-scoped visibility is the entire reason shared variables exist.
 
-        **Risk mitigation**
+        Team scope multiplies the consequences of the leak. A shared variable is injected into many projects at once, so a plaintext secret is exposed across every project it targets rather than just one, and the credential behind it usually guards something central such as a payment provider, an observability backend, or a database all of those projects reach.
 
-        - **Use encrypted or sensitive types:** Store shared secrets so their values cannot be retrieved after they are set.
-        - **Reserve plaintext for non-secrets:** Only use plaintext for values that are genuinely public, and rotate any secret previously stored as plaintext.
+        The protected types prevent the stored value from being read back after it is set. It can still be injected into builds and functions, so nothing about the deployment changes; what changes is that a leaked read-scoped token or a compromised member account no longer yields the secret itself.
+
+        Plaintext stays appropriate for shared values that are genuinely public, such as a public asset host or a region name, and those are often exactly what shared variables were created for. Any secret that has been stored as plaintext should be rotated as well as converted, since converting the variable does not invalidate a value that may already have been read.
       audit: |
         ### Audit via API
 
