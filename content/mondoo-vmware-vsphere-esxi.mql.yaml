@@ -92,19 +92,18 @@ queries:
     mql: |
       vsphere.host.accountUnlockTime == 900
     docs:
-      desc: |-
-        This check ensures that a locked account is automatically released after 15 minutes. ESXi locks an account once it reaches the maximum number of failed consecutive login attempts, and a defined unlock window restores access for legitimate users without leaving the account locked indefinitely.
+      desc: |
+        This check verifies that an account locked on the ESXi host stays locked for 15 minutes.
+
+        The `Security.AccountUnlockTime` setting holds that interval in seconds, and this check requires `900`. Read and set it in the vSphere Client under Configure, System, Advanced System Settings, or with `Get-AdvancedSetting` and `Set-AdvancedSetting` in PowerCLI. A value of `0` fails, since it means a locked account is released immediately and the lockout accomplishes nothing.
 
         **Why this matters**
 
-        - **Reduced administrative burden:** Authorized users regain access automatically instead of waiting for an administrator to unlock the account manually.
-        - **Brute-force resistance:** A timed lockout slows password-guessing attacks by forcing attackers to wait after each round of failures.
-        - **Predictable behavior:** A fixed unlock interval keeps account recovery consistent across every host in the environment.
+        The unlock interval is what converts a failure counter into an actual rate limit. Locking an account after a handful of wrong passwords only slows an attacker if the lock persists; if it clears instantly, they resume guessing at full speed and the threshold is decoration. At 15 minutes, an attacker gets a few attempts per quarter hour, which makes working through even a short password list a project measured in months rather than minutes.
 
-        **Risk mitigation**
+        Because ESXi local accounts sit outside the directory, they are attractive targets. They keep working when a domain account has been disabled, they are frequently shared, and they hold privileges over every virtual machine on the host, so guessing one is guessing at all the workloads it carries.
 
-        - **Account availability:** A 15-minute window balances security against the risk of locking out legitimate operators during an incident.
-        - **Throttled attacks:** Repeated guessing is rate-limited because each locked period must elapse before further attempts succeed.
+        The interval is a balance rather than a maximum. Longer locks are stronger but hand an attacker a denial-of-service lever, since deliberately failing logins against an operator's account keeps it locked when it is needed. Fifteen minutes is short enough that legitimate users recover without a call and long enough to make guessing impractical. Pair it with the companion check that sets the failure threshold, since neither works alone.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -166,19 +165,18 @@ queries:
     mql: |
       vsphere.host.kernelModules.where( loaded == true ).all( signedStatus != "Unsigned" )
     docs:
-      desc: |-
-        This check ensures that every kernel module loaded by the VMkernel carries a valid cryptographic signature. A signed module establishes its origin and integrity, while an unsigned module has not been verified and may indicate tampering or untrusted third-party software running inside the hypervisor.
+      desc: |
+        This check verifies that every kernel module currently loaded by the VMkernel carries a signature.
+
+        Modules are the drivers and low-level components that run inside the hypervisor itself, with full access to host memory and to the hardware. On the host, `esxcli system module list` shows which modules are loaded and `esxcli system module get --module=<module-name>` reports the signed status of each. This check fails when any loaded module reports a signed status of Unsigned. The fix is to remove or replace the offending bundle with a signed build from the vendor and reboot the host so the module set is rebuilt.
 
         **Why this matters**
 
-        - **Hypervisor integrity:** Loading only signed modules confirms that low-level drivers and components have not been altered since the vendor built them.
-        - **Tamper detection:** An unsigned module surfaces the presence of code that no trusted party has reviewed or approved.
-        - **Secure Boot prerequisite:** A fully signed module set is required before UEFI Secure Boot can be enabled and trusted.
+        Code inside the VMkernel is not confined by anything. A malicious module reads and writes the memory of every virtual machine on the host, intercepts their disk and network traffic, and hides its own presence from anything running in a guest, because everything in a guest depends on the layer the module is part of. There is no in-guest control that detects it and no guest that is unaffected by it.
 
-        **Risk mitigation**
+        An unsigned module is how such code gets there. It means a bundle was installed that no vendor or partner attested to, either because someone deliberately loosened the host or because an attacker with host administrative access installed one to persist through reboots and reinstalls of the guests.
 
-        - **Reduced attack surface:** Rejecting unsigned modules blocks a common path for installing rootkits and malicious drivers.
-        - **Verifiable supply chain:** Signature checks tie each loaded component back to a known vendor or partner.
+        Signature enforcement is only meaningful with the surrounding controls. Set the image profile acceptance level so unsigned bundles cannot be installed in the first place, which a companion check in this policy covers, and treat a clean module set as the precondition for enabling UEFI Secure Boot on the host.
       audit: |-
         ### Audit via the ESXi shell
 
@@ -256,19 +254,20 @@ queries:
       vsphere.host.properties['config']['storageDevice']['hostBusAdapter'].where( _['driver'] == 'iscsi_vmk' ).all( _['authenticationProperties']['mutualChapName'] != empty )
       vsphere.host.properties['config']['storageDevice']['hostBusAdapter'].where( _['driver'] == 'iscsi_vmk' ).all( _['authenticationProperties']['mutualChapSecret'] != empty )
     docs:
-      desc: |-
-        This check ensures that iSCSI host bus adapters use bidirectional Challenge-Handshake Authentication Protocol, also known as Mutual CHAP. Bidirectional CHAP requires both the ESXi host and the iSCSI target to prove their identity to each other before storage traffic flows.
+      desc: |
+        This check verifies that every iSCSI adapter on the host uses bidirectional CHAP authentication.
+
+        All of it has to be in place: CHAP enabled, the outgoing and mutual authentication types both set to require CHAP, and a name and secret configured for both directions. Configure it in the vSphere Client under Configure, Storage, Storage Adapters, selecting the iSCSI adapter and editing Authentication, then choosing to use bidirectional CHAP. The outgoing values must match what the storage array expects, and the incoming secret must differ from the outgoing one.
 
         **Why this matters**
 
-        - **Target verification:** The host confirms it is talking to the legitimate storage array rather than a rogue target.
-        - **Initiator verification:** The array confirms that only authorized hosts can connect to its iSCSI volumes.
-        - **Defense against impersonation:** Mutual authentication closes the gap left by one-way CHAP, which leaves the target unverified.
+        Without mutual authentication the host does not verify the array. An attacker on the storage network stands up a target that answers for the array's address and the host connects to it, at which point the attacker chooses what the virtual machines read from their disks. That is code execution inside every guest backed by the affected datastore, delivered without touching any of them.
 
-        **Risk mitigation**
+        Without CHAP at all, the array does not verify the host either, so any machine that can reach the target mounts the datastore and reads the virtual disks of every workload stored on it, with none of the guests' own access controls in the way.
 
-        - **Storage data protection:** Mutual authentication blocks unauthorized hosts from mounting or tampering with iSCSI datastores.
-        - **Man-in-the-middle resistance:** Verifying both endpoints reduces the risk of an attacker intercepting or redirecting storage traffic.
+        One-way CHAP closes only the second gap, which is why this check requires both directions to be required rather than merely enabled.
+
+        The secrets are shared with the array, so treat them as infrastructure credentials with a rotation plan, and change them from the storage side and the host side together. Where the storage network is genuinely isolated, this is defense in depth rather than the only control, but the isolation is worth verifying rather than assuming.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -340,19 +339,18 @@ queries:
       vsphere.host.dnsConfig.dhcp == false
       vsphere.host.dnsConfig.servers != empty
     docs:
-      desc: |-
-        This check ensures that the ESXi host uses statically configured, trusted DNS servers rather than DHCP-supplied values. ESXi relies on DNS to resolve vCenter Server, NTP servers, syslog targets, and other infrastructure services, so the name resolution path must come from a controlled source.
+      desc: |
+        This check verifies that the ESXi host resolves names using statically configured DNS servers rather than servers handed to it by DHCP.
+
+        Both conditions have to hold: DHCP must not be supplying the DNS configuration, and at least one DNS server must be configured. Set them in the vSphere Client under Configure, Networking, TCP/IP configuration on the Default stack, choosing to enter settings manually, or from the host shell with `esxcli network ip dns server add` and `esxcli network ip interface ipv4 set`.
 
         **Why this matters**
 
-        - **Trusted resolution:** Static DNS guarantees the host queries name servers chosen by administrators rather than whatever DHCP advertises.
-        - **Resistance to DHCP spoofing:** An attacker who influences DHCP responses cannot redirect the host's DNS lookups.
-        - **Stable management connectivity:** Fixed DNS settings keep vCenter, logging, and time services reachable even if the DHCP environment changes.
+        DNS decides where the host actually connects when it reaches for vCenter, a syslog collector, an NTP source, or a key provider. Whoever answers those queries chooses those destinations. When the settings come from DHCP, that authority belongs to whatever answered a broadcast on the management network, and an attacker with a foothold anywhere on that segment can be the one that answers.
 
-        **Risk mitigation**
+        From there the attacks are ordinary. Point the host at a syslog collector they control and the log trail moves to them. Point it at an NTP source they control and certificate validity windows and Kerberos tickets can be manipulated. Point it at something that impersonates a management endpoint and the host presents its credentials to it.
 
-        - **Interception prevention:** Controlled DNS reduces the chance of management traffic being routed to an attacker-controlled endpoint.
-        - **Operational reliability:** Static configuration removes a dependency on DHCP availability for critical host services.
+        Static configuration removes the negotiation entirely, which also means the host keeps working when the DHCP infrastructure does not. Take care when converting a management interface from DHCP to static: do it from the console rather than over a session that depends on the interface, confirm which VMkernel interface is the management one, and set the default gateway explicitly afterward.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -428,19 +426,18 @@ queries:
     mql: |
       vsphere.host.dvFilterBindIpAddress == empty
     docs:
-      desc: |-
-        This check ensures that the dvfilter network API is left unconfigured when no security appliance uses it. The dvfilter API allows certain network security products to inspect virtual machine traffic, and an unused binding address needlessly exposes VM network data.
+      desc: |
+        This check verifies that the dvfilter network introspection API has no bind address configured unless an appliance actually uses it.
+
+        The dvfilter API lets a security appliance sit in the path of virtual machine network traffic on the host. The `Net.DVFilterBindIpAddress` setting names the address the host will talk to, and this check requires it to be empty. Read and clear it in the vSphere Client under Configure, System, Advanced System Settings, or with `Get-AdvancedSetting` and `Set-AdvancedSetting` in PowerCLI.
 
         **Why this matters**
 
-        - **Minimized attack surface:** Leaving the API unconfigured removes a network introspection path that nothing on the host requires.
-        - **No stray traffic redirection:** An empty binding address prevents VM network information from being sent to an unintended destination.
-        - **Clear intent:** Configuring the API only when an appliance needs it keeps host settings aligned with actual deployments.
+        A configured bind address tells the host to hand virtual machine traffic to whatever is at that address. If the address is stale, left behind by an appliance that was decommissioned or by a template copied between environments, the endpoint it names may now belong to someone else, and the host is offering them a live feed of the traffic between the machines it runs. Since dvfilter operates below the guest, that traffic is visible before any encryption the workload applies at the network layer, and none of the guests see anything unusual.
 
-        **Risk mitigation**
+        An attacker who reaches host configuration privileges can set the value themselves, which gives them traffic interception across every virtual machine on the host from a single setting change and without touching any guest.
 
-        - **Reduced exposure:** Disabling an unused introspection channel limits the avenues available to an attacker.
-        - **Controlled enablement:** When a dvfilter appliance is deployed, the binding address is set deliberately to the correct endpoint.
+        Where a dvfilter-based appliance is deployed, the parameter is required and should hold that appliance's address. Exempt those hosts deliberately and confirm the address still resolves to the intended appliance, rather than leaving a value in place because nobody remembers what set it.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -509,19 +506,18 @@ queries:
       vsphere.host.esxiShellInteractiveTimeOut <= 300
       vsphere.host.esxiShellInteractiveTimeOut != 0
     docs:
-      desc: |-
-        This check ensures that idle ESXi shell and SSH sessions are automatically terminated after no more than 300 seconds. An interactive timeout closes sessions that an operator opened but left unattended, so an open prompt does not remain available indefinitely.
+      desc: |
+        This check verifies that an idle ESXi shell or SSH session is closed after no more than 300 seconds.
+
+        The `UserVars.ESXiShellInteractiveTimeOut` setting holds the interval in seconds. This check requires a value between 1 and 300, and fails on both a larger value and on `0`, which disables the timeout entirely. Read and set it in the vSphere Client under Configure, System, Advanced System Settings, or with `Get-AdvancedSetting` and `Set-AdvancedSetting` in PowerCLI.
 
         **Why this matters**
 
-        - **Abandoned session cleanup:** Idle sessions are closed before an unattended terminal can be misused.
-        - **Bounded exposure:** A short interactive timeout limits how long a privileged shell stays reachable after the operator walks away.
-        - **Enforced discipline:** Automatic termination removes reliance on operators remembering to log out.
+        An open shell on an ESXi host is authority over every virtual machine the host runs. An unattended one is that authority available to whoever finds it, and the person who finds it does not need a password, because the authentication already happened.
 
-        **Risk mitigation**
+        The realistic route is not someone walking up to a screen. It is a jump host or an operator workstation with a forgotten terminal open, compromised later by an unrelated route, where the attacker inherits a live authenticated session into the hypervisor without touching any credential. Nothing about their activity looks unusual, because it arrives on a session an authorized operator opened.
 
-        - **Hijack prevention:** A 300-second limit shrinks the window in which an attacker can reuse an open administrative session.
-        - **Consistent enforcement:** A non-zero value keeps the timeout active rather than disabling it entirely.
+        Five minutes is short enough to close that window during the pause an operator takes to read documentation or answer a message, and long enough not to interrupt work in progress. A value of zero is the state worth watching for, since it looks like a configured setting and disables the control entirely. Pair it with the companion check that stops the shell and SSH services themselves after a bounded period, since one covers idle sessions and the other covers services left enabled.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -587,19 +583,18 @@ queries:
     mql: |
       vsphere.host.mobEnabled == false
     docs:
-      desc: |-
-        This check ensures that the Managed Object Browser, or MOB, is disabled on the ESXi host. The MOB is a web-based interface that exposes the host's internal object model and allows configuration changes, and it serves no purpose in normal operations.
+      desc: |
+        This check verifies that the Managed Object Browser is disabled on the ESXi host.
+
+        The Managed Object Browser is a web interface that exposes the host's entire management object model for browsing, and it can invoke methods as well as read properties. It is controlled by the `Config.HostAgent.plugins.solo.enableMob` setting, which this check requires to be false. Change it in the vSphere Client under Configure, System, Advanced System Settings, or with `Set-AdvancedSetting` from PowerCLI. It cannot be changed while the host is in lockdown mode, and it should not be changed with `vim-cmd`.
 
         **Why this matters**
 
-        - **Reduced attack surface:** Disabling the MOB removes a web endpoint that can be used to enumerate and alter host configuration.
-        - **No debugging interface in production:** The MOB is primarily a development and troubleshooting tool that should not stay reachable on production hosts.
-        - **Tighter management boundary:** Host configuration is changed through vCenter Server and supported APIs rather than an unmonitored browser interface.
+        The interface is a complete map of the host, served over HTTP to anyone who can authenticate and reach the management interface. An attacker who obtains any host credential uses it to enumerate every virtual machine, every datastore, every network, and every configuration property, and to work out where the valuable workloads are, without installing a single tool on the host and without their activity looking like anything other than web requests.
 
-        **Risk mitigation**
+        It does not stop at reading. The browser invokes API methods, so the same session that enumerates the host can be used to change it, which makes the interface a fully functional management channel that sits outside the vCenter workflows an organization actually monitors.
 
-        - **Information disclosure prevention:** An attacker cannot use the MOB to walk the host object model and gather reconnaissance.
-        - **Unauthorized change prevention:** Removing the MOB closes a path for modifying host settings outside normal management channels.
+        Nothing in normal operation needs it, since it is a development and troubleshooting aid. Some third-party tools do use it, so confirm what an estate depends on before disabling it broadly, and note that a host already in lockdown mode has to leave lockdown, have the browser disabled, and re-enter it.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -670,19 +665,20 @@ queries:
     mql: |
       vsphere.host.properties['config']['lockdownMode'] == "lockdownNormal"
     docs:
-      desc: |-
-        This check ensures that Normal lockdown mode is enabled, which blocks direct local access to the ESXi host and requires the host to be managed remotely through vCenter Server. Normal mode keeps the Direct Console User Interface available as a fallback while still steering routine administration through vCenter.
+      desc: |
+        This check verifies that the ESXi host is in normal lockdown mode.
+
+        Lockdown mode blocks direct logins to the host and requires administration to arrive through vCenter Server. Normal mode keeps the Direct Console User Interface available to the accounts on the exception list, so an operator at the console can still recover a host that has lost contact with vCenter. Set it in the vSphere Client under Configure, System, Security Profile, choosing Normal next to Lockdown Mode, or from PowerCLI. This check fails on both a disabled host and one in strict mode, which the companion strict lockdown check covers instead.
 
         **Why this matters**
 
-        - **Centralized administration:** Funneling management through vCenter Server provides consistent authentication, role enforcement, and audit logging.
-        - **Reduced direct access:** Disabling local access removes a path that bypasses vCenter controls.
-        - **Console fallback retained:** The Direct Console User Interface remains available for recovery if the host loses contact with vCenter.
+        Direct access to a host bypasses everything vCenter provides. There is no role model beyond root, no task history tying an action to a person, and no alerting on a change, so an attacker with a host credential operates in a place nobody is watching, with authority over every virtual machine running there.
 
-        **Risk mitigation**
+        That path is also how host credentials get their value in the first place. Shared root passwords, credentials reused across hosts, and passwords left in build automation are all common; lockdown mode is what makes possessing one insufficient, because the host will not accept the login regardless.
 
-        - **Bypass prevention:** Lockdown mode stops operators and attackers from making changes directly on the host outside vCenter oversight.
-        - **Recoverability:** Keeping the console reachable avoids a lockout that would otherwise require reinstalling ESXi.
+        Funneling administration through vCenter means every action is authenticated against the directory, evaluated against a role, and recorded in the task log where anomalous activity can actually be found.
+
+        Keep the exception list short and deliberate, since accounts on it retain access, and confirm that the operational procedures which relied on direct host access have a vCenter equivalent before enabling this across a cluster.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -764,19 +760,18 @@ queries:
       vsphere.host.services.where( key == "ntpd").all( running == true )
       vsphere.host.services.where( key == "ntpd").all( policy == "on" )
     docs:
-      desc: |-
-        This check ensures that the Network Time Protocol service is running and configured to start with the host. Accurate, synchronized time keeps system event logs consistent and aligned with an agreed-upon standard such as Coordinated Universal Time.
+      desc: |
+        This check verifies that the ESXi host keeps its clock synchronized and does so across reboots.
+
+        Both the running state and the startup policy have to be right: the `ntpd` service must be running, and its policy must be on, which is shown in the vSphere Client as starting and stopping with the host. Configure it under Configure, System, Time Configuration, where the NTP servers are also set, or with `Set-VMHostService` and `Start-VMHostService` in PowerCLI.
 
         **Why this matters**
 
-        - **Reliable forensics:** Synchronized clocks let log events from multiple hosts be correlated accurately during an investigation.
-        - **Authentication integrity:** Many security protocols depend on clock accuracy to validate tickets and certificates.
-        - **Persistent enablement:** A startup policy of on ensures time synchronization resumes automatically after every reboot.
+        Time is the axis every investigation runs along. Correlating a syslog entry from the host with an authentication event on a domain controller and a connection log on a firewall only works if all three agree on when things happened. A host whose clock has drifted produces evidence that cannot be lined up with anything, and an attacker who can influence the clock produces evidence that lines up wrongly, which is worse than none.
 
-        **Risk mitigation**
+        Time also gates authentication and trust directly. Certificate validity windows, Kerberos tickets, and token lifetimes are all evaluated against the local clock, so a host far enough out of step either rejects valid credentials or accepts ones that should have expired.
 
-        - **Tamper detection:** Trustworthy timestamps make it harder for an attacker to obscure the timeline of an intrusion.
-        - **Operational consistency:** Continuous synchronization prevents clock drift that would otherwise degrade logging and scheduled tasks.
+        Requiring the policy as well as the running state is the part that lasts. A service started by hand goes away at the next reboot, and a host that silently stopped synchronizing looks entirely healthy until someone needs its logs. Point the hosts at time sources the organization controls rather than at whatever the template shipped with.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -847,19 +842,18 @@ queries:
       vsphere.host.syslogLogDir != ""
       vsphere.host.syslogLogDir != /scratch/
     docs:
-      desc: |-
-        This check ensures that the ESXi host writes its log files to a persistent datastore location rather than an in-memory file system. When the log directory points at a non-persistent location such as `/scratch`, only a single day of logs is retained and all log files are reinitialized on every reboot.
+      desc: |
+        This check verifies that the ESXi host writes its logs to persistent storage.
+
+        The `Syslog.global.logDir` setting names where host logs are written, and this check requires it to be set and to point somewhere other than `/scratch`. Read it in the vSphere Client under Configure, System, Advanced System Settings, or with `Get-AdvancedSetting` in PowerCLI, and set it to a datastore location written as a datastore name followed by a path.
 
         **Why this matters**
 
-        - **Log retention:** A persistent location preserves historical log data instead of discarding it after a day or a reboot.
-        - **Incident investigation:** Durable logs remain available to reconstruct events long after they occur.
-        - **Reboot survivability:** Logs stored on a datastore are not lost when the host restarts.
+        A host booting from removable media or from a small boot device places its scratch area on a ramdisk, so the logs live in memory. They hold roughly a day of history and they are gone at the next restart. That means the record of what happened on a hypervisor exists only until someone reboots it, and rebooting a host is not a privileged or unusual act.
 
-        **Risk mitigation**
+        An attacker on the host understands this. Rather than editing logs, which leaves traces, they restart the host and the evidence of how they arrived, what they authenticated as, and what they changed is discarded by the platform itself. The reboot looks like an ordinary maintenance event.
 
-        - **Evidence preservation:** Persistent logging prevents an attacker from erasing activity simply by triggering a reboot.
-        - **Audit continuity:** Retained logs support compliance reviews that require a longer record of host activity.
+        The host logs are also the only record of activity that a compromised guest cannot reach, which is precisely what makes them worth preserving. Point the directory at a datastore with capacity for the retention wanted, and pair this with the companion check that forwards logs to a central collector, since local persistence and off-host copies protect against different failures.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -934,19 +928,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that virtual switch port groups use a VLAN ID between 2 and 4094 and avoid the native VLAN. ESXi has no concept of a native VLAN, so placing a port group on the upstream native VLAN ID, commonly 1, mixes virtual machine traffic with untagged switch traffic.
+      desc: |
+        This check verifies that every port group on the host carries a VLAN ID in the tagged range.
+
+        This check requires each port group to use an ID between 2 and 4094, which excludes both the untagged value and the value physical switches most commonly use for their native VLAN, usually 1. Review the IDs in the vSphere Client under Configure, Networking, Virtual switches, where each standard switch's topology shows its port groups, or list them with `Get-VirtualPortGroup` in PowerCLI. Change one through the port group's Edit settings dialog.
 
         **Why this matters**
 
-        - **Traffic isolation:** A dedicated VLAN keeps virtual machine traffic separate from the physical switch's native VLAN.
-        - **Predictable tagging:** Using a non-native VLAN ID ensures frames are tagged consistently end to end.
-        - **Reduced misconfiguration:** Avoiding VLAN 1 removes ambiguity about which traffic belongs to which segment.
+        ESXi has no concept of a native VLAN, so a port group configured with the upstream switch's native VLAN ID ends up sharing a segment with the untagged traffic the physical switch carries. Virtual machines on that port group see traffic that was never meant for them, and their traffic reaches places the network design did not account for.
 
-        **Risk mitigation**
+        The specific attack this enables is VLAN hopping through double tagging. An attacker in a guest on the native VLAN sends a frame carrying two tags; the upstream switch strips the outer one because it matches the native VLAN and forwards the frame onto the inner VLAN, which may be a segment the guest was deliberately kept away from. The guest never had a route there, and the packet arrives anyway.
 
-        - **VLAN hopping resistance:** Keeping port groups off the native VLAN reduces exposure to attacks that exploit untagged traffic.
-        - **Containment:** Proper segmentation limits the blast radius if one segment is compromised.
+        Keeping port groups on explicitly tagged VLANs removes the ambiguity, because every frame is tagged end to end and the upstream switch has nothing to strip. Confirm the native VLAN configured on the physical switch ports feeding the host rather than assuming it is 1, and change the physical side rather than only the virtual side if it is set to something in use.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1032,19 +1025,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that virtual switch port groups avoid VLAN IDs 0 and 4095. VLAN 4095 activates Virtual Guest Tagging, which passes every frame to the guest with its VLAN tags intact, and should be used only when a guest is explicitly built to manage VLAN tags itself.
+      desc: |
+        This check verifies that no port group on the host uses VLAN ID 0 or 4095.
+
+        Those two values are special rather than ordinary IDs. VLAN 0 means no tagging is applied, and VLAN 4095 puts the port group into virtual guest tagging mode, where the host passes frames to the guest with their VLAN tags intact and lets the guest handle tagging itself. Review the IDs in the vSphere Client under Configure, Networking, Virtual switches, or list them with `Get-VirtualPortGroup` in PowerCLI, and change one through the port group's Edit settings dialog.
 
         **Why this matters**
 
-        - **Intentional VGT use:** Reserving VLAN 4095 for guests configured for Virtual Guest Tagging prevents accidental exposure of trunked traffic.
-        - **Defined segmentation:** Avoiding VLAN 0 ensures every port group sits on an explicitly assigned segment.
-        - **Reduced misconfiguration:** Excluding these special values keeps port group tagging behavior predictable.
+        A port group set to 4095 hands the virtual machine a trunk. The guest sees every VLAN the uplink carries and can send frames tagged for any of them, which means an attacker who compromises that guest reaches every segment the host is connected to, including management and storage networks the workload had no business touching. Nothing in the guest's own configuration stops that, because the segmentation is being enforced nowhere.
 
-        **Risk mitigation**
+        VLAN 0 is the other side of the same problem: traffic is untagged, so it lands on whatever the upstream switch does with untagged frames, which is a decision made outside the virtualization layer and often not the one the design assumed.
 
-        - **Traffic exposure prevention:** Limiting VGT mode stops a guest from seeing VLAN traffic it was never meant to receive.
-        - **Containment:** Correct VLAN assignment limits the spread of an attack between network segments.
+        Virtual guest tagging is legitimate for a router, firewall, or network appliance built to manage its own tags. Those machines should be treated as network infrastructure, kept on port groups created for that purpose, and exempted deliberately, rather than reached by a general-purpose workload that happens to sit on a port group somebody left at 4095.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1114,19 +1106,18 @@ queries:
     mql: |
       vsphere.host.syslogLogHost != ""
     docs:
-      desc: |-
-        This check ensures that the ESXi host forwards its logs to a central syslog server. By default ESXi stores logs only on a local scratch volume or ramdisk, so a remote log host is needed to preserve a copy off the host.
+      desc: |
+        This check verifies that the ESXi host forwards its logs to a central syslog server.
+
+        The `Syslog.global.logHost` setting names that destination, and this check requires it to be non-empty. Set it in the vSphere Client under Configure, System, Advanced System Settings, or with `Set-AdvancedSetting` in PowerCLI, giving the hostname or address of the collector. Setting `Syslog.global.logDirUnique` to true at the same time keeps each host's files distinct, and the configuration is per host rather than cluster-wide.
 
         **Why this matters**
 
-        - **Off-host retention:** A central log server keeps log data even if the host's local storage is wiped or fails.
-        - **Centralized analysis:** Aggregated logs let events from many hosts be searched and correlated in one place.
-        - **Tamper resistance:** Logs shipped off the host are harder for an attacker to alter or delete.
+        Logs that only exist on the machine being investigated are logs the attacker controls. Someone with host administrative access can edit or delete them, and someone who reaches the point of encrypting the datastores takes them along with everything else, which is exactly the position ESXi ransomware operators reach. Sending a copy off the host as events happen puts that record somewhere the attacker would have to compromise separately.
 
-        **Risk mitigation**
+        Central collection also changes what is detectable. A failed authentication on one host is noise; the same pattern arriving from twenty hosts within a few minutes is an attack in progress, and only an aggregated view shows it. The events that indicate a host is being probed are rarely alarming individually.
 
-        - **Evidence preservation:** Remote logging ensures investigators retain host activity even after a compromise or crash.
-        - **Faster detection:** A central log pipeline supports alerting and monitoring across the environment.
+        Local persistence and remote forwarding are complementary rather than alternatives. Configure both, verify the collector is actually receiving from each host rather than assuming the setting took effect, and make sure the firewall ruleset permits the outbound syslog traffic on hosts where egress is restricted.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1189,19 +1180,20 @@ queries:
       vsphere.host.services.where( key == "TSM-SSH").all( running == false )
       vsphere.host.services.where( key == "TSM-SSH").all( policy == "off" )
     docs:
-      desc: |-
-        This check ensures that the Secure Shell service is stopped and set to start manually on the ESXi host. SSH provides remote access to the ESXi shell, which should be enabled only when troubleshooting or diagnostics require it.
+      desc: |
+        This check verifies that the SSH service on the ESXi host is stopped and set to start manually.
+
+        Both conditions have to hold: the `TSM-SSH` service must not be running, and its startup policy must be off, shown in the vSphere Client as starting and stopping manually. Set both under Configure, System, Services, or with `Set-VMHostService` and `Stop-VMHostService` in PowerCLI. SSH is disabled by default, so a host failing this check has had it enabled at some point and left that way.
 
         **Why this matters**
 
-        - **Reduced remote access:** A stopped SSH service removes a network path into the privileged ESXi shell.
-        - **vCenter-centered management:** Routine administration flows through vCenter Server rather than direct shell sessions.
-        - **No automatic restart:** A manual startup policy prevents SSH from coming back on after a reboot.
+        SSH on a hypervisor offers a root shell with authority over every virtual machine the host carries. That makes it the single most valuable listening service on the management network and the one credential-guessing tools reach for first.
 
-        **Risk mitigation**
+        It matters more than the equivalent service on a server for two reasons. Host accounts are local, often shared, and frequently reused across every host in a cluster, so one recovered password is not one host. And a shell on the hypervisor reaches the disks and memory of workloads whose own defenses are irrelevant to that access, so a well-hardened guest is no protection at all.
 
-        - **Brute-force exposure:** Disabling SSH removes an interface attackers commonly target for credential guessing.
-        - **Controlled enablement:** SSH is turned on deliberately for a specific task and stopped again afterward.
+        Enabling SSH is a legitimate step for troubleshooting. The problem is that it stays on afterward, which is what the startup policy addresses: a service stopped by hand comes back at the next reboot unless the policy is off as well.
+
+        Stopping the service ends any session currently using it, so make the change from the vSphere Client or the host console. With lockdown mode enabled, SSH cannot be re-enabled from a local session, so confirm you retain another route to the host first.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1271,19 +1263,18 @@ queries:
     mql: |
       vsphere.host.properties['config']['lockdownMode'] == "lockdownStrict"
     docs:
-      desc: |-
-        This check ensures that Strict lockdown mode is enabled, which disables direct local access to the ESXi host and also disables the Direct Console User Interface. Strict mode requires the host to be managed exclusively through vCenter Server.
+      desc: |
+        This check verifies that the ESXi host is in strict lockdown mode.
+
+        Strict lockdown blocks direct logins to the host and additionally disables the Direct Console User Interface, so vCenter Server becomes the only way to administer the host at all. Set it in the vSphere Client under Configure, System, Security Profile, choosing Strict next to Lockdown Mode, or from PowerCLI through the host access manager. This check fails on a disabled host and on one in normal mode, which the companion normal lockdown check covers instead.
 
         **Why this matters**
 
-        - **Strongest access restriction:** Strict mode removes both local shell and console paths, leaving vCenter as the only management surface.
-        - **Centralized control:** All administration is subject to vCenter authentication, role enforcement, and audit logging.
-        - **Reduced attack surface:** Disabling the console eliminates an interface that bypasses vCenter entirely.
+        Normal lockdown still leaves the console reachable, and the console is a full administrative path with no vCenter role model, no per-person attribution, and no task log. Anyone with physical presence in the datacenter, or with access to the out-of-band management controller that renders that console over the network, can use it. Out-of-band controllers are frequently on their own network with their own credential set, managed by a different team, and patched on a different schedule, which makes them a realistic way in.
 
-        **Risk mitigation**
+        Strict mode closes that path, leaving a single administration surface where authentication goes to the directory, authorization goes through roles, and every action lands in a log someone reviews.
 
-        - **Bypass prevention:** Strict lockdown stops any change being made directly on the host outside vCenter oversight.
-        - **Lockout planning required:** Because the console is disabled, a loss of vCenter connectivity can require reinstalling ESXi, so recovery procedures must be in place.
+        The cost is real and has to be planned for. With the console disabled, a host that loses contact with vCenter can require reinstalling ESXi to recover. Confirm the recovery procedure, keep vCenter itself resilient, and consider normal lockdown with a tightly managed console access list where the operational risk of a lockout outweighs the exposure.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1368,19 +1359,18 @@ queries:
       vsphere.host.dcuiTimeOut <= 600
       vsphere.host.dcuiTimeOut != 0
     docs:
-      desc: |-
-        This check ensures that an idle Direct Console User Interface session is terminated after no more than 600 seconds. The Direct Console User Interface allows local login and host management, and an idle timeout closes sessions an operator opened but left unattended.
+      desc: |
+        This check verifies that an idle Direct Console User Interface session is closed after no more than 600 seconds.
+
+        The `UserVars.DcuiTimeOut` setting holds the interval in seconds. This check requires a value between 1 and 600, and fails on a larger value and on `0`, which disables the timeout altogether. Read and set it in the vSphere Client under Configure, System, Advanced System Settings, or with `Get-AdvancedSetting` and `Set-AdvancedSetting` in PowerCLI.
 
         **Why this matters**
 
-        - **Abandoned session cleanup:** Idle console sessions are closed before an unattended terminal can be misused.
-        - **Bounded exposure:** A short timeout limits how long a privileged local session stays open after the operator steps away.
-        - **Enforced discipline:** Automatic termination removes reliance on operators logging out manually.
+        The Direct Console User Interface is an administrative session on the hypervisor. From it an operator changes the management network, resets the root password, and restarts management agents, all of which affect every virtual machine the host runs. Leaving one signed in leaves that authority available to whoever comes next.
 
-        **Risk mitigation**
+        The exposure is not confined to people standing in the datacenter. The console is normally rendered over the network by the server's out-of-band management controller, so an idle session is reachable by anyone who can log into that controller, and those controllers sit on their own network with their own credentials and their own patching cadence. An operator who opens the console remotely, gets pulled onto something else, and closes their browser leaves the session live on the host.
 
-        - **Physical access risk reduction:** A 600-second limit shrinks the window for someone with console access to reuse an open session.
-        - **Consistent enforcement:** A non-zero value keeps the timeout active rather than disabling it entirely.
+        Ten minutes is long enough for the deliberate, careful work the console is used for and short enough that a forgotten session does not persist for a shift. As with the shell timeout, a value of zero is the state to watch for: it looks configured and turns the control off.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1437,19 +1427,18 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-3-1
     mql: vsphere.host.memShareForceSalting == 2
     docs:
-      desc: |-
-        This check ensures that per-virtual-machine salting for Transparent Page Sharing is set to its default of 2. With this setting each virtual machine receives a distinct salt, so memory pages are shared only within a single virtual machine and never across virtual machines.
+      desc: |
+        This check verifies that the host gives each virtual machine its own salt for transparent page sharing.
+
+        Transparent page sharing deduplicates identical memory pages so that one physical page backs many copies. Salting decides which machines are allowed to share with each other, and the `Mem.ShareForceSalting` setting controls the policy. A value of 2 is the shipped default and gives every virtual machine a distinct salt, so pages are shared only within a machine and never between machines. Read and set it in the vSphere Client under Configure, System, Advanced System Settings, or with `Get-AdvancedSetting` and `Set-AdvancedSetting` in PowerCLI.
 
         **Why this matters**
 
-        - **Inter-VM isolation:** Distinct salts prevent memory pages from being deduplicated across separate virtual machines.
-        - **Side-channel defense:** Cross-VM page sharing has been shown to leak information through timing-based memory disclosure attacks.
-        - **Safe default preserved:** A value of 2 keeps salting enabled as the vendor intends rather than relaxing it.
+        Sharing a physical page between two virtual machines creates a measurable link between them. Research on memory deduplication showed that an attacker in one guest can allocate a page with guessed contents and time how long it takes to write to it: a slow write means the page was deduplicated, which means another machine on the host holds identical content. Repeated, that turns into a way to confirm what data or which software a neighboring tenant is running, and in the published attacks into recovery of secret material a byte at a time.
 
-        **Risk mitigation**
+        The guests involved never communicate. The channel is the host's own memory optimization, which is exactly the sort of shared resource that makes a hypervisor a trust boundary rather than a wall.
 
-        - **Information leakage prevention:** Restricting sharing to intra-VM pages removes a channel for one tenant to infer another's data.
-        - **Tenant separation:** Per-VM salting reinforces the boundary between workloads sharing the same host.
+        Restricting sharing to within a single machine removes the cross-tenant channel while keeping the intra-machine benefit. It does give up some consolidation ratio, so the memory headroom of a densely packed cluster is worth checking before a change, but the default value is the correct one to be at.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1517,19 +1506,18 @@ queries:
       vsphere.host.properties['config']['firewall']['ruleset'].all( _['allowedHosts']['allIp'] == false )
       vsphere.host.properties['config']['firewall']['ruleset'].all( _['allowedHosts']['ipNetwork'] != null )
     docs:
-      desc: |-
-        This check ensures that the ESXi host firewall restricts each running service to specific authorized networks. The firewall is enabled by default, but a ruleset that allows all IP addresses leaves a service reachable from anywhere.
+      desc: |
+        This check verifies that the ESXi host firewall confines each enabled service to specific networks.
+
+        Three things have to hold: every running service is associated with a firewall ruleset, no ruleset has the allow-all setting enabled, and every ruleset names a specific allowed network. Review them in the vSphere Client under Configure, System, Firewall, or on the host with `esxcli network firewall ruleset list` and `esxcli network firewall ruleset allowedip list`. Restricting one is a matter of adding the allowed networks with `esxcli network firewall ruleset allowedip add` and then turning off the allow-all setting.
 
         **Why this matters**
 
-        - **Scoped access:** Limiting each ruleset to defined networks ensures only intended clients can reach a service.
-        - **No open services:** Disabling the allow-all setting prevents a service from being exposed to the entire network.
-        - **Defined boundaries:** Every running service is tied to an explicit allowed network rather than an implicit default.
+        An ESXi host serves the interfaces that manage every virtual machine running on it, so who can reach those interfaces is the question that decides how exposed the workloads are. A ruleset left allowing all addresses means any host that can route to the management interface can attempt to authenticate against it. In a flat network that includes the guests themselves, so a compromised virtual machine can attack the hypervisor that runs it, which is the failure that turns one breached workload into all of them.
 
-        **Risk mitigation**
+        Source restriction is also the control that has repeatedly mattered when an unauthenticated flaw is found in an ESXi service. Ransomware campaigns against ESXi have worked by scanning for reachable hosts; a ruleset limited to a management subnet takes a host out of that population regardless of the flaw.
 
-        - **Exposure reduction:** Restricting source addresses shrinks the population of hosts that can attack a management service.
-        - **Lateral movement containment:** Network-scoped rulesets make it harder for a compromised host to pivot to ESXi services.
+        Restricting a ruleset from the session that depends on it will disconnect that session, so add the allowed networks before turning off allow-all, include the address you are connecting from, and work from the host console when changing the SSH ruleset.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1612,19 +1600,18 @@ queries:
     mql: |
       vsphere.host.certificate.notAfter - time.now > 90 * time.day
     docs:
-      desc: |-
-        This check ensures that the ESXi host machine certificate remains valid for at least 90 more days. Each host presents an SSL/TLS certificate to secure management connections from vCenter Server and API clients, and an expired certificate breaks the trust relationship with vCenter.
+      desc: |
+        This check verifies that the ESXi host's machine certificate has more than 90 days of validity remaining.
+
+        Each host presents this certificate on its management interface, and vCenter and every API client validates it when connecting. Review the validity period in the vSphere Client under Configure, System, Certificate, where the Valid To date is shown, and renew or replace it from the same place, either issuing a new certificate from the VMware Certificate Authority or importing one signed by an enterprise or public authority.
 
         **Why this matters**
 
-        - **Uninterrupted management:** A valid certificate keeps vCenter and API clients able to connect to the host.
-        - **Renewal lead time:** A 90-day window gives operators time to renew or replace the certificate before it expires.
-        - **No insecure workarounds:** Avoiding expiration removes the temptation to disable certificate validation during an outage.
+        The certificate is what makes the management channel to the host authenticated rather than merely encrypted. It is the reason a client can tell it is talking to the real host and not to something that has interposed itself on the management network, and an attacker positioned there is the exact threat it defends against.
 
-        **Risk mitigation**
+        What makes expiry dangerous is the response to it. A host whose certificate has lapsed drops out of vCenter, usually at an inconvenient moment, and the fastest way to restore service under pressure is to reconnect while ignoring the certificate or to relax validation elsewhere. Those decisions are made quickly, documented rarely, and reversed later than they should be, and while they stand there is nothing distinguishing the real host from an impostor.
 
-        - **Trust preservation:** A current certificate maintains an authenticated, encrypted channel between the host and vCenter.
-        - **Outage prevention:** Renewing ahead of expiration avoids an interruption to host management.
+        The 90-day margin exists so the renewal is planned work rather than incident work. Where hosts use certificates from an enterprise authority, make renewal a scheduled task with its own lead time, since those do not renew themselves the way the built-in authority's certificates do.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1682,19 +1669,20 @@ queries:
       vsphere.host.services.where( key == "TSM").all( running == false )
       vsphere.host.services.where( key == "TSM").all( policy == "off" )
     docs:
-      desc: |-
-        This check ensures that the ESXi shell service is stopped and set to start manually. The ESXi shell is an interactive command line environment reachable from the Direct Console User Interface or over SSH, and it should be enabled only while running diagnostics or troubleshooting.
+      desc: |
+        This check verifies that the ESXi shell service is stopped and set to start manually.
+
+        Both conditions have to hold: the `TSM` service must not be running, and its startup policy must be off, shown in the vSphere Client as starting and stopping manually. Set both under Configure, System, Services, or with `Set-VMHostService` and `Stop-VMHostService` in PowerCLI. The shell is the interactive command environment reachable from the Direct Console User Interface, and it is separate from the SSH service that a companion check in this policy governs.
 
         **Why this matters**
 
-        - **Reduced privileged access:** A stopped shell service removes a powerful command line interface from everyday availability.
-        - **vCenter-centered management:** Routine administration flows through vCenter Server rather than direct shell sessions.
-        - **No automatic restart:** A manual startup policy prevents the shell from re-enabling after a reboot.
+        The shell is unrestricted access to the hypervisor. Commands run there read and write the datastores holding every virtual machine on the host, change how the host is configured, and manipulate the running machines directly, with no role model dividing what one operator may do from another and no per-command record tying an action to a person.
 
-        **Risk mitigation**
+        That combination is what makes the shell attractive to an attacker who has reached the console, and what makes it dangerous even when the person using it is authorized: a mistake at that layer takes down every workload on the host rather than one of them.
 
-        - **Attack surface reduction:** Disabling the shell removes an interface that grants direct control over the host.
-        - **Controlled enablement:** The shell is turned on deliberately for a specific task and stopped again afterward.
+        Enabling the shell for troubleshooting is normal. What this check targets is the state afterward, which is why the startup policy matters as much as the current state; a shell stopped by hand returns at the next reboot unless the policy is off too.
+
+        Disable the SSH service as well, since the two are independent, and pair both with the timeout checks in this policy that stop the services automatically when someone forgets.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1754,19 +1742,18 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: vsphere.host.acceptanceLevel == /VMwareCertified|VMwareAccepted|PartnerSupported/
     docs:
-      desc: |-
-        This check ensures that the ESXi image profile acceptance level is set to VMware Certified, VMware Accepted, or Partner Supported. The acceptance level controls which vSphere Installation Bundles may be installed, and the Community Supported level allows bundles that no trusted party has tested.
+      desc: |
+        This check verifies that the host will only accept software bundles at a trusted acceptance level.
+
+        Every vSphere Installation Bundle carries an acceptance level describing who tested and signed it, and the host has a matching setting that refuses anything below its own threshold. This check requires VMwareCertified, VMwareAccepted, or PartnerSupported, and fails on CommunitySupported, which admits bundles no trusted party has reviewed. Read it with `esxcli software acceptance get` on the host, or in the vSphere Client under Configure, System, Security Profile, where it appears as the Host Image Profile Acceptance Level.
 
         **Why this matters**
 
-        - **Verified software origin:** The accepted levels only admit bundles created, tested, or signed by VMware or a certified partner.
-        - **Untrusted code blocked:** Excluding the Community Supported level keeps unvetted bundles off the host.
-        - **Consistent trust baseline:** A defined acceptance level applies the same standard to every installed component.
+        An installation bundle can place a driver in the VMkernel, which is code running in the hypervisor with access to every virtual machine on the host and no guest-side control able to see it. The acceptance level is the gate deciding what may take that position, and lowering it to CommunitySupported opens the gate to anything.
 
-        **Risk mitigation**
+        The realistic path is supply chain rather than a dramatic intrusion. An administrator installs a community driver to get an unsupported network card or storage controller working, or follows a forum post to solve a hardware problem under time pressure. The host now runs unreviewed code in its most privileged layer, and it stays there through reboots, upgrades, and every rebuild of the guests running on it.
 
-        - **Supply chain protection:** Requiring a trusted acceptance level reduces the risk of installing malicious or unstable software.
-        - **Hypervisor integrity:** Restricting installable bundles supports a fully signed and verifiable host image.
+        Keeping the level at PartnerSupported or higher means the vendor stands behind what is installed. It also underpins the companion checks in this policy that require signed kernel modules and UEFI Secure Boot, since neither can hold on a host that accepts unsigned bundles.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1830,19 +1817,18 @@ queries:
     mql: |
       vsphere.host.accountLockFailures == 5
     docs:
-      desc: |-
-        This check ensures that an account is locked after 5 consecutive failed login attempts. A bounded failure count locks an account that is under attack before an attacker can work through a large set of password guesses.
+      desc: |
+        This check verifies that the ESXi host locks an account after 5 consecutive failed sign-in attempts.
+
+        The `Security.AccountLockFailures` setting holds that count, and this check requires a value of `5`. Read and set it in the vSphere Client under Configure, System, Advanced System Settings, or with `Get-AdvancedSetting` and `Set-AdvancedSetting` in PowerCLI. Applying it means an account is locked after the fifth wrong password and stays locked for the interval a companion check in this policy governs.
 
         **Why this matters**
 
-        - **Brute-force resistance:** A low failure threshold stops password-guessing attacks after only a few attempts.
-        - **Early lockout:** The account is protected well before an attacker can exhaust common password lists.
-        - **Consistent enforcement:** A fixed limit applies the same protection to every account on the host.
+        Password guessing against a hypervisor is worth an attacker's time in a way that guessing against an ordinary server is not. An ESXi local account has authority over every virtual machine on the host, so one recovered password yields the disks and the memory of all of them, and the guests never see an authentication event because the attacker never logs into a guest.
 
-        **Risk mitigation**
+        Without a threshold, the only limit on that guessing is how fast the service answers, and lists of common and previously breached passwords are long enough to make an unlimited-attempt service a matter of time rather than luck. Five attempts stops that outright: an attacker who does not already know the password gets essentially no chance to find it.
 
-        - **Credential compromise prevention:** Locking the account at 5 failures sharply reduces the chance of a successful guess.
-        - **Attack visibility:** Repeated lockouts surface accounts that are actively being targeted.
+        The threshold also produces a signal. Repeated lockouts on a host's local accounts are one of the clearest indications available that someone is working on the environment, provided those events reach a collector, which the remote logging check in this policy covers. Set the unlock interval as well, since a threshold with an immediate release is not a rate limit at all.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1906,19 +1892,20 @@ queries:
       vsphere.host.esxiShellTimeOut <= 3600
       vsphere.host.esxiShellTimeOut != 0
     docs:
-      desc: |-
-        This check ensures that the ESXi shell and SSH services automatically stop after no more than 1 hour. Without this timeout the services run indefinitely once enabled, leaving remote access available long after the work that required it is finished.
+      desc: |
+        This check verifies that the ESXi shell and SSH services stop on their own after no more than 1 hour.
+
+        The `UserVars.ESXiShellTimeOut` setting holds the interval in seconds. This check requires a value between 1 and 3600, and fails both on a larger value and on `0`, which disables the automatic shutdown entirely. Read and set it in the vSphere Client under Configure, System, Advanced System Settings, or with `Get-AdvancedSetting` and `Set-AdvancedSetting` in PowerCLI.
 
         **Why this matters**
 
-        - **Automatic shutdown:** The shell and SSH services stop on their own rather than staying enabled until someone remembers them.
-        - **Bounded availability:** A 1-hour limit keeps these services reachable only for the duration of a typical task.
-        - **Defense in depth:** This timeout complements the idle session timeout to cover both unattended and forgotten access.
+        This timeout addresses a different failure from the idle session timeout. That one closes a session someone left open; this one stops the service someone turned on and forgot about. The second is the more common outcome, because enabling SSH to investigate a problem at two in the morning is routine and remembering to disable it afterward is not.
 
-        **Risk mitigation**
+        A service left enabled that way is a permanently listening root-shell interface on the hypervisor, discovered by whoever scans the management network next. It is exactly the exposure that a scheduled configuration review will eventually find, weeks after an attacker would have.
 
-        - **Exposure reduction:** Limiting service uptime shrinks the window during which remote shell access can be attacked.
-        - **Consistent enforcement:** A non-zero value keeps the timeout active rather than disabling it entirely.
+        Making the shutdown automatic removes the reliance on anyone remembering. The service is available for the length of a normal troubleshooting session and then goes away by itself, which is the behavior an operator would choose if they were thinking about it at the end of the work rather than the start.
+
+        A value of zero is the state to watch for, since it looks configured and turns the control off. Pair this with the interactive session timeout and with the checks that require the services to be off in the steady state.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -1982,19 +1969,18 @@ queries:
       vsphere.host.services.where( key == "slpd" ).all( running == false )
       vsphere.host.services.where( key == "slpd" ).all( policy == "off" )
     docs:
-      desc: |-
-        This check ensures that the Service Location Protocol daemon, `slpd`, is stopped and set to start manually. SLP lets ESXi advertise and discover services such as CIM-based hardware monitoring, and it should be disabled on hosts that do not require it.
+      desc: |
+        This check verifies that the Service Location Protocol daemon is stopped and will not start on its own.
+
+        Both the running state and the startup policy have to be right: the `slpd` service must not be running, and its policy must be off, which the vSphere Client shows as starting and stopping manually. Set it under Configure, System, Services, or from the host shell by stopping the service, disabling the CIMSLP firewall ruleset, and turning it off at boot with `chkconfig`.
 
         **Why this matters**
 
-        - **Known vulnerability target:** SLP has been the subject of multiple critical ESXi flaws, including CVE-2021-21974, which ransomware campaigns exploited at scale.
-        - **Reduced attack surface:** A stopped service removes a network-facing component that attackers actively scan for.
-        - **Rarely needed:** Most hosts do not depend on CIM-based hardware monitoring over SLP, so the daemon serves no purpose.
+        This is not a theoretical exposure. SLP has produced a series of critical remotely exploitable flaws in ESXi, and CVE-2021-21974 in particular was used at scale by ransomware campaigns that scanned the internet for hosts with the service reachable and encrypted the virtual machines they found. The pattern is worth understanding: the attackers never touched a guest, never needed a credential, and never had to defeat anything inside the workloads. They reached a listening service on the hypervisor, and every virtual machine on that host went with it.
 
-        **Risk mitigation**
+        That is the reason a hypervisor service deserves harsher treatment than the equivalent service on a single server. The blast radius of one listening daemon is the entire set of workloads the host carries.
 
-        - **Exploit prevention:** Disabling `slpd` removes the service that ransomware campaigns have used to compromise ESXi hosts.
-        - **No automatic restart:** A manual startup policy keeps the daemon from re-enabling after a reboot.
+        SLP exists to advertise CIM-based hardware monitoring, which most estates no longer use. Confirm whether any monitoring product depends on it before disabling it fleet-wide, and set the startup policy as well as stopping the service, since a service stopped by hand comes back at the next reboot.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -2074,21 +2060,18 @@ queries:
         vsphere.host.services.where( key == "snmpd" ).all( policy == "off" )
       }
     docs:
-      desc: |-
-        This check ensures that the SNMP agent is either disabled or restricted to SNMPv3. SNMP v1 and v2c rely on community strings sent in clear text, which can be sniffed and replayed to read host data or change settings. SNMPv3 authenticates users and encrypts traffic, so hosts that require SNMP monitoring can keep the agent enabled when only SNMPv3 is configured.
+      desc: |
+        This check verifies that SNMP on the ESXi host is either switched off entirely or configured to use SNMPv3 only.
 
-        The host passes when the SNMP agent is disabled and the `snmpd` service is stopped with a manual startup policy. It also passes when the agent is enabled with no v1 or v2c community strings or trap targets, and at least one SNMPv3 user or SNMPv3 notification target is configured.
+        Two states pass. In the first, the agent is disabled and the `snmpd` service is stopped with its startup policy set to off, which the vSphere Client shows under Configure, System, Services. In the second, the agent is enabled but carries no v1 or v2c configuration: the community strings and trap targets are empty, and at least one SNMPv3 user or SNMPv3 notification target is configured. The agent configuration is read with `esxcli system snmp get` and written with `esxcli system snmp set`.
 
         **Why this matters**
 
-        - **Clear-text exposure:** Community-based SNMP transmits credentials without encryption, making them trivial to capture.
-        - **Reduced attack surface:** A stopped daemon removes a network service that can leak host information.
-        - **Rarely needed by default:** Many hosts do not require SNMP polling, so the service serves no purpose when left running.
+        SNMP v1 and v2c authenticate with a community string sent in clear text on every request. An attacker with any position on the management network captures it passively and then queries the host at will, reading its configuration, its interfaces, and its inventory, which is the reconnaissance that decides what they attack next. Community strings are also famously left at defaults, so on many networks no capture is needed at all.
 
-        **Risk mitigation**
+        Trap targets matter for the same reason in the other direction: the host will keep sending its status to whatever address is listed, and a stale target means that data goes wherever that address now points.
 
-        - **Information disclosure prevention:** Disabling SNMP stops an attacker from sniffing community strings to enumerate the host.
-        - **Stronger alternative:** When monitoring is required, SNMPv3 with authentication and privacy replaces the insecure v1 and v2c protocols.
+        SNMPv3 authenticates the user and encrypts the payload, which is why the enabled state is only acceptable in that form. Configure it with authentication and privacy, not merely with a v3 user and no security level, and remember that setting the community and target values overwrites what was there, so an empty string is what removes an old v1 or v2c configuration.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -2182,19 +2165,18 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the Forged Transmits security policy is set to reject on every standard vSwitch and port group. Forged Transmits controls whether a virtual machine may send traffic using a source MAC address other than the one assigned to its virtual adapter.
+      desc: |
+        This check verifies that forged transmits are rejected on every standard vSwitch and every port group on the host.
+
+        Forged transmits governs whether a virtual machine may send frames whose source MAC address differs from the one assigned to its virtual adapter. The check reads the policy on each standard switch, the effective policy on each port group, and any explicit per-port-group override, so a switch set correctly cannot be undone by a port group that overrides it. Set it in the vSphere Client under Configure, Networking, Virtual switches, editing Security and setting Forged transmits to Reject, or on the host with `esxcli network vswitch standard policy security set`.
 
         **Why this matters**
 
-        - **Source MAC integrity:** Rejecting forged transmits ensures outbound frames carry the adapter's assigned MAC address.
-        - **Consistent enforcement:** Applying the policy at both the vSwitch and port group levels prevents an override from weakening it.
-        - **Predictable network behavior:** Genuine source addresses keep switching and monitoring accurate.
+        When forged transmits are allowed, a compromised guest chooses what source address its traffic carries. That is the basis of ARP spoofing on the virtual switch: the guest announces itself as the gateway or as another machine, the switch learns the false mapping, and traffic between other virtual machines on the same segment starts flowing through the attacker. They read it, modify it, and forward it on, and the machines whose traffic is being intercepted see nothing unusual.
 
-        **Risk mitigation**
+        Forged source addresses also defeat any control keyed to machine identity, whether that is a MAC-based access control list on the physical network, a licence check, or a log that attributes activity to an address.
 
-        - **Spoofing prevention:** Blocking forged source MACs stops a virtual machine from impersonating another system on the network.
-        - **Attack containment:** Enforced MAC integrity limits traffic injection and interception between virtual machines.
+        Legitimate exceptions exist, notably clustering products that share a MAC address, nested virtualization, and layer 2 bridging appliances. Grant those exceptions at the port group holding the machine that needs them rather than by relaxing the vSwitch default, so the rest of the switch keeps the protection.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -2289,19 +2271,20 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the MAC Address Change security policy is set to reject on every standard vSwitch. This policy controls whether a guest may change the effective MAC address of its virtual adapter to a value different from the one configured by ESXi.
+      desc: |
+        This check verifies that MAC address changes are rejected on every standard vSwitch on the host.
+
+        This policy governs whether a guest may change the effective MAC address of its virtual adapter to something other than the address ESXi assigned it. Set it in the vSphere Client under Configure, Networking, Virtual switches, editing Security and setting MAC address changes to Reject, or on the host with `esxcli network vswitch standard policy security set`. It is a separate control from forged transmits, which a companion check in this policy covers.
 
         **Why this matters**
 
-        - **Adapter identity integrity:** Rejecting MAC changes keeps a virtual machine bound to the MAC address ESXi assigned it.
-        - **Reduced impersonation:** A guest cannot reconfigure its adapter to receive traffic destined for another system.
-        - **Predictable switching:** Stable MAC addresses keep the virtual switch's forwarding decisions accurate.
+        Where forged transmits controls what a guest may put in the source field of frames it sends, this policy controls what the switch will deliver to it. A guest that changes its effective address is asking the vSwitch to hand it traffic destined for that address, so an attacker who takes over a low-value virtual machine reassigns its adapter to the address of a machine on the same segment and starts receiving that machine's inbound traffic.
 
-        **Risk mitigation**
+        The target sees an intermittent fault rather than an attack, because some of its traffic stops arriving. The attacker sees session cookies, credentials, and database traffic belonging to a workload they never had to compromise, and they got there without leaving the guest they already owned.
 
-        - **Traffic interception prevention:** Blocking MAC changes stops a virtual machine from capturing frames meant for another address.
-        - **Spoofing resistance:** Enforced MAC identity limits a compromised guest's ability to masquerade on the network.
+        The same technique defeats anything that trusts a MAC address as an identity, including network access control and address-based licensing.
+
+        Microsoft clustering, layer 2 bridges, and some licensing arrangements genuinely require the change. Give those machines their own port group with an explicit override rather than relaxing the policy on the vSwitch that everything else shares.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -2396,19 +2379,20 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that the Promiscuous Mode security policy is set to reject on every standard vSwitch. Promiscuous mode lets a virtual machine adapter receive all frames passing through the vSwitch, not only those addressed to it.
+      desc: |
+        This check verifies that promiscuous mode is rejected on every standard vSwitch on the host.
+
+        Promiscuous mode decides whether a virtual adapter receives every frame passing through the switch rather than only the frames addressed to it. Set the policy in the vSphere Client under Configure, Networking, Virtual switches, editing Security and setting Promiscuous mode to Reject, or on the host with `esxcli network vswitch standard policy security set`.
 
         **Why this matters**
 
-        - **Traffic confinement:** Rejecting promiscuous mode ensures each adapter sees only the frames intended for it.
-        - **Reduced sniffing capability:** A guest cannot passively capture traffic belonging to other virtual machines on the switch.
-        - **Consistent enforcement:** Applying the policy at the vSwitch level prevents broad packet visibility by default.
+        A vSwitch with promiscuous mode allowed turns every guest on it into a potential network tap. An attacker who compromises the least important virtual machine on the segment puts its adapter into promiscuous mode and reads the traffic of every other machine sharing that switch, including workloads with far stronger defenses that they were never able to break into.
 
-        **Risk mitigation**
+        What they collect is whatever those machines send in the clear on an internal segment, which is usually more than the design assumed: database connections, replication traffic, internal service calls, session tokens, and health check endpoints that carry credentials. It is entirely passive, so nothing on the other machines logs it, no connection is initiated, and there is no failed attempt to notice.
 
-        - **Eavesdropping prevention:** Blocking promiscuous mode stops a compromised guest from monitoring its neighbors' traffic.
-        - **Data exposure containment:** Limiting frame visibility reduces the blast radius if one virtual machine is breached.
+        This is the control that keeps virtual machines sharing a host from being able to see each other's traffic just because they share hardware, which is the property tenants assume they are getting.
+
+        Intrusion detection sensors and packet capture appliances do need it. Put those on a dedicated port group with an explicit override, scoped to the segment they are meant to monitor, rather than allowing promiscuous mode on the vSwitch as a whole.
       audit: |-
         ### Audit via the vSphere Client
 
@@ -2490,19 +2474,18 @@ queries:
     mql: |
       vsphere.host.secureBootEnabled == true
     docs:
-      desc: |-
-        This check ensures that UEFI Secure Boot is enabled on the ESXi host. Secure Boot establishes a chain of trust from the platform firmware through the bootloader, the VMkernel, and every installed bundle, validating the cryptographic signature of each component before it is allowed to run.
+      desc: |
+        This check verifies that the ESXi host boots with UEFI Secure Boot active.
+
+        Secure Boot has the platform firmware validate the bootloader's signature, the bootloader validate the VMkernel, and the VMkernel validate every installed bundle, so each stage refuses to hand control to something it cannot verify. Confirm the state on the host with `/usr/lib/vmware/secureboot/bin/secureBoot.py -s`. Enabling it means the server firmware is set to boot in UEFI mode rather than legacy BIOS, and the host is checked for compatibility with `/usr/lib/vmware/secureboot/bin/secureBoot.py -c` before the change.
 
         **Why this matters**
 
-        - **Verified boot chain:** Each stage of startup confirms the next component is signed before executing it.
-        - **Boot-time tamper protection:** Modified or unsigned code is rejected before the hypervisor loads.
-        - **Hardware-rooted trust:** Anchoring the chain in firmware makes the integrity check difficult for software to bypass.
+        The hypervisor is the layer every workload on the host depends on, so an attacker who reaches it wants to stay. Modifying the boot path is how that is done, because code that loads before the VMkernel is outside anything the VMkernel or any guest can inspect. Such an implant survives reboots, survives patching the guests, and survives rebuilding the virtual machines entirely, since none of those touch the layer it lives in.
 
-        **Risk mitigation**
+        Secure Boot removes that persistence. A modified bootloader or an unsigned module means the host refuses to start rather than starting compromised, which turns a silent, durable foothold into a visible failure someone has to investigate.
 
-        - **Rootkit prevention:** Secure Boot blocks persistent boot-level malware from executing during startup.
-        - **Hypervisor integrity:** Validated signatures ensure the running hypervisor matches trusted, signed software.
+        The prerequisites are strict, and a host with any improperly signed bundle installed will not boot once Secure Boot is on. Resolve unsigned modules first, which a companion check in this policy identifies, then convert hosts one at a time with the console reachable, rather than enabling it across a cluster in one pass.
       audit: |-
         ### Audit via the ESXi shell
 
