@@ -101,14 +101,21 @@ queries:
       docker.file.stages.all(expose.all(port != 6443))
     docs:
       desc: |
-        Dockerfiles should not declare `EXPOSE` instructions for management ports such as SSH (22), the Docker Remote API (2375), Consul (8500), or the Kubernetes API (6443).
+        This check verifies that no `EXPOSE` instruction in the Dockerfile advertises a management port.
+
+        `EXPOSE` records the ports an image intends to serve. It does not publish anything by itself, but `docker run -P` publishes every exposed port to a host port, and orchestrators, service meshes, and compose files read the same metadata to decide what to wire up. The check requires that no build stage expose port 22 for SSH, 2375 for the unencrypted Docker Remote API, 8500 for the Consul HTTP API, or 6443 for the Kubernetes API server.
 
         **Why this matters**
 
-        - **Unauthorized access:** These ports are commonly targeted by attackers to gain access to containerized environments.
-        - **Increased attack surface:** Exposing management ports unnecessarily expands the attack surface and makes vulnerabilities easier to reach.
-        - **Operational risks:** Misconfigured or exposed management ports can lead to unintended access, service disruptions, or data breaches.
-        - **Compliance risks:** Many security standards require restricting access to management ports to reduce potential threats.
+        Port 2375 is the one that ends worst. The Docker Remote API listens there without TLS and without authentication, so anyone who reaches it can create a container that bind-mounts the host root filesystem and then write to `/etc/shadow` or drop a service unit file. That is root on the node rather than root inside one container.
+
+        Port 8500 hands an attacker the Consul HTTP API. They read the key-value store, which in most deployments holds database passwords and service tokens, then rewrite a service registration so traffic intended for a healthy backend is routed to a host they control.
+
+        Port 6443 matters when the image also carries a kubeconfig or a mounted service account token. Reaching the API server with that credential lets an attacker list secrets across every namespace the token can see and schedule a privileged pod on another node.
+
+        Port 22 turns the container into a login target. Whatever key or password the image baked in becomes a shell, and from that shell the attacker reaches every internal address the container network can route to.
+
+        Expose only the ports the application itself serves. Management access belongs on runtime-managed channels such as an orchestrator exec path, not on a port recorded in the image.
       audit: |
         Inspect the Dockerfile to confirm management ports are not exposed:
 
@@ -159,14 +166,19 @@ queries:
       docker.file.stages.all(run.all(commands.none(flags.contains("--allow-insecure-repositories"))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions should not pass the `--allow-insecure-repositories` option to the APT package manager.
+        This check verifies that no `RUN` instruction disables APT's repository signature verification.
+
+        APT refuses to install from a repository whose release metadata is not signed by a key it trusts. The `--allow-insecure-repositories` option removes that refusal and downgrades it to a warning, so an index that is unsigned or that cannot be verified is accepted and the install that follows proceeds from it. The check requires that no `RUN` instruction in any build stage pass this option.
 
         **Why this matters**
 
-        - **Man-in-the-middle attacks:** Without repository validation, attackers can intercept and modify package data during download, potentially injecting malicious code.
-        - **Integrity issues:** Using insecure repositories undermines the integrity of the software being installed, as there is no guarantee that packages come from trusted sources.
-        - **Operational risks:** Installing packages from insecure repositories can pull in compromised or outdated software, increasing the risk of vulnerabilities in the container.
-        - **Compliance risks:** Many security standards require repository and certificate validation to ensure secure communication and package integrity.
+        Repository signing is the only thing tying a package to its publisher. Without it, an attacker who can answer for the repository host, whether through DNS poisoning on the build network, a compromised mirror, or a typo-squatted hostname in the Dockerfile, serves an index of their choosing and APT installs whatever it names. The payload lands as an ordinary package with a maintainer script, which runs as root during the build and can write anywhere in the image.
+
+        That code then ships. Every container started from the image runs it, in every environment the image reaches, and the compromise is invisible to a scanner comparing installed package versions against a vulnerability database, because the attacker chose a version string that looks ordinary.
+
+        The bypass also hides its own cause. A build that needs this option is a build whose repository key was never imported, so the error it suppresses is the one worth reading.
+
+        The fix is to make verification succeed rather than to skip it. Import the publisher's signing key into a keyring, pin it to the repository so only that key can authorize packages from that source, then remove the option. Dropping the option on its own breaks the install against an unsigned repository, which is exactly why it tends to be added back.
       audit: |
         Inspect the Dockerfile to confirm APT does not skip repository validation:
 
@@ -224,14 +236,19 @@ queries:
       docker.file.stages.all(run.all(commands.where(binary == "curl").none(flags.contains("--insecure") || flags.any(_ == /^-[a-zA-Z]*k[a-zA-Z]*$/))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions should not pass the `--insecure` or `-k` options to `curl`. The `-k` option also counts when it is bundled into a short-option cluster such as `-fsSLk`.
+        This check verifies that no `curl` invocation in a `RUN` instruction disables TLS certificate validation.
+
+        `curl` validates the server certificate against its trust store by default and aborts the transfer when validation fails. The `--insecure` option, and its short form `-k`, turn that abort into silent acceptance of any certificate, including one the attacker signed themselves. The check reads every `RUN` instruction, finds the `curl` commands, and requires that neither form is present. The short form counts when it is bundled into an option cluster such as `-fsSLk`, which is how it most often reaches a Dockerfile, because it reads as part of a familiar download idiom rather than as a decision.
 
         **Why this matters**
 
-        - **Man-in-the-middle attacks:** Without TLS certificate validation, attackers can intercept and modify data during transmission, potentially injecting malicious content.
-        - **Integrity issues:** Disabling certificate checks undermines the integrity of the data being transferred, as there is no guarantee that it comes from trusted sources.
-        - **Operational risks:** Fetching content over unvalidated connections can pull in compromised or outdated data, increasing the risk of vulnerabilities in the container.
-        - **Compliance risks:** Many security standards require TLS certificate validation to ensure secure communication.
+        Almost every Dockerfile that calls `curl` is downloading something it then executes: a binary, an installer script piped to a shell, a release tarball unpacked into the image. Certificate validation is what makes the response come from the host named in the URL rather than from whoever is on the path.
+
+        With validation off, anyone who can answer for that hostname on the build network serves their own payload. On a shared CI runner or a build reached through an intercepting proxy, that is a realistic position to hold. The substituted binary is baked into a layer and runs with whatever privileges the container is later given.
+
+        The failure is silent in both directions. `curl` exits zero, the build succeeds, and the resulting layer looks identical to a clean one. Nothing in the image records that the download was unverified.
+
+        Remove the option and fix the underlying trust problem instead. If the endpoint presents a certificate from an internal authority, install that authority's certificate into the image so validation succeeds on its own.
       audit: |
         Inspect the Dockerfile to confirm `curl` validates certificates:
 
@@ -279,14 +296,19 @@ queries:
       docker.file.stages.all(run.all(commands.none(flags.contains("--no-check-certificate"))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions should not pass the `--no-check-certificate` option to `wget`.
+        This check verifies that no `wget` invocation in a `RUN` instruction disables TLS certificate validation.
+
+        `wget` verifies the server certificate against the system trust store and refuses the transfer when verification fails. The `--no-check-certificate` option removes that refusal and accepts any certificate, whether expired, self-signed, or issued for a different host. The check requires that no `RUN` instruction in any build stage pass this option.
 
         **Why this matters**
 
-        - **Man-in-the-middle attacks:** Without TLS certificate validation, attackers can intercept and modify data during transmission, potentially injecting malicious content.
-        - **Integrity issues:** Disabling certificate checks undermines the integrity of the data being transferred, as there is no guarantee that it comes from trusted sources.
-        - **Operational risks:** Fetching content over unvalidated connections can pull in compromised or outdated data, increasing the risk of vulnerabilities in the container.
-        - **Compliance risks:** Many security standards require TLS certificate validation to ensure secure communication.
+        The `wget` calls in a Dockerfile fetch the things the image is built out of: language runtimes, release archives, install scripts, static binaries. With certificate verification disabled, the only remaining guarantee is that something answered the connection, not that the thing answering is the publisher named in the URL.
+
+        An attacker positioned between the builder and that host, on a shared runner, behind a poisoned resolver, or on an intercepting proxy, answers with their own archive. It is unpacked into the image and, in the common install-script case, executed as root during the build. The result is a working image that passes its tests and carries an implant in a layer nobody rereads.
+
+        The option is usually added to get past a real error: an expired certificate on an internal mirror, or a private certificate authority the base image does not trust. Suppressing the error leaves that root cause in place, and every later build inherits both the broken trust configuration and the bypass.
+
+        Remove the option so verification runs again. If the download target uses an internal certificate authority, add that authority's certificate to the image's trust store before the fetch. If the certificate is genuinely expired, renewing it is the fix, because a build that succeeds against an expired certificate is a build that cannot tell a lapsed certificate from an attacker's.
       audit: |
         Inspect the Dockerfile to confirm `wget` validates certificates:
 
@@ -334,14 +356,19 @@ queries:
       docker.file.stages.all(run.all(commands.none(binary == "sudo")))
     docs:
       desc: |
-        Dockerfile `RUN` instructions should not use `sudo` to run commands.
+        This check verifies that no `RUN` instruction invokes `sudo`.
+
+        Build steps in a Dockerfile already run as root unless an earlier `USER` instruction changed that, so `sudo` is not what grants a step its privileges. The check requires that no `RUN` instruction in any build stage call `sudo`.
 
         **Why this matters**
 
-        - **Privilege escalation:** `sudo` grants elevated permissions that can be exploited if not handled properly.
-        - **Inconsistent behavior:** Commands requiring `sudo` may fail in environments where `sudo` is not configured or available.
-        - **Least privilege:** Docker containers are designed to run with the least privileges necessary, and using `sudo` contradicts this principle and increases the attack surface.
-        - **Operational risks:** Overuse of `sudo` can lead to misconfigurations or unintended privilege escalations, compromising container security.
+        The reason to care is what `sudo` leaves in the image rather than what it does during the build. For it to work at all, the package has to be installed, and it ships a setuid root binary alongside a policy file. Once a container from that image is running as a non-root user, that binary is the shortest path back to root inside the container.
+
+        An attacker who reaches code execution as the application user, through a deserialization bug, a template injection, or an uploaded file, looks for exactly this. A permissive rule left in the sudoers policy, a passwordless entry inherited from a base image, or a `sudo` release with a known local privilege escalation turns a limited foothold into root in the container. From root in the container, a writable Docker socket, a relaxed seccomp profile, or a retained kernel capability becomes reachable in a way it was not before.
+
+        There is a build-time cost too. A step that needs `sudo` assumes an interactive shell and a configured sudoers policy, so the same Dockerfile behaves differently on a base image that does not ship it, and the build fails in a way that reads as a missing command rather than as a design problem.
+
+        Run privileged steps while the build is still root, then drop to a non-root account with `USER` for the stages that follow. Nothing in a build needs `sudo` to reach root.
       audit: |
         Inspect the Dockerfile to confirm `sudo` is not used:
 
@@ -391,14 +418,19 @@ queries:
       docker.file.stages.all(run.all(commands.none(flags.contains("--nogpgcheck") || flags.contains("--no-gpg-checks"))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions should not pass GPG signature verification bypass options to package managers: `--nogpgcheck` for YUM and DNF, or `--no-gpg-checks` for zypper.
+        This check verifies that no `RUN` instruction disables GPG signature verification for RPM package installs.
+
+        YUM, DNF, and zypper verify each package against a signing key imported into the RPM keyring before installing it. The `--nogpgcheck` option for YUM and DNF, and `--no-gpg-checks` for zypper, skip that verification. The check requires that no `RUN` instruction in any build stage pass either option.
 
         **Why this matters**
 
-        - **Integrity issues:** Without GPG validation, there is no guarantee that installed packages come from trusted sources, increasing the risk of installing compromised or malicious software.
-        - **Man-in-the-middle attacks:** Disabling GPG checks makes it easier for attackers to intercept and modify package data during download.
-        - **Operational risks:** Skipping signature checks can pull in outdated or tampered packages, increasing the risk of vulnerabilities in the container.
-        - **Compliance risks:** Many security standards require GPG validation to ensure the integrity and authenticity of software packages.
+        Signature verification is what binds an RPM to the organization that built it. It survives an untrusted transport, a mirror the publisher does not control, and a caching proxy in between, because the check runs over the package contents rather than over the connection.
+
+        Turning it off returns the decision to whoever served the file. An attacker who controls a mirror, poisons the build network's resolver, or answers for a repository host publishes a package that installs cleanly. RPM scriptlets run as root during the build, so the package does not even need to contain a malicious binary; the install itself is enough to add a user, drop a key, or rewrite a service file inside the image.
+
+        The compromise then travels with the image. Package version reporting still looks correct, because the attacker chose the version string, so a vulnerability scan of the finished image finds nothing to report.
+
+        The correct fix is to make verification pass. Import the publisher's key into the RPM keyring, then install without the bypass. Removing the option on its own breaks the build against an unsigned or keyless repository, which is exactly why the bypass tends to reappear. If a repository genuinely publishes no signatures, that is a fact about the repository worth escalating rather than working around inside a Dockerfile.
       audit: |
         Inspect the Dockerfile to confirm GPG validation is not bypassed:
 
@@ -464,14 +496,21 @@ queries:
       docker.file.finalStage.runsAsRoot == false
     docs:
       desc: |
-        The final stage of the Dockerfile should set a `USER` instruction that specifies a non-root user, so container processes do not run as root. This check fails when the final stage omits `USER` entirely or sets it to `root` or UID `0`.
+        This check verifies that the final build stage of the Dockerfile switches to a non-root user.
+
+        The `USER` instruction sets the account that later build steps and, more importantly, the container's entrypoint run as. Docker defaults to root when no stage sets it. The check reads the final stage and requires a `USER` instruction naming something other than `root` or UID `0`. A final stage that omits `USER` entirely fails, and so does one that switches back to root after an earlier stage dropped privileges.
 
         **Why this matters**
 
-        - **Privilege escalation:** If an attacker gains access to a container running as root, they may exploit it to gain elevated privileges on the host system.
-        - **Increased attack surface:** Containers running as root have access to more system resources, increasing the potential impact of a security breach.
-        - **Least privilege:** Security standards recommend running containers with the least privileges necessary to perform their tasks.
-        - **Operational risks:** Misconfigurations or vulnerabilities in containers running as root can lead to unintended access, data breaches, or service disruptions.
+        Root in a container is not root on the host, but the gap is thinner than it looks. Root in the container holds the default capability set, which includes the ability to change ownership, become any user the image defines, and override file permission checks outright, so an attacker with code execution can read and rewrite any file in the image regardless of how it is protected.
+
+        That is what turns a single application bug into a persistent foothold. An attacker who lands as an unprivileged user can only modify what that user owns. As root they rewrite the entrypoint, patch a binary in place, and install whatever they want to survive a restart.
+
+        The blast radius grows with anything the container is given. A host path mounted into the container is written with root's identity, so a bind-mounted configuration directory becomes host-writable. A mounted Docker socket becomes full control of the node. A kernel vulnerability that needs a capability an unprivileged user lacks becomes reachable.
+
+        Orchestrators enforce this as well. A Kubernetes pod configured to require a non-root user refuses to start an image whose user resolves to UID 0, so an image without a `USER` instruction is rejected at admission rather than caught in review.
+
+        Create a dedicated account in the image, give it ownership of the paths the application writes at runtime, and place the `USER` instruction after the steps that need root. A numeric UID is preferable where a platform must confirm the user is non-root without resolving names.
       audit: |
         Inspect the Dockerfile to confirm the final stage runs as a non-root user:
 
@@ -542,13 +581,19 @@ queries:
       docker.file.stages.all(add == empty)
     docs:
       desc: |
-        Dockerfiles should use the `COPY` instruction instead of `ADD`, unless `ADD`'s specific features are genuinely required.
+        This check verifies that no build stage in the Dockerfile uses the `ADD` instruction.
+
+        `COPY` moves files from the build context or an earlier stage into the image and does nothing else. `ADD` does that too, but it also fetches remote URLs, clones git repositories, and silently unpacks local tar archives into the destination. The check requires that no stage contain an `ADD` instruction.
 
         **Why this matters**
 
-        - **Security risks:** `ADD` can fetch files from remote URLs and automatically extract tar archives, which can expose the container to malicious files or unintended behavior if misused.
-        - **Predictability:** `COPY` only copies files from source to destination, providing straightforward and consistent behavior and reducing the risk of unexpected outcomes during the build.
-        - **Best practices:** Security standards and Dockerfile best practices recommend `COPY` for file copying tasks to minimize potential vulnerabilities.
+        The automatic extraction is the part that surprises people. Any local file whose contents look like a tar archive is unpacked rather than copied, and the archive itself decides where its members land. A crafted archive with entries that traverse upward writes outside the destination directory, so adding an artifact that arrived from a build system or an outside contributor can rewrite paths the Dockerfile never mentions.
+
+        The remote fetch is the other half. Pointing `ADD` at an HTTPS URL downloads over the network at build time with no integrity check unless a checksum is supplied, and the result is baked into a layer. If the host is taken over, or the release asset is replaced in place, the next build pulls the substituted content and nothing in the Dockerfile changes to signal it.
+
+        Both behaviors are invisible at review. `ADD` and `COPY` read almost identically in a diff, so a reviewer scanning for a network fetch or an extraction step does not see one.
+
+        Replace `ADD` with `COPY` for anything that comes from the build context. When a remote artifact really is needed, download it in a `RUN` step and verify its checksum against a value committed to the repository, so a substituted file fails the build. When a local archive must be unpacked, copy it and extract it explicitly, so the extraction is a line a reviewer can see.
       audit: |
         Inspect the Dockerfile to confirm `ADD` is not used:
 
@@ -610,14 +655,19 @@ queries:
       docker.file.stages.all(from.tag != "latest")
     docs:
       desc: |
-        Dockerfile `FROM` instructions should not use the `latest` tag for base images.
+        This check verifies that no `FROM` instruction in the Dockerfile builds on a base image tagged `latest`.
+
+        A tag is a mutable pointer to an image digest. `latest` is the tag most projects move most often, and it carries no promise about which release it points at; it is the default name applied when a publisher pushes without specifying one. The check requires every `FROM` instruction in every build stage to name something other than `latest`.
 
         **Why this matters**
 
-        - **Unpredictable builds:** The `latest` tag may point to different versions of the base image over time, leading to inconsistent and unreliable builds.
-        - **Security risks:** Newer versions of the base image may introduce vulnerabilities or breaking changes that affect the container's functionality.
-        - **Lack of control:** Specifying an explicit version tag ensures the container is built with a known and tested base image.
-        - **Compliance risks:** Many security standards recommend fixed version tags to ensure predictable and secure builds.
+        Because the tag is mutable, the image a build produces is decided by whoever last pushed to the upstream repository rather than by the Dockerfile. An attacker who obtains a push credential for that repository, or who takes over an abandoned namespace on a public registry, repoints `latest` and every downstream build consumes their image on its next run. Nothing in the Dockerfile changes, so there is no diff, no review, and no signal in the pipeline.
+
+        The same mutability breaks incident response. When a base image is found to be compromised, the question is which of your images were built from the affected digest. With a moving tag there is no way to answer that from source; the record exists only in whatever the registry retained about each build.
+
+        The everyday cost is a broken build with no apparent cause. `latest` moves to a new major release, the runtime or system library the application links against changes underneath it, and the failure appears in a pipeline whose last commit touched something unrelated.
+
+        Name an explicit version tag so the base image is a reviewable line in the Dockerfile. Pin by digest where reproducibility must survive a retagged release, and let a dependency update tool raise the pin as a pull request a person approves.
       audit: |
         Inspect the Dockerfile to confirm base images do not use the `latest` tag:
 
@@ -665,16 +715,19 @@ queries:
       docker.file.stages.all(from.tag != empty || from.digest != empty || from.image == "scratch")
     docs:
       desc: |
-        Every `FROM` instruction in the Dockerfile should specify an explicit image tag or digest. When neither is provided, Docker implicitly uses the `:latest` tag, which defeats the purpose of version pinning. The reserved `scratch` base image is exempt because it is an empty starting point with no published tags.
+        This check verifies that every `FROM` instruction in the Dockerfile names an explicit tag or digest.
+
+        An image reference with no tag is not an error. The registry client fills in `:latest` and resolves that, so a bare image name and the same name with the `latest` tag build identically while only one of them says so. The check requires each `FROM` instruction to carry a tag or a digest. The reserved `scratch` base is exempt, because it is an empty filesystem with nothing published to tag.
 
         **Why this matters**
 
-        - **Silent version drift:** Builds silently pull whatever version is currently tagged as `latest`, leading to unpredictable behavior across environments.
-        - **Supply chain risk:** An attacker who compromises an image registry can push a malicious image as the default tag, affecting all untagged `FROM` references.
-        - **Harder to audit:** Without an explicit tag, it is difficult to determine which version of the base image was used, complicating incident response and vulnerability tracking.
-        - **Reproducibility:** Builds are not reproducible over time since the underlying image changes without any change to the Dockerfile.
+        The omission is harder to catch than the explicit case. A companion check in this policy flags `FROM image:latest`, which a reviewer also spots by eye. A bare image name reads like a deliberate choice and gets waved through, while resolving to exactly the same mutable pointer.
 
-        This check differs from the `latest` tag check: that check catches explicit use of `FROM image:latest`, while this check catches the implicit case where no tag is specified at all.
+        That pointer is controlled by whoever can push to the upstream repository. Someone who obtains a publisher's credential, or who registers an abandoned name on a public registry, changes what the default tag resolves to, and the next build of an untagged `FROM` consumes it. The Dockerfile is unchanged, so nothing in review or in the pipeline marks the substitution.
+
+        Reproducibility goes with it. Rebuilding a release from its commit produces whatever the registry serves that day, so a bug that reproduces in production may not reproduce in a rebuild, and a bill of materials describes one build rather than the source it came from.
+
+        Add the version tag the image is actually tested against. For builds that must be reproducible over time, pin the digest as well, so the tag documents intent and the digest fixes the content. Automated dependency updates keep the pin current and turn each base image change into a reviewable commit.
       audit: |
         Inspect the Dockerfile to confirm every base image specifies a tag:
 
@@ -728,14 +781,19 @@ queries:
       docker.file.stages.all(env.none(name == /(?i)(password|passwd|secret|token|private[_.\-]key|access[_.\-]key|api[_.\-]key|apikey|credential)/))
     docs:
       desc: |
-        Dockerfile `ENV` instructions should not define environment variables with names that suggest they contain secrets, such as passwords, API keys, tokens, or credentials.
+        This check verifies that no `ENV` instruction declares a variable whose name indicates it holds a secret.
+
+        `ENV` writes a name and value into the image configuration, where it becomes a default environment variable for every container started from that image. The check reads every `ENV` instruction in every build stage and fails any whose variable name suggests a credential, matching names that contain password, passwd, secret, token, private key, access key, api key, or credential in any capitalization.
 
         **Why this matters**
 
-        - **Image inspection:** Anyone with access to the image can run `docker inspect` or `docker history` to view all environment variables, including their values.
-        - **Container leakage:** Environment variables are inherited by all processes in the container and may appear in logs, error reports, or debug output.
-        - **Registry exposure:** Images pushed to registries, even private ones, carry all `ENV` values, expanding the blast radius of a registry compromise.
-        - **Layer persistence:** Even if a subsequent layer unsets the variable, the value remains in the earlier image layer and can be extracted.
+        The value does not stay in the container. It is stored in the image configuration blob, so `docker inspect` prints it, `docker history` prints the instruction that set it, and anyone who can pull the image reads both without ever starting it. Pulling is usually far easier than getting code execution: a registry credential lifted from a CI job, a leaked pull secret from a Kubernetes namespace, or a registry that turned out to allow anonymous reads are each enough.
+
+        Deleting the value later does not help. Image layers are immutable and additive, so a subsequent `ENV` that clears the variable, or a `RUN` that unsets it, only adds a layer on top. The original value is still in the earlier layer and is recovered by exporting the image and reading it.
+
+        Inside a running container the exposure widens again. Environment variables are inherited by every child process, so they appear in the process filesystem to anything that can read it, in crash dumps, in exception traces that many frameworks render with the full environment attached, and in debug endpoints that print configuration.
+
+        Inject credentials at run time from the orchestrator's secret store, and for values needed only during the build, use a build secret mount so nothing is written into a layer.
       audit: |
         Inspect the Dockerfile to confirm `ENV` instructions do not declare secrets:
 
@@ -799,15 +857,21 @@ queries:
       docker.file.stages.all(volumes.none(path == /^\/(etc|proc|sys|dev|boot|root)(\/|$)/ || path == "/"))
     docs:
       desc: |
-        Dockerfiles should not declare `VOLUME` instructions for sensitive host directories such as `/`, `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, or `/root`, including their subpaths. The `VOLUME` instruction declares a mount point within the image, and declaring sensitive paths creates a persistent risk when containers are later launched with host bind mounts.
+        This check verifies that no `VOLUME` instruction in the Dockerfile declares a sensitive system directory as a mount point.
+
+        `VOLUME` marks a path inside the image as a mount point. At runtime the container engine either creates an anonymous volume there or binds whatever the operator supplies, and the declaration in the image is what makes that path a candidate in the first place. The check requires that no build stage declare `/`, `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, or `/root`, or any path beneath them.
 
         **Why this matters**
 
-        - **Host filesystem exposure:** If `/` or `/etc` is declared as a volume and later bound to the host, it can expose host configuration files, credentials, and system secrets to the container.
-        - **Kernel interface access:** Declaring `/proc` or `/sys` as volumes creates mount points that, when bound at runtime, provide access to kernel parameters and system information usable for container escapes.
-        - **Device access:** A `/dev` volume declaration, combined with host bind mounts, can expose host devices and enable direct hardware access from within the container.
-        - **Privilege escalation:** Sensitive directory mount points can be chained with other vulnerabilities to escalate privileges and escape the container.
-        - **Data integrity:** Write access to host system directories through runtime-bound volumes can corrupt the host operating system.
+        The declaration is an instruction to whoever runs the image. Operators and compose files bind host paths to declared mount points because that is what the image says it needs, so a declared `/etc` is how a host `/etc` ends up inside a container.
+
+        Once it is there, the container reads the host's `/etc/shadow` and any credential file the host keeps alongside it, and if the mount is writable it appends a root account or drops an authorized key. A `/root` mount reaches the host administrator's SSH keys and shell history directly.
+
+        `/proc` and `/sys` bound from the host are the classic container escape surface. A writable cgroup filesystem lets an attacker register a release agent that the kernel then executes on the host, and `/proc` exposes the host process table, kernel command line, and tunables that a sandboxed container is not meant to see.
+
+        A `/dev` mount reaches raw block devices, so an attacker reads or rewrites the host filesystem underneath the operating system's own view of it, and `/boot` reaches the kernel and initramfs the host loads at next start.
+
+        Declare only the directories the application stores its own data in. If a container genuinely needs host information, mount the specific path read-only at run time rather than advertising it in the image.
       audit: |
         Inspect the Dockerfile to confirm no sensitive directories are declared as volumes:
 
@@ -860,13 +924,19 @@ queries:
       docker.file.stages.all(expose.all(port > 0 && port <= 65535))
     docs:
       desc: |
-        Every port exposed in the Dockerfile should fall within the valid TCP/UDP port range of 1 to 65535. An exposed port outside this range indicates a misconfiguration that causes unexpected behavior at runtime.
+        This check verifies that every port number declared in an `EXPOSE` instruction falls inside the valid TCP and UDP port range.
+
+        `EXPOSE` takes a port number and an optional protocol. A port number is a 16-bit value, so the only legal values are 1 through 65535. The check reads every `EXPOSE` instruction in every build stage and requires each port to fall in that range. A value of 0, or anything above 65535, fails.
 
         **Why this matters**
 
-        - **Silent failures:** Docker may silently ignore or misinterpret out-of-range port values, leading to containers that appear to start correctly but are not accessible on the expected port.
-        - **Configuration errors:** Out-of-range ports typically indicate a typo or copy-paste error in the Dockerfile.
-        - **Orchestration failures:** Container orchestration platforms and service meshes may silently ignore or reject containers with invalid port mappings, leading to deployment failures.
+        An out-of-range port is almost always a typo or a copied line that was never adjusted, and the failure it produces is quiet. The image builds, the container starts, and the process reports healthy, but nothing is listening where the deployment expects it. The first signal is usually a load balancer marking the backend down or a client timing out, long after the change shipped.
+
+        Tooling that consumes image metadata compounds the problem. Compose files, orchestrator manifests, and service meshes read the exposed port list to generate service definitions and network policy. A port they cannot parse tends to be dropped rather than rejected, so the generated policy silently covers fewer ports than the author believed, and a rule meant to constrain traffic to one port ends up constraining nothing.
+
+        Publishing with `docker run -P` has the same shape. The runtime maps each valid exposed port to a host port and skips the rest, so an operator reading the port mapping sees a shorter list than the Dockerfile appears to declare and has no error to explain the difference.
+
+        Correct the port number to the one the application actually binds. If the instruction was copied from another image, confirm the application's listener rather than assuming the value transferred.
       audit: |
         Inspect the Dockerfile to confirm exposed ports are within the valid range:
 
@@ -913,14 +983,19 @@ queries:
       docker.file.stages.all(run.all(commands.where(binary == "apt-get" || binary == "apt").none(subcommand == "dist-upgrade" || subcommand == "full-upgrade")))
     docs:
       desc: |
-        Dockerfile `RUN` instructions should not use `apt-get dist-upgrade` or its equivalent spellings `apt dist-upgrade` and `apt full-upgrade`. Unlike `apt-get upgrade`, `dist-upgrade` can remove existing packages, install new dependencies, and make major changes to the package configuration, leading to unpredictable and unreproducible builds.
+        This check verifies that no `RUN` instruction performs a distribution upgrade with APT.
+
+        `apt-get upgrade` installs newer versions of packages that are already present and never removes anything. `dist-upgrade` is allowed to resolve conflicts by removing packages, pulling in new dependencies, and changing which package satisfies a dependency at all. The check requires that no `RUN` instruction call `apt-get dist-upgrade`, `apt dist-upgrade`, `apt full-upgrade`, or `apt-get full-upgrade` in any build stage.
 
         **Why this matters**
 
-        - **Unpredictable builds:** `dist-upgrade` may remove or replace packages the application depends on, causing builds to break non-deterministically.
-        - **Reproducibility impact:** Non-deterministic package changes undermine the ability to audit and verify container contents, weakening supply chain security.
-        - **Image bloat:** Distribution upgrades pull in many unnecessary packages, increasing image size and attack surface.
-        - **Maintainability:** Container images should be deterministic; pinning specific package versions is preferable to running broad upgrades.
+        The set of packages a distribution upgrade installs is decided by the repository index at the moment the build runs, not by anything written in the Dockerfile. Two builds of the same commit a week apart produce different images, and neither one records what changed. When a container starts misbehaving, there is no diff to read and no way to reconstruct the earlier image.
+
+        That undermines the audit trail an image is supposed to have. A bill of materials generated from the image describes one particular build; it does not describe the Dockerfile, so the next build invalidates it. If a package pulled in by the upgrade turns out to be backdoored, there is no record of which images received it and which were built before the change.
+
+        The removal behavior is the sharper edge. A dependency conflict can remove a package the application needs, and the build still succeeds, because removal is a normal outcome for the command. The failure surfaces at runtime, in whichever environment happens to start the image first.
+
+        Install the specific packages the image needs and pin their versions. If the goal is to pick up security updates, rebuild against a newer base image tag, where the change is a visible line in the Dockerfile and reviewable in a diff.
       audit: |
         Inspect the Dockerfile to confirm `apt-get dist-upgrade` is not used:
 
@@ -969,14 +1044,19 @@ queries:
       docker.file.finalStage.oci.source != empty
     docs:
       desc: |
-        The final stage of the Dockerfile should set the `org.opencontainers.image.source` label. This [OCI image annotation](https://github.com/opencontainers/image-spec/blob/main/annotations.md) records the URL of the source code repository that produced the image, so any running container can be traced back to the repository it was built from.
+        This check verifies that the final build stage sets the `org.opencontainers.image.source` label to the URL of the repository that produced the image.
+
+        A label writes arbitrary key-value metadata into the image configuration, and the OCI image specification reserves a set of annotation keys with agreed meanings. `org.opencontainers.image.source` is the one that records the source code repository. The check reads the final stage and requires the label to be present and non-empty.
 
         **Why this matters**
 
-        - **Vulnerability response:** When a CVE is published, the source label is the canonical machine-readable link from a deployed digest back to a git repo, so the right repository can be found and rebuilt.
-        - **Incident response:** Responders inspecting a running pod can read the source URL directly from image metadata instead of correlating image names with an internal service catalog.
-        - **Asset inventory:** Compliance frameworks require maintaining an inventory of software components in production, and the source label makes that inventory self-describing.
-        - **Supply chain integrity:** Combined with a SLSA provenance attestation pointing to the same repo, the source label provides defense in depth.
+        The question this answers comes up under time pressure. A vulnerable package is announced, a scanner flags a digest running in production, and the first thing anyone needs is the repository to change and rebuild. Without the label, that mapping lives in tribal knowledge or a wiki page, and the image name is often no help: repository names drift from image names, one repository builds several images, and images inherited from a team that reorganized have no obvious owner at all.
+
+        The cost is measured in the wrong units. Time spent identifying which repository built a digest is time the vulnerable image keeps running, and the search is unreliable enough that a guess sometimes produces a rebuild of the wrong thing.
+
+        The label also makes automation possible. Vulnerability tooling that reads image metadata can open a pull request against the right repository without a separate service catalog to maintain, and a catalog maintained by hand drifts out of date exactly when it is needed.
+
+        Set the label in the final stage, since only that stage's metadata survives into the published image. Sourcing the value from a build argument that CI populates keeps it correct automatically, so a repository that is renamed or moved does not leave stale metadata behind in the next build.
       audit: |
         Inspect the Dockerfile to confirm the source label is set:
 
@@ -1036,14 +1116,19 @@ queries:
       docker.file.finalStage.oci.authors != empty
     docs:
       desc: |
-        The final stage of the Dockerfile should set the `org.opencontainers.image.authors` label. This [OCI image annotation](https://github.com/opencontainers/image-spec/blob/main/annotations.md) records the contact information for the people or team responsible for the image, so any running container can be traced back to a clear owner.
+        This check verifies that the final build stage sets the `org.opencontainers.image.authors` label to a contact for the team responsible for the image.
+
+        `org.opencontainers.image.authors` is one of the annotation keys reserved by the OCI image specification, and it holds contact details for the people accountable for the image. The check reads the final stage and requires the label to be present and non-empty. A shared team address is what makes it durable; an individual address stops resolving the moment that person changes roles.
 
         **Why this matters**
 
-        - **Faster remediation:** An owner contact embedded in image metadata lets vulnerability tooling auto-route findings to the right team without a separate catalog lookup.
-        - **Incident routing:** Pages, alerts, and dashboards can surface the owner directly from image metadata, cutting time-to-acknowledge.
-        - **Asset accountability:** NIST 800-171 3.4.1 explicitly calls out component owners as required inventory metadata, and this label attaches that information to the artifact itself.
-        - **Lifecycle management:** Mandating an authors label forces ownership decisions at build time rather than after an incident, reducing the long-tail risk of orphaned images.
+        A missing owner is what stalls remediation. A scanner reports a vulnerable digest, the finding lands in a queue, and nobody can route it because the image name does not identify a team. Findings that cannot be routed are the ones that sit unaddressed for months, and the ones that get reassigned several times before reaching someone who can act.
+
+        Incident response has the same shape on a shorter clock. A container is misbehaving in the middle of the night and the responder needs whoever owns it. Reading the contact out of image metadata takes one command; finding it through a service catalog takes a working catalog, and catalogs maintained by hand are stale in exactly the corners where ownership is unclear.
+
+        Requiring the label also forces the ownership conversation at build time rather than after an incident. An image nobody will put a contact address on is an image nobody owns, and that is worth knowing before it is running in production.
+
+        Pair the label with the repository source label so a single inspection of the image yields both the code and the team. Use a mailing list or shared inbox rather than a personal address, and populate it from a build argument so an ownership change updates the metadata on the next build.
       audit: |
         Inspect the Dockerfile to confirm the authors label is set:
 
@@ -1094,13 +1179,19 @@ queries:
       docker.file.stages.all(workdir.none(path == /^\/(proc|sys|dev|sbin|boot)(\/|$)/ || path == "/"))
     docs:
       desc: |
-        WORKDIR should not be set to the filesystem root (`/`) or sensitive system directories such as `/proc`, `/sys`, `/dev`, `/sbin`, or `/boot`, including their subpaths. Setting the working directory to a system path can cause build or runtime commands to inadvertently modify critical system files or interfere with kernel interfaces.
+        This check verifies that no `WORKDIR` instruction in the Dockerfile points at the filesystem root or a system directory.
+
+        `WORKDIR` sets the directory that every subsequent `RUN`, `CMD`, `ENTRYPOINT`, `COPY`, and `ADD` in that stage resolves relative paths against, and it persists until the next `WORKDIR`. The check requires that no stage set it to `/` or to a path under `/proc`, `/sys`, `/dev`, `/sbin`, or `/boot`.
 
         **Why this matters**
 
-        - **System corruption:** Commands that create temporary files, write logs, or extract archives into the working directory could corrupt system paths.
-        - **Security exposure:** `/proc` and `/sys` expose kernel parameters and process information, so using them as a working directory increases the risk of accidental information disclosure or privilege escalation.
-        - **Unexpected behavior:** Build tools and package managers may create files in the working directory, leading to unpredictable results when that directory is a system path.
+        Whatever the working directory is becomes the default landing place for anything a build step writes without an explicit path. A recursive copy of the build context with the working directory set to `/` unpacks the repository over the root filesystem, replacing whatever names happen to collide. A tarball extracted with relative paths does the same. The build succeeds; the image is quietly broken, or quietly modified in ways nobody reviews, because the diff a reader sees is a one-line change.
+
+        `/sbin` is the sharper case. Dropping files there puts accidental executables into a directory that runs with privilege, and a name collision with an existing system binary replaces it outright.
+
+        `/proc` and `/sys` are kernel interfaces, not directories. Writes to them set kernel and process tunables rather than creating files, so a build step that expects to write a temporary file instead changes runtime behavior or fails for reasons that have nothing to do with the file it meant to create. `/boot` and `/dev` have the same problem with different consequences: one holds what the system loads at start, the other holds device nodes.
+
+        Set the working directory to a path the application owns, and create it explicitly so a typo produces a new empty directory rather than a silent write into a system location.
       audit: |
         Inspect the Dockerfile to confirm WORKDIR is not a system directory:
 
@@ -1149,14 +1240,19 @@ queries:
       docker.file.stages.all(run.none(security == "insecure"))
     docs:
       desc: |
-        Dockerfile `RUN` instructions should not use the BuildKit `--security=insecure` flag. This flag disables seccomp and AppArmor confinement for the build step, granting the command the same capabilities as the BuildKit daemon, including raw device access and unrestricted system calls.
+        This check verifies that no `RUN` instruction requests BuildKit's insecure security mode.
+
+        BuildKit executes each `RUN` step in a sandbox with a seccomp profile and, on hosts that support it, AppArmor confinement. The `--security=insecure` flag on a `RUN` instruction removes both, giving the step the full capability set of the BuildKit daemon, raw device access, and unrestricted system calls. The check requires that no `RUN` instruction in any build stage set it.
 
         **Why this matters**
 
-        - **Build host compromise:** A `RUN --security=insecure` step executes with the privileges of the BuildKit daemon, so a malicious or compromised command can read host files, attach to host processes, and modify the build environment.
-        - **Untrusted dependencies:** Build steps often invoke third-party scripts and package installers. Running them outside the default sandbox turns any supply-chain compromise in those tools into a build-host compromise.
-        - **Audit trail:** BuildKit emits no special record when `insecure` is used; reviewers reading scan output, not the Dockerfile, will miss that the build ran without confinement.
-        - **Least privilege:** The flag exists for narrow cases like nested containerization. Defaulting to it for convenience violates the principle of least functionality required by hardened build pipelines.
+        A `RUN` step almost never runs code the author wrote. It runs package managers, install scripts fetched over the network, and compiler toolchains pulled from a language ecosystem, all of which execute arbitrary code from third parties. The sandbox is what keeps that code inside the build.
+
+        Without it, that code holds the daemon's privileges on the build machine. It reads the build host's filesystem, including the credentials the runner uses to push images and the cache directories of every other build on that runner. It attaches to processes belonging to concurrent builds and reads their memory, which is where build secrets live while they are in use. On a shared runner, one project's compromised dependency reaches every other project built there.
+
+        The escalation is quiet. BuildKit emits no distinct record when the flag is used, and the resulting image looks like any other, so a reviewer working from scan results rather than from the Dockerfile has nothing to notice. Using `RUN --security=insecure` also requires the builder to be started with the matching entitlement, which means somebody relaxed the build environment as well, and that relaxation stays in place for every later build.
+
+        Remove the flag. If a step genuinely needs privileged operations, run it in a controlled job outside the image build and copy the resulting artifact in.
       audit: |
         Inspect the Dockerfile to confirm no `RUN` instruction requests the insecure security mode:
 
@@ -1206,14 +1302,19 @@ queries:
       docker.file.stages.all(run.none(network == "host"))
     docs:
       desc: |
-        Dockerfile `RUN` instructions should not use the BuildKit `--network=host` flag. This flag attaches the build step directly to the build host's network namespace, removing the network isolation that BuildKit applies by default.
+        This check verifies that no `RUN` instruction joins the build host's network namespace.
+
+        BuildKit runs each `RUN` step in its own network namespace with outbound access through the builder. The `--network=host` flag places the step directly in the host's namespace instead, so it shares the host's loopback interface, routes, and link-local addresses. The check requires that no `RUN` instruction in any build stage set it.
 
         **Why this matters**
 
-        - **Host network exposure:** A build step running in the host network namespace can reach loopback services, link-local metadata endpoints (`169.254.169.254`), and other internal addresses that are normally unreachable from a sandboxed build.
-        - **Credential and token theft:** Cloud-hosted build environments often expose instance metadata or workload identity tokens on loopback or link-local addresses. Host networking lets any installer script or malicious dependency exfiltrate them.
-        - **Reproducibility loss:** A build that depends on the host network behaves differently on developer laptops, CI runners, and air-gapped builders, undermining reproducible images.
-        - **Least privilege:** Host networking should be reserved for narrow cases like building network drivers; using it as a default convenience violates the principle of least functionality.
+        The addresses this reaches are the ones nothing else can. Cloud builders serve instance credentials from the link-local metadata endpoint at `169.254.169.254`, and a step in the host namespace requests them with an ordinary HTTP call. Those credentials belong to the build machine's role, which in most pipelines can push to the image registry and read the artifact store, so a malicious install script in a `RUN` step trades a build-time foothold for durable access to the software supply chain.
+
+        Loopback is the second target. Agents, sidecars, local databases, and unauthenticated admin endpoints bound to the loopback address are unreachable from a sandboxed build precisely because they assume anything on loopback is trusted. Host networking removes that assumption for every third-party script the build executes.
+
+        There is a correctness cost as well. A build that resolves a hostname or reaches a service through the host's network produces a different image on a developer laptop, on a CI runner, and on an isolated builder, and the Dockerfile records nothing about the dependency. The build that worked yesterday fails on a runner in another subnet with an error about a package rather than about networking.
+
+        Let BuildKit use its own network. When a build needs a private mirror, configure it as a build argument or stage the dependency in an earlier stage rather than removing the isolation.
       audit: |
         Inspect the Dockerfile to confirm no `RUN` instruction joins the host network:
 
@@ -1263,16 +1364,19 @@ queries:
       docker.file.stages.all(run.all(mounts.where(from == empty).where(type == "bind" || type == empty).none(source == /^\/(etc|proc|sys|dev|boot|root|home|tmp|var|run)?(\/|$)/)))
     docs:
       desc: |
-        Dockerfile `RUN` instructions should not declare bind mounts whose `source` points at sensitive system paths such as `/`, `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, `/root`, `/home`, `/tmp`, `/var`, or `/run`, or at sub-paths beneath them such as `/etc/shadow`, `/root/.ssh`, or `/var/run/docker.sock`. A bind mount in a `RUN` instruction resolves its `source` inside the build context, or inside the stage or image named by `from`, never on the build host. A sensitive-looking absolute source therefore signals one of two problems: the author misunderstands the mount semantics and believes the build reads host files, or copies of sensitive system files and credentials were placed in the build context.
+        This check verifies that no `RUN` instruction bind-mounts a sensitive system path out of the build context.
+
+        BuildKit lets a `RUN` instruction mount data into the step. A bind mount resolves its `source` inside the build context, or inside the stage or image named by `from`, never on the build host. The check inspects mounts of `type=bind`, and mounts that omit the type because BuildKit treats those as bind mounts, that do not set `from=`, and requires the source not to be `/` or a path under `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, `/root`, `/home`, `/tmp`, `/var`, or `/run`. Sub-paths fail too, so `/etc/shadow`, `/root/.ssh`, and `/var/run/docker.sock` are all violations. Cache mounts written as `--mount=type=cache` are not affected.
 
         **Why this matters**
 
-        - **Secrets in the build context:** For such a mount to resolve, files like shadow copies, SSH keys, or credential stores must exist inside the build context. Everything in the context is sent to the builder, is readable by every build step, and is exposed to anyone who can read the context or the repository it comes from.
-        - **Supply-chain blast radius:** Build steps run third-party package managers and installers. Any sensitive material reachable through the mounted context can be exfiltrated by a compromised dependency during the build.
-        - **Misleading intent:** A Dockerfile that appears to mount host system paths confuses reviewers and incident responders, and the build silently reads different data than the author intended, which can mask broken or missing build inputs.
-        - **Wrong tool for the job:** Builds that genuinely need host resources, such as a Docker socket for Docker-in-Docker workflows, belong in dedicated CI jobs. An image build step can never reach those resources through a bind mount.
+        A source like this resolves only if a copy of those files was placed in the build context, and everything in the context is uploaded to the builder and readable by every step of the build. An SSH key or a shadow file that reaches the context reaches every `RUN` instruction in the Dockerfile, including the ones that execute third-party install scripts, so a single compromised dependency reads the credential and sends it out over the same connection it uses to fetch packages.
 
-        Mounts that set `from=` to an earlier build stage or a named image resolve inside that stage and are not flagged. Legitimate BuildKit caching uses `--mount=type=cache`, so this check only flags `type=bind` and the omitted-type case that BuildKit treats as `bind`.
+        The context also tends to be the repository. Files copied there to satisfy a mount get committed, and then the credential is in the git history of every clone.
+
+        When the files are not in the context, the mount resolves to an empty directory and the build reads nothing. That is worse than an error, because the step appears to succeed while operating on data that is not there, and a reviewer reading the Dockerfile believes the build inspects host state it never sees.
+
+        Mount only the specific build inputs the step needs, stage them in an earlier stage and reference it with `from`, and pass credentials through a secret mount instead of placing them in the context.
       audit: |
         Inspect the Dockerfile to confirm no `RUN` instruction bind-mounts a sensitive source path from the build context:
 

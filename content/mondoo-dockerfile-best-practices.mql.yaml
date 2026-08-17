@@ -72,13 +72,19 @@ queries:
       docker.file.stages.all(run.all(commands.none(binary == "apt" && subcommand.in(["install", "update", "upgrade", "remove", "purge"]))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions should invoke the `apt-get` CLI rather than `apt` for package management operations.
+        This check verifies that package operations in `RUN` instructions call `apt-get` rather than the bare `apt` command.
+
+        Debian ships two front ends over the same package system. `apt-get` is the scripting interface, with a command-line surface and exit behavior that Debian keeps stable across releases. `apt` is the interactive one, built for a person at a terminal, and its own maintainers state that it has no stable interface for scripts. The check requires that no `RUN` instruction call `apt` with install, update, upgrade, remove, or purge.
 
         **Why this matters**
 
-        - **Predictable behavior:** The `apt-get` CLI is designed for scripting and automation, offering consistent and reliable behavior in non-interactive Dockerfile contexts.
-        - **Stability:** `apt-get` maintains a stable command-line interface across releases, while `apt` is intended for interactive use and its output and behavior may change between versions.
-        - **Reduced risk of errors:** Using `apt-get` minimizes the chance of unexpected prompts or behavior changes interrupting the build process.
+        The instability is not theoretical. `apt` writes a progress bar and colored output that assume a terminal, so a build log captured to a file fills with control sequences instead of readable text. It prints a warning on every invocation saying it should not be scripted against, which trains everyone reading build output to ignore warnings there. Flags and defaults have changed between Debian and Ubuntu releases in ways `apt-get` did not, so a Dockerfile that works on one base image tag can stop working on the next.
+
+        The failure mode when it does change is worse than a broken build. `apt` may prompt where `apt-get` returns an error, resolve a dependency differently, or omit output that a later step in the same instruction greps for. A build that quietly installs a different set of packages is much harder to diagnose than one that stops.
+
+        There is a readability cost as well. Reviewers and linters recognize the update, install, and cleanup idiom built around `apt-get`, so a Dockerfile using it is scanned quickly. A bare `apt` line breaks the pattern and hides the fact that the same package hygiene rules apply to it.
+
+        Replace `apt` with `apt-get` and keep the install and the cleanup in the same instruction.
       audit: |
         Inspect the Dockerfile to confirm package management uses `apt-get`:
 
@@ -116,13 +122,19 @@ queries:
       docker.file.stages.all(run.where(commands.any(binary == "apk" && subcommand == "update")).all(commands.any(binary == "apk" && subcommand == "add")))
     docs:
       desc: |
-        Package manager update commands (`apt-get update`, `apk update`) should run in the same `RUN` instruction as the corresponding install command, never alone in a separate layer.
+        This check verifies that a package index refresh runs in the same `RUN` instruction as the install that depends on it.
+
+        Every `RUN` instruction becomes its own image layer, and Docker caches layers independently, keyed on the instruction text and on the layers beneath it. Splitting `apt-get update` into one instruction and the install into the next makes them two separately cached units. The check requires that any `RUN` containing `apt-get update` also run an apt-get install in the same instruction, and that any `RUN` containing `apk update` also run an apk add in the same instruction.
 
         **Why this matters**
 
-        - **Stale package lists:** Docker caches each layer independently. If the update layer is cached but the install layer is rebuilt, the install uses outdated package indexes, potentially installing older versions with known vulnerabilities.
-        - **Non-reproducible builds:** Cached update layers create a false sense of freshness. Builds at different times produce different results depending on cache state.
-        - **Unnecessary layer bloat:** The update command creates a layer containing package index files that are only needed during installation and should be cleaned up afterward.
+        The two layers age apart. Adding a package to the install line changes that instruction's text, so its layer is rebuilt, but the update line is unchanged and its layer comes from cache. The install then resolves against a package index fetched whenever that layer was last built, which can be weeks or months earlier. The build asks for a package by name and gets whichever version the stale index knew about, so a fix published since then is silently not installed.
+
+        The failure is invisible in the build log. The install succeeds, the versions it reports look plausible, and nothing distinguishes a fresh index from a cached one. The mismatch surfaces later, as a scanner reporting a vulnerability the team believes was already patched, or as two engineers producing different images from the same commit because their caches diverged.
+
+        There is a size cost as well. The index files land in the update layer and stay there, so removing them in a later instruction adds a layer without recovering the space.
+
+        Join the refresh and the install with a shell operator in one instruction, and remove the index in that same instruction so it never becomes a layer of its own.
       audit: |
         Inspect the Dockerfile to confirm update and install are combined:
 
@@ -165,13 +177,19 @@ queries:
       docker.file.stages.all(run.all(commands.where(binary == "apk" && subcommand == "add").all(flags.contains("--no-cache"))))
     docs:
       desc: |
-        Alpine's `apk add` command should always include the `--no-cache` flag in Dockerfile `RUN` instructions.
+        This check verifies that every `apk add` in a `RUN` instruction avoids leaving Alpine's package index in the image.
+
+        Alpine's package manager writes the repository index it downloads to `/var/cache/apk/`. The `--no-cache` flag fetches that index for the duration of the command without writing it to disk, which is also why it removes the need for a separate `apk update` beforehand. The check requires every `apk add` command in every build stage to pass `--no-cache`.
 
         **Why this matters**
 
-        - **Image bloat:** Without `--no-cache`, `apk add` downloads and stores a local package index in `/var/cache/apk/`, adding unnecessary size to the image layer and increasing storage costs and pull times.
-        - **Stale cache risk:** A cached index in a layer can become outdated, leading to confusing behavior if the layer is reused.
-        - **Simpler instructions:** The `--no-cache` flag fetches the index temporarily and discards it after the operation, eliminating the need for a separate `apk update` or manual `rm -rf /var/cache/apk/*` cleanup step.
+        The cost lands exactly where Alpine is usually chosen to avoid it. A base image is a few megabytes, and the index left behind by a plain `apk add` is comparable in size to the image itself, so an image picked for being small ships mostly package metadata. That size is paid on every pull, by every node that schedules the container, on every rollout.
+
+        A cached index also goes stale in a way that is hard to see. The files sit in a layer, and a later build that reuses that layer resolves package names against an index fetched whenever the layer was created. Two builds of the same Dockerfile then install different versions with nothing in the log to explain the difference.
+
+        Cleaning up afterward does not work. Image layers are additive, so running `rm -rf /var/cache/apk/*` in a later instruction records a deletion without reclaiming the bytes, and the files remain recoverable from the earlier layer.
+
+        Add `--no-cache` to each `apk add` and drop any preceding `apk update`, which the flag makes redundant. Where a build reinstalls the same packages often enough that download time matters, mount the cache directory as a build cache instead, so it is reused across builds without landing in a layer.
       audit: |
         Inspect the Dockerfile to confirm `apk add` uses `--no-cache`:
 
@@ -204,13 +222,19 @@ queries:
       docker.file.stages.all(run.where(commands.any(binary == "apt-get" && subcommand == "install")).all(mounts.any(type == "cache" && target == /^\/var\/lib\/apt\/lists\/?$/) || commands.any(binary == "rm" && args.any(_ == /\/var\/lib\/apt\/lists/))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions that use `apt-get install` should also clean up the apt package lists in the same layer, or keep them out of the image by mounting `/var/lib/apt/lists` as a BuildKit cache.
+        This check verifies that a `RUN` instruction which installs Debian packages does not leave the apt package lists in the image layer.
+
+        A package index refresh downloads the repository lists into `/var/lib/apt/lists/`, and `apt-get install` needs them only while it resolves and fetches. The check requires every `RUN` instruction containing `apt-get install` either to delete `/var/lib/apt/lists` within that same instruction or to mount it as a build cache so its contents never enter a layer.
 
         **Why this matters**
 
-        - **Image bloat:** After `apt-get install`, the downloaded package index files remain in `/var/lib/apt/lists/` and can add tens of megabytes to the image layer.
-        - **Unnecessary data:** The package lists are only needed during installation and serve no purpose at runtime.
-        - **Layer persistence:** If cleanup happens in a separate `RUN` instruction, the files still exist in the install layer due to how Docker's union filesystem works, providing no actual size savings.
+        Union filesystem semantics are what make the same-instruction requirement matter. A layer records what a step wrote; a later step that deletes those files records a deletion marker on top. The bytes are still in the earlier layer, still transferred on every pull, and still extractable from the image. Splitting the cleanup into its own `RUN` therefore reads like housekeeping while saving nothing at all.
+
+        The size involved is not trivial. A full Debian index runs to tens of megabytes, often more than the packages the image actually installs, and it is paid on every pull, on every node that schedules the container, and on every layer push in CI. For a service that scales out during an incident, image pull time sits on the critical path of recovery.
+
+        The index is also dead weight at runtime. Nothing in a running container consults it, because containers do not install packages after they start, so it exists only to be shipped and stored.
+
+        Chain the removal onto the same instruction. Where fast rebuilds matter more than never fetching the index twice, a build cache mount on the lists directory keeps it out of the image entirely while still reusing it between builds, at the cost of disabling apt's own automatic cleanup so it stops emptying the mounted directory.
       audit: |
         Inspect the Dockerfile to confirm apt lists are cleaned in the install layer:
 
@@ -256,13 +280,19 @@ queries:
       docker.file.stages.all(run.where(commands.any(binary == "yum" && subcommand == "install")).all(mounts.any(type == "cache" && target == /^\/var\/cache\/yum\/?$/) || commands.any(binary == "yum" && subcommand == "clean" && args.contains("all"))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions that use `yum install` should also run `yum clean all` in the same layer, or keep the cache out of the image by mounting `/var/cache/yum` as a BuildKit cache.
+        This check verifies that a `RUN` instruction which installs packages with `yum` does not leave the package cache in the image layer.
+
+        `yum install` downloads RPMs and repository metadata into `/var/cache/yum/` and keeps them after the install finishes. `yum clean all` removes both. The check requires every `RUN` instruction containing `yum install` either to run `yum clean all` in the same instruction or to mount `/var/cache/yum` as a build cache so nothing is written into a layer.
 
         **Why this matters**
 
-        - **Image bloat:** After `yum install`, cached package data and metadata remain in `/var/cache/yum/` and add significant size to the image layer.
-        - **Unnecessary data:** The cache is only needed during installation and serves no purpose at runtime.
-        - **Layer persistence:** If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
+        The cache holds the full RPM files, not just metadata, so its size is roughly the download size of everything installed. On an enterprise Linux base with a handful of packages that is routinely hundreds of megabytes, which can be larger than the rest of the image put together.
+
+        Doing the cleanup one instruction later recovers none of it. Each instruction produces a layer, and a deletion in a later layer only masks the files; they remain in the layer that created them and are still pulled, still stored, and still recoverable by exporting the image. The Dockerfile then looks tidy while the image is unchanged, which is the worst combination, because it stops anyone from looking again.
+
+        The runtime value of the cache is zero. A container does not install packages after it starts, so the RPMs it carries are never read. What they do affect is pull time on every node that runs the image, registry storage for every tag retained, and the transfer cost of every push from CI.
+
+        Chain `yum clean all` onto the install so both happen in one instruction. If rebuild speed matters, a build cache mount on the cache directory keeps the downloads available across builds while leaving the image layer clean.
       audit: |
         Inspect the Dockerfile to confirm the yum cache is cleaned in the install layer:
 
@@ -302,13 +332,19 @@ queries:
       docker.file.stages.all(run.where(commands.any(binary == "dnf" && subcommand == "install")).all(mounts.any(type == "cache" && target == /^\/var\/cache\/dnf\/?$/) || commands.any(binary == "dnf" && subcommand == "clean" && args.contains("all"))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions that use `dnf install` should also run `dnf clean all` in the same layer, or keep the cache out of the image by mounting `/var/cache/dnf` as a BuildKit cache.
+        This check verifies that a `RUN` instruction which installs packages with `dnf` does not leave the package cache in the image layer.
+
+        `dnf install` writes downloaded RPMs and the repository metadata it resolved against into `/var/cache/dnf/`, and it keeps them because the design assumes a long-lived machine that will install again. `dnf clean all` discards both. The check requires every `RUN` instruction containing `dnf install` either to run `dnf clean all` in the same instruction or to mount `/var/cache/dnf` as a build cache.
 
         **Why this matters**
 
-        - **Image bloat:** After `dnf install`, cached package data and metadata remain in `/var/cache/dnf/` and add significant size to the image layer.
-        - **Unnecessary data:** The cache is only needed during installation and serves no purpose at runtime.
-        - **Layer persistence:** If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
+        An image is the opposite of the long-lived machine that default is tuned for. It is built once and started many times, and nothing inside a running container ever installs a package, so the cached RPMs are read exactly zero times over the life of the image while being copied to every node that pulls it.
+
+        The retained metadata is larger than people expect. Modern DNF repositories ship module and application stream data alongside the primary index, so even a build that installs two small packages can carry a few hundred megabytes of resolved metadata into the final layer.
+
+        Cleaning up in a following instruction achieves nothing measurable. Layers are append-only, so the deletion is recorded as a marker in a new layer while the original bytes stay where they were written. The image size the registry reports does not move, and the files are still readable by anyone who exports the image and walks its layers.
+
+        Put `dnf clean all` in the same instruction as the install. When repeated builds make redownloading painful, mount the cache directory as a build cache instead: the content persists between builds on the builder and never becomes part of any layer.
       audit: |
         Inspect the Dockerfile to confirm the dnf cache is cleaned in the install layer:
 
@@ -348,13 +384,19 @@ queries:
       docker.file.stages.all(run.where(commands.any(binary == "zypper" && subcommand == "install")).all(mounts.any(type == "cache" && target == /^\/var\/cache\/zypp\/?$/) || commands.any(binary == "zypper" && subcommand == "clean")))
     docs:
       desc: |
-        Dockerfile `RUN` instructions that use `zypper install` should also run `zypper clean` in the same layer, or keep the cache out of the image by mounting `/var/cache/zypp` as a BuildKit cache.
+        This check verifies that a `RUN` instruction which installs packages with `zypper` does not leave the package cache in the image layer.
+
+        `zypper install` stores downloaded RPMs and repository metadata under `/var/cache/zypp`, and on SUSE and openSUSE base images that directory persists for the life of the container unless something removes it. `zypper clean` discards the package cache, and asking it to clean everything discards the resolver metadata as well. The check requires every `RUN` instruction containing `zypper install` either to run `zypper clean` in the same instruction or to mount `/var/cache/zypp` as a build cache.
 
         **Why this matters**
 
-        - **Image bloat:** After `zypper install`, cached package data and metadata remain on disk and add significant size to the image layer.
-        - **Unnecessary data:** The cache is only needed during installation and serves no purpose at runtime.
-        - **Layer persistence:** If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
+        SUSE repositories carry substantial solver metadata, and zypper keeps both that and the downloaded RPMs. An image built from a SUSE base with a modest package set commonly ships a cache comparable in size to everything else in it, which then has to be transferred on every pull and stored for every tag the registry retains.
+
+        None of it is used again. Containers are not patched in place; a new version means a new image built from a new Dockerfile, so the cached RPMs sit unread for the entire life of the image.
+
+        Doing the cleanup in a later instruction is the mistake worth naming. Image layers are additive, and a removal in a later layer only hides the files from the assembled filesystem. The bytes stay in the layer that wrote them, the registry still stores them, and anyone who exports the image reads them back.
+
+        Join the cleanup to the install so both land in the same instruction. Where rebuild speed matters, mounting the cache directory as a build cache keeps the downloads on the builder across builds while leaving nothing behind in the image.
       audit: |
         Inspect the Dockerfile to confirm the zypper cache is cleaned in the install layer:
 
@@ -393,13 +435,19 @@ queries:
       docker.file.stages.all(run.where(commands.any(binary == "pip" && subcommand == "install")).all(mounts.any(type == "cache" && target == /pip/) || commands.where(binary == "pip" && subcommand == "install").all(flags.contains("--no-cache-dir"))))
     docs:
       desc: |
-        `pip install` commands in Dockerfile `RUN` instructions should include the `--no-cache-dir` flag, or mount the pip cache directory as a BuildKit cache so it never lands in an image layer.
+        This check verifies that a `RUN` instruction which installs Python packages with pip does not leave pip's download cache in the image layer.
+
+        pip caches downloaded distributions and locally built wheels under `~/.cache/pip/` so a later install can skip both the download and the rebuild. The `--no-cache-dir` flag turns that off for the invocation. The check requires every `RUN` instruction containing `pip install` either to pass `--no-cache-dir` on each such command or to mount the pip cache directory as a build cache so it never becomes part of a layer.
 
         **Why this matters**
 
-        - **Image bloat:** By default, pip caches downloaded packages and build artifacts in `~/.cache/pip/`, which can add tens or hundreds of megabytes to the image layer, especially for packages with large binary wheels.
-        - **Unnecessary data:** Cached packages serve no purpose in a container since packages are not reinstalled at runtime.
-        - **Layer persistence:** Even if the cache is deleted in a subsequent `RUN` instruction, it persists in the install layer.
+        The cache is often larger than what it installed. Packages with compiled extensions, such as scientific and machine learning libraries, ship wheels of several hundred megabytes each, and pip keeps both the downloaded wheel and any wheel it built from a source distribution, so the cache can hold two copies of the largest thing in the image.
+
+        That size is paid repeatedly. Every node that schedules the container pulls it, every registry copy stores it, and every push from CI transfers it. On an image whose useful content is a small application and its dependencies, the cache can be the majority of the bytes moved.
+
+        Removing it afterward shrinks nothing. Layers are immutable once written, so deleting the cache directory in a following instruction adds a layer recording the deletion while the original files stay in place and continue to be pulled.
+
+        Add `--no-cache-dir` to each `pip install`. If the rebuild cost of redownloading large wheels is the real concern, drop the flag and mount the cache directory as a build cache instead, which keeps the wheels on the builder between builds and still leaves them out of every layer.
       audit: |
         Inspect the Dockerfile to confirm `pip install` uses `--no-cache-dir`:
 
@@ -442,13 +490,19 @@ queries:
       docker.file.stages.all(run.where(commands.any(binary == "yarn" && subcommand == "install")).all(mounts.any(type == "cache" && target == /yarn/) || commands.any(binary == "yarn" && subcommand == "cache" && args.contains("clean"))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions that use `yarn install` should also run `yarn cache clean` in the same layer, or mount the yarn cache directory as a BuildKit cache so it never lands in an image layer. This check targets Yarn Classic (Yarn 1.x), where the cache lives in a global directory. Yarn Berry (Yarn 2 and later) manages its cache differently through Plug'n'Play and zero-installs, so the `yarn cache clean` step does not apply there.
+        This check verifies that a `RUN` instruction which installs JavaScript dependencies with yarn does not leave the yarn cache in the image layer.
+
+        `yarn install` populates a global cache of downloaded package tarballs outside the project directory so later installs can be served from disk. `yarn cache clean` empties it. The check requires every `RUN` instruction containing `yarn install` either to run `yarn cache clean` in the same instruction or to mount the cache directory as a build cache. This applies to Yarn Classic, the 1.x line, where the cache is a shared global directory. Yarn Berry, meaning Yarn 2 and later, resolves dependencies through Plug'n'Play and zero-installs and does not use that cache the same way.
 
         **Why this matters**
 
-        - **Image bloat:** After `yarn install`, a local cache of downloaded packages is stored on disk and can add significant size to the image layer, often exceeding the size of the installed packages themselves.
-        - **Unnecessary data:** The cache is only useful for speeding up future installs, which do not happen at container runtime.
-        - **Layer persistence:** If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
+        A JavaScript dependency tree is large and the cache duplicates it. The tarballs cover every package resolved, including the ones needed only to build, so the cache is routinely bigger than the installed tree itself, and the installed tree is already the biggest thing in most Node images.
+
+        The bytes travel. Every pull on every node carries them, every registry replica stores them, and every push from CI uploads them, all for data no running container ever reads. A container does not install dependencies after it starts.
+
+        Cleaning up in a separate instruction does nothing. Docker layers are additive, so a removal in a later layer masks the files in the assembled filesystem while leaving them in the layer that wrote them, where they are still pulled and still recoverable.
+
+        Chain the cleanup onto the install. Where install speed across rebuilds matters more, mount the cache directory as a build cache: the tarballs then persist on the builder between builds and never enter a layer.
       audit: |
         Inspect the Dockerfile to confirm the yarn cache is cleaned in the install layer:
 
@@ -489,13 +543,19 @@ queries:
       docker.file.stages.all(run.where(commands.any(binary == "npm" && subcommand == "ci")).all(mounts.any(type == "cache" && target == /npm/) || commands.any(binary == "npm" && subcommand == "cache" && args.contains("clean"))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions that use `npm install` or `npm ci` should also run `npm cache clean` in the same layer, or mount the npm cache directory as a BuildKit cache so it never lands in an image layer.
+        This check verifies that a `RUN` instruction which installs JavaScript dependencies with npm does not leave the npm cache in the image layer.
+
+        Both `npm install` and `npm ci` write every package tarball they fetch into a content-addressed store under `~/.npm/`, in addition to unpacking them into `node_modules`. `npm cache clean` empties that store. The check requires every `RUN` instruction containing `npm install` or `npm ci` either to run `npm cache clean` in the same instruction or to mount the npm cache directory as a build cache.
 
         **Why this matters**
 
-        - **Image bloat:** After `npm install` or `npm ci`, a local cache of downloaded packages is stored in `~/.npm/` and can add significant size to the image layer, often comparable to or exceeding the size of `node_modules` itself.
-        - **Unnecessary data:** The cache speeds up future installs but serves no purpose at container runtime.
-        - **Layer persistence:** If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
+        The cache holds a compressed copy of everything already unpacked, so the image ships each dependency twice. On a typical Node service the cache is comparable in size to `node_modules`, and `node_modules` is usually the largest thing in the image by a wide margin.
+
+        `npm ci` makes this easy to miss. It deletes and recreates the dependency tree on every run, which reads like a clean install, but the cache it populates on the way is untouched by that and persists into the layer.
+
+        A removal in a later instruction is not a fix. Image layers are append-only: deleting the cache in the next `RUN` writes a marker into a new layer while the files stay in the one that created them, so the image is exactly as large as before and the tarballs are still recoverable from it.
+
+        Append the cache cleanup to the install in the same instruction. For production images, prefer `npm ci` with development dependencies omitted, which installs the exact versions recorded in the lockfile and leaves the build-only packages out of the image. If rebuild speed is the priority, mount the cache directory as a build cache instead, so it is reused across builds without entering a layer.
       audit: |
         Inspect the Dockerfile to confirm the npm cache is cleaned in the install layer:
 
@@ -543,13 +603,19 @@ queries:
       docker.file.stages.all(run.all(commands.where(binary == "apt-get" && subcommand == "install").all(flags.contains("--no-install-recommends"))))
     docs:
       desc: |
-        `apt-get install` commands in Dockerfile `RUN` instructions should include the `--no-install-recommends` flag.
+        This check verifies that every `apt-get install` in a `RUN` instruction declines Debian's recommended packages.
+
+        A Debian package declares hard dependencies and a softer set of recommendations, which describe what a typical desktop or server installation would also want. `apt-get install` treats those recommendations as dependencies by default and installs them. The `--no-install-recommends` flag limits the install to what the package actually requires to run. The check requires every `apt-get install` command in every build stage to pass it.
 
         **Why this matters**
 
-        - **Image bloat:** By default, `apt-get install` pulls in recommended packages such as documentation, man pages, and X11 libraries that are unnecessary in a container, which can add hundreds of megabytes to the image.
-        - **Increased attack surface:** Every additional package is a potential source of vulnerabilities that must be tracked and patched.
-        - **Slower builds and pulls:** Larger images take longer to build, push, and pull, increasing CI/CD cycle times and deployment latency.
+        The amount pulled in is not marginal. Recommendation chains drag in documentation, manual pages, locale data, editors, and in common cases graphical and font libraries behind a package that only needed a shared library, so a single install line can add hundreds of megabytes to an image meant to run one process.
+
+        Everything added has to be maintained. Each package carries its own vulnerability history, so a scanner reports findings for software the application never invokes, and someone has to triage each one and decide whether an unused documentation viewer justifies a rebuild. That triage cost recurs on every scan, indefinitely, for packages nobody chose.
+
+        Build and deployment times follow the size. Larger layers take longer to push from CI, longer to pull on every node that schedules the container, and longer to start a replacement during a rollout or an incident.
+
+        Add the flag to every `apt-get install`. If declining the recommendations breaks something, the missing piece is a real dependency: name it explicitly on the install line, which documents the requirement instead of relying on a chain that may resolve differently on the next base image.
       audit: |
         Inspect the Dockerfile to confirm `apt-get install` uses `--no-install-recommends`:
 
@@ -584,12 +650,19 @@ queries:
       docker.file.stages.all(run.all(commands.where(binary == "apt-get" && subcommand == "install").all(flags.any(_ == "--yes" || _ == "--assume-yes" || _ == /^-[a-z]*y/))))
     docs:
       desc: |
-        `apt-get install` commands in Dockerfile `RUN` instructions should include the `-y` (or `--yes`) flag.
+        This check verifies that every `apt-get install` in a `RUN` instruction runs without waiting for confirmation.
+
+        `apt-get install` prompts before proceeding whenever the operation pulls in packages beyond the ones named, which covers almost every real install. The `-y` flag, spelled `--yes` in long form, answers that prompt in advance. The check requires every `apt-get install` command in every build stage to carry one of them.
 
         **Why this matters**
 
-        - **Build failure:** Docker builds run non-interactively. Without `-y`, `apt-get install` waits for confirmation input that never comes, causing the build to hang and eventually fail.
-        - **CI/CD reliability:** Automated build pipelines cannot provide interactive input, making builds unreliable without this flag.
+        A Docker build has no terminal attached and nothing supplies input to the prompt. The command reads end of input, treats it as a refusal, and aborts, so the instruction returns non-zero and the build fails. On some configurations it blocks instead, and the build sits doing nothing until a CI job timeout kills it, which costs a full runner slot for the length of the timeout and produces a log that ends mid-install with no error.
+
+        The behavior is not stable across images either. Whether a given install prompts depends on how many extra packages it resolves, so the same instruction can succeed on one base image and stop on the next after a dependency changed upstream. That produces a build that broke without a commit, which is the most expensive kind to diagnose.
+
+        Answering the prompt in the Dockerfile also makes the intent explicit. A reader can see the install is meant to proceed unattended rather than wondering whether an interactive step was left in by accident.
+
+        Add `-y` to each `apt-get install`. Some packages ask their own configuration questions through debconf rather than through apt, and those are silenced separately by selecting a non-interactive frontend for the build, which is worth doing in the same instruction when installing anything that configures a service.
       audit: |
         Inspect the Dockerfile to confirm `apt-get install` uses the `-y` flag:
 
@@ -622,12 +695,19 @@ queries:
       docker.file.stages.all(run.all(commands.where(binary == "yum" && subcommand == "install").all(flags.any(_ == "--assumeyes" || _ == /^-[a-z]*y/))))
     docs:
       desc: |
-        `yum install` commands in Dockerfile `RUN` instructions should include the `-y` (or `--assumeyes`) flag.
+        This check verifies that every `yum install` in a `RUN` instruction runs without waiting for confirmation.
+
+        `yum install` prints the transaction it intends to perform and then asks whether to continue. The `-y` flag, spelled `--assumeyes` in long form, answers yes in advance and lets the transaction proceed. The check requires every `yum install` command in every build stage to carry one of them.
 
         **Why this matters**
 
-        - **Build failure:** Docker builds run non-interactively. Without `-y`, `yum install` waits for confirmation input that never comes, causing the build to hang and eventually fail.
-        - **CI/CD reliability:** Automated build pipelines cannot provide interactive input, making builds unreliable without this flag.
+        Nothing answers the prompt during an image build. The instruction has no terminal, standard input is closed, and yum reads that as a refusal and exits with an error, so the `RUN` returns non-zero and the build stops at the install line. The log ends with a transaction summary and a question, which reads like a truncated build rather than a missing flag, so the first response is often to run the build again.
+
+        Whether the prompt appears is not fixed. Yum skips it for some transaction shapes and asks for others, and which shape a given install produces depends on what is already present in the base image and on how dependencies resolve at that moment. A Dockerfile that has built for a year can stop building because an upstream package gained a dependency, with nothing in the repository history to point at.
+
+        There is also a cost when it does not fail outright. A build that hangs at a prompt occupies a CI runner until the job timeout expires, and that timeout is usually set generously enough to waste far more time than a fast failure would.
+
+        Add `-y` to each `yum install` so the transaction proceeds unattended and the outcome does not depend on how dependencies happen to resolve on the day of the build.
       audit: |
         Inspect the Dockerfile to confirm `yum install` uses the `-y` flag:
 
@@ -658,12 +738,19 @@ queries:
       docker.file.stages.all(run.all(commands.where(binary == "dnf" && subcommand == "install").all(flags.any(_ == "--assumeyes" || _ == /^-[a-z]*y/))))
     docs:
       desc: |
-        `dnf install` commands in Dockerfile `RUN` instructions should include the `-y` (or `--assumeyes`) flag.
+        This check verifies that every `dnf install` in a `RUN` instruction runs without waiting for confirmation.
+
+        `dnf install` resolves the transaction, prints what it will install, and then asks for approval before downloading anything. The `-y` flag, or `--assumeyes` written in full, supplies that approval up front. The check requires every `dnf install` command in every build stage to carry one of them.
 
         **Why this matters**
 
-        - **Build failure:** Docker builds run non-interactively. Without `-y`, `dnf install` waits for confirmation input that never comes, causing the build to hang and eventually fail.
-        - **CI/CD reliability:** Automated build pipelines cannot provide interactive input, making builds unreliable without this flag.
+        An image build is unattended by construction. There is no terminal on the `RUN` instruction and no way to type an answer, so dnf takes the closed input as a negative response and exits non-zero. The build fails at that line with output that looks like a completed dependency resolution followed by nothing, which is easy to misread as a network or repository problem.
+
+        The dependency on transaction shape makes it intermittent. Dnf proceeds without asking in some cases and asks in others, and which one applies depends on what the base image already contains and on how the repository resolves the request that day. An instruction that has worked in every build so far can begin failing after an upstream package adds a dependency, with no change on your side to explain it.
+
+        Where dnf blocks rather than exiting, the build occupies a CI runner until the job timeout fires. That converts a one-character omission into a long, silent pipeline stall and a log that has to be read to the end before the cause is visible.
+
+        Add `-y` to each `dnf install`. The equivalent setting can also be made permanent by writing it into the dnf configuration in the image, but putting it on the command line keeps the intent visible on the line it applies to.
       audit: |
         Inspect the Dockerfile to confirm `dnf install` uses the `-y` flag:
 
@@ -694,12 +781,19 @@ queries:
       docker.file.stages.all(run.all(commands.where(binary == "zypper" && subcommand == "install").all(flags.contains("--non-interactive"))))
     docs:
       desc: |
-        `zypper install` commands in Dockerfile `RUN` instructions should include the `--non-interactive` flag.
+        This check verifies that every `zypper install` in a `RUN` instruction runs without waiting for confirmation.
+
+        `zypper install` presents the packages it will install and waits for a yes or no answer, and it also prompts on repository trust decisions and on license acceptance. The `--non-interactive` flag answers all of those with the default and lets the command run unattended. Zypper takes it as a global option, so it belongs before the subcommand rather than after it. The check requires every `zypper install` command in every build stage to carry it.
 
         **Why this matters**
 
-        - **Build failure:** Docker builds run non-interactively. Without `--non-interactive`, `zypper install` waits for confirmation input that never comes, causing the build to hang and eventually fail.
-        - **CI/CD reliability:** Automated build pipelines cannot provide interactive input, making builds unreliable without this flag.
+        A build has no terminal to answer with. Depending on where zypper stops, the instruction either exits non-zero and fails the build or waits, in which case the job holds a CI runner until the pipeline timeout kills it and the log ends mid-transaction with a question and no error.
+
+        Zypper prompts in more situations than apt or dnf, which makes the omission more likely to surface. A repository whose signing key is unknown, a package under a license that requires acceptance, and a vendor change on an update each produce their own question, and whether any of them appears depends on the base image and the repository state at build time rather than on the Dockerfile. An instruction that has always worked can stop after an upstream key rotation.
+
+        The flag also decides the answers, not just whether the question is asked. It selects the default response for each one, so a build that would have paused on a trust decision now proceeds with zypper's default. That is the right behavior for an automated build, and it is a reason to be explicit elsewhere in the Dockerfile about which repositories the image trusts.
+
+        Put `--non-interactive` on every `zypper install`.
       audit: |
         Inspect the Dockerfile to confirm `zypper install` uses the `--non-interactive` flag:
 
@@ -730,16 +824,19 @@ queries:
       docker.file.finalStage.hasHealthcheck
     docs:
       desc: |
-        The final stage of a Dockerfile should include a HEALTHCHECK instruction so orchestrators can determine whether the application inside the container is actually working.
+        This check verifies that the final build stage of the Dockerfile defines a `HEALTHCHECK` instruction.
+
+        `HEALTHCHECK` records a command the container runtime runs on a schedule, together with an interval, a timeout, and a retry count. Its exit status sets the container's health state, which Docker, Docker Compose, and Docker Swarm all read. The check requires the final stage to declare one, since only the final stage's configuration is carried into the published image.
 
         **Why this matters**
 
-        - **Silent failures:** A container can remain in a "running" state even when the application has crashed, deadlocked, or become unresponsive.
-        - **Traffic to broken containers:** Load balancers and orchestrators continue routing traffic to unhealthy containers, causing user-facing errors.
-        - **Delayed recovery:** Without health information, orchestrators cannot automatically restart or replace failed containers, increasing downtime.
-        - **Monitoring blind spots:** Container health status provides a basic monitoring signal that integrates with orchestrator dashboards and alerting.
+        Without it, the only signal the runtime has is whether the main process is still alive, and that is a weak proxy for whether the application works. A process that has deadlocked on a lock, exhausted its connection pool, lost its database and is retrying forever, or wedged its event loop stays alive and reports as running. Compose keeps it in service, Swarm keeps routing to it, and dependent containers configured to wait for it start against a service that cannot answer.
 
-        Note that Kubernetes ignores the Dockerfile HEALTHCHECK instruction. Kubernetes determines container health through its own liveness, readiness, and startup probes defined in the pod specification. A HEALTHCHECK still benefits Docker, Docker Compose, and Docker Swarm, so it remains worth defining, but on Kubernetes you must configure the equivalent probes separately.
+        The absence also breaks orchestration ordering. A Compose dependency that waits for a service to become healthy has nothing to wait on when no health check is defined, so the dependent container starts immediately and fails on its first request, producing a startup race that reproduces on some machines and not others.
+
+        Health history is useful after the fact as well. When a container is investigated, the record of when it last passed narrows the window to look at; without a check, the timeline starts wherever a human first noticed.
+
+        Define a check that exercises the application rather than the process, and make sure the command it runs exists in the final image, because minimal and distroless bases often ship without an HTTP client and a probe that cannot execute reports unhealthy forever. Kubernetes ignores this instruction entirely and uses its own liveness, readiness, and startup probes, so define those separately on that platform.
       audit: |
         Inspect the Dockerfile to confirm a HEALTHCHECK is defined:
 
@@ -782,14 +879,19 @@ queries:
       docker.file.stages.all(healthcheck == null || healthcheck.none == false)
     docs:
       desc: |
-        No Dockerfile stage should use `HEALTHCHECK NONE` to explicitly disable health checking.
+        This check verifies that no build stage disables health checking with `HEALTHCHECK NONE`.
+
+        `HEALTHCHECK NONE` is the instruction form that removes a health check rather than defining one. It exists because image configuration is inherited: a stage built on a base that declares a check carries that check forward, and this form is how a Dockerfile discards it. The check requires that no stage in the Dockerfile use it.
 
         **Why this matters**
 
-        - **Overrides base image checks:** Many well-maintained base images include appropriate HEALTHCHECK instructions. `HEALTHCHECK NONE` discards these intentionally configured checks.
-        - **Intentional degradation:** While a missing HEALTHCHECK might be an oversight, `HEALTHCHECK NONE` is a deliberate decision to remove health monitoring.
-        - **Orchestrator impact:** Containers without health checks cannot benefit from automatic restart policies or health-aware load balancing.
-        - **Debugging difficulty:** When a container becomes unresponsive, the lack of health check history makes it harder to determine when the problem started.
+        The inherited check is usually the better one. Publishers of database, message broker, and web server images write probes against the protocol their service speaks, using a client they know is present in the image, and they update the probe when the service changes. Discarding it replaces a maintained, protocol-aware check with nothing at all.
+
+        Once it is gone, the runtime falls back to process liveness, which reports a wedged or deadlocked service as running. Compose leaves it in the rotation, Swarm keeps routing to it, and any container waiting for this one to become healthy has nothing to wait on and starts against a service that cannot answer.
+
+        This is also a different problem from an image that never had a check. A missing health check is usually an oversight and reads as one. `HEALTHCHECK NONE` is a deliberate line someone added, typically to stop a probe that was failing. The failing probe was reporting something real, and turning it off leaves that cause in place while removing the only signal that would have shown it recurring.
+
+        If the inherited check does not fit the application, override it with one that does rather than removing it. A probe that fails because the base image's client is missing from a slimmed final stage is fixed by supplying a probe that uses a command the image actually has.
       audit: |
         Inspect the Dockerfile to confirm no stage disables health checking:
 
@@ -823,14 +925,19 @@ queries:
       docker.file.stages.all(workdir.all(path == /^\//))
     docs:
       desc: |
-        Every WORKDIR instruction in the Dockerfile should use an absolute path rather than a relative path.
+        This check verifies that every `WORKDIR` instruction in the Dockerfile uses an absolute path.
+
+        `WORKDIR` sets the directory that subsequent instructions in the stage resolve relative paths against, and it creates that directory if it does not exist. A relative argument is resolved against whatever the working directory happened to be at that point, which may come from an earlier `WORKDIR` in the same stage or from the base image's own configuration. The check requires every `WORKDIR` path in every stage to begin with a slash.
 
         **Why this matters**
 
-        - **Context dependence:** A relative WORKDIR is resolved against the current working directory, which may differ depending on the base image or preceding WORKDIR instructions.
-        - **Build fragility:** Changing the base image or reordering instructions can silently change where files are copied and commands are executed.
-        - **Harder to audit:** With relative paths, determining the actual working directory at any point in the Dockerfile requires tracing through all preceding instructions.
-        - **Unexpected file placement:** Files added with COPY or ADD may end up in unintended locations when the working directory is ambiguous.
+        The starting point is not under the Dockerfile's control. A base image sets its own working directory, so a relative `WORKDIR` lands in a different place depending on which image the stage builds on. Changing a base image tag, or switching from one language image to another, silently moves every path in the file without a single line of the Dockerfile changing.
+
+        Relative paths compound. Each one is applied to the result of the previous one, so inserting, removing, or reordering a `WORKDIR` moves everything after it. A reviewer looking at a diff that adds one instruction cannot tell it relocated the application, and the build still succeeds, because `WORKDIR` creates whatever directory it names.
+
+        The consequences show up as files in the wrong place. A `COPY` lands outside the directory the entrypoint runs in, a build artifact is written where nothing looks for it, and the container starts and fails with a missing-file error that points at the application rather than at the Dockerfile.
+
+        Reading the file also becomes an exercise in simulation. Answering where a given `RUN` executes means tracing every preceding instruction, including whatever the base image configured. Writing each path in full makes each instruction independently readable.
       audit: |
         Inspect the Dockerfile to confirm WORKDIR paths are absolute:
 
@@ -865,16 +972,17 @@ queries:
       docker.file.stages.all(run.all(commands.none(binary == "cd")))
     docs:
       desc: |
-        Dockerfile `RUN` instructions should use the WORKDIR instruction to change directories rather than calling `cd`.
+        This check verifies that `RUN` instructions do not use `cd` to change directories.
+
+        `WORKDIR` sets the working directory for every instruction that follows it in the stage, and the setting is recorded in the image configuration. `cd` inside a `RUN` instruction changes the directory only for the shell that instruction spawns, and that shell exits when the instruction finishes, so subsequent `RUN`, `COPY`, and `ADD` instructions are unaffected. The check requires that no `RUN` instruction in any build stage invoke `cd`.
 
         **Why this matters**
 
-        - **Non-persistent:** `cd` in a `RUN` instruction only changes the directory for that single command and does not affect subsequent `RUN`, `COPY`, or `ADD` instructions.
-        - **Error-prone:** Developers may expect `cd` to persist across instructions, leading to files being placed in the wrong location or commands failing.
-        - **Readability:** WORKDIR makes the current directory explicit and visible, while `cd` buried in a `RUN` command is easy to miss.
-        - **Idiomatic Dockerfiles:** The WORKDIR instruction is purpose-built for setting the working directory and is the recommended approach.
+        The mismatch between what the line looks like and what it does is the whole problem. A Dockerfile whose first instruction changes into an application directory and whose second installs dependencies looks like it installs there, and it does not; the second instruction runs wherever the stage's working directory was before. The install succeeds in the wrong place, later copies resolve somewhere else again, and the failure appears at container start as a missing file.
 
-        This check flags any `RUN` instruction containing `cd`. Using `cd` within a compound command such as `cd /tmp && make && cd /app && make install` is acceptable practice to avoid extra layers but will still trigger this check. Set WORKDIR before the `RUN` instruction where possible.
+        It also hides the working directory from anything that reads the image rather than the source. Image inspection reports the configured working directory, so a `WORKDIR` is visible to tooling and to anyone debugging a container, while a `cd` buried in a shell line is not. The same applies to a person scanning the file: `WORKDIR` sits at the start of a line, `cd` sits in the middle of a long chained command.
+
+        This check flags any `cd` in a `RUN` instruction, including the compound form `cd /tmp && make && cd /app && make install`. Chaining that way is a reasonable technique for keeping the layer count down, so treat a finding here as a prompt to move the directory change into a `WORKDIR` where the structure allows it. Where a step really must move between directories, setting `WORKDIR` before the instruction and again afterward costs at most an empty directory in the image.
       audit: |
         Inspect the Dockerfile to confirm `RUN` instructions do not use `cd`:
 
@@ -916,13 +1024,19 @@ queries:
       docker.file.stages.all(run.where(commands.any(binary == "microdnf" && subcommand == "install")).all(mounts.any(type == "cache" && target == /^\/var\/cache\/(dnf|yum)\/?$/) || commands.any(binary == "microdnf" && subcommand == "clean" && args.contains("all"))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions that use `microdnf install` should also run `microdnf clean all` in the same layer, or keep the cache out of the image by mounting `/var/cache/dnf` as a BuildKit cache. microdnf is a minimal DNF implementation used in Red Hat UBI micro images, and like other package managers it caches downloaded packages and metadata.
+        This check verifies that a `RUN` instruction which installs packages with `microdnf` does not leave the package cache in the image layer.
+
+        `microdnf` is the stripped-down package manager shipped in Red Hat's Universal Base Image micro images, built without the Python stack that DNF requires. It is smaller, but it caches the same way: downloaded RPMs and repository metadata land in `/var/cache/dnf` or `/var/cache/yum` and stay there. The check requires every `RUN` instruction containing `microdnf install` either to run `microdnf clean all` in the same instruction or to mount the cache directory as a build cache.
 
         **Why this matters**
 
-        - **Image bloat:** microdnf caches downloaded packages and metadata in `/var/cache/yum` or `/var/cache/dnf`, which can add significant size to the image layer.
-        - **Consistency:** All other package manager checks (apt, yum, dnf, zypper) require cache cleanup; microdnf should not be an exception.
-        - **Layer optimization:** Combining install and cleanup in a single `RUN` instruction ensures the cache never persists in any layer.
+        The whole point of a micro base image is size. It exists so an image is a few tens of megabytes rather than a few hundred, and a package cache left in a layer can be larger than the base image it was added to. The saving the base image was chosen for is spent on metadata for packages nobody will install again.
+
+        Nothing reads the cache after the build. Containers are replaced rather than patched, so a new package version means a new image from a new build, and the cached RPMs sit unread while being pulled to every node that runs the image.
+
+        Cleaning up in a following instruction shrinks nothing. Layers are append-only, so a deletion is recorded on top while the files remain in the layer that wrote them, still transferred on pull and still readable from an exported image.
+
+        Chain `microdnf clean all` onto the install so both land in one instruction, or mount the cache as a build cache if repeated builds make redownloading costly. The sibling checks in this policy ask the same of apt, yum, dnf, and zypper, so applying it here keeps every install path in the Dockerfile consistent.
       audit: |
         Inspect the Dockerfile to confirm the microdnf cache is cleaned in the install layer:
 
@@ -962,13 +1076,19 @@ queries:
       docker.file.stages.all(copy.where(src.length > 1).all(dst == /\/$/))
     docs:
       desc: |
-        COPY instructions with more than one source argument should use a destination path ending with `/`. When COPY has multiple source files but the destination does not end with a slash, the build may fail or produce unexpected results depending on the Docker version.
+        This check verifies that a `COPY` instruction with more than one source path names a destination directory.
+
+        `COPY` accepts several sources and one destination. When more than one source is given, the destination has to be a directory, and Dockerfile syntax marks a directory by ending the path with `/`. Without it the builder cannot tell whether the last argument is a directory to copy into or a filename to rename onto. The check requires every `COPY` with two or more sources to end its destination with a slash.
 
         **Why this matters**
 
-        - **Build failures:** With multiple source files, Docker expects the destination to be a directory indicated by a trailing slash. Without it, the build may fail with an ambiguous error.
-        - **Required by Docker:** When a COPY instruction lists multiple sources, Docker requires the destination to be a directory ending with `/` and rejects the instruction with a build error otherwise.
-        - **Clarity:** A trailing slash explicitly communicates that the destination is a directory, making the Dockerfile easier to understand and maintain.
+        The build fails, and the message does not name the cause clearly. The builder reports that the destination must be a directory when copying multiple files, which sends the reader looking at whether the directory exists rather than at the missing character. That is a slow diagnosis for a one-character fix, and it happens at a point where CI is already several minutes into a build.
+
+        The instruction is also fragile in a way that is easy to introduce. A `COPY` with one source and no trailing slash is legal and writes to a file of that name, so a working line becomes a broken one the moment a second source is added, and the diff that broke it looks like it only added a filename.
+
+        Where behavior differs across builder versions the outcome is worse than a failure. An ambiguous destination can be treated as a directory by one builder and as a rename target by another, so the same Dockerfile produces different filesystem layouts depending on where it is built, and the difference only appears when something tries to read the file at runtime.
+
+        Ending every multi-source destination with a slash removes the ambiguity and states the intent on the line, so a reader knows the arguments land inside a directory rather than replacing one.
       audit: |
         Inspect the Dockerfile to confirm multi-source COPY destinations end with `/`:
 
