@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-cisco-iosxr-security
     name: Mondoo Cisco IOS-XR Security
-    version: 1.0.3
+    version: 1.0.4
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -117,18 +117,17 @@ queries:
       cisco.iosxr.ssh.version == "v2"
     docs:
       desc: |
-        This check verifies that SSH version 2 is enforced on the device. SSH version 1 contains known cryptographic vulnerabilities and must not be used for secure management access.
+        This check verifies that remote management sessions negotiate only the modern SSH protocol.
+
+        IOS-XR runs an SSH server that can be told which protocol generations it will accept. The `ssh server v2` command in configuration mode restricts the server to SSH version 2 and refuses version 1 negotiation outright. Like every IOS-XR configuration change it stages into a target configuration and does nothing until `commit` runs. The check requires the SSH server to report version 2.
 
         **Why this matters**
 
-        SSH version 1 has well-documented weaknesses including susceptibility to man-in-the-middle attacks and session hijacking. If SSH version 2 is not enforced:
+        SSH version 1 has a structurally broken integrity mechanism. It protects packets with a CRC-32 checksum rather than a keyed message authentication code, which lets an attacker on the path insert chosen ciphertext into an authenticated session and have the device act on it. Public tooling for that insertion attack has existed since 2001, and it needs no credentials, only a position between the operator and the router.
 
-        - Management sessions are vulnerable to cryptographic attacks present in SSH version 1.
-        - Session integrity cannot be guaranteed, allowing potential session hijacking.
-        - Compliance with modern security frameworks that require strong encryption cannot be met.
-        - Credential exposure risk increases due to weaker key exchange mechanisms.
+        A router is where that position is easiest to obtain, because management traffic to it crosses the same infrastructure the router controls. An attacker who lands a command inside an administrator's live session can add an account, redirect traffic, or open a path deeper into the network without ever guessing a password.
 
-        Enforcing SSH version 2 ensures that all remote management sessions use a secure, modern protocol with strong cryptographic protections.
+        Pair this with generating an RSA host key of adequate size and restricting the line templates to SSH transport, both covered by companion checks in this policy.
       audit: |-
         To verify that SSH version 2 is enforced:
 
@@ -178,17 +177,17 @@ queries:
       cisco.iosxr.ssh.timeout <= 120
     docs:
       desc: |
-        This check verifies that an SSH timeout is configured to limit how long an SSH connection may spend in user authentication before the device drops it. The timeout should be set to a reasonable value of 120 seconds or less to minimize the window available for authentication attempts.
+        This check verifies that half-open SSH connections are dropped instead of being allowed to sit in authentication indefinitely.
+
+        `ssh timeout` sets how many seconds an incoming SSH connection may spend completing user authentication before IOS-XR tears it down. The value is staged in configuration mode and applies once `commit` runs. The check requires a value greater than zero and no more than 120 seconds, the upper bound the platform accepts.
 
         **Why this matters**
 
-        Without an SSH timeout, connections can remain in the authentication phase indefinitely. If the timeout is not configured:
+        Every connection sitting in authentication occupies a slot in the SSH server's session table. That table is small on a router, far smaller than on a general-purpose server, and an attacker who opens connections and simply never sends credentials can fill it from a single host. Once it is full, legitimate administrators are refused, and on a device whose only remaining access path is a console cable in a locked facility that turns a nuisance into an outage somebody has to drive to.
 
-        - Attackers can hold unauthenticated connections open while probing or brute-forcing credentials.
-        - Resources are consumed by stalled connections, potentially blocking legitimate access.
-        - Compliance requirements for session management cannot be met.
+        A generous timeout also widens the window for slow credential guessing, since each attempt costs the attacker a longer-lived connection they never had to keep alive.
 
-        Configuring an SSH timeout ensures that connections that fail to authenticate promptly are dropped, reducing the attack surface. Disconnecting sessions that go idle after authentication requires an exec timeout on the console and line templates.
+        This bounds authentication only. Sessions that go idle after a successful login are cut by an exec timeout on the console and on the line templates, which a companion check in this policy covers.
       audit: |-
         To verify that an SSH timeout is configured:
 
@@ -239,17 +238,17 @@ queries:
       cisco.iosxr.routerPublicKey.modulusSize >= 2048
     docs:
       desc: |
-        This check verifies that the RSA key pair used for SSH has a modulus size of at least 2048 bits. Keys smaller than 2048 bits are considered cryptographically weak and vulnerable to brute-force attacks.
+        This check verifies that the host key identifying the device to SSH clients is strong enough to resist factoring.
+
+        IOS-XR generates its SSH host key with `crypto key generate rsa` from EXEC mode, which prompts for a modulus size. Unlike configuration commands, this one takes effect immediately and needs no `commit`. The check requires the router's public key to report a modulus of at least 2048 bits.
 
         **Why this matters**
 
-        RSA keys with fewer than 2048 bits can be factored with current computing resources. If the key size is insufficient:
+        The host key is what tells an administrator they reached the real router rather than something impersonating it. An attacker who recovers the private half can stand up a machine-in-the-middle that presents the genuine fingerprint, so the client raises no warning, and then collect the TACACS+ or local credentials the operator types into it. From there they hold whatever privileges that operator holds.
 
-        - The SSH host key can potentially be compromised, enabling man-in-the-middle attacks.
-        - Compliance with NIST and other standards requiring minimum 2048-bit RSA keys cannot be met.
-        - The overall security of all SSH sessions to the device is weakened.
+        A 1024-bit RSA modulus is within reach of well-resourced factoring effort and has been deprecated for that reason since NIST SP 800-131A, and a 768-bit modulus was factored publicly in 2009. Routers frequently still carry a key generated at install with whatever default the software of that era offered, and nothing about normal operation ever regenerates it.
 
-        Using RSA keys of at least 2048 bits ensures that SSH sessions are protected with adequate cryptographic strength.
+        Regenerating replaces the fingerprint clients have pinned, so update known-hosts entries on jump hosts and automation before you rotate, or scripted access breaks the moment the new key is live.
       audit: |-
         To verify the RSA key modulus size:
 
@@ -300,18 +299,17 @@ queries:
       cisco.iosxr.aaaAuthenticationLogin.length > 0
     docs:
       desc: |
-        This check verifies that AAA authentication login method lists are configured on the device. AAA authentication integrates the router with centralized identity management systems such as TACACS+ or RADIUS for scalable authentication.
+        This check verifies that administrative logins are resolved against a defined authentication method list.
+
+        IOS-XR decides who a user is through AAA method lists built with `aaa authentication login`, typically `aaa authentication login default group tacacs+ local`, which consults the TACACS+ servers first and the local database if they are unreachable. The list is staged in configuration mode and takes effect at `commit`. The check requires at least one login method list to exist.
 
         **Why this matters**
 
-        Without AAA authentication login configured, the device relies solely on local credentials, which are difficult to manage at scale. If AAA authentication is not configured:
+        IOS-XR has no `enable secret`; privilege comes from the task groups AAA binds to an identity. Without a login method list the identity half of that model is unanchored, and every access decision collapses onto whichever local accounts happen to exist on that one chassis.
 
-        - The device cannot integrate with centralized identity management.
-        - User authentication cannot be enforced consistently across the network.
-        - Audit trails for authentication events are incomplete.
-        - Compliance with security frameworks requiring centralized authentication cannot be achieved.
+        Locally defined accounts are exactly what state-sponsored campaigns against routing infrastructure have repeatedly harvested and reused, because they are created once during turn-up, shared across a team, never rotated, and often identical across a fleet. A centralized method list means a departing engineer loses access everywhere at once instead of remaining a valid login on hundreds of routers.
 
-        Configuring AAA authentication login ensures centralized, scalable authentication with comprehensive audit trails.
+        Always keep `local` as the final method. A list pointing only at servers that later become unreachable locks everyone out, so stage the change with `commit confirmed` and let the timer roll it back if your test session fails to authenticate.
       audit: |-
         To verify that AAA authentication login method lists are configured:
 
@@ -368,18 +366,17 @@ queries:
       cisco.iosxr.aaaAccounting.length > 0
     docs:
       desc: |
-        This check verifies that AAA accounting is configured to log user activity. Accounting records provide a detailed audit trail of commands executed, sessions started, and system events.
+        This check verifies that administrative activity on the device produces an audit record held off the box.
+
+        `aaa accounting exec default start-stop group tacacs+` records session starts and stops, and `aaa accounting commands default start-stop group tacacs+` records the individual commands run inside them. Both are staged in configuration mode and become active at `commit`. The check requires at least one accounting entry to be configured.
 
         **Why this matters**
 
-        Without AAA accounting, there is no record of what administrators have done on the device. If accounting is not configured:
+        Accounting is the only source that says which named person did something. Syslog reports that a configuration was committed and which line it arrived on, but without accounting it does not attach that to an identity, so a shared local account leaves an investigation holding a timestamp and nothing else.
 
-        - There is no forensic evidence of commands executed during a security incident.
-        - Compliance requirements for audit logging cannot be met.
-        - Accountability for privileged operations is lost.
-        - Investigating unauthorized changes becomes significantly harder.
+        The records also leave the device as they are generated. Someone who reaches an IOS-XR router with configuration rights can clear the local log buffer and shape what remains, but they cannot retract accounting records a TACACS+ server has already accepted. That asymmetry is the difference between reconstructing an intrusion and guessing at it.
 
-        Enabling AAA accounting ensures that all activity is logged and available for audit, investigation, and compliance reporting.
+        Command accounting on a busy device is chatty, and because IOS-XR stages changes before they apply, an operator's exploratory work generates records before anything is committed. Size the accounting server and its retention for that volume rather than turning command accounting off.
       audit: |-
         To verify that AAA accounting is configured:
 
@@ -429,18 +426,17 @@ queries:
       cisco.iosxr.aaaAuthorization.length > 0
     docs:
       desc: |
-        This check verifies that AAA authorization is configured to control which commands and resources users can access. Authorization enforces the principle of least privilege by limiting user actions based on their assigned role.
+        This check verifies that an authenticated operator is limited to the operations their role permits.
+
+        IOS-XR expresses privilege through task groups, which are sets of read, write, execute and debug permissions over named tasks, bound to a user group and then to a user. `aaa authorization exec default group tacacs+ local` and `aaa authorization commands default group tacacs+ local` determine which of those a session actually receives. Both are staged in configuration mode and take effect at `commit`. The check requires at least one authorization entry.
 
         **Why this matters**
 
-        Without AAA authorization, authenticated users may have unrestricted access to all commands. If authorization is not configured:
+        Without authorization, authentication becomes the entire access decision and anyone who gets in gets everything the platform can do. On a core router that includes rewriting routing policy, applying an access list that partitions a site, and switching off the logging that would have shown it happened.
 
-        - Users can execute commands beyond what their role requires.
-        - Separation of duties cannot be enforced.
-        - The principle of least privilege is not applied.
-        - Compliance with access control requirements cannot be met.
+        The realistic threat is usually not an outsider. It is a contractor, a monitoring account, or an automation credential handed interactive access because carving out a narrower scope was more work at the time. Any of those turning into a full-privilege session is a lateral movement path that starts inside the management network.
 
-        Configuring AAA authorization ensures that users can only perform operations appropriate to their role.
+        Define and assign the task groups before you enforce authorization. A method list applied over groups nobody has been assigned to will deny work that operators legitimately need to perform.
       audit: |-
         To verify that AAA authorization is configured:
 
@@ -490,17 +486,17 @@ queries:
       cisco.iosxr.lineAuthentication.length > 0
     docs:
       desc: |
-        This check verifies that line authentication is configured for console and VTY lines. Line authentication ensures that all access points to the device require proper credentials before granting access.
+        This check verifies that every physical and virtual access path into the device demands credentials.
+
+        Applying a method list with `login authentication` under `line console` and `line default` is what binds the console and the line templates serving remote sessions to AAA. A line with no method list applied does not inherit enforcement merely because AAA is configured globally. The commands are staged in configuration mode and take effect at `commit`. The check requires line authentication to be configured.
 
         **Why this matters**
 
-        Without line authentication, access points such as the console or VTY lines may allow unauthenticated access. If line authentication is not configured:
+        An unbound line is the one that gets missed. AAA is set up carefully for remote administration, the console is left as it was during turn-up, and anyone who reaches the rack finds an unauthenticated prompt with full platform access. In a shared cage, a carrier hotel, or a cabinet a landlord's contractor can open, that is a realistic path, and it produces no authentication record because no authentication took place.
 
-        - Console or remote access may be available without any credentials.
-        - Unauthorized users can gain access to the device through unprotected lines.
-        - Compliance requirements for access control cannot be met.
+        The same gap turns up on auxiliary lines and on named templates created for one purpose and never revisited.
 
-        Configuring line authentication on all lines ensures that every access method requires proper authentication.
+        Prove the console works before you depend on it. If the AAA servers become unreachable and the console method list carries no `local` fallback, the one access path that survives a network failure is the one you have just closed, and recovery then means a site visit.
       audit: |-
         To verify that line authentication is configured:
 
@@ -554,17 +550,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that all local user accounts have encrypted passwords. Passwords stored with encryption type 0 (clear text) are visible in the device configuration and can be trivially compromised.
+        This check verifies that local account credentials are stored as one-way hashes rather than readable text.
+
+        IOS-XR records each local credential with a type marker showing how it was stored, and type 0 means the value sits in the configuration exactly as typed. `username <user> secret <password>` stores a hash instead: the device accepts clear-text input and keeps only the digest. The check requires every local user to carry a secret type other than 0 or unset.
 
         **Why this matters**
 
-        Clear-text passwords in the running configuration are exposed to anyone who can view the configuration. If passwords are not encrypted:
+        Router configurations are copied constantly. They go into change tickets, vendor support cases, nightly backup shares, and configuration management repositories, and every one of those copies is a credential file if the passwords in it are readable. An attacker who reaches a backup server never has to touch a router to collect logins for the whole fleet, and those logins usually work on more than the device they came from.
 
-        - Credentials are visible in plain text in configuration backups and show commands.
-        - Configuration files sent to support or stored in version control expose all passwords.
-        - An attacker who gains read access to the configuration immediately obtains all credentials.
+        `username <user> password ...` is not an equivalent. That form uses the reversible type 7 encoding, a published XOR against a fixed key with public decoders going back two decades. It hides a credential from a glance at a shared screen and from nothing else.
 
-        Ensuring all users have encrypted passwords protects credentials from exposure through configuration access.
+        Remove any leftover `password` entry once a secret is in place, or the weaker copy stays in the configuration alongside the hash and is the one an attacker uses.
       audit: |-
         To verify that all local users have encrypted passwords:
 
@@ -623,18 +619,17 @@ queries:
       cisco.iosxr.passwordPolicies.length > 0
     docs:
       desc: |
-        This check verifies that AAA password policies are configured to enforce password complexity and lifecycle requirements. Password policies define minimum length, character requirements, and expiration settings.
+        This check verifies that local credentials must satisfy defined strength and lifecycle rules.
+
+        `aaa password-policy <name>` creates a named policy carrying settings such as `min-length`, `min-char-change`, `special-char`, `numeric` and `lifetime days`. The policy does nothing until it is attached to an account with `username <user> password-policy <name>`, and neither step is live until `commit`. The check requires at least one password policy to exist.
 
         **Why this matters**
 
-        Without password policies, users can set weak or trivially guessable passwords. If password policies are not configured:
+        Local accounts on network devices are where weak passwords survive longest. They are created during turn-up under time pressure, frequently reused across a batch of chassis commissioned the same week, and then left untouched for the decade the hardware stays in service. Nothing in normal operation ever prompts a change.
 
-        - Passwords may not meet minimum length or complexity requirements.
-        - Password reuse cannot be prevented.
-        - Password expiration cannot be enforced.
-        - Compliance with password management requirements cannot be met.
+        An attacker who obtains one such credential from an old configuration backup, a departed contractor, or another compromised device gets to try it against every router in the estate. Guessing is cheap as well when the credential is short, because the local database is evaluated directly on the box with no external rate limiting beyond what the operator configured.
 
-        Configuring password policies ensures that all local accounts meet minimum security requirements for password strength.
+        The policy governs both the `password` and `secret` forms, so it is not a substitute for storing credentials as hashes. Pair it with secrets, which a companion check in this policy requires.
       audit: |-
         To verify that AAA password policies are configured:
 
@@ -699,17 +694,17 @@ queries:
       cisco.iosxr.type6.aesConfigState == "Enabled"
     docs:
       desc: |
-        This check verifies that Type 6 AES password encryption is enabled. Type 6 encryption uses AES to provide strong, reversible encryption for passwords stored in the configuration, replacing the weak Type 7 encryption.
+        This check verifies that configuration values that cannot be hashed are protected with strong encryption instead of a trivially decoded encoding.
+
+        Some values must be reproducible by the device to be usable, including TACACS+ and RADIUS shared secrets and routing protocol keys. IOS-XR stores these as Type 6, AES encryption under a master key held outside the configuration text. It is turned on with `password6 encryption aes` and a `commit`, and the master key is then created from EXEC mode with `key config-key password-encryption`. The check requires the Type 6 AES state to report as enabled.
 
         **Why this matters**
 
-        Type 7 encryption is trivially reversible and provides minimal protection. If Type 6 encryption is not enabled:
+        The alternative is Type 7, whose algorithm is a published XOR against a fixed key. Any configuration containing a Type 7 string yields the original value in the time it takes to paste it into a decoder, and configurations leave the device constantly through backups, tickets and support cases.
 
-        - Passwords in the configuration are protected only by weak, easily reversed encryption.
-        - An attacker with access to the configuration can decode all Type 7 passwords instantly.
-        - RADIUS and TACACS+ shared secrets in the configuration are inadequately protected.
+        The values at stake are shared keys, so recovering one from a single router often unlocks far more than that router. A TACACS+ shared secret lets an attacker impersonate the authentication server for every device that trusts it, turning one leaked backup into control over the fleet's login decisions.
 
-        Enabling Type 6 encryption ensures that passwords stored in the configuration are protected with AES encryption.
+        Record the master key securely before storing anything under it. If it is lost or changed, every existing Type 6 value becomes unrecoverable and each one has to be reconfigured by hand.
       audit: |-
         To verify that Type 6 AES password encryption is enabled:
 
@@ -767,18 +762,17 @@ queries:
       cisco.iosxr.ntp.authenticate == true
     docs:
       desc: |
-        This check verifies that NTP authentication is enabled to ensure the device only synchronizes time with trusted NTP servers. Without authentication, an attacker could manipulate the device's clock by spoofing NTP responses.
+        This check verifies that the device accepts clock updates only from time sources that prove their identity.
+
+        `ntp authenticate` turns on verification of NTP messages, working together with `ntp authentication-key`, `ntp trusted-key`, and a `key` reference on each `ntp server` line. Without that keying, authentication is switched on but nothing is trusted. All of it is staged in configuration mode and applies at `commit`. The check requires NTP authentication to be enabled.
 
         **Why this matters**
 
-        Accurate, trusted time is critical for security operations. If NTP authentication is not enabled:
+        NTP runs over UDP, so an attacker who can reach the management network can forge a reply that appears to come from the configured server without intercepting anything first. Moving a router's clock is a quiet way to ruin the record of an intrusion: log entries land at times that correlate with nothing, and an analyst comparing routers sees a timeline that will not reconcile.
 
-        - An attacker can manipulate the device clock through NTP spoofing attacks.
-        - Log timestamps become unreliable, undermining forensic investigations.
-        - Certificate validation can be bypassed with manipulated time.
-        - Time-sensitive security mechanisms such as OTP tokens can be compromised.
+        A shifted clock also disturbs controls that read time directly. Certificate validity windows, the send and accept lifetimes on the key chains protecting OSPF and BGP, and time-based access lists all decide from it, and a large enough step expires a key chain or reactivates one that was retired.
 
-        Enabling NTP authentication ensures the device only accepts time updates from verified, trusted sources.
+        MD5 is the practical floor rather than a strong choice. Use a stronger digest where your release and your time servers both support one, and set the same key and key number on the server or the device discards its updates.
       audit: |-
         To verify that NTP authentication is enabled:
 
@@ -830,17 +824,19 @@ queries:
       cisco.iosxr.ntp.servers.length > 0
     docs:
       desc: |
-        This check verifies that at least one NTP server is configured to maintain accurate time synchronization. Accurate time is essential for log correlation, certificate validation, and security event analysis.
+        This check verifies that the device keeps its clock synchronized against an external reference.
+
+        `ntp server <address>` points IOS-XR at a time source. The entry is staged in configuration mode and becomes active at `commit`. The check requires at least one NTP association to exist.
 
         **Why this matters**
 
-        Without NTP servers configured, the device clock will drift over time, leading to inaccurate timestamps. If NTP servers are not configured:
+        A router with no external reference runs on a free-running oscillator that drifts steadily. Within weeks it can sit minutes away from real time, and a chassis brought back after a long power loss can come up decades off, since it has no battery-backed clock to fall back on.
 
-        - Log timestamps are inaccurate, making incident investigation unreliable.
-        - Time-based security controls such as certificate expiration checks may malfunction.
-        - Correlation of events across multiple devices becomes impossible.
+        That breaks incident work first. Correlating a routing anomaly across a core router, an edge router and a firewall depends on their timestamps lining up, and if one is minutes adrift the order of events is unreadable and the wrong cause gets blamed. It equally breaks anything that reads the clock to make a decision, including certificate validity, key chain lifetimes on routing protocol authentication, and scheduled configuration jobs.
 
-        Configuring NTP servers ensures the device maintains accurate, synchronized time.
+        Configure at least two sources so one unreachable server does not leave the device unsynchronized, and prefer sources you operate over public pools for infrastructure this sensitive.
+
+        Synchronizing without authenticating the source leaves it spoofable, which a companion check in this policy addresses.
       audit: |-
         To verify that NTP servers are configured:
 
@@ -892,18 +888,17 @@ queries:
       cisco.iosxr.logging.enabled == true
     docs:
       desc: |
-        This check verifies that logging is enabled on the device. Logging is the foundation of security monitoring, providing records of system events, errors, and security-relevant activities.
+        This check verifies that the device produces a record of what happens on it.
+
+        IOS-XR sends log messages to several destinations, each with its own severity threshold: `logging console`, `logging monitor` for terminal sessions, `logging buffered` for the in-memory ring, and `logging trap` for remote syslog. Each is staged in configuration mode and takes effect at `commit`. The check requires logging to be active.
 
         **Why this matters**
 
-        Without logging enabled, the device generates no records of system activity. If logging is disabled:
+        Without logging there is no trace that a configuration was committed, that an interface went down, that authentication failed repeatedly, or that a BGP session flapped. An intrusion into a router is often visible only as that kind of trace, because someone who has compromised the management plane makes changes that look ordinary in isolation and only form a pattern when they can be read in sequence.
 
-        - Security events such as failed logins, configuration changes, and link state changes are not recorded.
-        - Incident response teams have no data to investigate security breaches.
-        - Compliance requirements for audit logging cannot be met.
-        - Operational issues cannot be diagnosed from historical data.
+        The absence hurts more here than on a server, where an endpoint agent, a package database, and filesystem timestamps each leave evidence independently. A router has almost none of that. If the log did not capture it, there is usually nothing else to reconstruct from.
 
-        Enabling logging ensures that the device records system events for security monitoring and troubleshooting.
+        Set severity thresholds per destination rather than sending everything everywhere. Console logging at debug severity on a busy router floods the console and slows the very session you would need for recovery.
       audit: |-
         To verify that logging is enabled:
 
@@ -955,18 +950,17 @@ queries:
       cisco.iosxr.runLoggingSyslogHosts.length > 0
     docs:
       desc: |
-        This check verifies that at least one remote syslog host is configured for centralized log collection. Sending logs to a remote server ensures that log data is preserved even if the device is compromised or restarted.
+        This check verifies that log records are copied to a collector the device itself does not control.
+
+        `logging <syslog-server-address>` adds a remote destination, usually paired with `logging source-interface` so records arrive with a stable source address regardless of the path they take. Both are staged in configuration mode and apply at `commit`. The check requires at least one remote syslog host.
 
         **Why this matters**
 
-        Logs stored only on the device are vulnerable to loss or tampering. If remote syslog hosts are not configured:
+        Logs kept only on the router are held by the very system an attacker is trying to hide activity on. Anyone with configuration rights on IOS-XR can clear the buffer, and even untouched it is a fixed-size ring that overwrites itself, so a burst of interface flaps can push the evidence of a login out of memory within minutes. A reload erases it entirely.
 
-        - Logs are lost when the device reboots or the log buffer overflows.
-        - An attacker who compromises the device can erase local logs to cover their tracks.
-        - Centralized log correlation across multiple devices is not possible.
-        - SIEM integration for real-time security monitoring cannot function.
+        Once a record has been accepted by a remote collector it is beyond the attacker's reach, and during an investigation that difference is decisive. Central collection is also the only way to see a pattern that spans devices, such as one source address failing authentication against a dozen routers in sequence, which no single device's log reveals.
 
-        Configuring remote syslog hosts ensures that logs are preserved in a centralized, tamper-resistant location.
+        Remote logging is plain UDP by default and carries operational detail about your network. Keep the collector inside the management network or a dedicated VRF rather than routing syslog across general infrastructure.
       audit: |-
         To verify that remote syslog hosts are configured:
 
@@ -1016,17 +1010,17 @@ queries:
       cisco.iosxr.runLogging.bufferLogLevel != ""
     docs:
       desc: |
-        This check verifies that logging to the local buffer is configured. Buffer logging provides a local cache of recent log messages that can be reviewed for troubleshooting and incident investigation.
+        This check verifies that recent events stay readable on the device itself.
+
+        `logging buffered <severity>` allocates an in-memory ring buffer and sets the lowest severity stored in it, for example `logging buffered informational`. The command is staged in configuration mode and takes effect at `commit`. The check requires a buffer severity level to be configured.
 
         **Why this matters**
 
-        Without buffer logging configured, there is no local log history available on the device. If buffer logging is not enabled:
+        The buffer is what you still have when the network is the problem. If routing has broken, an uplink is down, or the syslog collector is unreachable, remote records stop arriving exactly when they matter most, and the operator sitting on a console cable needs the device's own account of the last several minutes to work out what happened.
 
-        - Administrators cannot review recent events directly on the device.
-        - Troubleshooting connectivity issues that prevent access to remote syslog becomes difficult.
-        - There is no local log data available during network outages.
+        It also covers the gap that remote logging leaves. Syslog over UDP offers no delivery guarantee, so a burst during an incident can be dropped in transit with nothing to signal the loss, and the local copy is the only way to notice.
 
-        Configuring buffer logging ensures that recent log messages are available locally for review.
+        Treat it as a diagnostic window rather than a record of account. The buffer is a fixed size that overwrites its oldest entries, it does not survive a reload, and anyone with configuration access can clear it, which is why a companion check in this policy also requires a remote collector.
       audit: |-
         To verify that buffer logging is configured:
 
@@ -1080,18 +1074,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that the default SNMP community strings "public" and "private" are not in use. These well-known defaults are the first values attackers try when attempting to access SNMP-enabled devices.
+        This check verifies that the device is not reachable through community strings every scanner already knows.
+
+        A community string is the entire credential for SNMP version 1 and version 2c, and `snmp-server community public RO` and `snmp-server community private RW` are the values printed as examples in nearly every vendor document ever written. The check requires that no configured community is named `public` or `private`.
 
         **Why this matters**
 
-        Default SNMP community strings are universally known and are actively scanned for by attackers. If default community strings are in use:
+        Those two strings are the first thing internet-wide scanners try, and an attempt costs one UDP packet with no session and no handshake. A read community answers with the interface table, the ARP and routing tables, the platform and software version, and on many builds portions of the running configuration, which amounts to a map of the network drawn by the network itself.
 
-        - Anyone with network access can read device configuration and operational data using the "public" community.
-        - The "private" community may allow unauthorized configuration changes via SNMP write access.
-        - Automated scanning tools will immediately detect and exploit default community strings.
-        - Sensitive network topology and configuration information is exposed.
+        A write community is worse. It permits interface state changes, and on Cisco platforms the configuration copy MIB has historically been used to pull the running configuration to an attacker-controlled TFTP server or push a replacement back. SNMP has been a named component of state-actor campaigns against routing infrastructure for precisely this reason.
 
-        Removing default community strings and using unique, complex values ensures SNMP access is properly restricted.
+        Renaming the community is the minimum, not the fix. Restrict each one with an access list and move to SNMPv3 wherever the management platform supports it, both covered by companion checks in this policy.
       audit: |-
         To verify that default SNMP community strings are not in use:
 
@@ -1155,17 +1148,19 @@ queries:
       cisco.iosxr.runSnmpUsers.length > 0
     docs:
       desc: |
-        This check verifies that SNMPv3 users are configured. SNMPv3 provides authentication and encryption, unlike SNMPv1/v2c which transmit community strings in clear text.
+        This check verifies that monitoring access uses per-user credentials with authentication and encryption.
+
+        SNMPv3 replaces the shared community string with named users bound to a group and a security level. `snmp-server group <name> v3 priv` demands both authentication and privacy, and `snmp-server user <user> <group> v3 auth sha clear <auth-password> priv aes 128 clear <priv-password>` creates a user that signs its requests and encrypts the payload. Both are staged in configuration mode and apply at `commit`. The check requires at least one SNMPv3 user.
 
         **Why this matters**
 
-        SNMPv1 and SNMPv2c use community strings as the sole authentication mechanism, and these are sent in clear text. If SNMPv3 is not configured:
+        Versions 1 and 2c put the community string in clear text in every single packet. Anyone able to observe management traffic, whether from a span port, a compromised switch, or a link between sites, recovers the credential passively without transmitting anything, and there is no exchange to detect afterward.
 
-        - SNMP credentials are transmitted in plain text and can be captured by network sniffing.
-        - There is no per-user authentication or access control for SNMP operations.
-        - SNMP data can be viewed or modified by anyone who intercepts the community string.
+        The responses are readable too. SNMP replies carry interface names, addressing, neighbor tables and platform detail, so an observer assembles a topology map from traffic that looks exactly like ordinary monitoring.
 
-        Configuring SNMPv3 users ensures that SNMP communications are authenticated and encrypted.
+        Per-user credentials also make revocation possible at all. A shared community string cannot be withdrawn from one team without breaking every poller using it, so in practice it never changes.
+
+        Choose SHA for authentication and AES for privacy. The MD5 and DES options that SNMPv3 still permits do not deliver what the version exists to provide.
       audit: |-
         To verify that SNMPv3 users are configured:
 
@@ -1221,17 +1216,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that all SNMP community strings have access control lists (ACLs) applied to restrict which IP addresses can query the device via SNMP. Without ACLs, any host with network connectivity can access the device using SNMP.
+        This check verifies that SNMP queries are answered only for the management stations you name.
+
+        An IOS-XR community definition carries an access list, as in `snmp-server community <string> RO IPv4 <acl-name>`, limiting the source addresses whose queries the agent will process. The list is built with `ipv4 access-list`, and both it and the community line stage in configuration mode until `commit`. The check requires every configured community to have an access list applied.
 
         **Why this matters**
 
-        SNMP without ACL restrictions allows any network host to query the device. If ACLs are not applied to community strings:
+        Without one, the credential is the only barrier, and it is a static string carried in clear text over UDP in every poll. Anyone who observes a poll, finds the string in a configuration backup, or guesses one of the handful of values organizations reuse can query the device from anywhere that routes to it.
 
-        - Any device on the network can query SNMP data, exposing configuration and operational information.
-        - Unauthorized SNMP polling can be used for reconnaissance.
-        - Write-access community strings without ACLs allow remote configuration changes from any host.
+        An access list breaks that reuse. A string recovered from one router's backup does not work from an attacker's vantage point, because the request never arrives from an address the agent will answer.
 
-        Applying ACLs to SNMP community strings restricts access to authorized management stations only.
+        It also removes most of the unauthenticated exposure, since untargeted scanning is dropped before the community string is evaluated at all.
+
+        Confirm the list covers every legitimate poller before committing. A list that omits one monitoring system leaves that system blind while everything else looks healthy, so apply it with `commit confirmed` and let the timer revert the change if you got it wrong.
       audit: |-
         To verify that SNMP communities have ACLs applied:
 
@@ -1284,17 +1281,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that a login banner is configured on the device. A login banner provides legal notice to users before they authenticate, which is a prerequisite for prosecuting unauthorized access in many jurisdictions.
+        This check verifies that a warning notice is presented before anyone authenticates to the device.
+
+        `banner login` sets the text shown at connection time, ahead of any credential prompt. On IOS-XR the command takes a delimiter character marking the start and end of the message rather than quotation marks, so the correct form is `banner login # Authorized access only. All activity is monitored and logged. #`. It is staged in configuration mode and appears after `commit`. The check requires a login banner whose text is not empty.
 
         **Why this matters**
 
-        Without a login banner, there is no legal warning presented before access. If a login banner is not configured:
+        The banner is a legal instrument rather than a technical control. Prosecutions under unauthorized-access statutes, and disciplinary action against insiders, often turn on whether the accused was on notice that access was restricted and that activity was recorded. A device that greets a connection with a bare username prompt hands the defense an argument that access looked open.
 
-        - Legal proceedings against unauthorized access may be weakened without a warning.
-        - Users are not informed of acceptable use policies or monitoring.
-        - Compliance with organizational and regulatory requirements for access warnings cannot be met.
+        Notice of monitoring matters separately. In several jurisdictions consent to session recording must be established before the session, and the banner is where that consent is given for command accounting and syslog to be usable as evidence later.
 
-        Configuring a login banner ensures that all users receive legal notice before accessing the device.
+        Keep anything useful to an attacker out of the text: no hostname, no platform, no software version, no operator contact detail, and no word of welcome. Have counsel supply the wording rather than copying another organization's.
       audit: |-
         To verify that a login banner is configured:
 
@@ -1344,17 +1341,19 @@ queries:
       cisco.iosxr.runConsoleExecTimeout.seconds > 0
     docs:
       desc: |
-        This check verifies that an exec timeout is configured for the console line. A console exec timeout ensures that idle console sessions are automatically disconnected, reducing the risk of unauthorized physical access.
+        This check verifies that an idle session on the physical console is disconnected rather than left logged in.
+
+        `exec-timeout <minutes> <seconds>` under `line console` sets how long an authenticated console session may sit without input before IOS-XR closes it, and a value of `0 0` disables the timeout entirely. The setting is staged in configuration mode and takes effect at `commit`. The check requires a non-zero timeout.
 
         **Why this matters**
 
-        Without a console exec timeout, an idle console session remains open indefinitely. If the timeout is not configured:
+        Console sessions outlive the person who opened them. A field engineer connects a laptop or a terminal server to finish a turn-up, gets called away, and the session stays authenticated at full privilege for as long as the cable is attached. Terminal servers make this durable, because the session persists across the engineer's own disconnection, so the next person who reaches that port lands in an authenticated prompt without logging in.
 
-        - An unattended console connection can be used to make unauthorized changes.
-        - Physical access security requirements cannot be met.
-        - Compliance requirements for session management are not fulfilled.
+        Whatever is done from that prompt is unattributable. It is recorded under the identity of whoever authenticated originally, which is exactly the situation command accounting exists to prevent.
 
-        Configuring a console exec timeout ensures that idle console sessions are terminated.
+        Physical access to the cabinet is a realistic assumption in shared cages, carrier hotels, and remote sites serviced by third-party technicians.
+
+        Ten minutes is a workable value. Set it so short that operators cannot finish a change and they will find ways to defeat it, and apply the same discipline to the line templates that serve remote sessions.
       audit: |-
         To verify that the console line has an exec timeout configured:
 
@@ -1406,17 +1405,17 @@ queries:
       cisco.iosxr.hostname.downcase != "ios"
     docs:
       desc: |
-        This check verifies that a unique, descriptive hostname is configured. A meaningful hostname is essential for identifying the device in logs, alerts, and management systems.
+        This check verifies that the device identifies itself by a name that distinguishes it from every other device.
+
+        `hostname <name>` sets the value carried in the CLI prompt and in the identifier attached to every syslog record and SNMP notification the device sends. It is staged in configuration mode and applies at `commit`. The check requires a hostname that is set and is not one of the generic values `router` or `ios`, compared without regard to case.
 
         **Why this matters**
 
-        Without a unique hostname, the device uses a generic default name that makes it difficult to manage effectively. If the hostname is not configured:
+        Identity is what makes a log usable. A collector receiving records from forty devices that all call themselves `router` produces a stream where nothing can be attributed, alerts cannot be routed to the owning team, and an investigation cannot establish which chassis a change was committed on. The failure shows up during an incident, when reconstructing the order of events across devices is the entire task.
 
-        - The device cannot be clearly identified in logs or management platforms.
-        - Log correlation and analysis across multiple devices is unreliable.
-        - Network topology documentation is incomplete or ambiguous.
+        Operator error is the other cost, and on a router it is expensive. An engineer with several sessions open who misreads an ambiguous prompt and commits an interface shutdown on the wrong device can black out a site, and recovering it may require someone physically present at the console.
 
-        Setting a descriptive hostname ensures the device is easily recognizable across all operational and security workflows.
+        Encode location, role and sequence in the name and keep the scheme consistent across the estate, so a name read off an alert tells you what you are about to log in to.
       audit: |-
         To verify that a unique, descriptive hostname is configured:
 
@@ -1465,17 +1464,17 @@ queries:
       cisco.iosxr.cdp.disabled == true
     docs:
       desc: |
-        This check verifies that Cisco Discovery Protocol (CDP) is disabled globally. CDP broadcasts detailed device information including hostname, IP address, platform, and IOS version to all directly connected devices, which can be exploited for network reconnaissance.
+        This check verifies that the device does not advertise its own identity and capabilities to whatever is plugged into it.
+
+        Cisco Discovery Protocol, or CDP, broadcasts hostname, platform, software version, the local interface, and frequently a management address to directly connected neighbors at layer 2. IOS-XR ships with it off, so it is present only where someone entered the global `cdp` command and committed it. `no cdp` followed by `commit` restores the default. The check requires CDP to be disabled.
 
         **Why this matters**
 
-        CDP operates at Layer 2 and sends information in clear text. If CDP is not disabled:
+        CDP frames are unauthenticated and unencrypted and go to a multicast address every device on the segment receives. Anyone who reaches a port, through a wall jack, an unused patch in a shared cage, or a compromised host on an attached switch, is handed the exact software release running on your router. That turns vulnerability research into a lookup, telling an attacker which published advisories apply before they send a single probe.
 
-        - Detailed device information is broadcast to all devices on the same network segment.
-        - Attackers can passively collect network topology, platform, and software version information.
-        - This information can be used to identify vulnerable devices and plan targeted attacks.
+        The advertised management address is just as useful, since it names the interface where SSH and SNMP actually listen rather than the address an untargeted scan would find first.
 
-        Disabling CDP prevents unnecessary information disclosure on the network.
+        Some link layer discovery is genuinely needed, for IP phones and for cable audits. Where that applies, enable it on the specific access interfaces that require it and leave it off globally rather than turning it on device-wide.
       audit: |-
         To verify that CDP is disabled globally:
 
@@ -1526,17 +1525,19 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that small servers (TCP and UDP) are disabled. Small servers such as echo, chargen, discard, and daytime are legacy diagnostic services that are rarely needed and can be exploited for denial-of-service attacks.
+        This check verifies that the legacy diagnostic services on the device are not answering.
+
+        The small servers are echo, discard, daytime and chargen, controlled on IOS-XR by `service ipv4 tcp-small-servers`, `service ipv4 udp-small-servers` and their IPv6 equivalents. Each carries a maximum server count, and removing them with the `no` form and a `commit` drives that count to zero. The check requires a maximum server count of zero for every small-server service.
 
         **Why this matters**
 
-        Small servers expose unnecessary network services that increase the attack surface. If small servers are enabled:
+        Chargen over UDP is a reflection amplifier. It answers a spoofed request with a stream of characters far larger than the request, so an attacker who forges a victim's address turns your router into a source of traffic aimed at someone else. Generating it also burns control-plane CPU on a device that has routing adjacencies to maintain, so the router degrades while being used as a weapon.
 
-        - They can be used as amplification vectors for DoS attacks.
-        - Legacy services may contain undiscovered vulnerabilities.
-        - Each enabled service increases the attack surface without providing operational value.
+        Echo and daytime provide an unauthenticated responder that confirms a live device and hints at what it is, useful to a scanner working out which addresses in a block are infrastructure.
 
-        Disabling small servers removes unnecessary services and reduces the attack surface.
+        None of these services have an operational purpose on a modern network. They date from an era of small trusted networks, so removing them costs nothing.
+
+        Confirm the change actually committed. Staged configuration is discarded if you leave configuration mode without a `commit`, and the services keep running.
       audit: |-
         To verify that small servers are disabled:
 
@@ -1592,17 +1593,19 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that all VTY line templates are configured to allow only SSH as the transport input protocol. Telnet transmits all data including credentials in clear text, making it unsuitable for management access.
+        This check verifies that remote management sessions can arrive only over an encrypted transport.
+
+        IOS-XR configures terminal access through line templates rather than a numbered VTY range. `transport input ssh` under `line default`, or under a named `line template`, states which protocols that template accepts inbound. The change is staged until `commit`. The check requires every template serving VTY sessions to accept SSH and to refuse telnet.
 
         **Why this matters**
 
-        Telnet on VTY lines exposes management traffic to interception. If telnet is allowed:
+        Telnet carries the whole session in clear text, including the username and password typed at the start. An attacker able to observe management traffic anywhere along its path, from a span port, a compromised intermediate switch, or an inter-site link, reads the credential without transmitting a packet and leaves no trace of having done so.
 
-        - All management sessions including usernames and passwords are transmitted unencrypted.
-        - Active sessions can be hijacked through TCP session hijacking.
-        - Compliance with standards requiring encrypted management interfaces cannot be met.
+        The session is modifiable in flight as well. There is no integrity protection, so an attacker on the path can inject commands into an administrator's authenticated session, and on a router those commands run with whatever task groups that operator holds.
 
-        Restricting VTY transport to SSH only ensures that all remote management sessions are encrypted.
+        Because the credentials taken this way belong to the management plane, the outcome is not one compromised host but the ability to reroute, mirror or drop traffic for everything behind the device.
+
+        Removing telnet cuts off anyone still relying on it. Stage the change with `commit confirmed`, verify a fresh SSH session works, and only then run the final `commit`.
       audit: |-
         To verify that VTY line templates accept only SSH transport:
 
@@ -1664,17 +1667,19 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that all VTY line templates have access control lists (ACLs) applied to restrict which IP addresses can establish remote management sessions. Without ACLs on VTY lines, any host with network connectivity can attempt to connect.
+        This check verifies that remote management sessions are accepted only from the addresses you designate.
+
+        An IOS-XR line template applies an inbound filter with `access-class ingress <acl-name>`, referencing a list built with `ipv4 access-list`. Under `line default` it governs every VTY session that template serves. Both the list and the template change stage in configuration mode until `commit`. The check requires an access class on every template serving VTY sessions.
 
         **Why this matters**
 
-        VTY lines without ACLs are open to connection attempts from any source. If ACLs are not configured:
+        Without one, the SSH port is reachable from everywhere the device's addresses are routable, and every host in that set can attempt authentication. That is what credential stuffing against network devices depends on: one password leaked from an old configuration backup, tried against the whole estate from anywhere.
 
-        - Any host on the network can attempt brute-force attacks against the device's authentication.
-        - The device is exposed to unauthorized access from untrusted networks.
-        - Management access cannot be restricted to authorized management stations.
+        The attempts cost something even when they fail. Each is handled by the route processor, and a sustained flood against SSH consumes control-plane CPU on the same processor that maintains routing adjacencies.
 
-        Applying ACLs to VTY lines ensures that only authorized management stations can establish remote sessions.
+        An access class also narrows who can exploit a future defect in the management path. These devices are patched rarely and stay in service for a decade, so a vulnerability disclosed in year three is often still present in year eight, and the filter keeps it unreachable.
+
+        Verify the list contains the address you are connected from and apply it with `commit confirmed`, so a mistake rolls back on its own instead of needing a console visit.
       audit: |-
         To verify that VTY line templates have ACLs applied:
 
@@ -1745,17 +1750,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that all BGP neighbors have MD5 authentication configured. BGP session authentication prevents unauthorized peers from injecting routes or disrupting routing.
+        This check verifies that BGP sessions authenticate the peer before exchanging routes.
+
+        `password clear <value>` under a `neighbor` inside `router bgp` enables TCP MD5 authentication for that session, signing each TCP segment with a shared key that both ends must configure identically. The change is staged in configuration mode and takes effect at `commit`. The check requires every configured BGP neighbor to have a password.
 
         **Why this matters**
 
-        Without BGP authentication, an attacker can establish a rogue BGP session and inject malicious routes. If BGP neighbor authentication is not configured:
+        An unauthenticated BGP session will accept a TCP connection from anything that reaches port 179 with the expected source address and AS number. An attacker who achieves that, or who can spoof it, brings the session up and advertises prefixes that pull traffic through infrastructure they control, which is route hijacking performed from inside your own peering rather than from a distant network.
 
-        - An attacker can establish unauthorized BGP peering sessions.
-        - Malicious routes can be injected, causing traffic to be redirected or black-holed.
-        - BGP sessions can be disrupted through TCP reset attacks.
+        Even without establishing a session, an off-path attacker who guesses the connection four-tuple and a plausible sequence number can reset an existing one. Repeated resets cause route flapping, and dampening then withdraws the affected prefixes for far longer than the attack itself lasted, converting a spoofing attempt into an outage.
 
-        Configuring authentication on all BGP neighbors ensures that only authorized peers can establish sessions.
+        MD5 here is a floor rather than a strong algorithm. Prefer the TCP Authentication Option where both peers support it.
+
+        Adding a key resets the session and stops traffic through that peer until both sides match, so coordinate with the peer operator and use a maintenance window.
       audit: |-
         To verify that BGP neighbors have authentication configured:
 
@@ -1812,17 +1819,17 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that all OSPF areas have authentication configured using either a key chain or message digest. OSPF authentication prevents unauthorized routers from injecting routes into the routing domain.
+        This check verifies that routers must prove their identity before they can join the interior routing domain.
+
+        IOS-XR authenticates OSPF through a key chain applied with `authentication keychain <name>` under an `area`, or through a message digest key. The key chain is built with `key chain`, a `key-string`, a `cryptographic-algorithm`, and send and accept lifetimes. All of it stages in configuration mode and applies at `commit`. The check requires every configured area to carry a key chain or a message digest key.
 
         **Why this matters**
 
-        Without OSPF authentication, any device on the network segment can participate in OSPF routing. If OSPF authentication is not configured:
+        Without authentication, any device that can send OSPF hellos on a participating segment forms an adjacency. There is no registration step and no operator approval, so a host plugged into the wrong port, or an attacker who has compromised a server on a routed VLAN, becomes a router as far as the topology is concerned.
 
-        - Rogue routers can inject false routes, causing traffic to be redirected.
-        - OSPF adjacencies can be disrupted, causing network outages.
-        - An attacker can perform man-in-the-middle attacks by advertising routes through their device.
+        From there it advertises a low-cost path to a prefix it does not own and receives the traffic for it, a machine-in-the-middle across an entire subnet obtained without touching any endpoint. Advertising and withdrawing links instead drives constant recomputation, and because OSPF reconverges the whole area on every change, modest forged flooding disrupts routing far beyond the attacker's segment.
 
-        Configuring OSPF area authentication ensures that only authorized routers can participate in the OSPF routing domain.
+        Prefer HMAC-SHA-256 where the release supports it and treat MD5 as the floor. Authentication must match on every router in the area, so stage it across all of them in one maintenance window or the adjacencies you are protecting will drop.
       audit: |-
         To verify that OSPF areas have authentication configured:
 
