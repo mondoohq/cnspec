@@ -107,20 +107,19 @@ queries:
       postgresql.conf.listenAddresses.none(_ == "*" || _ == "0.0.0.0" || _ == "::")
     docs:
       desc: |
-        This check ensures that `listen_addresses` names specific interfaces instead of binding the server to every address on the host. A value of `*`, `0.0.0.0`, or `::` makes the PostgreSQL port reachable from every network the host is attached to, including networks the database was never meant to serve.
+        This check verifies that the server binds only to the network interfaces an operator named, instead of to every address the host holds.
 
-        PostgreSQL defaults to `localhost`, which is safe. Packaged installations and container images frequently widen this to `*` so the server is reachable during setup, and that widened value is rarely narrowed again afterwards.
+        `listen_addresses` in `postgresql.conf` decides which interfaces the postmaster opens a socket on. The check fails on the wildcard forms `*`, `0.0.0.0`, and `::`, and passes when the value lists `localhost` or the specific private addresses the database is meant to serve. PostgreSQL reads this setting only at startup, so a restart is required; a reload leaves the existing sockets bound.
 
         **Why this matters**
 
-        - **Smaller network surface:** Only the interfaces you name can carry a connection attempt, so an unexpected management or public network cannot reach the port at all.
-        - **Defense in depth behind the firewall:** Host and network firewall rules change over time. Binding narrowly means a firewall mistake does not immediately expose the database.
-        - **Clear intent:** An explicit address list documents which networks the database is expected to serve, which makes later review straightforward.
+        A wildcard bind puts port 5432 on every network the host touches, including a management VLAN, a second interface added months later, and the public address of a cloud instance. Internet-wide scanners sweep that port continuously, and PostgreSQL answers an unauthenticated startup packet with enough detail to fingerprint the server, so a newly exposed cluster is catalogued within hours of becoming reachable.
 
-        **Risk mitigation**
+        Once an attacker can open a socket, they spray passwords against `postgres` and against the application roles whose names they harvested from a leaked connection string or a public repository. Every attempt reaches the authentication code path directly, and if any host-based authentication rule is broad enough to match their source address, the credential is the only thing left between them and the tables.
 
-        - **Blocks opportunistic scanning:** Internet-wide scanners routinely probe port 5432 and fingerprint the server version from its response.
-        - **Contains credential attacks:** Brute-force and password-spraying attempts cannot start against an address that never accepts the connection.
+        Packaged installations and container images widen this to `*` so the server answers during setup, and the widened value is rarely narrowed once the deployment works.
+
+        Keep the list to loopback plus the application subnets, and confirm what the server is actually listening on after the restart rather than trusting the file alone. A host that genuinely serves several networks should name each address explicitly rather than falling back to the wildcard.
       audit: |
         ### Audit via CLI
 
@@ -233,20 +232,19 @@ queries:
       postgresql.conf.sslEnabled == true
     docs:
       desc: |
-        This check ensures that the `ssl` directive is turned on so PostgreSQL can negotiate TLS with connecting clients. PostgreSQL ships with `ssl` set to off, and a server built that way carries every session in cleartext, including the authentication exchange.
+        This check verifies that the server offers an encrypted channel to connecting clients.
 
-        Turning TLS on is a prerequisite for the rest of the transport controls in this policy. Minimum protocol version, cipher selection, and client certificate verification have no effect while `ssl` remains off.
+        The `ssl` directive in `postgresql.conf` turns the TLS listener on. It needs a server certificate and private key the server account can read, and a reload applies the change once those files are in place. PostgreSQL ships with the directive off.
 
         **Why this matters**
 
-        - **Confidential query traffic:** Query text and result sets frequently contain the most sensitive data in an environment. TLS keeps that content unreadable in transit.
-        - **Credential protection:** Without TLS, password based authentication exchanges are observable by anything on the network path.
-        - **Tamper detection:** TLS integrity protection means an attacker cannot silently rewrite statements or results in flight.
+        While it is off, every session runs in cleartext from the first packet. In a database the traffic is the data rather than a pointer to it, so anyone on the network path reads the statement text and the result rows: personal records, payment details, session tokens. A span port on a switch, a compromised hypervisor, or a cloud traffic mirror yields the contents of the tables without the attacker ever authenticating to the server.
 
-        **Risk mitigation**
+        The authentication exchange rides the same wire. An attacker who captures a session recovers whatever the configured method exposes, and where cleartext password authentication is permitted that is the password itself, reusable against this cluster and against every other system that shares the credential.
 
-        - **Defeats passive interception:** A compromised switch, hypervisor, or cloud network tap yields no readable database traffic.
-        - **Defeats connection hijacking:** An active attacker cannot inject statements into an authenticated session.
+        Cleartext also means the attacker can write and not only read. Without integrity protection they can inject a statement into an established session or rewrite a result set on its way back to the application, so the application acts on data the database never returned.
+
+        This directive is the prerequisite for the rest of the transport controls in this policy. Minimum protocol version, cipher selection, and client certificate verification have no effect while it remains off. Because `ALTER SYSTEM` writes to `postgresql.auto.conf` and that file is applied last, clear any override there so the value in the main file is the one the server uses.
       audit: |
         ### Audit via CLI
 
@@ -389,20 +387,19 @@ queries:
       postgresql.conf.sslMinProtocolVersion == /^TLSv1\.[23]$/
     docs:
       desc: |
-        This check ensures that `ssl_min_protocol_version` explicitly pins the lowest TLS version the server will negotiate to `TLSv1.2` or `TLSv1.3`. TLS 1.0 and TLS 1.1 are deprecated, rely on obsolete hashing and cipher constructions, and are no longer considered adequate for protecting authentication material.
+        This check verifies that the server refuses to negotiate an obsolete TLS version.
 
-        Recent PostgreSQL releases default to `TLSv1.2`, but the directive is frequently set to a lower value in configurations carried forward from older versions. Setting it explicitly keeps the floor from drifting downward when a configuration file is copied to a new host.
+        `ssl_min_protocol_version` in `postgresql.conf` sets the floor for the handshake. The check passes on `TLSv1.2` and `TLSv1.3` and fails on the older values or on an unset directive. A reload applies the new floor to connections established afterwards.
 
         **Why this matters**
 
-        - **Removes downgrade room:** A client cannot negotiate a weak protocol version that the server refuses to offer.
-        - **Modern cipher suites only:** TLS 1.2 and above provide authenticated encryption modes that older versions lack.
-        - **Audit clarity:** An explicit floor is verifiable from the configuration file without inferring a version-specific default.
+        TLS 1.0 and TLS 1.1 build their handshake on MD5 and SHA-1 and their record layer on CBC modes without authenticated encryption. Those constructions are broken in practice, not merely deprecated, and the published attacks against them target exactly the part of the session an attacker wants: the early records, where the authentication exchange sits.
 
-        **Risk mitigation**
+        An attacker in the network path does not need to break the server to use them. They interfere with the handshake so the client retries with a lower version, and if the server still accepts TLS 1.0 the session proceeds on a protocol whose padding and record structure leak plaintext block by block. The credential exchanged at the start of the session is recovered from that leak, and the attacker then connects as the role with a normal client.
 
-        - **Blocks protocol downgrade attacks:** An attacker who can influence the handshake cannot force the session onto a deprecated version.
-        - **Prevents weak-cipher exposure:** Attacks against obsolete cipher constructions in TLS 1.0 and 1.1 no longer apply.
+        Recent PostgreSQL releases default to `TLSv1.2`, but the directive is often carried forward at a lower value in a configuration file copied from an older host, and a version upgrade does not correct an explicit setting.
+
+        Pin the floor explicitly so it cannot drift downward with the file. Raise it to `TLSv1.3` where every client library supports it, and confirm the client fleet before doing so, because a client that cannot reach the floor is refused rather than downgraded.
       audit: |
         ### Audit via CLI
 
@@ -511,20 +508,19 @@ queries:
       postgresql.conf.sslCiphers == /!aNULL/
     docs:
       desc: |
-        This check ensures that `ssl_ciphers` is set to a list built on the `HIGH` cipher grouping and that it explicitly excludes the `aNULL` suites. The `aNULL` group performs key exchange without authenticating the server, which allows a machine-in-the-middle to terminate the session while the client still believes it reached the database.
+        This check verifies that the server offers only cipher suites that authenticate it and provide adequate key strength.
 
-        The value is passed through to the TLS library, so a permissive list such as `ALL` silently re-admits export grade and unauthenticated suites that the library still carries for compatibility.
+        `ssl_ciphers` in `postgresql.conf` is handed straight to the TLS library. The check requires the value to be set, to be built on the `HIGH` grouping, and to exclude the unauthenticated `aNULL` suites explicitly. A reload applies the list to subsequent handshakes.
 
         **Why this matters**
 
-        - **Server authenticity:** Excluding `aNULL` guarantees the server proves its identity during every handshake.
-        - **Adequate key strength:** The `HIGH` grouping restricts negotiation to suites with acceptable key lengths.
-        - **Predictable negotiation:** A narrow list means every client converges on a small, reviewed set of suites.
+        The `aNULL` suites perform key exchange with no server certificate at all. When one is negotiated the client encrypts the session to whoever answered the socket, which is exactly what an attacker sitting between the application and the database wants. They terminate the connection on their own host, present a session the client accepts as encrypted, read the credential and every statement and result, and forward the traffic on so nothing looks broken.
 
-        **Risk mitigation**
+        A permissive value such as `ALL` re-admits those suites along with the export-grade and single-DES suites the library still carries for compatibility. Those keys are recoverable with rented compute, so an attacker who records the traffic decrypts it afterwards even without an active position on the path.
 
-        - **Prevents anonymous key exchange:** A machine-in-the-middle cannot present an unauthenticated session as a legitimate one.
-        - **Removes weak and export suites:** Cipher suites vulnerable to practical cryptanalysis are never offered.
+        The `HIGH` grouping keeps negotiation to suites with acceptable key lengths, and naming the exclusions after it means a library update that adds a weak suite to a broader group does not silently widen what this server accepts.
+
+        Extend the list with the other exclusions your platform needs rather than replacing it with a permissive one, and expand the value with your TLS tooling after a change to confirm no suite without server authentication survives.
       audit: |
         ### Audit via CLI
 
@@ -631,20 +627,19 @@ queries:
       postgresql.conf.params["ssl_prefer_server_ciphers"] == empty || postgresql.conf.params["ssl_prefer_server_ciphers"].downcase == "on"
     docs:
       desc: |
-        This check ensures that `ssl_prefer_server_ciphers` is left at its secure default of on, so the server's cipher ordering decides the negotiated suite rather than the client's. PostgreSQL enables this by default, and the check treats an absent directive as compliant. It fails only when the setting has been explicitly turned off.
+        This check verifies that the server's cipher ordering, not the client's, decides which suite a session uses.
 
-        When the client's preference wins, a misconfigured or deliberately hostile client can steer every session onto the weakest suite the server still admits, which undermines the ordering established by `ssl_ciphers`.
+        `ssl_prefer_server_ciphers` in `postgresql.conf` controls whose preference wins during the handshake. PostgreSQL enables it by default, so the check treats an absent directive as compliant and fails only when the setting has been turned off explicitly. A reload restores it.
 
         **Why this matters**
 
-        - **Server controls strength:** The database operator decides which suite is preferred, not the connecting application.
-        - **Consistent posture:** Every client converges on the same preferred suite regardless of its own library defaults.
-        - **Makes cipher ordering meaningful:** The order expressed in `ssl_ciphers` only takes effect when the server's preference is honored.
+        When the client's preference wins, the client chooses from the intersection of the two lists, and a client is free to prefer the weakest suite in that set. Any of them is acceptable to the library on the far side, so a hostile or badly configured client steers every one of its sessions onto the oldest construction the server still admits, and the ordering an administrator expressed in `ssl_ciphers` never takes effect.
 
-        **Risk mitigation**
+        That is a downgrade an attacker can arrange without touching the server. Malware on an application host, or a driver configured from a copied snippet, connects with a cipher list that names one legacy suite first; the server agrees, and the traffic for that session is protected by whatever the attacker picked rather than by what the operator chose. The credential and the result rows are exposed to the same offline analysis that suite was retired for.
 
-        - **Prevents client-driven downgrade:** A client cannot select the weakest mutually supported suite.
-        - **Limits legacy library impact:** Outdated client libraries cannot drag sessions onto obsolete suites.
+        Leaving the server in charge also makes the posture uniform. Every client converges on the same preferred suite regardless of the defaults its own library ships with, so a single review of the server list describes what is actually negotiated across the fleet.
+
+        Turning this off is only defensible when a specific client needs a suite the server would otherwise deprioritize, and even then narrowing the server list is the better fix.
       audit: |
         ### Audit via CLI
 
@@ -748,20 +743,19 @@ queries:
       postgresql.hba.rules.none(authMethod.downcase == "cert") || postgresql.conf.sslCaFile != empty
     docs:
       desc: |
-        This check ensures that `ssl_ca_file` names a certificate authority bundle whenever `pg_hba.conf` contains a rule that authenticates clients with the `cert` method. Certificate authentication is only meaningful when the server has a trust anchor to validate the presented client certificate against.
+        This check verifies that a certificate authority bundle is configured whenever clients are authenticated by certificate.
 
-        Without `ssl_ca_file`, PostgreSQL has nothing to verify a client certificate chain against, so rules that appear to enforce certificate authentication cannot do so. The check applies only to servers that actually use the `cert` method, so a password authenticated deployment is not asked to configure a trust anchor it has no use for.
+        `ssl_ca_file` in `postgresql.conf` names the trust anchor the server validates presented client certificates against. The check looks at `pg_hba.conf` first: if no rule uses the `cert` method, it passes, because a password-authenticated deployment has no use for the bundle. If a `cert` rule exists, the bundle must be set. A reload applies the new path.
 
         **Why this matters**
 
-        - **Makes certificate authentication real:** A trust anchor is what turns a presented certificate into a verified identity.
-        - **Controls who can issue identities:** Only certificates chaining to the configured authority are accepted.
-        - **Supports revocation:** A managed authority bundle gives you a place to distrust compromised client certificates.
+        Certificate authentication without a trust anchor is a rule that cannot do its job. The server has nothing to build a chain to, so the rule that appears on paper to be the strongest authentication in the file is the weakest thing in it, and nobody reviewing the configuration notices, because the method name reads correctly.
 
-        **Risk mitigation**
+        The consequence is that an attacker who can reach a matching address does not need a credential the operator issued. They generate their own key pair, sign a certificate naming the role they want, and present it. The rule matches, the identity is unverified, and they hold a session as that role with whatever privileges it carries.
 
-        - **Rejects untrusted certificates:** A self-issued client certificate cannot satisfy an authentication rule.
-        - **Prevents a false sense of assurance:** Certificate rules that could never validate anything are surfaced before they are relied upon.
+        The bundle is also where revocation lives. When a client key is lost, the authority is what lets you stop accepting the certificates it signed; without one there is nothing to revoke against and no way to cut off the holder.
+
+        Point the directive at the issuing authority for your client certificates only, not at the system-wide root store, or every certificate any public authority ever issued becomes acceptable to the server.
       audit: |
         ### Audit via CLI
 
@@ -892,20 +886,19 @@ queries:
       postgresql.conf.passwordEncryption.downcase == "scram-sha-256"
     docs:
       desc: |
-        This check ensures that `password_encryption` is explicitly set to `scram-sha-256`, which is the salted challenge response mechanism PostgreSQL uses to store and verify passwords. The legacy `md5` scheme salts only with the role name, so the stored verifier is effectively a password equivalent: an attacker who reads `pg_authid` can authenticate as that role without ever recovering the password.
+        This check verifies that new and changed passwords are stored as salted challenge-response verifiers rather than as legacy hashes.
 
-        This directive governs how new and changed passwords are stored, so it must be set before passwords are rotated. Existing `md5` verifiers are not converted automatically and remain usable until each role's password is set again.
+        `password_encryption` in `postgresql.conf` decides the format used when a password is set. The check requires `scram-sha-256`. A reload applies it, but only to passwords set afterwards; verifiers already stored are not converted.
 
         **Why this matters**
 
-        - **Stolen verifiers are not credentials:** A SCRAM verifier cannot be replayed against the server the way an MD5 hash can.
-        - **Per-password salting:** Random per-password salts defeat precomputed lookup tables across roles and servers.
-        - **Configurable work factor:** SCRAM applies iterated hashing, which raises the cost of offline guessing.
+        The legacy `md5` scheme salts the hash with the role name alone, so the value stored in `pg_authid` is not a hint about the password, it is a password equivalent. An attacker who reads that catalog, through a backup file, a replica they attached to, a `SELECT` as a role with the right attributes, or a stolen data directory, can authenticate as that role without ever recovering the password. The stored value goes straight into the protocol exchange.
 
-        **Risk mitigation**
+        Salting by role name also means the salt is predictable and shared. A table built once for the role name `postgres` applies to every PostgreSQL cluster in the world, so the attacker who dumps a catalog does not even need to crack anything unique.
 
-        - **Blocks pass-the-hash against the database:** Reading the system catalog no longer yields directly replayable credentials.
-        - **Slows offline cracking:** Iterated, individually salted hashes make bulk recovery from a catalog dump impractical.
+        A challenge-response verifier removes both properties. It cannot be replayed at the protocol level, its salt is random per password, and it is produced with iterated hashing, so bulk offline guessing against a catalog dump costs far more than it returns.
+
+        Set the directive first, then reset each role's password so its verifier is rewritten, and check the catalog afterwards for roles whose stored value is still in the old format. Those roles keep working, and keep the exposure, until their passwords are set again.
       audit: |
         ### Audit via CLI
 
@@ -1032,20 +1025,19 @@ queries:
       postgresql.hba.rules.none(authMethod.downcase == "trust")
     docs:
       desc: |
-        This check ensures that no host-based authentication rule uses the `trust` method. A `trust` rule accepts any connection matching it without asking for a credential of any kind, so anyone who can reach the server on a matching address becomes the requested role, including a superuser.
+        This check verifies that no host-based authentication rule accepts a connection without asking for a credential.
 
-        Installation scripts and container entrypoints commonly write a `trust` rule so the first connection can create roles before any password exists. That bootstrap rule frequently survives into production. The check also asserts that rules were parsed at all, so a missing or unreadable `pg_hba.conf` is reported rather than passing silently.
+        Each line in `pg_hba.conf` names a connection type, a database, a role, a client address, and a method. This check requires that rules were parsed at all, so an unreadable or missing file is reported instead of passing quietly, and that none of them uses the `trust` method.
 
         **Why this matters**
 
-        - **Authentication is mandatory:** Every connection must present a credential before acting as a role.
-        - **Superuser is reachable through matching rules:** A `trust` rule that matches the `postgres` role hands over full control of the cluster.
-        - **Local rules matter too:** A `trust` rule scoped to local sockets grants the database to any account on the host, including compromised service accounts.
+        A `trust` rule grants whatever role the client asks for, with no password, no certificate, and no operating system identity check. Anyone who matches the rule's address becomes that role on request. When the rule matches `postgres`, they own the cluster: they read and alter every table, create roles for later, and read files on the host through server-side functions available to a superuser.
 
-        **Risk mitigation**
+        The path in is short. An attacker with any route to the port, a compromised container on the same network, an application server they already hold, or an exposed address, connects and is inside. There is no failed login to alert on, because nothing failed.
 
-        - **Prevents unauthenticated takeover:** An attacker who reaches the port cannot become a superuser without a credential.
-        - **Contains host compromise:** A foothold in an unrelated service on the same host does not extend into the database.
+        Local rules are not safer. A `trust` rule scoped to the Unix socket hands the database to every account on the host, so a foothold in an unrelated service running there escalates into the database without another credential.
+
+        Installation scripts and container entrypoints write a `trust` rule so the first connection can create roles before a password exists, and that bootstrap line survives into production far more often than it is removed. Replace it with a challenge-response method for network rules and with operating system identity for local socket rules, then reload.
       audit: |
         ### Audit via CLI
 
@@ -1169,20 +1161,19 @@ queries:
       postgresql.hba.rules.none(authMethod.downcase == "password")
     docs:
       desc: |
-        This check ensures that no host-based authentication rule uses the `password` method, which sends the password across the connection in cleartext. The similarly named `scram-sha-256` method performs a challenge response exchange instead, so the password itself never crosses the wire.
+        This check verifies that no host-based authentication rule accepts a password sent in the clear.
 
-        The `password` method is dangerous even on a TLS protected server, because a rule that permits it will still be used by clients that negotiate a plaintext connection through a `host` rule. Removing the method entirely closes that path rather than depending on every client to request TLS.
+        The `password` method in `pg_hba.conf` has the client transmit the password itself to the server. The similarly named challenge-response method exchanges proofs instead, so the password never crosses the connection. The check requires that rules were parsed and that none of them selects the cleartext method.
 
         **Why this matters**
 
-        - **The password never transits:** A challenge response exchange gives an observer nothing to replay or reuse.
-        - **Independent of transport:** Removing the method protects the credential even when a session is established without TLS.
-        - **No credential in server memory:** SCRAM avoids handling the cleartext password on the server side.
+        A single captured packet is the whole credential. An attacker on the path, on a mirrored switch port, in a compromised load balancer, or on a router between two data centers, reads the password as it is sent and then connects as that role from anywhere the rules allow. Nothing about the intrusion looks anomalous afterwards, because they authenticate the way the application does.
 
-        **Risk mitigation**
+        The damage rarely stops at the database. Database passwords are reused in deployment scripts, in other environments of the same service, and sometimes by the human who chose them, so the captured value gets tried elsewhere immediately.
 
-        - **Defeats network sniffing:** A captured session yields no usable password.
-        - **Limits credential reuse damage:** A password shared with other systems is not exposed by a database connection.
+        Having TLS enabled is not a defense here. A rule that permits the cleartext method is still matched by a client that connects through a `host` rule without requesting encryption, and clients do that by accident whenever a connection string omits the setting. Removing the method closes the path outright rather than depending on every client to ask for protection.
+
+        Confirm that stored verifiers are already in the `scram-sha-256` format before changing the rules, then rewrite the method and reload. A role whose verifier is still in the legacy format cannot complete the stronger exchange and will be locked out until its password is set again.
       audit: |
         ### Audit via CLI
 
@@ -1289,20 +1280,19 @@ queries:
       postgresql.hba.rules.none(authMethod.downcase == "md5")
     docs:
       desc: |
-        This check ensures that no host-based authentication rule uses the legacy `md5` method. The MD5 scheme salts the stored verifier with the role name alone, so the value held in `pg_authid` is replayable: an attacker who reads it can authenticate as that role without recovering the password.
+        This check verifies that no host-based authentication rule still selects the legacy password exchange.
 
-        A rule set to `md5` also accepts SCRAM verifiers, which makes the rule appear harmless on a cluster that has already migrated its passwords. It still permits the weaker exchange for any role whose verifier remains in the legacy format, so the rule should be changed to `scram-sha-256` to close that path.
+        The `md5` method in `pg_hba.conf` authenticates against a verifier salted with the role name alone. The check requires that rules were parsed and that none of them names this method, so authentication happens through `scram-sha-256` instead.
 
         **Why this matters**
 
-        - **Verifier theft is not authentication:** SCRAM verifiers cannot be replayed against the server.
-        - **Per-password salting:** Role-name salting allows precomputation across servers that share role names such as `postgres`.
-        - **Completes the migration:** Changing the rule prevents new connections from negotiating the weaker exchange.
+        The value stored in `pg_authid` under the old scheme is replayable. It is not a hint about the password, it is what the protocol exchange consumes, so an attacker who reads the catalog through a stolen backup, a data directory copy, or a query run as a privileged role authenticates as that role immediately, without cracking anything.
 
-        **Risk mitigation**
+        Because the salt is the role name, the work is also reusable. Precomputed tables built once for a common name such as `postgres` apply to every cluster that uses it, so a dump from one environment shortens the attack on another.
 
-        - **Blocks pass-the-hash:** A catalog dump no longer yields directly usable credentials.
-        - **Removes precomputation advantage:** Attackers cannot reuse tables built for common role names.
+        A rule left at the old method looks harmless on a cluster that has already migrated its passwords, since that method also accepts the newer verifiers. It is still the weaker exchange whenever a role's stored value remains in the legacy format, and it keeps that path open indefinitely.
+
+        Sequence the change carefully. Set the storage format, reset the password of every role whose verifier is still legacy, and only then rewrite the rules and reload. A role that has not been reset cannot complete the stronger exchange, so changing the rules first locks it out. A companion check in this policy covers the storage format itself.
       audit: |
         ### Audit via CLI
 
@@ -1431,20 +1421,19 @@ queries:
       postgresql.hba.rules.none(address == "0.0.0.0/0" || address == "::/0" || address.downcase == "all")
     docs:
       desc: |
-        This check ensures that no host-based authentication rule matches every possible client address. A rule scoped to `0.0.0.0/0`, `::/0`, or `all` accepts connection attempts from any host that can route to the server, which turns the authentication method into the only remaining barrier.
+        This check verifies that every host-based authentication rule names the networks it serves rather than matching every client address.
 
-        Narrowing the client address is the most effective control in `pg_hba.conf` because it stops an attacker before any credential exchange begins. Rules should name the specific subnets that host the application tier, replication peers, or administrative jump hosts.
+        The address column of a rule in `pg_hba.conf` is the first thing the server evaluates. The check requires that rules were parsed and that none of them uses `0.0.0.0/0`, `::/0`, or `all`, each of which matches any host that can route to the server.
 
         **Why this matters**
 
-        - **Fewer sources can attempt authentication:** Hosts outside the named ranges are rejected before a credential is offered.
-        - **Layered with the network controls:** Address scoping in the database survives a firewall change that unexpectedly opens the port.
-        - **Documents expected topology:** Explicit ranges record which systems are supposed to connect.
+        A wildcard address turns the authentication method into the only barrier, and methods fail in ways addresses do not. A weak password, a credential committed to a repository, or a legacy method still permitted somewhere in the file is enough, and the attacker only needs to reach the port. With a scoped rule they never get to make the attempt: the connection is refused before any credential is offered, and the failure is recorded with their source address.
 
-        **Risk mitigation**
+        That difference matters most during password guessing. Credential stuffing runs against every role name it can find; scoping the rule means those attempts come from addresses that match nothing, so they are rejected at the rule and never touch a verifier.
 
-        - **Stops credential stuffing at the door:** Password guessing cannot begin from an address the rule does not match.
-        - **Limits exposure after a network mistake:** An accidentally public port does not become an accessible database.
+        Address scoping is also the control that survives a mistake elsewhere. Firewall rules, security groups, and load balancer listeners change on their own schedules, and a rule set that names the application subnets keeps an accidentally opened port from becoming an accessible database.
+
+        Name the subnets that host the application tier, the replication peers, and the administrative jump hosts, one rule per network, and remember that the first matching rule wins, so a broad rule placed above a narrow one makes the narrow one unreachable.
       audit: |
         ### Audit via CLI
 
@@ -1568,20 +1557,19 @@ queries:
       postgresql.hba.rules.where(address != "" && address.downcase != "samehost").none(type.downcase == "host" || type.downcase == "hostnossl")
     docs:
       desc: |
-        This check ensures that every rule carrying a remote client address uses the `hostssl` connection type. A `host` rule accepts both encrypted and unencrypted connections, so a client that simply omits TLS is still admitted. A `hostnossl` rule goes further and matches only unencrypted connections.
+        This check verifies that every rule carrying a remote client address demands an encrypted connection.
 
-        Enabling the `ssl` directive makes TLS available but does not make it mandatory. Requiring `hostssl` on remote rules is what actually forces encryption. Rules for local socket connections are excluded, because those never traverse a network and TLS does not apply to them.
+        `pg_hba.conf` distinguishes three network connection types. A `hostssl` rule matches only encrypted sessions, a `hostnossl` rule matches only unencrypted ones, and a `host` rule matches either. The check requires that rules were parsed and that no rule with a remote address uses the permissive or the plaintext type. Rules for the local socket are outside its scope, since those never cross a network.
 
         **Why this matters**
 
-        - **Encryption becomes mandatory:** A client cannot reach the database by declining TLS.
-        - **Closes the optional-TLS gap:** Turning `ssl` on protects only the clients that ask for it, while `hostssl` protects all of them.
-        - **Local access stays workable:** Unix socket rules continue to function without certificates.
+        Turning the `ssl` directive on makes encryption available; it does not make it mandatory. A `host` rule admits a client that never asked for TLS, and clients omit it constantly: a connection string copied without the setting, a driver whose default changed between releases, a retry path that falls back on handshake failure. Every one of those sessions carries its credential and its result rows in the clear, and neither end reports a problem.
 
-        **Risk mitigation**
+        An attacker uses that gap deliberately. Sitting on the path, they interfere with the TLS handshake until the client falls back to an unencrypted attempt, and because the rule accepts it the server completes the session. They then read the authentication exchange and the traffic, and reuse the credential from their own host.
 
-        - **Prevents accidental cleartext sessions:** A misconfigured client library cannot silently fall back to an unencrypted connection.
-        - **Removes a downgrade path:** An active attacker cannot strip TLS and have the server accept the session anyway.
+        A `hostnossl` rule is worse, because it accepts only unencrypted sessions and so guarantees the exposure for anything that matches it.
+
+        Verify that TLS is working before converting the rules, since an encrypted-only rule refuses every client the moment the certificate is missing or expired. Local socket rules continue to work unchanged and need no certificate.
       audit: |
         ### Audit via CLI
 
@@ -1702,20 +1690,19 @@ queries:
       postgresql.hba.rules.where(database.downcase == "replication").none(address == "0.0.0.0/0" || address == "::/0" || user.downcase == "all")
     docs:
       desc: |
-        This check ensures that rules granting access to the special `replication` database name a specific role and a specific client address. A replication connection streams the write-ahead log, which carries the contents of every table in the cluster, so a permissive replication rule is equivalent to granting a full copy of the database.
+        This check verifies that rules granting the special `replication` connection name a specific role and a specific client address.
 
-        Replication rules deserve tighter scoping than ordinary client rules because a single successful connection exfiltrates everything rather than only what a role is granted to read. Name the dedicated replication role and the exact addresses of the standby servers.
+        Replication rules live in the same file as ordinary client rules but are matched by their database column. The check fails when such a rule accepts any address or when its role column matches every role, and passes when the rule names one replication role and the addresses of the standby servers.
 
         **Why this matters**
 
-        - **Replication bypasses table privileges:** The log stream is not filtered by object level grants.
-        - **Standby addresses are known and stable:** There is no operational reason for a replication rule to accept arbitrary clients.
-        - **Dedicated role limits blast radius:** A purpose-built replication role cannot be reused for ordinary queries.
+        A replication connection streams the write-ahead log, and the log carries the contents of every table in the cluster. Object-level grants do not filter it, so a role that would be refused a `SELECT` on a table still receives every row of that table through the stream. One successful replication connection is a full copy of the database, taken continuously, from a code path that looks like normal operation.
 
-        **Risk mitigation**
+        An attacker who matches a permissive replication rule needs only a credential that the rule's role column accepts. They attach a standby of their own from anywhere that routes to the port, let it catch up, and then read the tables at leisure on hardware the operator does not control. Nothing in the primary's ordinary query logs shows the tables being read, because they are not being queried.
 
-        - **Prevents wholesale data exfiltration:** An attacker cannot attach as a standby and stream the cluster contents.
-        - **Blocks unauthorized standbys:** Only the named hosts can establish a replication session.
+        Standby addresses are known and stable, which is why there is no operational reason for a rule here to accept arbitrary clients.
+
+        Create a role that holds only the replication attribute, use it for nothing else, and write one rule per standby naming its address. Where standbys are provisioned dynamically, scope the rule to the subnet they are created in rather than opening it to everything.
       audit: |
         ### Audit via CLI
 
@@ -1845,20 +1832,19 @@ queries:
       postgresql.hba.rules.where(authMethod.downcase == "cert").all(options["clientcert"] == "verify-full")
     docs:
       desc: |
-        This check ensures that every rule using the `cert` authentication method also sets `clientcert=verify-full`. With `verify-ca`, PostgreSQL confirms only that the client certificate chains to a trusted authority. Any certificate that authority has ever issued then satisfies the rule, regardless of which identity it names.
+        This check verifies that certificate authentication ties each certificate to the specific role it may connect as.
 
-        The `verify-full` setting additionally requires that the certificate's common name match the PostgreSQL role the client is requesting. That binding is what turns a valid certificate into a specific, verified identity.
+        Rules in `pg_hba.conf` that use the `cert` method carry a `clientcert` option. This check requires `clientcert=verify-full` on every such rule. With `verify-ca` the server confirms only that the presented certificate chains to the configured authority; `verify-full` additionally requires the certificate's common name to match the role being requested.
 
         **Why this matters**
 
-        - **Certificates map to one identity:** A certificate issued for one service cannot be used to connect as another role.
-        - **Contains authority scope:** An internal authority that also issues certificates for other purposes cannot be used to reach any role.
-        - **Completes mutual authentication:** Both endpoints are identified rather than only the server.
+        Chain validation alone answers the wrong question. It establishes that the authority issued the certificate, not that the holder is the party the rule is about, so any certificate that authority has ever signed satisfies the rule regardless of the identity it names.
 
-        **Risk mitigation**
+        Internal authorities sign a great deal. The same one typically issues certificates for web servers, service meshes, monitoring agents, and developer laptops. An attacker who takes any one of those keys, from a host far less protected than the database, presents it and asks to connect as the role of their choosing. The chain validates, the rule matches, and they hold a session as a privileged role without ever touching a database credential.
 
-        - **Blocks cross-identity reuse:** A compromised service certificate cannot authenticate as a privileged role.
-        - **Limits the impact of broad authorities:** Certificates issued for unrelated systems are rejected.
+        Binding the common name closes that. A certificate issued for one service authenticates as that service only, so compromising a low-value host yields access to whatever that host already had and nothing more.
+
+        Confirm before changing the rules that each client certificate's common name matches the role that client connects as, or configure an identity map to translate between them. A mismatch is rejected, so a rollout that skips this step disconnects working clients.
       audit: |
         ### Audit via CLI
 
@@ -1958,20 +1944,19 @@ queries:
       postgresql.ident.mappings.none(pgUsername.downcase == "postgres")
     docs:
       desc: |
-        This check ensures that no `pg_ident.conf` mapping resolves an external identity onto the `postgres` superuser role. Identity maps translate an authenticated operating system account, Kerberos principal, or certificate common name into a PostgreSQL role, and they are consulted by the `ident`, `peer`, `gss`, and `cert` methods.
+        This check verifies that no external identity is mapped directly onto the cluster superuser.
 
-        A mapping that targets `postgres` grants cluster ownership to whoever controls the mapped external identity. Administrators should connect as a named role that holds only the privileges they need, and escalate deliberately, rather than being mapped straight onto the superuser.
+        `pg_ident.conf` translates an authenticated operating system account, Kerberos principal, or certificate common name into a PostgreSQL role, and it is consulted by the `ident`, `peer`, `gss`, and `cert` methods. The check fails when any mapping resolves to the `postgres` role.
 
         **Why this matters**
 
-        - **Named accountability:** Actions taken in the database are attributable to a specific role rather than a shared superuser.
-        - **Least privilege by default:** Routine work happens without cluster-wide authority.
-        - **External identity compromise is contained:** Losing control of a mapped account does not immediately mean losing the cluster.
+        Such a mapping makes control of the external identity equal to ownership of the cluster. Whoever holds that operating system account, that ticket, or that certificate connects as a superuser with no further credential, so the security of the database becomes the security of the weakest system that issues the identity.
 
-        **Risk mitigation**
+        For a local account mapping, that system is the host itself. An attacker who reaches any code execution as the mapped user, through a vulnerable service running under it, a writable script it executes from cron, or a stolen key in its home directory, is a superuser in the database on the next connection. From there they read every table, install a function that runs commands as the server account, and add a role of their own so they keep access after the original hole is closed.
 
-        - **Prevents silent privilege escalation:** A mapped operating system or certificate identity cannot become a superuser implicitly.
-        - **Limits lateral movement:** A compromised host account cannot take ownership of the database.
+        Superuser sessions are also unattributable. Several administrators mapped onto the same role produce log lines that name that role, so an investigation cannot tell which person or which process acted.
+
+        Map administrators onto named roles carrying only the privileges their work needs, and let escalation be a deliberate, logged step rather than the default state of every session.
       audit: |
         ### Audit via CLI
 
@@ -2102,20 +2087,19 @@ queries:
       postgresql.ident.mappings.none(systemUsername == /\.\*/ || systemUsername == /\.\+/)
     docs:
       desc: |
-        This check ensures that no `pg_ident.conf` mapping uses a regular expression that matches every external identity. A system username entry beginning with a slash is treated as a regular expression, so a pattern such as `/^(.*)$` matches any authenticated account and hands each of them the mapped PostgreSQL role.
+        This check verifies that identity mappings enumerate the external accounts they accept instead of matching all of them with a pattern.
 
-        Catch-all patterns are usually introduced to save writing one mapping per user, but they remove the boundary the map is supposed to enforce. Any identity the authentication method accepts becomes the mapped role, which turns a specific grant into a broad one.
+        A system username in `pg_ident.conf` that begins with a slash is treated as a regular expression, so an entry such as `/^(.*)$` matches every authenticated identity and grants each one the mapped PostgreSQL role. The check fails on patterns of that shape and passes when each mapping names a specific identity.
 
         **Why this matters**
 
-        - **Explicit mappings are reviewable:** A finite list shows exactly who can assume which role.
-        - **New accounts are not implicitly granted:** Creating an operating system account does not silently create database access.
-        - **Patterns can capture more than intended:** A broad expression matches identities that were never considered.
+        A catch-all removes the boundary the map exists to enforce. The authentication method establishes that the connecting party is who they claim to be; the map is supposed to decide which of those parties may act as which role. Match everything and the second decision disappears, so proving any identity at all is enough to hold the mapped role.
 
-        **Risk mitigation**
+        That converts account creation into database access. An attacker who can add a local account on the host, or who compromises a service account nobody associated with the database, connects and is granted the role. On a certificate-based deployment the same pattern accepts every certificate the trusted authority ever issued, including ones minted for unrelated systems.
 
-        - **Prevents unintended role assumption:** An unrelated account cannot connect as the mapped role.
-        - **Blocks escalation through account creation:** An attacker who can add a host account gains no database access from it.
+        Broad patterns also capture more than their author intended. A regular expression written to match a naming convention matches every future account that happens to fit it, so access is granted by a hostname convention or a username prefix rather than by a decision anyone made.
+
+        Write one mapping per identity so the file is a reviewable list of who may assume which role. Where a pattern is genuinely necessary, anchor it tightly to a prefix that only the intended accounts can hold, and revisit it whenever the account naming convention changes.
       audit: |
         ### Audit via CLI
 
@@ -2241,20 +2225,19 @@ queries:
       postgresql.conf.params["db_user_namespace"] == empty || postgresql.conf.params["db_user_namespace"].downcase == "off"
     docs:
       desc: |
-        This check ensures that `db_user_namespace` is left disabled. When enabled, PostgreSQL accepts per-database usernames written as `user@dbname`, and the client-supplied name is rewritten before authentication. The feature is off by default and the check treats an absent directive as compliant.
+        This check verifies that role names mean the same thing regardless of which database a client selects.
 
-        The rewriting behavior makes the effective role name depend on the database the client selected, so the same connection string can resolve to different roles. That indirection makes authentication rules and audit records harder to reason about, and the feature interacts poorly with SCRAM because clients must know whether to include the database suffix when computing their response.
+        `db_user_namespace` in `postgresql.conf` enables per-database usernames written as `user@dbname`. When it is on, the server strips the suffix and rewrites the client-supplied name before authentication runs. The feature is off by default, so the check treats an absent directive as compliant and fails only when it has been turned on.
 
         **Why this matters**
 
-        - **Role names stay unambiguous:** A username in a log line or an authentication rule means exactly one role.
-        - **Authentication rules remain predictable:** Rule matching does not shift based on the selected database.
-        - **Avoids a deprecated mechanism:** The feature exists for backward compatibility and is not recommended for new deployments.
+        The rewrite happens before rule matching, so the role a rule applies to depends on the database the client asked for. The same connection string resolves to different roles against different databases, which means reading the authentication file no longer tells you who can connect as what. An attacker probing the server manipulates one half of the pair to reach a name that a permissive rule matches, and the reviewer who wrote that rule never considered the combination.
 
-        **Risk mitigation**
+        Recorded usernames become ambiguous in the same way. A log line names the rewritten role, so during an investigation the identity in the record does not correspond to the name the client actually presented, and correlating database activity with application logs stops working exactly when it is needed.
 
-        - **Prevents rule bypass through name rewriting:** An attacker cannot influence which role a rule matches by changing the database.
-        - **Keeps audit trails reliable:** Recorded usernames correspond directly to roles during investigation.
+        The mechanism also interacts poorly with challenge-response authentication, because the client has to know whether to include the suffix when computing its response, and getting that wrong produces authentication failures that look like the wrong password rather than a configuration problem.
+
+        The feature exists for backward compatibility and is not recommended for new deployments. Confirm no role name depends on the suffixed form before turning it off, then set the directive and reload.
       audit: |
         ### Audit via CLI
 
@@ -2368,20 +2351,19 @@ queries:
       postgresql.conf.loggingCollector == true
     docs:
       desc: |
-        This check ensures that `logging_collector` is enabled so PostgreSQL captures server messages into log files it manages itself. Without the collector, messages go to the process standard error stream, where they depend entirely on how the service was started and are frequently discarded.
+        This check verifies that the server captures its own messages into log files it manages.
 
-        The collector is also a prerequisite for the log protection and rotation settings in this policy. Directives such as `log_file_mode`, `log_rotation_age`, and `log_filename` only take effect when the collector is running.
+        `logging_collector` in `postgresql.conf` starts a dedicated process that receives server messages and writes them to files. The check requires it to be on. The setting is read at startup, so it needs a restart rather than a reload.
 
         **Why this matters**
 
-        - **Durable records:** Messages are written to files that survive a client disconnect or a terminal closing.
-        - **Enables log protection:** File permissions on log output can only be controlled when PostgreSQL owns the files.
-        - **Supports rotation:** Predictable filenames and rotation keep log volume manageable without losing history.
+        Without the collector, messages go to the process standard error stream, and where they end up depends entirely on how the service was started. Under some unit files they land in the journal, under others in a file nobody rotates, and inside many container images they go to a stream that is discarded when the container is replaced. The result is that a cluster can be attacked repeatedly and produce no durable record of it.
 
-        **Risk mitigation**
+        That gap is the attacker's advantage rather than an inconvenience. Failed authentications, connections from unexpected addresses, and the statements that created a new superuser role all still happen; they leave nothing behind for anyone to find. An investigation that begins after the fact then has no way to establish when access started or what was touched.
 
-        - **Preserves incident evidence:** Authentication failures and errors remain available for investigation.
-        - **Prevents silent loss of audit data:** Messages are not discarded because no one captured the output stream.
+        The collector is also what makes the rest of the logging configuration real. `log_file_mode`, `log_rotation_age`, and `log_filename` only take effect when PostgreSQL owns the files, so log protection and rotation cannot be applied until the collector is running.
+
+        Where a container platform deliberately harvests the standard error stream into a durable, protected pipeline, that is a reasonable alternative; confirm that the collection actually persists and is access-controlled before treating it as one.
       audit: |
         ### Audit via CLI
 
@@ -2486,20 +2468,19 @@ queries:
       postgresql.conf.logDestination == /csvlog|jsonlog|syslog/
     docs:
       desc: |
-        This check ensures that `log_destination` includes `csvlog`, `jsonlog`, or `syslog` rather than relying on the default freeform `stderr` output. Structured formats emit one record per event with stable fields, and `syslog` forwards records to a collector off the host.
+        This check verifies that server messages are emitted in a form a log pipeline can parse or are forwarded off the host.
 
-        Freeform output is readable by a person but awkward for automated analysis, because message text and field boundaries vary by event type. Structured output lets a log pipeline parse authentication failures, connection records, and statement logs reliably.
+        `log_destination` in `postgresql.conf` selects the output format. The check requires the value to include `csvlog`, `jsonlog`, or `syslog` rather than only the default freeform `stderr` text. A reload applies the change.
 
         **Why this matters**
 
-        - **Reliable parsing:** Fixed fields let detection rules match events without fragile text matching.
-        - **Off-host retention:** Forwarding records to a collector preserves them when the host is lost or compromised.
-        - **Consistent correlation:** Structured fields align database events with records from other systems.
+        Freeform text is written for a person reading one line at a time. Message wording and field boundaries vary by event type and change between releases, so detection rules built on text matching miss events after an upgrade and match the wrong ones in the meantime. The events that matter most, a burst of failed authentications or a connection from an address that has never appeared before, are exactly the ones a fragile pattern drops.
 
-        **Risk mitigation**
+        Structured output removes the guesswork by emitting one record per event with stable fields, so a rule matches on the role, the client address, and the error code instead of on a sentence.
 
-        - **Resists local log tampering:** Records already forwarded cannot be edited by an attacker on the host.
-        - **Improves detection coverage:** Authentication anomalies are matched dependably rather than missed by text patterns.
+        Forwarding matters for a different reason. Logs that only exist on the database host are within reach of an attacker who reached that host. Clearing or editing them is a routine step once a foothold is established, and it works: the evidence of how they arrived is in the same file they can now write to. Records already sent to a collector are outside their control and survive the loss of the machine.
+
+        Choose the destination your pipeline actually consumes, and keep a local copy alongside the forwarded one so a collector outage does not leave a hole in the record.
       audit: |
         ### Audit via CLI
 
@@ -2606,20 +2587,19 @@ queries:
       postgresql.conf.logConnections == true
     docs:
       desc: |
-        This check ensures that `log_connections` is enabled so every successful connection attempt is recorded together with the authenticated role and the client address. PostgreSQL leaves this off by default, which means a cluster can be accessed repeatedly without producing any record of who connected.
+        This check verifies that every successful connection to the cluster is recorded.
 
-        Connection records are the foundation of database access monitoring. They establish which identities reached the server, from where, and when, and they provide the baseline that makes unusual access visible.
+        `log_connections` in `postgresql.conf` makes the server write a record for each session as it is established, naming the authenticated role, the database, and the client address. PostgreSQL leaves it off, so the check fails on the default. A reload applies it.
 
         **Why this matters**
 
-        - **Attribution:** Each session is tied to a role and a source address.
-        - **Baseline for anomaly detection:** Normal access patterns become measurable, so deviations stand out.
-        - **Investigation timeline:** Responders can establish when an identity first appeared.
+        With it off, a cluster can be reached again and again without leaving any trace of who arrived. An attacker who has obtained a credential, from a configuration file on a compromised application host, a repository, or a backup, connects with a normal client, does what they came for, and disconnects. Nothing distinguishes their session from the application's, because nothing recorded either one.
 
-        **Risk mitigation**
+        Connection records are what make the abnormal visible. A production database is contacted by a small, stable set of addresses; a session from a workstation subnet, from a container that should not talk to it, or at three in the morning stands out immediately against that baseline. Without the records there is no baseline and no deviation to notice.
 
-        - **Reveals credential misuse:** Access from an unexpected address or at an unusual time becomes visible.
-        - **Detects reconnaissance:** Repeated connection attempts across roles are recorded rather than invisible.
+        They also bound an incident. When a compromise is discovered later, the first question is when the attacker's access began and which roles they used, and connection records answer it directly. Without them, responders cannot distinguish a week of access from a month.
+
+        The volume is modest, one line per session, though an application that opens a connection per request rather than pooling will generate a great deal of it; fix the pooling rather than turn off the record.
       audit: |
         ### Audit via CLI
 
@@ -2723,20 +2703,19 @@ queries:
       postgresql.conf.logDisconnections == true
     docs:
       desc: |
-        This check ensures that `log_disconnections` is enabled so the end of each session is recorded along with its duration. Paired with connection records, this closes the session out and shows how long an identity held access to the database.
+        This check verifies that the end of each session is recorded along with how long it lasted.
 
-        Session duration is frequently the most informative signal in a database log. A connection that stays open far longer than the application's normal pattern, or one that ends immediately after connecting, both stand out only when the disconnect is recorded.
+        `log_disconnections` in `postgresql.conf` writes a record when a session closes, including its duration. It is off by default. Paired with the connection record, it closes the session out so the log shows both when an identity arrived and how long it held access. A reload applies it.
 
         **Why this matters**
 
-        - **Complete session records:** Every connection has a matching close with an elapsed time.
-        - **Duration as a signal:** Unusually long or short sessions become measurable.
-        - **Accurate concurrency history:** Reconstructing who held sessions at a given moment becomes possible.
+        Duration is one of the most informative signals a database log carries, and it exists only when the close is recorded. A pooled application connection lives for hours in a predictable pattern; a session that connects, runs a handful of statements, and vanishes in four seconds looks nothing like it, and neither does one that stays open for two days while rows are pulled out in small batches to stay under a rate alarm. Both are visible against the normal shape of the workload, and both are invisible when only the open is logged.
 
-        **Risk mitigation**
+        Without the close, responders also cannot say when access ended. They know an attacker connected at a point in time and have no way to bound what happened afterwards, which forces them to treat everything since as suspect and widens the scope of the incident far beyond what actually occurred.
 
-        - **Exposes long-lived unauthorized sessions:** A session held open for data collection is visible in the record.
-        - **Supports scope assessment:** Responders can bound how long an attacker had access.
+        Complete session records make concurrency reconstructable as well, so it is possible to establish which identities held sessions at the moment a table was altered or a role was created.
+
+        Enable it alongside the connection record; each is far less useful on its own than the pair is together.
       audit: |
         ### Audit via CLI
 
@@ -2840,20 +2819,19 @@ queries:
       postgresql.conf.logStatement.downcase == "ddl" || postgresql.conf.logStatement.downcase == "mod" || postgresql.conf.logStatement.downcase == "all"
     docs:
       desc: |
-        This check ensures that `log_statement` is set to `ddl`, `mod`, or `all` so schema changing statements are recorded. PostgreSQL defaults to `none`, which means statements that create roles, grant privileges, drop tables, or alter the schema leave no record of the statement text.
+        This check verifies that statements which change the schema or the privilege structure are recorded with their text.
 
-        The `ddl` setting captures data definition statements including `CREATE`, `ALTER`, `DROP`, and `GRANT`. The `mod` setting adds data modifying statements, and `all` records every statement at a substantially higher log volume. Choose the level that matches your retention capacity, but record at least data definition.
+        `log_statement` in `postgresql.conf` selects which statement classes are logged. PostgreSQL defaults to `none`. This check requires `ddl`, `mod`, or `all`. The `ddl` level captures data definition statements including `CREATE`, `ALTER`, `DROP`, and `GRANT`; `mod` adds data-modifying statements; `all` records everything at a substantially higher volume. A reload applies the change.
 
         **Why this matters**
 
-        - **Privilege changes are recorded:** `GRANT` and `CREATE ROLE` statements leave an auditable trail.
-        - **Schema tampering is visible:** Added functions, triggers, or dropped tables are attributable.
-        - **Change reconstruction:** Responders can determine exactly what an attacker altered.
+        At the default, an attacker who reaches the database can restructure it silently. They run `CREATE ROLE` with a password only they know and grant it membership in a privileged group, so they keep access after the credential they arrived with is rotated. They install a trigger or a function that re-creates that role whenever it is deleted. They drop a table or alter a constraint to hide what they took. None of it leaves a record of the statement text.
 
-        **Risk mitigation**
+        Privilege changes are the ones that matter most. A `GRANT` is a single short statement that permanently widens what an identity may do, and it is indistinguishable from legitimate administration unless the text and the time are in the log.
 
-        - **Detects persistence mechanisms:** A trigger or function installed to maintain access is logged when it is created.
-        - **Reveals privilege escalation:** A role granted membership in a privileged group is recorded.
+        The same records make recovery possible. After an incident, the difference between knowing exactly which objects were altered and having to compare the schema against a backup is the difference between an afternoon and a week.
+
+        Choose the level your retention can hold. Recording every statement on a busy cluster produces an enormous volume and often captures parameter values you would rather not store, so record at least data definition and go further only where the traffic justifies it.
       audit: |
         ### Audit via CLI
 
@@ -2963,20 +2941,19 @@ queries:
       postgresql.conf.params["log_line_prefix"] == /%d/
     docs:
       desc: |
-        This check ensures that `log_line_prefix` includes the timestamp with milliseconds as `%m`, the connecting role as `%u`, and the database as `%d`. Without these fields, log records describe what happened but not who did it or where, which makes them nearly unusable for investigation.
+        This check verifies that every log line identifies when it was written, which role produced it, and which database it concerns.
 
-        Every message the server writes carries this prefix, so it determines whether an error or a logged statement can be attributed to a session. Adding `%h` for the client host and `%p` for the process identifier makes correlation across records straightforward.
+        `log_line_prefix` in `postgresql.conf` is prepended to every message the server writes. The check requires the value to be set and to include the timestamp with milliseconds as `%m`, the connecting role as `%u`, and the database as `%d`. A reload applies the change.
 
         **Why this matters**
 
-        - **Attribution per record:** Each line identifies the role and database it belongs to.
-        - **Accurate ordering:** Millisecond timestamps allow events to be sequenced reliably.
-        - **Cross-record correlation:** Process identifiers tie together the statements of a single session.
+        Without those fields the log says what happened but not who did it. A line recording a dropped table, a failed authentication, or a permission error is an observation with no subject, so an investigation can establish that something occurred and can go no further. The events are present and useless at the same time, which is worse than an obvious gap because it looks like coverage.
 
-        **Risk mitigation**
+        Attribution is what turns a record into evidence. Repeated authentication failures against one role tell you a credential is being guessed only when the role is named; the same lines without it are indistinguishable from an application misconfiguration.
 
-        - **Makes logs usable during response:** Malicious activity can be attributed to an identity rather than merely observed.
-        - **Prevents anonymous errors:** Repeated authentication failures can be traced to a source.
+        Timestamp precision decides whether events can be ordered. Several statements within the same second are common on an active cluster, and second-granularity stamps leave their sequence ambiguous exactly when the sequence is the question, such as whether a privilege was granted before or after the statement that used it.
+
+        Add `%h` for the client host and `%p` for the process identifier as well. The process identifier is what ties the separate lines of one session together, and the client host is what lets a database event be lined up against records from the network and the application.
       audit: |
         ### Audit via CLI
 
@@ -3083,20 +3060,19 @@ queries:
       postgresql.conf.params["log_error_verbosity"] == empty || postgresql.conf.params["log_error_verbosity"].downcase != "terse"
     docs:
       desc: |
-        This check ensures that `log_error_verbosity` is not set to `terse`. The `terse` setting strips the detail, hint, and context fields from logged errors, leaving only the primary message. PostgreSQL defaults to `default`, and the check treats an absent directive as compliant.
+        This check verifies that logged errors keep the fields that explain them.
 
-        The suppressed fields carry the information that makes an error actionable, including which constraint was violated and the statement context in which the failure occurred. During an investigation, that context often distinguishes an application bug from an injection attempt.
+        `log_error_verbosity` in `postgresql.conf` controls how much of an error is written. The `terse` value strips the detail, hint, and context fields and leaves only the primary message. PostgreSQL uses `default`, so the check treats an absent directive as compliant and fails only on the reduced setting. A reload restores the detail.
 
         **Why this matters**
 
-        - **Errors stay diagnosable:** Detail and hint fields explain why a statement failed.
-        - **Context identifies the source:** The context field shows the function or statement that raised the error.
-        - **Better failure triage:** Recurring errors can be classified without reproducing them.
+        The stripped fields are the ones that identify what actually failed. The primary message says a syntax error occurred or a constraint was violated; the detail says which constraint and which values, and the context names the function and the statement that raised it. Without them a log of errors records that the database is unhappy without recording why, and every entry has to be reproduced before it means anything.
 
-        **Risk mitigation**
+        That gap costs most during an intrusion. Injection attempts against an application generate a characteristic run of errors, malformed literals, type mismatches, references to objects that do not exist, and the diagnostic fields are what distinguish that pattern from a bug in a deployment that went out the same afternoon. Reduced to a bare message, the two look identical, so the probing is filed as noise while it continues.
 
-        - **Preserves attack indicators:** Malformed statements characteristic of injection attempts retain their diagnostic detail.
-        - **Speeds investigation:** Responders do not have to reproduce a failure to learn what it was.
+        The same detail is what makes an error tractable at all after the fact, since the failing statement is often long gone and cannot be run again against the same data.
+
+        Leave the setting alone unless log volume genuinely demands it, and if it does, reduce the statement logging level rather than the error detail.
       audit: |
         ### Audit via CLI
 
@@ -3200,20 +3176,19 @@ queries:
       postgresql.conf.params["log_file_mode"] == empty || postgresql.conf.params["log_file_mode"] == /^0?600$/
     docs:
       desc: |
-        This check ensures that `log_file_mode` keeps PostgreSQL log files readable only by the account that owns the server. PostgreSQL defaults to `0600`, and the check treats an absent directive as compliant. It fails when the mode has been widened to allow group or world access.
+        This check verifies that log files the server writes are readable only by the account that runs it.
 
-        Log files hold the material that makes logging valuable and also makes it sensitive. With `log_statement` recording data definition statements, log files contain role names, granted privileges, and schema structure. With `log_line_prefix` populated they also record client addresses and database names.
+        `log_file_mode` in `postgresql.conf` sets the permission bits applied to each new log file. PostgreSQL uses `0600`, so the check treats an absent directive as compliant and fails when the mode has been widened to allow group or world access. A reload applies the mode to files created afterwards; files already on disk keep the mode they were created with.
 
         **Why this matters**
 
-        - **Logs are sensitive output:** Recorded statements and identities should not be world readable.
-        - **Limits reconnaissance:** An unprivileged local account cannot enumerate roles and schema from the logs.
-        - **Protects audit integrity:** Restricting access reduces the number of accounts able to read the audit trail.
+        Logs are valuable precisely because of what they contain, and that makes the files themselves sensitive. With `log_statement` recording data definition, they hold role names, group memberships, granted privileges, and the shape of the schema. With `log_line_prefix` populated they hold client addresses and database names, and error detail routinely includes column values from the statement that failed.
 
-        **Risk mitigation**
+        A world-readable log therefore hands a local attacker a map. An unprivileged account on the host, or a compromised unrelated service running there, reads which roles exist, which of them are privileged, which networks connect, and which tables are worth reaching, all without touching the database or producing a single failed login.
 
-        - **Blocks local information disclosure:** A compromised unrelated service on the host cannot read database logs.
-        - **Prevents credential leakage through logs:** Connection strings or statements that embed sensitive values stay protected.
+        Occasionally the logs give up more than a map. Statements that embed a password in a role definition, connection strings written into a function body, and application errors that echo parameter values all end up in the file verbatim.
+
+        Restrict access to the server account and to the log collection agent, and correct the permissions on files written before the change, since the directive does not go back and fix them.
       audit: |
         ### Audit via CLI
 
@@ -3338,20 +3313,19 @@ queries:
       postgresql.conf.sharedPreloadLibraries.any(_ == "pgaudit")
     docs:
       desc: |
-        This check ensures that `pgaudit` appears in `shared_preload_libraries` so the extension is loaded at server start. The built-in `log_statement` setting records statement text but not which objects a statement touched, and it cannot record read access at the object level.
+        This check verifies that object-level auditing is loaded into the server.
 
-        The pgaudit extension adds session and object level auditing, so reads of specific tables can be recorded and audit entries are emitted in a consistent, parseable format. Because the extension must be preloaded, it cannot be enabled with a reload and requires a restart.
+        The `pgaudit` extension has to be listed in `shared_preload_libraries` in `postgresql.conf` so it is loaded when the server starts. The check fails when it is absent from that list. Because the library is preloaded, adding it requires a restart rather than a reload, and the extension must also be created in each database it should audit.
 
         **Why this matters**
 
-        - **Read access is auditable:** `SELECT` against sensitive tables can be recorded, which `log_statement` cannot do.
-        - **Object level granularity:** Auditing can target specific tables rather than entire statement classes.
-        - **Consistent audit format:** Entries are structured for downstream analysis rather than freeform.
+        The built-in `log_statement` setting records statement text, but it cannot tell you which objects a statement touched, and it does not record reads at all at any level short of logging every statement on the server. Reads are what an attacker who is stealing data actually does. A credential that is used exactly as intended, running `SELECT` against tables it holds a grant on, produces nothing at all in a configuration that only logs schema changes.
 
-        **Risk mitigation**
+        Object-level auditing closes that. Reads of the specific tables that hold regulated or high-value data are recorded with the role, the object, and the statement, so bulk extraction stands out against the volume an application normally issues, and a query that walks a customer table row by row leaves a trail even though every individual statement was authorized.
 
-        - **Detects data exfiltration:** Bulk reads of sensitive tables leave an audit record.
-        - **Supports regulatory evidence:** Object level access records demonstrate who read protected data.
+        The entries are also emitted in a consistent, parseable shape rather than as freeform text, which is what makes alerting on them practical.
+
+        Scope the auditing to the objects that warrant it. Auditing everything on a busy cluster produces a volume nobody retains, and the records that matter get rotated away with the rest.
       audit: |
         ### Audit via CLI
 
@@ -3500,20 +3474,17 @@ queries:
       postgresql.conf.files.all(permissions.group_writeable == false && permissions.other_readable == false && permissions.other_writeable == false)
     docs:
       desc: |
-        This check ensures that `postgresql.conf` and every fragment it pulls in through `include`, `include_if_exists`, and `include_dir` are readable only by the server account. PostgreSQL does not enforce permissions on its own configuration files the way it does for TLS key material, so a widened mode goes unnoticed at start up.
+        This check verifies that the server's configuration files are not readable or writable by other accounts on the host.
 
-        Include fragments deserve the same protection as the main file. Configuration management tooling frequently writes drop-in files under a `conf.d` directory with default permissions, which leaves a fragment world readable even when the main file is correctly restricted. This check evaluates every contributing file rather than only the entry point.
+        It evaluates `postgresql.conf` together with every fragment pulled in by `include`, `include_if_exists`, and `include_dir`, and fails when any of them is group-writable or world-readable or world-writable. PostgreSQL does not enforce permissions on these files the way it does on TLS key material, so a widened mode produces no warning at startup.
 
         **Why this matters**
 
-        - **Configuration reveals architecture:** Listen addresses, data directory paths, and TLS material locations describe how to reach and attack the server.
-        - **Write access is server control:** An account able to modify a fragment can point the server at different authentication rules.
-        - **Fragments are easy to overlook:** Drop-in files inherit the permissions of whatever wrote them.
+        Read access is reconnaissance. The files record the addresses the server listens on, where the data directory lives, where the private key and certificate sit, which authentication and identity files are in use, and where logs are written. A local account that can read them knows exactly which file to target next, and whether a target is worth the effort, without generating a single connection attempt.
 
-        **Risk mitigation**
+        Write access is control of the database. An account that can edit a fragment points the server at an authentication file of its own on the next reload, and that file can grant unauthenticated superuser access. The change is a few characters in a file the attacker already had permission to write, and the reload may be triggered by ordinary configuration management rather than by them.
 
-        - **Blocks local reconnaissance:** An unprivileged account cannot read where keys and data live.
-        - **Prevents configuration tampering:** An attacker cannot weaken authentication by editing an included fragment.
+        Fragments are the part that gets missed. Configuration management tooling writes drop-in files under a `conf.d` directory with whatever default the module carries, so a fragment ends up world-readable while the main file is correctly locked down, which is why this check evaluates every contributing file rather than only the entry point.
       audit: |
         ### Audit via CLI
 
@@ -3639,20 +3610,19 @@ queries:
       postgresql.hba.file.permissions.other_writeable == false
     docs:
       desc: |
-        This check ensures that `pg_hba.conf` is readable only by the account that owns the server. This file is the complete authorization policy for the cluster: it records which roles may connect, from which networks, and with which authentication method.
+        This check verifies that the host-based authentication file is readable only by the account that runs the server.
 
-        Read access alone is valuable to an attacker, because the file shows exactly which network ranges are trusted and which roles use weaker authentication methods. Write access is equivalent to controlling the database, since a new rule can grant unauthenticated superuser access on the next reload.
+        `pg_hba.conf` is the cluster's complete access policy: which roles may connect, from which networks, over which connection types, and with which authentication method. The check fails when the file is group-writable, world-readable, or world-writable.
 
         **Why this matters**
 
-        - **The file is the access control policy:** Its contents describe every path into the cluster.
-        - **Write access defeats authentication:** An added rule can bypass every credential requirement.
-        - **Reveals the weakest path:** An attacker learns which roles and networks to target first.
+        Read access alone is a reconnaissance win. The file states which network ranges are trusted, which roles are reachable from where, and which rules still use a weaker method, so a local attacker learns the cheapest way in and pursues that one instead of guessing. It also tells them which rules will not match, so their attempts are confined to paths that could work and are less likely to trip a threshold.
 
-        **Risk mitigation**
+        Write access is equivalent to owning the database. One added line that grants unauthenticated access to the superuser role takes effect on the next reload, and reloads happen for unrelated reasons all the time: a certificate renewal, a configuration management run, a log rotation hook. The attacker does not have to trigger it themselves, and afterwards they connect as a superuser with no credential and no failed attempt in the log.
 
-        - **Prevents authentication bypass:** An attacker cannot insert a permissive rule.
-        - **Blocks targeted attacks:** Trusted ranges and weak methods are not disclosed to local accounts.
+        That path is also short. Any local foothold, a vulnerable service running under a group that shares access to the file, an over-permissive deployment account, or a backup directory that copied the file with default permissions, is enough.
+
+        Set ownership to the server account with access restricted to it, and resolve the path from the running server rather than assuming a distribution default, since the location is itself configurable.
       audit: |
         ### Audit via CLI
 
@@ -3763,20 +3733,17 @@ queries:
       postgresql.conf.params["local_preload_libraries"] == empty
     docs:
       desc: |
-        This check ensures that `local_preload_libraries` is unset. Unlike `shared_preload_libraries`, this directive can be set by an ordinary role on a per-session basis, and the libraries it names are loaded into the backend process at connection time.
+        This check verifies that the server does not carry a cluster-wide list of libraries to load into ordinary client backends.
 
-        Because it is settable without special privileges, the directive is a recognized route for loading code into the server. A server-wide value in `postgresql.conf` should be empty so that any library loaded into a backend is deliberate and traceable to the preload list an administrator controls.
+        `local_preload_libraries` in `postgresql.conf` names shared libraries loaded into a backend process when a session starts. Unlike `shared_preload_libraries`, it can also be set by an unprivileged role for its own session. The check requires the server-wide value to be empty. A reload applies the change.
 
         **Why this matters**
 
-        - **Loaded code runs with server privileges:** A library in a backend process has the access of the server account.
-        - **Unprivileged roles can set it:** The directive does not require superuser, so a server-wide default deserves scrutiny.
-        - **Deliberate extension loading:** Extensions belong in `shared_preload_libraries`, where they are visible and reviewed.
+        A library loaded into a backend runs inside the server process with the privileges of the account that owns the cluster. That is not the privileges of the connecting role, it is read and write access to the data directory, to the TLS private key, and to anything else that account can reach on the host, plus the ability to make network connections outward from the database host.
 
-        **Risk mitigation**
+        Because the setting does not require superuser, it is a recognized route for turning a foothold on the host into code execution inside the database. An attacker who can write a shared object into the plugin directory, through a deployment account, a writable path, or a package they persuaded an operator to install, gets it loaded on the next connection made by any role. A value already present in the server configuration makes that easier still, since it establishes the load path as normal and the addition of one more name attracts no attention.
 
-        - **Blocks a code loading path:** An attacker who can write to the plugin directory cannot rely on a preconfigured load.
-        - **Preserves an auditable extension list:** All loaded libraries remain visible in the administrator-controlled setting.
+        Keep the server-wide list empty so that any library loaded into a backend is deliberate. Extensions belong in the preload list an administrator controls, where they are visible, reviewed, and applied at startup rather than per session.
       audit: |
         ### Audit via CLI
 
