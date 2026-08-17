@@ -96,26 +96,53 @@ The parent check carries `title`, `impact`, `tags`, and `docs:`; variants carry 
 
 The three required sections follow a consistent shape across the repo. Match it so new checks are visually and structurally indistinguishable from the surrounding policy.
 
-**`desc:`** — what the check enforces, then why it matters.
+**`desc:`** — what the check verifies, then why it matters.
 
 ```markdown
-This check ensures that <resource> is configured to <enforced behavior>. By default <vendor default>, but <why the safer setting matters>.
+This check verifies that <capability> is <required state>.
+
+<What that capability is and what it does, in a sentence or two.> <Where the reader administers it, and the value the check requires.>
 
 **Why this matters**
 
-- **<benefit 1>:** <one sentence>.
-- **<benefit 2>:** <one sentence>.
-- **<benefit 3>:** <one sentence>.
+<What an attacker concretely does without it, or what concretely breaks. Two to four short paragraphs.>
 
-**Risk mitigation**
-
-- **<mitigation 1>:** <one sentence>.
-- **<mitigation 2>:** <one sentence>.
+<When this legitimately should not be applied, or what to pair it with.>
 ```
 
-Lead with the assertion (one paragraph), then bullet the benefits. Don't restate the title verbatim. Don't reference the MQL query, variant UIDs, or "this policy" — the reader sees the check in isolation.
+Four rules, in priority order.
+
+**1. The first sentence says what is being verified.** It begins with the literal string `This check`, and it names the capability the reader would recognize as a security property — not the resource, not the config key, not a paraphrase of the title. A reader who stops after one sentence should know what was assessed.
+
+**2. The capability leads; the setting is how it is measured.** The setting is the instrument, never the subject:
+
+```markdown
+This check verifies that Address Space Layout Randomization is fully enabled.
+
+ASLR places a program's stack, heap, shared libraries, and executable at different memory addresses every time it runs, so an attacker cannot know in advance where anything is. The check reads the kernel parameter `kernel.randomize_va_space`, which must be `2`. A value of `1` randomizes everything except the `brk` heap, and `0` turns randomization off entirely.
+```
+
+Not "This check verifies that `kernel.randomize_va_space` is set to 2", which tells a reader what the scanner did rather than what is true about their system.
+
+**3. Name the setting where the reader administers it, not where the scanner reads it.** On an OS these coincide: `kernel.randomize_va_space` *is* the sysctl, `/etc/ssh/sshd_config` *is* the file. On SaaS, cloud, and API-driven policies they diverge completely, and naming the MQL accessor is useless to the reader:
+
+| Wrong | Right |
+|---|---|
+| the organization's `twoFactorRequirementEnabled` setting | GitHub calls this **Require two-factor authentication for everyone in your organization**, under Organization Settings, Authentication security |
+| `github.organization.defaultRepositoryPermission` must be `read` | GitHub calls this **Base permissions**, under Organization Settings, Member privileges. It offers None, Read, Write, and Admin |
+| the response header names from a GET request | the server must send `X-Content-Type-Options: nosniff` |
+
+Backticks stay correct for anything the reader types or sees: a filename, an HTTP header, a Terraform argument, a manifest field such as `securityContext.readOnlyRootFilesystem`, a literal value. What never appears is the provider path the query walks.
+
+**4. Say what an attacker does, not that risk is reduced.** "Reduces the attack surface", "improves the security posture", and "adheres to the principle of least functionality" are true of every check in the repo and therefore tell the reader nothing. Name the mechanism, and name a real technique or advisory where you are confident it is accurate.
+
+Also: do not close with a paragraph restating the opener. Do not write "compliance with security standards may be compromised" unless you name the control. Do not reference the MQL query, variant UIDs, or "this policy" — the reader sees the check in isolation.
+
+Use exactly one `**Why this matters**` heading. Older policies carry a second `**Risk mitigation**` heading; do not add it to new checks, and drop it when you rewrite one. Around 2,000 descriptions still have it and will converge as policies are revisited.
 
 **`audit:`** — vendor-native verification steps. Use H3 headers (`### Audit via Console`, `### Audit via CLI`) when both a console path and a CLI path exist. Each path is a short numbered list ending with what a passing vs. failing result looks like. Never reference `cnspec`, `mql`, or the Mondoo console (see the formatting rule above).
+
+**The audit command must observe what the query observes.** A vendor command that reports the *effective* configuration will contradict a check that reads a *file*, and the auditor will conclude the scanner is wrong. The worked example is `sshd -T`: `sshd.config.params`, `.ciphers`, `.macs`, and `.kexs` parse `/etc/ssh/sshd_config` and its `Include` files and never shell out, so for a directive whose OpenSSH default is already secure (`X11Forwarding`, `IgnoreRhosts`, `HostbasedAuthentication`, `PermitRootLogin`, `PermitEmptyPasswords`, `PermitUserEnvironment`, `LogLevel`) `sshd -T` prints the passing value on a host where the directive is absent and the check fails. Grep the configuration file instead, and say in the audit text that an absent directive fails.
 
 **`remediation:`** — a list of `- id: <method>` entries, one per supported management surface (see the remediation-coverage rule above). Each entry's `desc:` follows the same shape:
 
@@ -384,6 +411,8 @@ Not Azure-specific: Cloudflare (`cloudflare.zone.settings.*`), GCP (`gcp.project
 - **`terraform.resources()` takes a positional type argument** — `terraform.resources("aws_s3_bucket")`. The named form does not compile.
 - **`parse.int` fails inside variant queries.** Use date arithmetic or a string match instead. For port ranges there is no string→int conversion at all, so match with an anchored regex.
 - **GCP dict fields omit defaults.** `protoToDict` drops `false`, `0`, and `""` and camelCases the keys, so assert presence rather than `== false`.
+- **`.one()` means exactly one, and is almost never what a presence check wants.** `files.one(name.in(["dependabot.yaml", "dependabot.yml"]))` fails a repository holding both. Use `.any()` for "at least one exists" and reserve `.one()` for genuine uniqueness assertions.
+- **`.any()` fails on an empty list, which is usually the verdict you want.** It is the correct operation for "something must exist", precisely because `.all()` and `.none()` pass vacuously there. Verified: `[1,2,3].where(_ > 99).any(_ > 0)` fails, while the same filter with `.all()` returns `[ok] value: true`.
 
 ## Validation and testing
 
