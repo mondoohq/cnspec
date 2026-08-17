@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-mcp-security
     name: Mondoo Model Context Protocol (MCP) Security
-    version: 1.0.2
+    version: 1.0.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -71,18 +71,21 @@ queries:
       )
     docs:
       desc: |
-        Tool and prompt metadata advertised by an MCP server is copied verbatim into the model's context window and into client and server logs. Person names, physical locations, and payment card numbers embedded in `name`, `title`, or `description` fields therefore leak into systems that were never scoped to hold personal data.
+        This check verifies that MCP tool and prompt metadata contains no personally identifiable information.
+
+        The check reads the `name` and `description` fields of every tool the server advertises and screens them for person names, physical locations, and payment card numbers.
 
         **Why this matters**
 
-        - **Privacy exposure:** Metadata strings reach the model context and audit logs, placing personal data in stores with weaker access controls than a customer database.
-        - **Regulatory scope creep:** Credit card numbers and identifiable personal data pull MCP servers and their logs into PCI DSS and data-protection audit scope.
-        - **Uncontrolled disclosure:** Tool definitions are returned to any connected client, so personal data in metadata is disclosed to every consumer of the server.
+        Tool metadata is not documentation that sits on a shelf. It is copied verbatim into the model's context window on every invocation that uses the server, and into client and server logs along the way.
 
-        **Risk mitigation**
+        That gives personal data in these fields an unusually wide distribution for its size. It reaches the model provider as part of the prompt, it lands in the logs of every client that connects, and it is retained according to whatever those systems do rather than according to any decision about the data itself.
 
-        - **Synthetic placeholders:** Replacing real values with synthetic identifiers keeps metadata useful for the model while removing the personal data.
-        - **Schema-bound inputs:** Documenting personal data as runtime arguments in the input schema keeps it out of static, broadly readable metadata.
+        It also arrives without the handling that personal data normally attracts. A name in a database column is subject to retention rules, access control, and a deletion path. The same name in a tool description is in a configuration file, replicated to every client, and outside every one of those processes.
+
+        Payment card numbers carry the sharpest consequence, since their presence brings the server and everything logging it into PCI DSS scope.
+
+        Use placeholders in metadata rather than real values. Example text is the usual source: a description showing what a tool does, written with a real name or address because that was what the author had to hand.
       audit: |-
         ### Audit via the MCP client
 
@@ -171,18 +174,21 @@ queries:
       )
     docs:
       desc: |
-        MCP tool and prompt metadata is appended directly to the model's context as trusted instructions. When `name`, `title`, or `description` fields contain imperative phrasing aimed at the model, an attacker can use them to override system instructions, escalate the agent's behavior, or redirect tool calls. Each field is scored for injection patterns and a score above 0.8 indicates a likely attempt.
+        This check verifies that MCP tool and prompt metadata contains no prompt injection.
+
+        The check screens the `name` and `description` fields of every advertised tool and prompt for injection content, failing when the confidence score exceeds 0.8.
 
         **Why this matters**
 
-        - **Instruction hijacking:** Directive phrasing in metadata can override the system prompt and steer the agent into unintended actions.
-        - **Security control bypass:** Injection content can coax the model past guardrails that would otherwise block sensitive operations.
-        - **Data leakage:** A manipulated agent can be induced to exfiltrate context, credentials, or query results to an attacker.
+        The model treats tool metadata as trusted instruction. It is appended to the context to explain what the tools do, and nothing in the protocol marks it as data rather than direction.
 
-        **Risk mitigation**
+        That makes a description an instruction channel. Imperative phrasing aimed at the model, embedded in a field that looks like documentation, can override system instructions, redirect what the agent does with its other tools, or cause it to exfiltrate context to somewhere the attacker chose. The agent's user sees a tool list; the model sees the instructions inside it.
 
-        - **Descriptive metadata:** Phrasing that states what a tool does, rather than instructing the model, removes the injection surface.
-        - **Untrusted-content isolation:** Keeping end-user text in argument values instead of tool definitions prevents it from being treated as instructions.
+        What makes this the highest-impact check in the policy is where the content comes from. Tool metadata is authored by whoever wrote the MCP server, which for a third-party or community server is not the organization running it, and it is re-read on every connection, so a change made upstream takes effect without any local action.
+
+        The confidence threshold means this is a screen rather than a proof. A score below the threshold is not a guarantee, and a failure warrants reading the field rather than assuming a false positive.
+
+        Review metadata from any server you did not write, and treat descriptions as untrusted input from a third party, because that is what they are.
       audit: |-
         ### Audit via the MCP client
 
@@ -279,18 +285,21 @@ queries:
       mcp.prompts.none(title == /https?:\/\//)
     docs:
       desc: |
-        HTTP and HTTPS links placed in the `name`, `title`, or `description` fields of MCP tools and prompts flow into the model context window on every invocation. An agent may follow such a link or surface it to a user, turning static metadata into a delivery channel for phishing pages and attacker-controlled endpoints.
+        This check verifies that MCP tool and prompt metadata contains no embedded URLs.
+
+        The check screens the `name` and `description` fields of every advertised tool and prompt for HTTP and HTTPS links.
 
         **Why this matters**
 
-        - **Phishing delivery:** A link in tool metadata can be presented to users as if it were trusted guidance from the application.
-        - **Malicious redirects:** Agents that act on embedded URLs can be steered to attacker-controlled destinations.
-        - **Data exfiltration:** A crafted URL in metadata can become an endpoint to which an agent sends context or query results.
+        A link in tool metadata reaches the model on every invocation that uses the server, and from there it reaches the user or the agent's own fetching behavior.
 
-        **Risk mitigation**
+        That turns static configuration into a delivery channel. An agent able to fetch may retrieve the link's contents and bring them into context, which makes the remote page an instruction source under someone else's control and updatable after the metadata was reviewed. A user shown the link in a tool listing may click it, in a context that carries the authority of the tooling rather than of an unknown sender.
 
-        - **Functional metadata:** Keeping tool and prompt descriptions focused on behavior removes the link as an attack vector.
-        - **Structured resources:** Exposing documentation as an MCP resource with a defined URI gives clients a controlled discovery path instead of free-text links.
+        The indirection is the problem. Metadata is reviewed once when the server is added, while the content behind a link changes at any time, so approving a description does not approve what it points at tomorrow.
+
+        The finding is deliberately broad and will flag legitimate documentation links. That is the intended trade for a field whose contents are treated as trusted instruction.
+
+        Where a tool genuinely needs to direct users somewhere, do it in the tool's output at invocation time, where it can be evaluated in context, rather than in metadata that is loaded unconditionally.
       audit: |-
         ### Audit via the MCP client
 
@@ -374,18 +383,21 @@ queries:
       )
     docs:
       desc: |
-        Every MCP tool must declare a non-empty `name` and `description` and an `inputSchema` whose JSON Schema `type` is `object`. A tool that ships with a missing or empty schema accepts arbitrary arguments, so the server has no structural contract to validate calls against before invoking the underlying capability.
+        This check verifies that every MCP tool declares a name, a description, and a structured input schema.
+
+        The check requires each advertised tool to have a non-empty `name` and `description` and an `inputSchema` whose JSON Schema `type` is `object`.
 
         **Why this matters**
 
-        - **Input validation gap:** Without an `object` schema, the server cannot reject malformed or unexpected arguments before they reach tool logic.
-        - **Injection surface:** Unconstrained arguments flow straight into downstream systems, widening the path for injection and overflow attacks.
-        - **Ambiguous contracts:** A missing `name` or `description` leaves clients and the model guessing what the tool does and what it expects.
+        The input schema is the tool's contract. It states what arguments exist and what shape they take, and it is what allows the server to reject a call that does not match before any handler runs.
 
-        **Risk mitigation**
+        A tool with a missing or unstructured schema has no such contract. It accepts whatever arguments arrive, so validation moves into the handler if it happens at all, and the failure mode is a tool invoked with arguments its author never anticipated. On a tool that reaches a filesystem, a database, or a shell, that is the gap an injected instruction aims for.
 
-        - **Schema-enforced contracts:** A declared `object` schema gives the server a definition to validate every call against.
-        - **Bounded arguments:** Constraints such as `maxLength`, `enum`, and `additionalProperties: false` reject unexpected input before it is processed.
+        The schema also constrains the model rather than only the server. It is how the model learns which arguments are valid, so an absent schema produces both an unvalidated call path and a model guessing at the interface, which is a reliability problem before it is a security one.
+
+        The `name` and `description` requirements matter for a related reason: an unnamed or undescribed tool cannot be reasoned about by a reviewer or by the model, so it is approved and invoked on trust.
+
+        This check asserts structure rather than strictness. A schema of type `object` with no property constraints satisfies it, so treat this as a floor and constrain types, ranges, and required properties in the schema itself.
       audit: |-
         ### Audit via the MCP client
 
@@ -480,18 +492,21 @@ queries:
       )
     docs:
       desc: |
-        The `name`, `title`, and `description` fields of MCP tools and prompts are part of every model invocation that uses the server. Explicit, hateful, violent, or promotional language in those fields becomes a recurring exposure that influences model output and is visible to every connected client.
+        This check verifies that MCP tool and prompt metadata contains no explicit content.
+
+        The check screens the `name` and `description` fields of every advertised tool and prompt for explicit, hateful, violent, or promotional language.
 
         **Why this matters**
 
-        - **Recurring exposure:** Tool metadata is replayed into the model context on each invocation, so inappropriate content is not a one-time event.
-        - **Reputational and policy risk:** Offensive metadata can surface in agent responses and breach organizational content and acceptable-use policies.
-        - **Output contamination:** Adult, hateful, or violent phrasing in definitions can steer model output toward the same content.
+        These fields are part of every model invocation that uses the server, which makes their contents a recurring input rather than a one-time embarrassment.
 
-        **Risk mitigation**
+        Content in the context window influences output. Language of this kind, present on every call, shifts what the model produces in ways that are hard to attribute afterward, because the cause is in a configuration file rather than in the conversation anyone is reading.
 
-        - **Professional metadata:** Descriptions focused on technical behavior, allowed inputs, and outputs keep content within policy.
-        - **Review gates:** Routing definition changes through code review and pre-commit content scanning keeps regressions out of the codebase.
+        It is also reproduced widely. Tool listings are surfaced to users, logged by clients and servers, and included in support bundles, so the material appears in places nobody reviewed and travels further than the server itself.
+
+        For a third-party MCP server, this doubles as a signal about provenance. Metadata is authored upstream, and content of this sort in a tool description says something about the care taken with the rest of the implementation.
+
+        Promotional language deserves its own mention: a description that advertises rather than describes is manipulating tool selection, steering the model toward one tool over another for reasons unrelated to the task.
       audit: |-
         ### Audit via the MCP client
 
@@ -570,18 +585,21 @@ queries:
       )
     docs:
       desc: |
-        The `name` and `description` fields of MCP tools are evaluated against the Unicode general category of every character. Symbol, surrogate, private-use, and unassigned code points almost never appear in legitimate metadata and are the building blocks of homograph, bidirectional-text, and hidden-character attacks against the model and the user.
+        This check verifies that MCP tool metadata uses only ordinary characters.
+
+        The check reads the Unicode general category of every character in each tool's `name` and `description`, and fails on symbol, surrogate, private-use, and unassigned code points.
 
         **Why this matters**
 
-        - **Homograph deception:** Visually similar characters from outside the basic Latin set let an attacker disguise a tool as a trusted one.
-        - **Hidden instructions:** Format-class code points such as zero-width and bidirectional controls can smuggle invisible content into the model context, while symbol characters enable markup and instruction injection in rendered metadata.
-        - **Malformed and ambiguous text:** Surrogate, private-use, and unassigned code points have no standard meaning and can break rendering or parsing.
+        These categories almost never appear in legitimate metadata, and they are the building blocks of the attacks that make text mean something other than it appears to.
 
-        **Risk mitigation**
+        Homograph substitution is the first. Characters that render identically to Latin letters let a tool masquerade as another, so a reviewer reading a tool list sees a familiar name while the model matches a different string. Private-use code points render inconsistently or not at all, which lets content appear in the model's context while being invisible in the interface a human reviews.
 
-        - **Restricted character set:** Limiting metadata to printable ASCII and well-known Unicode letters removes the deceptive and hidden-character surface.
-        - **Normalization and screening:** Normalizing to Unicode Form C and rejecting the four risky categories enforces the constraint at registration time.
+        That difference between what a reviewer sees and what the model receives is the whole point of the check, and it is exactly the gap an injected instruction hides in.
+
+        Unassigned and surrogate code points also cause inconsistent handling across clients, so the same metadata behaves differently depending on what connected, which makes the resulting behavior hard to reproduce and diagnose.
+
+        Legitimate metadata rarely needs anything outside ordinary letters, digits, and punctuation. Where a genuine use exists, such as a non-Latin script in a description, expect this check to flag it and treat the exemption as deliberate.
       audit: |-
         ### Audit via the MCP client
 
@@ -681,18 +699,21 @@ queries:
       )
     docs:
       desc: |
-        MCP resources and resource templates must each declare a non-empty `name` and `description`, and those descriptions must contain neither explicit content nor personally identifiable information. Resource metadata is returned to every connected client and flows into the model context, so an empty or unsafe definition both starves the agent of context and leaks unsafe content.
+        This check verifies that MCP resources and resource templates are properly described and free of sensitive or explicit content.
+
+        The check requires every advertised resource to declare a non-empty `name` and `description`, and screens those descriptions for explicit content and for personally identifiable information covering person names, locations, and payment card numbers.
 
         **Why this matters**
 
-        - **Ambiguous resources:** A missing `name` or `description` leaves clients and the model unable to determine what a resource provides.
-        - **Privacy exposure:** Personal data in a resource description flows into model context and logs that are not scoped to hold it.
-        - **Content policy breach:** Explicit content in resource metadata is replayed to every client and can surface in agent output.
+        Resources are the MCP server's data surface, where tools are its action surface. Their metadata is returned to every connected client and flows into the model context in the same way, so the same exposure applies with a different set of contents behind it.
 
-        **Risk mitigation**
+        The naming requirement carries more weight here than it does for tools. A resource is something the model may choose to read, and it makes that choice from the name and description alone. An unnamed or undescribed resource is either never used or used blindly, and the second is worse: the model pulls data into context without any basis for judging whether it should.
 
-        - **Complete definitions:** Requiring a name and description for every resource and template gives the agent reliable context.
-        - **Screened descriptions:** Validating descriptions for explicit content and personal data at registration time keeps unsafe content out of the catalog.
+        Resource templates extend this. A template describes a family of resources reachable through a parameter, so its description governs how the model constructs requests, and a vague one produces requests the author did not anticipate.
+
+        Personal data in these descriptions has the same wide distribution as in tool metadata, reaching every client and every log without any of the handling personal data normally attracts.
+
+        Describe what the resource contains and what it is for, precisely enough that the model's decision to read it is well founded, and use placeholders rather than real values in any example.
       audit: |-
         ### Audit via the MCP client
 
