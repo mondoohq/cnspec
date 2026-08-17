@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-shodan
     name: Mondoo Shodan Security
-    version: 1.2.0
+    version: 1.2.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -62,18 +62,19 @@ queries:
     mql: shodan.profile.member == true
     docs:
       desc: |
-        This check verifies that the Shodan account used to assess the organization holds an active membership. Shodan offers free and paid membership tiers, and most scanning, monitoring, and API capabilities depend on an active paid membership.
+        This check verifies that the account used to observe the organization's internet-facing estate holds the entitlements that external exposure monitoring depends on.
+
+        Shodan sells access in tiers. A free account can look up a handful of addresses and run a small number of searches. A paid membership adds API access, on-demand scan submission, network monitoring, and the query and scan credits that make it practical to sweep an entire address range. Membership status appears on the account overview page of the Shodan website, and this check requires that the account report an active membership.
 
         **Why this matters**
 
-        - **Continuous visibility:** An active membership keeps network monitoring and on-demand scans available, so changes in exposure are detected promptly.
-        - **API access:** Automated security workflows that query Shodan rely on the API access that membership provides.
-        - **Scan capacity:** Membership grants the query and scan credits needed to assess the full external footprint rather than a sampled subset.
+        The rest of this policy is only as good as the account behind it. Every other check here asks Shodan what the internet can already see about a host or a domain, and the answers arrive through the API. When a membership lapses, those queries stop returning data rather than returning wrong data, so the failure is quiet. A scan that used to enumerate open ports and known vulnerabilities across an estate reports nothing, and nothing looks a great deal like clean.
 
-        **Risk mitigation**
+        Credits matter as much as access. Query and scan credits are what let an operator re-scan an address after closing a port instead of waiting days for the next crawl, and what let a sweep cover every address in a range rather than the first few. An estate assessed on a sampled subset produces a picture that is accurate about what it examined and silent about the rest, and the addresses that go unexamined are exactly the ones an attacker enumerating the range will reach.
 
-        - **Avoids monitoring gaps:** A lapsed membership silently disables scanning and monitoring, leaving new exposures undetected.
-        - **Sustains coverage:** Maintaining the appropriate tier keeps the organization's entire internet-facing estate in scope.
+        Membership also decides whether monitoring is continuous or occasional. Network monitoring alerts on newly opened ports and newly published vulnerabilities against registered addresses, which is the difference between learning about an exposed management interface within a day and learning about it from whoever found it first.
+
+        This check reports on the assessing account rather than on anything the organization operates, so a failure belongs to whoever owns the tooling rather than to a system owner. If external exposure monitoring is deliberately handled by another product, this policy is not the right one to run against the organization.
       audit: |-
         Verify your organization's Shodan membership status using Shodan's own tooling:
 
@@ -135,18 +136,19 @@ queries:
     mql: shodan.host.ports == empty
     docs:
       desc: |
-        This check ensures that Shodan observes no open ports on the host. Every port reachable from the internet is a potential entry point, and a host that exposes no ports presents no network-facing attack surface to opportunistic scanning.
+        This check verifies that the host presents no internet-reachable service, by confirming that Shodan's index holds no open ports for its public address.
+
+        Shodan crawls the public address space continuously, connects to every port that answers, and publishes what came back along with the address, the software and version named in the banner, the hosting provider, and the country. The record for a single address is browsable on the Shodan website and searchable by anyone. This check requires that the record list no ports at all.
 
         **Why this matters**
 
-        - **Reduced attack surface:** Each closed port removes a service an attacker could probe, fingerprint, or exploit.
-        - **Lower exposure to scanning:** Internet-wide scanners such as Shodan continuously catalog open ports, and a host with none does not appear as a target.
-        - **Defense in depth:** Closing unused ports limits the blast radius if a single service is later found vulnerable.
+        An open port here is not a theoretical exposure. It is a published one. Shodan's search syntax lets anyone select hosts by port, product, version, organization, and country in a single query, so an attacker who wants every reachable instance of a particular database or remote-access product does not scan for it. They ask for the list and receive it already fingerprinted. Reconnaissance that once cost an internet-wide scan now costs a search.
 
-        **Risk mitigation**
+        That inverts the usual assumption about obscure services. A management interface on an unusual port, a database someone opened for an afternoon, a camera or a printer that was racked and forgotten: none of these are hard to find, because the finding was done in advance by a crawler that visits everything. The gap between exposing a service and appearing in someone's target list is a crawl interval, not a discovery effort.
 
-        - **Prevents unauthorized access:** Closed ports block direct connections to services that should not be publicly reachable.
-        - **Limits data exposure:** Restricting network entry points reduces the paths available for data exfiltration or unauthorized transfer.
+        The port is also where an attacker's options begin. Every answering service is an authentication surface to spray credentials against, a protocol implementation to send malformed input to, and a version string that says which published exploits are worth trying. A host with nothing listening offers none of that and is skipped for the next entry in the list.
+
+        The fix is usually network placement rather than a setting on the host. Withdraw the address, move the service behind a VPN or a source allowlist, or decommission it. Be careful about what a pass means. It means Shodan has no ports on record, which may be because the host genuinely accepts no connections or because the crawler has not reached it recently. An absent finding is not proof that a host is unreachable, and a present finding may describe a port that has since been closed, because the record carries the time of the last observation rather than the state right now.
       audit: |-
         Check the ports Shodan has observed on the host using Shodan's own tooling:
 
@@ -208,18 +210,19 @@ queries:
     mql: shodan.host.vulns == empty
     docs:
       desc: |
-        This check ensures that Shodan associates no known vulnerabilities with the host. Shodan correlates the service banners it observes against published CVEs, so a flagged host is very likely running software with a documented weakness.
+        This check verifies that the host's internet-facing software carries no publicly indexed vulnerability, by confirming that Shodan associates no CVE with its public address.
+
+        When Shodan connects to a port it records the service banner, and where that banner names a product and a version it matches the pair against published CVE data and attaches the result to the host record. The list appears on the host's page on the Shodan website and in the command line output for that address. This check requires the list to be empty.
 
         **Why this matters**
 
-        - **Known exploit paths:** Vulnerabilities surfaced by Shodan are public, so attackers can find and target the host with readily available exploit code.
-        - **Internet-wide visibility:** A vulnerability visible to Shodan is visible to every other scanner, making the host an easy opportunistic target.
-        - **Patch hygiene:** A clean result indicates that exposed services are running supported, up-to-date software.
+        A CVE on a host record is a finished piece of attacker research. Finding a reachable instance, fingerprinting what it runs, and deciding which published exploit applies has already been done and published, and Shodan's search syntax returns every indexed host carrying a given CVE. Within hours of a widely exploited vulnerability being disclosed, that query is how mass exploitation campaigns assemble their target list, and a host on it is attacked because it is on the list rather than because anyone chose it.
 
-        **Risk mitigation**
+        Timing is what makes the exposure expensive. The interval between a proof of concept appearing and opportunistic scanning arriving is routinely measured in days, and an internet-facing service that lags a patch cycle spends that interval visible to everyone running the query. The perimeter is the worst place to carry that lag, because a foothold there needs no phishing, no insider, and no prior access.
 
-        - **Prevents exploitation:** Remediating flagged CVEs closes the documented paths attackers use to gain access or disrupt service.
-        - **Improves resilience:** Keeping internet-facing software current reduces the window between disclosure and patching.
+        A flagged CVE is also frequently the visible part of a larger gap. Version-derived findings usually indicate a service that has not been updated in some time, so the named CVE sits alongside every other issue fixed in the releases that were skipped, including ones with no banner-visible signature at all.
+
+        Confirm a finding against the installed software before acting on it, and confirm a clean result before trusting it. Shodan reads the version a service advertises, so a distribution that backports a fix without changing that string leaves the CVE listed against a host that is genuinely patched, while a host whose banner has been suppressed or rewritten shows nothing and remains vulnerable. A clean result is also only as fresh as the last crawl. After patching, request a re-scan rather than waiting for the record to catch up on its own.
       audit: |-
         Check the vulnerabilities Shodan has associated with the host using Shodan's own tooling:
 
@@ -281,18 +284,19 @@ queries:
     mql: shodan.domain.hosts.all(vulns == empty)
     docs:
       desc: |
-        This check ensures that none of the IP addresses the domain and its subdomains resolve to have known vulnerabilities associated with them in Shodan. Shodan correlates the service banners it observes against published CVEs, so a flagged host reachable through the domain is very likely running software with a documented weakness.
+        This check verifies that everything reachable under the domain is free of publicly indexed vulnerabilities, by confirming that Shodan associates no CVE with any address the domain and its subdomains resolve to.
+
+        Shodan keeps DNS records alongside its host index, so a domain lookup returns the subdomains it knows about and the addresses behind them, and each of those addresses carries its own record of observed services and the CVEs matched against their banners. This check walks that resolved set and requires every host in it to be clean.
 
         **Why this matters**
 
-        - **Domain-wide visibility:** A domain is the entry point attackers enumerate first, and every address it resolves to inherits the domain's exposure. Assessing the resolved hosts surfaces weaknesses that a per-IP review can miss.
-        - **Known exploit paths:** Vulnerabilities surfaced by Shodan are public, so attackers can find and target any reachable host with readily available exploit code.
-        - **Subdomain sprawl:** Forgotten or staging subdomains often point to unmaintained hosts, and those are the addresses most likely to carry unpatched CVEs.
+        A domain is where enumeration starts. An attacker choosing a target does not begin with an address. They begin with a name, expand it into subdomains using certificate transparency logs and passive DNS, and resolve each one. What comes back is the estate as it actually stands, including the parts nobody on the defending side has an inventory entry for. Reviewing addresses one at a time only ever covers the addresses someone remembered to list.
 
-        **Risk mitigation**
+        The hosts that fail here are rarely the flagship ones. Production is patched because production is watched. It is the staging copy behind a name from a project that ended, the vendor demo someone pointed a subdomain at, the legacy application kept alive for a single customer, that run software years behind and carry the CVEs. Those hosts are equally resolvable and equally indexed, and are often trusted by internal systems in a way an anonymous address on the internet is not, so a foothold there tends to land inside rather than outside.
 
-        - **Prevents exploitation:** Remediating flagged CVEs on every resolved host closes the documented paths attackers use to gain access or disrupt service.
-        - **Reduces blast radius:** Keeping the full set of internet-facing hosts behind a domain current limits how far an attacker can move after a single foothold.
+        Shared naming compounds it. A subdomain still pointing at an address someone else now controls, or at a host in another team's account, extends the domain's standing to infrastructure the domain's owner does not administer. Cookies scoped to a parent domain, certificates issued against a wildcard, and internal allowlists written against the name all follow the delegation wherever it now leads.
+
+        Remediation here frequently means removing a record rather than patching a host. Where a name resolves to something nobody intends to operate, deleting the DNS entry both clears the finding and shrinks the surface permanently. Where the host must stay, patch it and request a re-scan rather than waiting for the crawl, and read a pass narrowly: it says nothing vulnerable was found among the addresses Shodan has observed for this domain, not that the domain publishes nothing else.
       audit: |-
         Check the vulnerabilities Shodan associates with the hosts the domain resolves to using Shodan's own tooling:
 
@@ -354,18 +358,19 @@ queries:
     mql: shodan.domain.nsrecords.where(type == "NS").length >= 2
     docs:
       desc: |
-        This check ensures that the domain is served by at least two nameservers. DNS is the entry point to every service published under a domain, and a single nameserver is a single point of failure: if it becomes unreachable, the entire domain stops resolving and all of its services become inaccessible. RFC 2182 recommends operating multiple, independently reachable nameservers.
+        This check verifies that name resolution for the domain survives the loss of a single server, by confirming that the DNS records Shodan holds for the domain list at least two nameservers.
+
+        Delegation records at the registrar tell every resolver on the internet which servers are authoritative for a domain, and resolvers try them in turn until one answers. Shodan records that delegation alongside its index of the domain. This check requires two or more records of type NS. RFC 2182 sets the same floor and asks further that the servers be genuinely independent of one another in network path and location.
 
         **Why this matters**
 
-        - **Availability:** Multiple nameservers keep a domain resolvable when one server fails, is overloaded, or is taken offline by a denial-of-service attack.
-        - **Resilience to disruption:** Independent nameservers reduce the chance that a single network outage or maintenance window makes the whole domain disappear.
-        - **Graceful degradation:** Resolvers automatically retry against the remaining nameservers, so transient failures stay invisible to users.
+        When a domain has one nameserver, that server is the domain. Not one service under it, all of them. Resolvers with nothing else to try return failure, caches expire within the TTL, and mail delivery, API clients, certificate validation, and the website itself stop together. Nothing on the hosts is broken and nothing in the application changed, which is a large part of why this kind of outage takes so long to diagnose.
 
-        **Risk mitigation**
+        A single delegation is also an inviting target. Denial of service against name resolution is unusually efficient, because DNS servers answer small requests from anyone and taking one host off the air removes an entire organization from the internet. Two servers on the same subnet behind the same transit provider barely improve on this. The attacker still has one target, and so does a fiber cut or a misapplied firewall rule.
 
-        - **Avoids total outage:** Removing the single point of failure prevents one server's downtime from taking every service under the domain with it.
-        - **Limits denial-of-service impact:** An attacker must overwhelm every nameserver at once rather than a single target to disrupt resolution.
+        Redundancy is also what keeps ordinary maintenance ordinary. With a second authoritative server, patching the first, rebooting it, or migrating it is invisible to users, because resolvers retry elsewhere within a fraction of a second. With one, every routine change becomes a scheduled outage, gets deferred, and the deferred patching of an internet-facing service carries consequences of its own.
+
+        A second server only helps if the zone data on it is complete and current, so pair the change with replication and confirm that each server answers authoritatively before relying on it. Note also that Shodan reports the delegation as it last observed it, so a newly added nameserver may not appear until the next crawl, and the registrar remains the authority on what is actually published.
       audit: |-
         Check the nameservers Shodan has recorded for the domain using Shodan's own tooling:
 
