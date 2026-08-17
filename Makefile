@@ -154,7 +154,7 @@ VALIDATION := content/validation
 .PHONY: test/content/remediation test/content/remediation/terraform test/content/remediation/cloudformation
 .PHONY: test/content/remediation/bicep test/content/remediation/ansible test/content/remediation/powershell
 .PHONY: test/content/remediation/bash test/content/remediation/chef
-.PHONY: test/content/commands test/content/upstream
+.PHONY: test/content/commands test/content/upstream test/content/upstream/unit
 
 # The checks that run with nothing installed but Go and cnspec. Two groups are
 # deliberately left out, each for its own reason:
@@ -268,6 +268,13 @@ test/content/commands:
 # reports only, never fails the build.
 test/content/upstream:
 	python3 $(VALIDATION)/upstream/check.py --format markdown
+
+# The resolvers behind that report, against recorded upstream payloads. Offline
+# and fast, and the one part of this that does fail the build: a resolver that
+# reads an index wrongly opens a pull request bumping a pin to a version that
+# does not exist.
+test/content/upstream/unit:
+	python3 -m unittest discover -s $(VALIDATION)/upstream -p "*_test.py"
 
 .PHONY: test/lint/staticcheck
 test/lint/staticcheck:
