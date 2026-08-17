@@ -118,18 +118,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that Pods have the `ownerReferences` metadata field populated, which indicates they were created by a controller (such as a Deployment, ReplicaSet, DaemonSet, StatefulSet, or Job) rather than directly.
+        This check verifies that every Pod is managed by a controller rather than created on its own.
+
+        When a Deployment, ReplicaSet, StatefulSet, DaemonSet, or Job creates a Pod, the API server records the parent in the Pod's `ownerReferences` metadata. A Pod applied directly from a manifest has that list empty, and nothing in the cluster is responsible for it. This check requires `ownerReferences` to be present and non-empty.
 
         **Why this matters**
 
-        The `ownerReferences` metadata field establishes the relationship between a Pod and its managing controller. Pods without this metadata are typically "orphaned" or manually created, which creates operational risks:
+        A standalone Pod is the one workload Kubernetes does not put back. If its node fails, is drained for an upgrade, or is removed by a scale-down, the Pod is deleted and stays deleted; the self-healing behavior people expect from the cluster comes from the controller, not from the Pod. A service running as a bare Pod is therefore down until a person notices and reapplies the manifest, and node maintenance turns from a routine operation into an outage.
 
-          - **No automatic recovery**: Without a controller tracking the Pod, Kubernetes will not recreate it if it crashes or the node fails.
-          - **No garbage collection**: Orphaned Pods are not automatically cleaned up when their parent resources are deleted.
-          - **Manual lifecycle management**: Updates, scaling, and deletion must be handled manually for each Pod.
-          - **Cluster maintenance risks**: During node drains or upgrades, Pods without owner references may be lost permanently.
+        Everything else that operates on workloads is missing too. There is no rollout, so a new image means deleting and recreating by hand with a gap in between. There is no scaling, no rollback to a previous revision, and no HorizontalPodAutoscaler, because those all act on a controller.
 
-        Ensure Pods are created through controllers like Deployments, which set the `ownerReferences` field automatically and provide lifecycle management.
+        Garbage collection is driven by the same metadata. Kubernetes cleans up children when a parent is deleted by following `ownerReferences`, so a Pod without one is never collected. Debugging Pods started for a one-off investigation routinely survive for months, holding resources and confusing anyone auditing what is running.
+
+        Recreate the workload through a controller, most often a Deployment, which sets `ownerReferences` automatically. Give the new controller a selector and Pod labels that do not match the existing standalone Pod, or it may adopt the Pod instead of creating its own, then delete the standalone Pod once the managed one is serving.
       audit: |
         Check for Pods without an owner reference. Any line of output starting with '0' will indicate a Pod that has no owner:
 
@@ -187,19 +188,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define CPU resource requests, which tell the Kubernetes scheduler how much CPU capacity the container needs.
+        This check verifies that every container and init container in a Pod declares a CPU request.
+
+        `resources.requests.cpu` states how much CPU the container needs, expressed in cores or millicores such as `250m`. The scheduler subtracts it from a node's allocatable capacity when deciding where the Pod fits, and the kubelet uses it to weight the container's share of CPU time when the node is contended. This check requires the field on both the `containers` and the `initContainers` entries of the Pod spec.
 
         **Why this matters**
 
-        Without CPU requests, Kubernetes cannot make informed scheduling decisions, leading to operational and stability risks:
+        The request is the only thing the scheduler knows about what a Pod needs. Omit it and the Pod is treated as costing nothing, so it will be placed on a node that is already fully committed. It starts, competes for leftover cycles, and runs slowly, and there is nothing in the Pod's own status to say that placement is the reason.
 
-          - **Resource contention**: Pods may be scheduled on nodes without sufficient CPU capacity, causing performance degradation for all workloads on that node.
-          - **Unpredictable throttling**: During high load, containers without requests receive lower priority and may be heavily throttled.
-          - **Quality of Service degradation**: Pods without requests are classified as BestEffort QoS, making them first to be evicted under resource pressure.
-          - **Autoscaling failures**: Horizontal Pod Autoscaler and cluster autoscaler rely on resource requests to function correctly.
-          - **Capacity planning challenges**: Without requests, it is impossible to accurately plan cluster capacity or predict resource utilization.
+        Contention is resolved by the same number. The kernel scheduler divides CPU time in proportion to the requests of the containers on the node, so a container that requested nothing gets the smallest possible share whenever anything else wants CPU. It runs at full speed on a quiet node and is throttled hard on a busy one, which makes performance depend on where it happened to land.
 
-        Defining CPU requests ensures predictable scheduling, fair resource allocation, and stable cluster operations.
+        The request also fixes the Pod's quality of service class. A Pod whose containers declare neither requests nor limits is BestEffort, the first class the kubelet evicts when a node comes under pressure. That makes the least specific manifest the first casualty rather than the least important workload.
+
+        Init containers need the field too. The scheduler sizes a Pod on the larger of the highest single init container request and the sum of the regular containers, so an unspecified init container distorts the whole calculation.
       audit: |
         Check for the existence of CPU `requests` resources.
 
@@ -253,19 +254,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define CPU resource requests, which tell the Kubernetes scheduler how much CPU capacity the container needs.
+        This check verifies that every container and init container in a CronJob's Pod template declares a CPU request.
+
+        `resources.requests.cpu` states how much CPU the container needs in order to run, expressed in cores or millicores such as `250m`. The scheduler subtracts it from a node's allocatable capacity when deciding where the Pod fits, and the kubelet uses it to weight the container's share of CPU when the node is busy. This check requires the field on both the `containers` and the `initContainers` entries of the Pod template.
 
         **Why this matters**
 
-        Without CPU requests, Kubernetes cannot make informed scheduling decisions, leading to operational and stability risks:
+        With no request the scheduler treats the container as needing nothing and will happily place the Pod on a node that is already fully committed. The Pod starts, competes for whatever cycles are left over, and runs slowly. A CronJob that normally finishes in two minutes can take an hour on a busy node, and if the schedule fires again before it finishes you get overlapping runs or a skipped one, depending on `concurrencyPolicy`.
 
-          - **Resource contention**: Pods may be scheduled on nodes without sufficient CPU capacity, causing performance degradation for all workloads on that node.
-          - **Unpredictable throttling**: During high load, containers without requests receive lower priority and may be heavily throttled.
-          - **Quality of Service degradation**: Pods without requests are classified as BestEffort QoS, making them first to be evicted under resource pressure.
-          - **Autoscaling failures**: Horizontal Pod Autoscaler and cluster autoscaler rely on resource requests to function correctly.
-          - **Capacity planning challenges**: Without requests, it is impossible to accurately plan cluster capacity or predict resource utilization.
+        The omission also changes how the Pod is treated under pressure. A Pod whose containers declare neither requests nor limits is classified BestEffort, which puts it first in line for eviction when the node runs short. Long batch work is exactly the kind that suffers most from being killed near the end, because the work already done is usually thrown away.
 
-        Defining CPU requests ensures predictable scheduling, fair resource allocation, and stable cluster operations.
+        Cluster autoscaling reads the same field. An autoscaler decides whether to add a node by summing the requests of the Pods it cannot place, so a Pending batch Pod that requests nothing gives it no reason to grow the cluster and the Job waits.
+
+        Set the request to what the job actually consumes at steady state rather than to its peak. A request far above real usage strands capacity on the node for the whole run.
       audit: |
         Check for the existence of CPU `requests` resources.
 
@@ -323,19 +324,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define CPU resource requests, which tell the Kubernetes scheduler how much CPU capacity the container needs.
+        This check verifies that every container and init container in a StatefulSet's Pod template declares a CPU request.
+
+        `resources.requests.cpu` states the CPU the container needs to do its work, in cores or millicores such as `250m`. The scheduler counts it against a node's allocatable CPU when choosing where the Pod fits, and the kubelet uses it to weight the container's share when the node is oversubscribed. This check requires the field on both the `containers` and the `initContainers` entries of the Pod template.
 
         **Why this matters**
 
-        Without CPU requests, Kubernetes cannot make informed scheduling decisions, leading to operational and stability risks:
+        With no request the scheduler believes the Pod needs nothing and will place it on a node that is already fully committed. The replica starts, gets whatever CPU is left over, and runs slowly. In a StatefulSet that slowness does not stay in one Pod: a lagging member of a replicated store falls behind on replication, fails its peers' health checks, and can be voted out of the group, so one badly placed replica degrades the whole set.
 
-          - **Resource contention**: Pods may be scheduled on nodes without sufficient CPU capacity, causing performance degradation for all workloads on that node.
-          - **Unpredictable throttling**: During high load, containers without requests receive lower priority and may be heavily throttled.
-          - **Quality of Service degradation**: Pods without requests are classified as BestEffort QoS, making them first to be evicted under resource pressure.
-          - **Autoscaling failures**: Horizontal Pod Autoscaler and cluster autoscaler rely on resource requests to function correctly.
-          - **Capacity planning challenges**: Without requests, it is impossible to accurately plan cluster capacity or predict resource utilization.
+        Placement matters more here than for a stateless workload, because the choice is sticky. A StatefulSet Pod is bound to its PersistentVolumeClaim, and once that volume is provisioned in a particular zone or on a particular node the replica returns to the same neighborhood every time it restarts. A poor first placement repeats for the life of the workload.
 
-        Defining CPU requests ensures predictable scheduling, fair resource allocation, and stable cluster operations.
+        The request also decides the Pod's quality of service class. A Pod whose containers declare no requests is BestEffort and is the first candidate for eviction when the node comes under pressure, which is precisely the wrong treatment for the replica holding your data.
+
+        Base the number on measured steady-state usage rather than on peak, and let a limit, if you set one, absorb the bursts.
       audit: |
         Check for the existence of CPU `requests` resources.
 
@@ -391,19 +392,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define CPU resource requests, which tell the Kubernetes scheduler how much CPU capacity the container needs.
+        This check verifies that every container and init container in a Deployment's Pod template declares a CPU request.
+
+        `resources.requests.cpu` states how much CPU the container needs, in cores or millicores such as `250m`. The scheduler subtracts it from a node's allocatable capacity when choosing a placement, and the kubelet uses it to weight the container's share when the node is oversubscribed. This check requires the field on both the `containers` and the `initContainers` entries of the Pod template.
 
         **Why this matters**
 
-        Without CPU requests, Kubernetes cannot make informed scheduling decisions, leading to operational and stability risks:
+        With no request the scheduler treats the Pod as free and will place it on a node that is already fully committed. Replicas of the same Deployment then behave differently depending on where they landed: one on an idle node responds in milliseconds, another sharing a saturated node responds in seconds. Latency percentiles get worse while the average looks fine, and the cause is invisible from the workload itself.
 
-          - **Resource contention**: Pods may be scheduled on nodes without sufficient CPU capacity, causing performance degradation for all workloads on that node.
-          - **Unpredictable throttling**: During high load, containers without requests receive lower priority and may be heavily throttled.
-          - **Quality of Service degradation**: Pods without requests are classified as BestEffort QoS, making them first to be evicted under resource pressure.
-          - **Autoscaling failures**: Horizontal Pod Autoscaler and cluster autoscaler rely on resource requests to function correctly.
-          - **Capacity planning challenges**: Without requests, it is impossible to accurately plan cluster capacity or predict resource utilization.
+        Horizontal autoscaling breaks outright. A HorizontalPodAutoscaler that targets CPU utilization computes usage as a percentage of the request, and with no request there is nothing to take a percentage of, so the metric is unavailable and the autoscaler stops making decisions for that workload. Cluster autoscaling has the same dependency in reverse: it decides whether to add a node by summing the requests of unschedulable Pods, and Pods that request nothing never justify a new node.
 
-        Defining CPU requests ensures predictable scheduling, fair resource allocation, and stable cluster operations.
+        The quality of service class follows from the same field. A Pod with no requests is BestEffort and is evicted first when its node comes under pressure, so the replicas that get killed are chosen by which manifest was least specific rather than by which workload matters least.
+
+        Base the value on measured steady-state usage. Init containers need one too, since the scheduler sizes the Pod on the larger of the init phase and the running phase.
       audit: |
         Check for the existence of CPU `requests` resources.
 
@@ -459,19 +460,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define CPU resource requests, which tell the Kubernetes scheduler how much CPU capacity the container needs.
+        This check verifies that every container and init container in a Job's Pod template declares a CPU request.
+
+        `resources.requests.cpu` states how much CPU the container needs, in cores or millicores such as `250m`. The scheduler subtracts it from a node's allocatable capacity when choosing a placement, and the kubelet uses it to weight the container's share when the node is contended. This check requires the field on both the `containers` and the `initContainers` entries of the Pod template.
 
         **Why this matters**
 
-        Without CPU requests, Kubernetes cannot make informed scheduling decisions, leading to operational and stability risks:
+        With no request the scheduler treats the Pod as costing nothing and will place it on a node that is already fully committed. The worker starts and then crawls, competing for leftover cycles against workloads that did declare what they need. A Job that should finish in minutes runs for hours, and if it has an `activeDeadlineSeconds` it is killed for exceeding a deadline that had nothing to do with the work.
 
-          - **Resource contention**: Pods may be scheduled on nodes without sufficient CPU capacity, causing performance degradation for all workloads on that node.
-          - **Unpredictable throttling**: During high load, containers without requests receive lower priority and may be heavily throttled.
-          - **Quality of Service degradation**: Pods without requests are classified as BestEffort QoS, making them first to be evicted under resource pressure.
-          - **Autoscaling failures**: Horizontal Pod Autoscaler and cluster autoscaler rely on resource requests to function correctly.
-          - **Capacity planning challenges**: Without requests, it is impossible to accurately plan cluster capacity or predict resource utilization.
+        The reverse harm is just as real. A compute-heavy Job that requests nothing is invisible to the scheduler's accounting, so the scheduler keeps assigning latency-sensitive Pods to the same node while the Job saturates it. The workload that suffers is the one that was well behaved.
 
-        Defining CPU requests ensures predictable scheduling, fair resource allocation, and stable cluster operations.
+        Eviction ordering compounds it. A Pod with neither requests nor limits is BestEffort and is terminated first when the node comes under pressure, so a long-running Job is likely to be killed near the end and start over from the beginning, up to whatever `backoffLimit` allows.
+
+        Cluster autoscaling reads the same field: unschedulable Pods that request nothing give an autoscaler no reason to add capacity, so a queued Job waits indefinitely. Set the request from a measured run, and set one on init containers too.
       audit: |
         Check for the existence of CPU `requests` resources.
 
@@ -527,19 +528,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define CPU resource requests, which tell the Kubernetes scheduler how much CPU capacity the container needs.
+        This check verifies that every container and init container in a ReplicaSet's Pod template declares a CPU request.
+
+        `resources.requests.cpu` states how much CPU the container needs, in cores or millicores such as `250m`. The scheduler subtracts it from a node's allocatable capacity when choosing a placement, and the kubelet uses it to weight the container's share when the node is oversubscribed. This check requires the field on both the `containers` and the `initContainers` entries of the Pod template.
 
         **Why this matters**
 
-        Without CPU requests, Kubernetes cannot make informed scheduling decisions, leading to operational and stability risks:
+        With no request the scheduler treats every replica as free and will place them on nodes that are already fully committed. Because the replicas are identical, the result is inconsistent rather than uniformly bad: one replica on a quiet node answers quickly, another on a saturated node answers slowly, and the same request served by the same image behaves differently depending on where it landed. Tail latency degrades while averages stay respectable, and the workload gives no indication that placement is the cause.
 
-          - **Resource contention**: Pods may be scheduled on nodes without sufficient CPU capacity, causing performance degradation for all workloads on that node.
-          - **Unpredictable throttling**: During high load, containers without requests receive lower priority and may be heavily throttled.
-          - **Quality of Service degradation**: Pods without requests are classified as BestEffort QoS, making them first to be evicted under resource pressure.
-          - **Autoscaling failures**: Horizontal Pod Autoscaler and cluster autoscaler rely on resource requests to function correctly.
-          - **Capacity planning challenges**: Without requests, it is impossible to accurately plan cluster capacity or predict resource utilization.
+        The scheduler also has no way to spread the load sensibly. Requests are the input to its scoring, so a set of replicas that request nothing can all be assigned to the same node, concentrating on one machine the very redundancy the ReplicaSet exists to provide.
 
-        Defining CPU requests ensures predictable scheduling, fair resource allocation, and stable cluster operations.
+        Quality of service follows from the same field. A Pod with neither requests nor limits is BestEffort and is evicted first under node pressure, so the replicas that get killed are chosen by which template was least specific rather than by importance.
+
+        Set the value from measured steady-state usage, and set one on init containers as well, since the scheduler sizes the Pod on the larger of the init phase and the running phase. If the ReplicaSet is managed by a Deployment, make the change there so it is not reverted on the next reconcile.
       audit: |
         Check for the existence of CPU `requests` resources.
 
@@ -595,19 +596,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define CPU resource requests, which tell the Kubernetes scheduler how much CPU capacity the container needs.
+        This check verifies that every container and init container in a DaemonSet's Pod template declares a CPU request.
+
+        `resources.requests.cpu` states how much CPU the container needs, in cores or millicores such as `250m`. The scheduler subtracts it from a node's allocatable capacity, and the kubelet uses it to weight the container's share when the node is contended. This check requires the field on both the `containers` and the `initContainers` entries of the Pod template.
 
         **Why this matters**
 
-        Without CPU requests, Kubernetes cannot make informed scheduling decisions, leading to operational and stability risks:
+        A DaemonSet runs on every node, so its request is subtracted from every node's allocatable capacity. Declaring it is what makes the rest of the cluster's accounting correct: without it, the scheduler believes each node has more CPU available for application Pods than it really does, and it over-commits every node in the cluster in the same way at the same time.
 
-          - **Resource contention**: Pods may be scheduled on nodes without sufficient CPU capacity, causing performance degradation for all workloads on that node.
-          - **Unpredictable throttling**: During high load, containers without requests receive lower priority and may be heavily throttled.
-          - **Quality of Service degradation**: Pods without requests are classified as BestEffort QoS, making them first to be evicted under resource pressure.
-          - **Autoscaling failures**: Horizontal Pod Autoscaler and cluster autoscaler rely on resource requests to function correctly.
-          - **Capacity planning challenges**: Without requests, it is impossible to accurately plan cluster capacity or predict resource utilization.
+        The agent itself suffers from the other side of the same gap. A log shipper or metrics exporter with no request gets whatever CPU is left after the application Pods on that node have taken their share, so on exactly the busy nodes where its data matters most it is throttled hardest and falls behind.
 
-        Defining CPU requests ensures predictable scheduling, fair resource allocation, and stable cluster operations.
+        Eviction ordering adds the final turn. A Pod with neither requests nor limits is BestEffort and is terminated first when a node comes under pressure, so the observability agent is killed at the moment an incident starts. There is no other replica to take over, because a DaemonSet has one Pod per node.
+
+        Set the value from measured usage on a busy node rather than an idle one, and remember that whatever you choose is multiplied by the node count. A generous request on a DaemonSet reserves that amount on every machine in the cluster, which is real capacity taken away from workloads.
       audit: |
         Check for the existence of CPU `requests` resources.
 
@@ -663,19 +664,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define memory resource requests, which tell the Kubernetes scheduler how much memory the container needs.
+        This check verifies that every container and init container in a Pod declares a memory request.
+
+        `resources.requests.memory` states how much memory the container needs, written as a quantity such as `1Gi`. The scheduler reserves that amount on the node it selects, and the kubelet uses it to decide which Pods to evict as the node approaches exhaustion. This check requires the field on both the `containers` and the `initContainers` entries of the Pod spec.
 
         **Why this matters**
 
-        Without memory requests, Kubernetes cannot properly schedule Pods or manage resources, leading to serious stability risks:
+        Memory is not shareable the way CPU is. A container denied CPU runs slower and eventually catches up; a container denied memory is killed. Without a request the scheduler has no idea the Pod needs any, so it will place it on a node whose memory is already accounted for elsewhere, and the node runs short as soon as the workload does real work.
 
-          - **Out-of-memory kills**: Containers may be scheduled on nodes with insufficient memory, leading to OOMKilled errors and application crashes.
-          - **Node instability**: Memory-hungry containers without requests can exhaust node memory, affecting all workloads on that node.
-          - **Eviction priority**: Pods without memory requests are classified as BestEffort QoS and are evicted first when nodes experience memory pressure.
-          - **Autoscaling issues**: Vertical Pod Autoscaler and cluster autoscaler cannot function correctly without memory requests defined.
-          - **Unpredictable performance**: Applications may experience severe performance degradation when competing for limited memory resources.
+        The kubelet then reclaims memory by evicting Pods, and it chooses by quality of service class. A Pod that declares no requests at all is BestEffort and is evicted first, ahead of every neighbor that stated what it needed. When memory disappears faster than the kubelet can react, the kernel out-of-memory killer acts instead and terminates whichever process it scores worst, which can be a container belonging to an entirely different workload that happened to be on the same node.
 
-        Defining memory requests ensures containers are scheduled on nodes with adequate resources and receive guaranteed memory allocation.
+        Either way the Pod dies without an application-level error, and the only trace is a terminated state and an exit code. Teams routinely spend a long time looking for a bug in code that was killed by the node rather than by anything it did.
+
+        Init containers matter as much as the main ones. A step that unpacks an archive, restores a dump, or loads a model before the application starts is often the largest allocation in the Pod, and the scheduler sizes the Pod on that peak rather than on what runs afterwards.
       audit: |
         Check for the existence of memory `requests` resources.
 
@@ -729,19 +730,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define memory resource requests, which tell the Kubernetes scheduler how much memory the container needs.
+        This check verifies that every container and init container in a CronJob's Pod template declares a memory request.
+
+        `resources.requests.memory` states how much memory the container needs, written as a quantity such as `1Gi`. The scheduler reserves that much on the node it picks, and the kubelet uses it to decide which Pods to evict when the node runs short. This check requires the field on both the `containers` and the `initContainers` entries of the Pod template.
 
         **Why this matters**
 
-        Without memory requests, Kubernetes cannot properly schedule Pods or manage resources, leading to serious stability risks:
+        Memory behaves differently from CPU under contention. A container short of CPU runs slowly; a container short of memory is killed. Without a request the scheduler assumes the Pod needs nothing and places it on a node whose memory is already spoken for, so a batch run that allocates a large working set pushes that node into memory pressure and the kubelet starts terminating Pods to recover.
 
-          - **Out-of-memory kills**: Containers may be scheduled on nodes with insufficient memory, leading to OOMKilled errors and application crashes.
-          - **Node instability**: Memory-hungry containers without requests can exhaust node memory, affecting all workloads on that node.
-          - **Eviction priority**: Pods without memory requests are classified as BestEffort QoS and are evicted first when nodes experience memory pressure.
-          - **Autoscaling issues**: Vertical Pod Autoscaler and cluster autoscaler cannot function correctly without memory requests defined.
-          - **Unpredictable performance**: Applications may experience severe performance degradation when competing for limited memory resources.
+        The Pod that gets terminated is often not the one at fault. The kubelet evicts by quality of service class first, and a Pod with no requests at all is BestEffort, so a well-behaved neighbor with an honest request survives while the batch Pod is killed partway through its run. When memory runs out faster than the kubelet reacts, the kernel out-of-memory killer steps in instead and takes whichever process it scores worst, which may be a container with nothing to do with the CronJob.
 
-        Defining memory requests ensures containers are scheduled on nodes with adequate resources and receive guaranteed memory allocation.
+        The value belongs on init containers too. An init container that decompresses an archive or loads a dataset is often the largest memory consumer in the Pod, and the scheduler sizes the Pod on the larger of the init container peak and the sum of the regular containers.
+
+        Measure a representative run before choosing the number. A request far above real usage reserves memory on the node for the whole run and leaves it idle.
       audit: |
         Check for the existence of memory `requests` resources.
 
@@ -799,19 +800,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define memory resource requests, which tell the Kubernetes scheduler how much memory the container needs.
+        This check verifies that every container and init container in a StatefulSet's Pod template declares a memory request.
+
+        `resources.requests.memory` states how much memory the container needs, written as a quantity such as `1Gi`. The scheduler reserves that amount on the node it selects, and the kubelet uses it when deciding which Pods to evict as a node approaches exhaustion. This check requires the field on both the `containers` and the `initContainers` entries of the Pod template.
 
         **Why this matters**
 
-        Without memory requests, Kubernetes cannot properly schedule Pods or manage resources, leading to serious stability risks:
+        Memory pressure is not graceful. A container denied CPU runs slower; a container denied memory is terminated. Without a request the scheduler assumes the replica needs nothing, packs it onto a node whose memory is already promised elsewhere, and the first time the working set grows the node runs short and the kubelet starts evicting.
 
-          - **Out-of-memory kills**: Containers may be scheduled on nodes with insufficient memory, leading to OOMKilled errors and application crashes.
-          - **Node instability**: Memory-hungry containers without requests can exhaust node memory, affecting all workloads on that node.
-          - **Eviction priority**: Pods without memory requests are classified as BestEffort QoS and are evicted first when nodes experience memory pressure.
-          - **Autoscaling issues**: Vertical Pod Autoscaler and cluster autoscaler cannot function correctly without memory requests defined.
-          - **Unpredictable performance**: Applications may experience severe performance degradation when competing for limited memory resources.
+        For a stateful workload an eviction is not a free restart. The replica must be rescheduled, re-attach its volume, and replay whatever it had not yet flushed, and its peers see it as down for the whole of that. If the kernel out-of-memory killer gets there before the kubelet does, the process is killed abruptly with no chance to flush at all, and recovery starts from the last checkpoint.
 
-        Defining memory requests ensures containers are scheduled on nodes with adequate resources and receive guaranteed memory allocation.
+        The eviction order makes the omission self-inflicted. A Pod with no requests is BestEffort, so it is chosen first, ahead of neighbors whose requests are honest. Declaring what the replica actually needs is what moves it out of that class.
+
+        Init containers need the field too. A replica that restores a snapshot or rebuilds an index before starting often peaks higher during that phase than in steady state, and the scheduler sizes the Pod on that peak.
       audit: |
         Check for the existence of memory `requests` resources.
 
@@ -867,19 +868,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define memory resource requests, which tell the Kubernetes scheduler how much memory the container needs.
+        This check verifies that every container and init container in a Deployment's Pod template declares a memory request.
+
+        `resources.requests.memory` states how much memory the container needs, written as a quantity such as `1Gi`. The scheduler reserves that amount on the node it selects, and the kubelet uses it to order evictions as a node approaches exhaustion. This check requires the field on both the `containers` and the `initContainers` entries of the Pod template.
 
         **Why this matters**
 
-        Without memory requests, Kubernetes cannot properly schedule Pods or manage resources, leading to serious stability risks:
+        Memory is not compressible. A container short of CPU runs slowly and recovers; a container short of memory is terminated. Without a request the scheduler believes the Pod needs nothing and packs it onto a node whose memory is already promised elsewhere, and the first time real traffic arrives the node runs short.
 
-          - **Out-of-memory kills**: Containers may be scheduled on nodes with insufficient memory, leading to OOMKilled errors and application crashes.
-          - **Node instability**: Memory-hungry containers without requests can exhaust node memory, affecting all workloads on that node.
-          - **Eviction priority**: Pods without memory requests are classified as BestEffort QoS and are evicted first when nodes experience memory pressure.
-          - **Autoscaling issues**: Vertical Pod Autoscaler and cluster autoscaler cannot function correctly without memory requests defined.
-          - **Unpredictable performance**: Applications may experience severe performance degradation when competing for limited memory resources.
+        What happens next is chosen badly. The kubelet evicts by quality of service class, and a Pod with no requests is BestEffort, so it goes first, ahead of neighbors that declared honestly. That means the replica killed under pressure is the one whose manifest was least specific rather than the one that matters least. If memory is consumed faster than the kubelet reacts, the kernel out-of-memory killer intervenes instead and terminates whichever process it scores worst, which may be a container from an entirely different workload on the same node.
 
-        Defining memory requests ensures containers are scheduled on nodes with adequate resources and receive guaranteed memory allocation.
+        Because a Deployment's replicas are identical, one under-specified template multiplies. Every replica lands on a node the scheduler over-promised, so a memory spike that would have been survivable on one node happens on several at once.
+
+        Set the request from a measured working set under load, and put it on init containers as well. A migration or asset-build step that runs before the application starts is frequently the largest allocation in the Pod, and the scheduler sizes on that peak.
       audit: |
         Check for the existence of memory `requests` resources.
 
@@ -935,19 +936,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define memory resource requests, which tell the Kubernetes scheduler how much memory the container needs.
+        This check verifies that every container and init container in a Job's Pod template declares a memory request.
+
+        `resources.requests.memory` states how much memory the container needs, written as a quantity such as `1Gi`. The scheduler reserves that amount on the node it picks, and the kubelet uses it to order evictions as the node approaches exhaustion. This check requires the field on both the `containers` and the `initContainers` entries of the Pod template.
 
         **Why this matters**
 
-        Without memory requests, Kubernetes cannot properly schedule Pods or manage resources, leading to serious stability risks:
+        Batch work is where memory estimates are hardest and the consequence of getting them wrong is largest. A Job that processes a dataset allocates in proportion to the input, so the same manifest that ran comfortably last month can need several times as much today. Without a request the scheduler has no idea any of that is coming and will place the Pod on a node whose memory is already promised elsewhere.
 
-          - **Out-of-memory kills**: Containers may be scheduled on nodes with insufficient memory, leading to OOMKilled errors and application crashes.
-          - **Node instability**: Memory-hungry containers without requests can exhaust node memory, affecting all workloads on that node.
-          - **Eviction priority**: Pods without memory requests are classified as BestEffort QoS and are evicted first when nodes experience memory pressure.
-          - **Autoscaling issues**: Vertical Pod Autoscaler and cluster autoscaler cannot function correctly without memory requests defined.
-          - **Unpredictable performance**: Applications may experience severe performance degradation when competing for limited memory resources.
+        When the node runs short, the kubelet evicts by quality of service class, and a Pod with no requests is BestEffort, so the Job's Pod is chosen first. The work done so far is lost, the Job creates a replacement, and the replacement inherits the same template and is scheduled the same way, so it fails again. The retry budget set by `backoffLimit` is consumed by a placement problem rather than by anything wrong with the code.
 
-        Defining memory requests ensures containers are scheduled on nodes with adequate resources and receive guaranteed memory allocation.
+        Neighbors pay too. A Job that quietly consumes a node's memory can push the kernel out-of-memory killer into terminating an unrelated container that happened to be resident on the same machine.
+
+        Init containers matter here more than in most workloads. A step that decompresses an archive or loads a model before the main container starts is frequently the largest allocation in the Pod, and the scheduler sizes the Pod on that peak rather than on the steady state that follows it.
       audit: |
         Check for the existence of memory `requests` resources.
 
@@ -1003,19 +1004,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define memory resource requests, which tell the Kubernetes scheduler how much memory the container needs.
+        This check verifies that every container and init container in a ReplicaSet's Pod template declares a memory request.
+
+        `resources.requests.memory` states how much memory the container needs, written as a quantity such as `1Gi`. The scheduler reserves that amount on the node it selects, and the kubelet uses it to order evictions as a node approaches exhaustion. This check requires the field on both the `containers` and the `initContainers` entries of the Pod template.
 
         **Why this matters**
 
-        Without memory requests, Kubernetes cannot properly schedule Pods or manage resources, leading to serious stability risks:
+        Memory is not compressible. A container short of CPU runs slowly and recovers; a container short of memory is terminated outright. Without a request the scheduler believes the Pod costs nothing and places it on a node whose memory is already promised to other workloads, so the node runs short as soon as real traffic arrives.
 
-          - **Out-of-memory kills**: Containers may be scheduled on nodes with insufficient memory, leading to OOMKilled errors and application crashes.
-          - **Node instability**: Memory-hungry containers without requests can exhaust node memory, affecting all workloads on that node.
-          - **Eviction priority**: Pods without memory requests are classified as BestEffort QoS and are evicted first when nodes experience memory pressure.
-          - **Autoscaling issues**: Vertical Pod Autoscaler and cluster autoscaler cannot function correctly without memory requests defined.
-          - **Unpredictable performance**: Applications may experience severe performance degradation when competing for limited memory resources.
+        Identical replicas turn one omission into a pattern. Every Pod the ReplicaSet creates carries the same under-specified template, so several nodes are over-promised at once and a memory spike that one node might have absorbed instead lands on all of them. The ReplicaSet reacts by creating replacements, which are scheduled by the same faulty accounting onto nodes that are equally short, and the workload settles into a cycle of eviction and recreation.
 
-        Defining memory requests ensures containers are scheduled on nodes with adequate resources and receive guaranteed memory allocation.
+        The eviction order makes it self-inflicted. A Pod with no requests is BestEffort, so the kubelet chooses it first, ahead of neighbors that declared what they need. Where memory is exhausted faster than the kubelet reacts, the kernel out-of-memory killer terminates whichever process it scores worst, and that may belong to an unrelated workload on the same machine.
+
+        Set the request from a measured working set under load, and put one on init containers too. A migration or asset-build step that runs before the application starts is often the largest allocation in the Pod, and the scheduler sizes on that peak.
       audit: |
         Check for the existence of memory `requests` resources.
 
@@ -1071,19 +1072,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define memory resource requests, which tell the Kubernetes scheduler how much memory the container needs.
+        This check verifies that every container and init container in a DaemonSet's Pod template declares a memory request.
+
+        `resources.requests.memory` states how much memory the container needs, written as a quantity such as `1Gi`. The scheduler reserves that amount on every node the DaemonSet covers, and the kubelet uses it to order evictions as a node approaches exhaustion. This check requires the field on both the `containers` and the `initContainers` entries of the Pod template.
 
         **Why this matters**
 
-        Without memory requests, Kubernetes cannot properly schedule Pods or manage resources, leading to serious stability risks:
+        An agent that runs on every node usually holds buffers proportional to how busy that node is. A log shipper queues lines it has not yet flushed; a metrics exporter holds a series cardinality that grows with the number of Pods on the machine. Without a memory request the scheduler assumes none of that exists and hands the node's full apparent capacity to application Pods, so the node is over-promised by the same amount everywhere in the cluster.
 
-          - **Out-of-memory kills**: Containers may be scheduled on nodes with insufficient memory, leading to OOMKilled errors and application crashes.
-          - **Node instability**: Memory-hungry containers without requests can exhaust node memory, affecting all workloads on that node.
-          - **Eviction priority**: Pods without memory requests are classified as BestEffort QoS and are evicted first when nodes experience memory pressure.
-          - **Autoscaling issues**: Vertical Pod Autoscaler and cluster autoscaler cannot function correctly without memory requests defined.
-          - **Unpredictable performance**: Applications may experience severe performance degradation when competing for limited memory resources.
+        When memory then runs short, the kubelet evicts by quality of service class and a Pod with no requests is BestEffort, so the agent goes first. That is the worst possible ordering: the node is under pressure, which is exactly when its logs and metrics are needed, and the component that would have reported it is the one being terminated. A DaemonSet has no second replica to fall back on, so the node goes dark until the Pod is recreated and, on a node that is still short of memory, evicted again.
 
-        Defining memory requests ensures containers are scheduled on nodes with adequate resources and receive guaranteed memory allocation.
+        Init containers count too. A DaemonSet that copies a binary or a configuration bundle onto the host before the agent starts can allocate more in that phase than the agent ever does afterwards, and the scheduler sizes the Pod on the larger of the two.
+
+        Measure the agent on a busy node, and keep the value modest, because it is reserved on every node in the cluster.
       audit: |
         Check for the existence of memory `requests` resources.
 
@@ -1140,19 +1141,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define a livenessProbe, which allows Kubernetes to detect when a container has become unresponsive and needs to be restarted.
+        This check verifies that every container in a Pod configures a `livenessProbe`.
+
+        A liveness probe is the kubelet's periodic test of whether the process inside a container is still working. When it fails often enough, the kubelet restarts that container in place. It is declared per container under `livenessProbe`, and this check accepts any of the handler forms Kubernetes supports: `httpGet`, `tcpSocket`, `exec`, or `grpc`.
 
         **Why this matters**
 
-        Without liveness probes, Kubernetes cannot detect application failures that do not result in container crashes, leading to degraded service availability:
+        Kubernetes has exactly one built-in signal that a container is broken, and that is the process exiting. Everything short of an exit is invisible to it. A server deadlocked on a mutex, stuck retrying a dependency that has gone away, or holding every connection in a pool it never releases, stays in the Running state indefinitely. The Pod is counted as healthy, its address stays in every Service that selects it, and requests keep arriving at a process that will not answer them.
 
-          - **Silent failures**: Applications may enter deadlock states, infinite loops, or become unresponsive while the container process continues running.
-          - **Zombie containers**: Failed containers remain in Running state, consuming resources and receiving traffic they cannot handle.
-          - **Extended outages**: Without automatic restarts, failed containers require manual intervention to recover, increasing mean time to recovery.
-          - **Load balancer issues**: Traffic continues to be routed to unhealthy containers, causing user-facing errors and degraded experience.
-          - **Cascading failures**: A single unresponsive container can cause timeouts and failures in dependent services.
+        Recovery in that state is entirely manual. Someone has to notice the errors, work out which Pod is responsible, and delete it. If deleting the Pod fixes the problem, then a restart fixes the problem, which is the case a liveness probe automates.
 
-        Configuring liveness probes enables Kubernetes to automatically restart unhealthy containers, improving application resilience and reducing operational burden.
+        Choose a handler that exercises a path that can actually fail. A `tcpSocket` probe confirms only that something is accepting connections, which a wedged server generally still does; an `httpGet` against an endpoint that touches the work the container is meant to do catches much more.
+
+        Size `initialDelaySeconds` for the slowest legitimate startup, or use a startup probe to cover the boot window, because a liveness probe that fires too early restarts a container that was merely still starting. Pods created by a Job are out of scope here, since a batch Pod is expected to run to completion and exit rather than to be kept alive.
       audit: |
         Check for the existence of `livenessProbe`:
 
@@ -1203,19 +1204,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define a livenessProbe, which allows Kubernetes to detect when a container has become unresponsive and needs to be restarted.
+        This check verifies that every container in a StatefulSet's Pod template configures a `livenessProbe`.
+
+        A liveness probe is the kubelet's periodic test of whether the process inside a container is still working. When the probe fails often enough, the kubelet restarts that container in place. It is declared per container under `livenessProbe`, and this check accepts any of the handler forms Kubernetes supports: `httpGet`, `tcpSocket`, `exec`, or `grpc`.
 
         **Why this matters**
 
-        Without liveness probes, Kubernetes cannot detect application failures that do not result in container crashes, leading to degraded service availability:
+        Kubernetes restarts a container when its process exits, and it has no other way of knowing the container is broken. A process that is alive but no longer serving, deadlocked on a lock it will never get, spinning in a retry loop against a dependency that went away, or wedged on an exhausted connection pool, keeps its container in the Running state indefinitely. With no liveness probe, nothing ever notices.
 
-          - **Silent failures**: Applications may enter deadlock states, infinite loops, or become unresponsive while the container process continues running.
-          - **Zombie containers**: Failed containers remain in Running state, consuming resources and receiving traffic they cannot handle.
-          - **Extended outages**: Without automatic restarts, failed containers require manual intervention to recover, increasing mean time to recovery.
-          - **Load balancer issues**: Traffic continues to be routed to unhealthy containers, causing user-facing errors and degraded experience.
-          - **Cascading failures**: A single unresponsive container can cause timeouts and failures in dependent services.
+        For a StatefulSet the result is a replica that stays a member of the set while contributing nothing. Its ordinal is still taken, its PersistentVolumeClaim is still bound to it, and its peers still address it by its stable name, so one hung replica of a three-member cluster can hold quorum hostage until an operator deletes the Pod by hand.
 
-        Configuring liveness probes enables Kubernetes to automatically restart unhealthy containers, improving application resilience and reducing operational burden.
+        Choose a handler that exercises the path that actually matters. A `tcpSocket` probe on the listening port proves only that something accepted the connection, which a wedged server usually still does; an `httpGet` against an endpoint that touches the storage layer catches far more.
+
+        Size `initialDelaySeconds` for the slowest legitimate startup you expect. A liveness probe that fires before a data-heavy replica has finished recovering will restart it forever. Where startup time varies widely, add a startup probe to cover the boot window and let the liveness probe handle steady state.
       audit: |
         Check for the existence of `livenessProbe`:
 
@@ -1267,19 +1268,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define a livenessProbe, which allows Kubernetes to detect when a container has become unresponsive and needs to be restarted.
+        This check verifies that every container in a Deployment's Pod template configures a `livenessProbe`.
+
+        A liveness probe is the kubelet's periodic test of whether the process inside a container is still working. When it fails often enough, the kubelet restarts that container in place. It is declared per container under `livenessProbe`, and this check accepts any of the handler forms Kubernetes supports: `httpGet`, `tcpSocket`, `exec`, or `grpc`.
 
         **Why this matters**
 
-        Without liveness probes, Kubernetes cannot detect application failures that do not result in container crashes, leading to degraded service availability:
+        Kubernetes restarts a container when its process exits. That is the only signal it has by default. A process that is alive but no longer serving, deadlocked on a lock it will never acquire, spinning against a dependency that went away, or wedged on an exhausted connection pool, keeps its container in the Running state forever, and the Deployment reports the desired number of replicas the whole time.
 
-          - **Silent failures**: Applications may enter deadlock states, infinite loops, or become unresponsive while the container process continues running.
-          - **Zombie containers**: Failed containers remain in Running state, consuming resources and receiving traffic they cannot handle.
-          - **Extended outages**: Without automatic restarts, failed containers require manual intervention to recover, increasing mean time to recovery.
-          - **Load balancer issues**: Traffic continues to be routed to unhealthy containers, causing user-facing errors and degraded experience.
-          - **Cascading failures**: A single unresponsive container can cause timeouts and failures in dependent services.
+        For a Deployment the damage is spread by load balancing. A hung replica among five keeps its share of traffic, so roughly a fifth of requests hang or time out while dashboards show a healthy replica count. There is no crash loop to notice and no event to alert on. Recovery waits for a human to find the bad Pod and delete it, and the same fault recurs the next time the process wedges.
 
-        Configuring liveness probes enables Kubernetes to automatically restart unhealthy containers, improving application resilience and reducing operational burden.
+        A restart is also usually enough to fix it. The failure modes that a liveness probe catches are the ones a fresh process does not have, which is exactly why an automatic restart is the right response.
+
+        Choose a handler that exercises the path that matters. A `tcpSocket` probe proves only that something accepted a connection, which a wedged server often still does. Size `initialDelaySeconds` for the slowest legitimate startup, or use a startup probe for the boot window, so a slow-starting replica is not restarted before it ever serves.
       audit: |
         Check for the existence of `livenessProbe`:
 
@@ -1332,19 +1333,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define a livenessProbe, which allows Kubernetes to detect when a container has become unresponsive and needs to be restarted.
+        This check verifies that every container in a ReplicaSet's Pod template configures a `livenessProbe`.
+
+        A liveness probe is the kubelet's periodic test of whether the process inside a container is still working. When it fails often enough, the kubelet restarts that container in place. It is declared per container under `livenessProbe`, and this check accepts any of the handler forms Kubernetes supports: `httpGet`, `tcpSocket`, `exec`, or `grpc`.
 
         **Why this matters**
 
-        Without liveness probes, Kubernetes cannot detect application failures that do not result in container crashes, leading to degraded service availability:
+        A ReplicaSet's only job is to keep a set number of Pods existing. It counts Pods, not working Pods. A container that is deadlocked, spinning in a retry loop, or wedged on an exhausted connection pool has not exited, so the Pod still exists, the ReplicaSet is satisfied, and the replica count reads exactly as intended while a share of traffic goes nowhere.
 
-          - **Silent failures**: Applications may enter deadlock states, infinite loops, or become unresponsive while the container process continues running.
-          - **Zombie containers**: Failed containers remain in Running state, consuming resources and receiving traffic they cannot handle.
-          - **Extended outages**: Without automatic restarts, failed containers require manual intervention to recover, increasing mean time to recovery.
-          - **Load balancer issues**: Traffic continues to be routed to unhealthy containers, causing user-facing errors and degraded experience.
-          - **Cascading failures**: A single unresponsive container can cause timeouts and failures in dependent services.
+        Nothing else in the cluster fills that gap. Without a liveness probe there is no signal that distinguishes a running process from a working one, no restart, no event, and no crash loop to alert on. The fault ends when someone notices elevated errors, works out which Pod is responsible, and deletes it by hand, at which point the ReplicaSet creates a replacement and the symptom disappears until the next time.
 
-        Configuring liveness probes enables Kubernetes to automatically restart unhealthy containers, improving application resilience and reducing operational burden.
+        That manual deletion is also the clue that a probe is the right fix. If deleting the Pod resolves it, a fresh process resolves it, which is precisely what the kubelet does automatically once a liveness probe is configured.
+
+        Choose a handler that exercises a real code path. A `tcpSocket` probe proves only that something accepted a connection, which a wedged server usually still does. Size `initialDelaySeconds` for the slowest legitimate startup, or add a startup probe for the boot window, so a slow-starting replica is not restarted before it has ever served a request.
       audit: |
         Check for the existence of `livenessProbe`:
 
@@ -1397,19 +1398,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define a livenessProbe, which allows Kubernetes to detect when a container has become unresponsive and needs to be restarted.
+        This check verifies that every container in a DaemonSet's Pod template configures a `livenessProbe`.
+
+        A liveness probe is the kubelet's periodic test of whether the process inside a container is still working. When it fails often enough, the kubelet restarts that container in place. It is declared per container under `livenessProbe`, and this check accepts any of the handler forms Kubernetes supports: `httpGet`, `tcpSocket`, `exec`, or `grpc`.
 
         **Why this matters**
 
-        Without liveness probes, Kubernetes cannot detect application failures that do not result in container crashes, leading to degraded service availability:
+        Kubernetes restarts a container when its process exits, and nothing else. A process that is alive but no longer doing its job, blocked on a socket that will never answer, spinning on a full buffer, or deadlocked after a transient error, keeps its container Running indefinitely, and the DaemonSet reports the desired number ready on every node.
 
-          - **Silent failures**: Applications may enter deadlock states, infinite loops, or become unresponsive while the container process continues running.
-          - **Zombie containers**: Failed containers remain in Running state, consuming resources and receiving traffic they cannot handle.
-          - **Extended outages**: Without automatic restarts, failed containers require manual intervention to recover, increasing mean time to recovery.
-          - **Load balancer issues**: Traffic continues to be routed to unhealthy containers, causing user-facing errors and degraded experience.
-          - **Cascading failures**: A single unresponsive container can cause timeouts and failures in dependent services.
+        A DaemonSet is the workload kind where that goes unnoticed longest. Its Pods are usually infrastructure rather than something users hit directly, so there is no error rate to notice. A log shipper that has wedged just stops shipping from one node, and the absence of data reads as a quiet node rather than as a broken agent. The same is true of a metrics exporter: the series stops, the dashboard shows a gap, and the gap is attributed to the node, not to the agent on it.
 
-        Configuring liveness probes enables Kubernetes to automatically restart unhealthy containers, improving application resilience and reducing operational burden.
+        A DaemonSet Pod also cannot be rescheduled away from the problem. There is exactly one per node, so no other replica picks up the work and no controller moves it elsewhere. Restarting the container in place is the only automatic remedy available, which is precisely what a liveness probe provides.
+
+        Choose a handler that exercises the real path, such as an `httpGet` on an endpoint that reports the agent's pipeline health, rather than a `tcpSocket` probe that only proves a listener is still accepting connections.
       audit: |
         Check for the existence of `livenessProbe`:
 
@@ -1464,19 +1465,17 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define a readinessProbe, which allows Kubernetes to determine when a container is ready to accept traffic.
+        This check verifies that every container in a Pod configures a `readinessProbe`.
+
+        A readiness probe is the kubelet's periodic test of whether a container is prepared to serve requests. Its result controls Service membership: while the probe fails, the Pod's address is withdrawn from the EndpointSlice of every Service that selects it, and it is restored as soon as the probe passes again. The probe is declared per container under `readinessProbe`, and this check accepts an `httpGet`, `tcpSocket`, `exec`, or `grpc` handler.
 
         **Why this matters**
 
-        Without readiness probes, Kubernetes cannot distinguish between containers that are starting up and those that are ready to serve requests:
+        With no readiness probe a container is considered ready the instant it starts. Its address is published to every matching Service straight away, and requests arrive while the process is still reading configuration, running migrations, warming a cache, or opening its database connections. Clients get refused connections or errors, and nothing in the cluster records that the Pod was not ready, because Kubernetes had no way to know.
 
-          - **Premature traffic routing**: New Pods receive traffic before the application is fully initialized, causing errors for users.
-          - **Deployment failures masked**: Rolling updates may complete even when new Pods are not functioning correctly, leading to degraded service.
-          - **Startup race conditions**: Applications that require time to load configurations, warm caches, or establish connections may fail initial requests.
-          - **Service discovery issues**: Endpoints are added to Services before the application can handle requests, causing intermittent failures.
-          - **Health check confusion**: Without readiness probes, load balancers cannot accurately determine which Pods should receive traffic.
+        Readiness is also the only way a Pod can take itself out of rotation without dying. A container that has lost its database connection, filled a queue it cannot drain, or hit a dependency that is down can fail a readiness probe, stop receiving traffic, and rejoin when the condition clears. Without one it keeps receiving requests it cannot serve for as long as the fault lasts, and the only alternative remedy is killing the container outright.
 
-        Configuring readiness probes ensures traffic is only routed to containers that are fully prepared to handle requests, improving reliability during deployments and scaling events.
+        Keep readiness distinct from liveness even when both hit the same process. A dependency being unavailable should fail readiness, so traffic goes elsewhere; failing liveness on the same condition would restart a container that is perfectly healthy and would do so repeatedly for as long as the dependency stays down. Pods created by a Job are out of scope, since batch work serves no traffic.
       audit: |
         Check for the existence of `readinessProbe`:
 
@@ -1527,19 +1526,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define a readinessProbe, which allows Kubernetes to determine when a container is ready to accept traffic.
+        This check verifies that every container in a StatefulSet's Pod template configures a `readinessProbe`.
+
+        A readiness probe is the kubelet's periodic test of whether a container is prepared to receive requests. Its result controls Service membership: while the probe fails, the Pod's address is withdrawn from the EndpointSlice of every Service that selects it. The probe is declared per container under `readinessProbe`, and this check accepts an `httpGet`, `tcpSocket`, `exec`, or `grpc` handler.
 
         **Why this matters**
 
-        Without readiness probes, Kubernetes cannot distinguish between containers that are starting up and those that are ready to serve requests:
+        Without a readiness probe a container counts as ready the instant it starts. Its address is published immediately, and requests arrive while the process is still loading configuration, replaying a write-ahead log, warming a cache, or opening its connections. Clients get connection refused or a burst of errors, and nothing in the cluster records that the Pod was not ready, because as far as Kubernetes was concerned it was.
 
-          - **Premature traffic routing**: New Pods receive traffic before the application is fully initialized, causing errors for users.
-          - **Deployment failures masked**: Rolling updates may complete even when new Pods are not functioning correctly, leading to degraded service.
-          - **Startup race conditions**: Applications that require time to load configurations, warm caches, or establish connections may fail initial requests.
-          - **Service discovery issues**: Endpoints are added to Services before the application can handle requests, causing intermittent failures.
-          - **Health check confusion**: Without readiness probes, load balancers cannot accurately determine which Pods should receive traffic.
+        Recovery is where a StatefulSet feels this most. A replica that is restarted or rescheduled has to re-attach its volume and catch up before it can serve, which can take minutes for a data-heavy workload. Published early, it takes its share of traffic and fails it.
 
-        Configuring readiness probes ensures traffic is only routed to containers that are fully prepared to handle requests, improving reliability during deployments and scaling events.
+        Rollouts compound the problem. The StatefulSet controller waits for one ordinal to become ready before moving to the next, so with no probe it moves on immediately and can walk the whole set, taking replicas down faster than they come back and leaving the service without a healthy member.
+
+        Keep the readiness check distinct from the liveness check even when both hit the same process. Readiness should fail when a dependency is unavailable so traffic moves elsewhere; liveness failing in that same situation would restart a container that is perfectly healthy.
       audit: |
         Check for the existence of `readinessProbe`:
 
@@ -1591,19 +1590,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define a readinessProbe, which allows Kubernetes to determine when a container is ready to accept traffic.
+        This check verifies that every container in a Deployment's Pod template configures a `readinessProbe`.
+
+        A readiness probe is the kubelet's periodic test of whether a container is prepared to serve requests. Its result controls Service membership: while the probe fails, the Pod's address is withdrawn from the EndpointSlice of every Service that selects it. It is declared per container under `readinessProbe`, and this check accepts an `httpGet`, `tcpSocket`, `exec`, or `grpc` handler.
 
         **Why this matters**
 
-        Without readiness probes, Kubernetes cannot distinguish between containers that are starting up and those that are ready to serve requests:
+        Without a readiness probe a container is treated as ready the moment it starts. Its address is added to the Service immediately and requests arrive while the process is still parsing configuration, warming caches, running migrations, or opening database connections. Users see connection refused or a burst of errors, and nothing in the cluster attributes it to the new Pod.
 
-          - **Premature traffic routing**: New Pods receive traffic before the application is fully initialized, causing errors for users.
-          - **Deployment failures masked**: Rolling updates may complete even when new Pods are not functioning correctly, leading to degraded service.
-          - **Startup race conditions**: Applications that require time to load configurations, warm caches, or establish connections may fail initial requests.
-          - **Service discovery issues**: Endpoints are added to Services before the application can handle requests, causing intermittent failures.
-          - **Health check confusion**: Without readiness probes, load balancers cannot accurately determine which Pods should receive traffic.
+        Rolling updates are where this turns a routine change into an outage. The Deployment controller uses readiness to decide when a new Pod counts toward the desired replica count and therefore when it is safe to terminate an old one. With no probe, every new Pod counts as ready at once, so the controller can retire the entire previous generation while none of the replacements can serve. `maxUnavailable` and `maxSurge` are enforced against a readiness signal that means nothing, and a bad release rolls all the way out instead of stalling on the first replica.
 
-        Configuring readiness probes ensures traffic is only routed to containers that are fully prepared to handle requests, improving reliability during deployments and scaling events.
+        The same signal is what makes scaling safe. A replica added under load starts cold, and publishing it before it has warmed sends it traffic it will fail.
+
+        Keep readiness separate from liveness even when both hit the same process. Readiness failing on an unavailable dependency correctly moves traffic away; liveness failing on the same condition would restart a container that is working fine.
       audit: |
         Check for the existence of `readinessProbe`:
 
@@ -1656,19 +1655,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define a readinessProbe, which allows Kubernetes to determine when a container is ready to accept traffic.
+        This check verifies that every container in a ReplicaSet's Pod template configures a `readinessProbe`.
+
+        A readiness probe is the kubelet's periodic test of whether a container is prepared to serve requests. Its result controls Service membership: while the probe fails, the Pod's address is withdrawn from the EndpointSlice of every Service that selects it. It is declared per container under `readinessProbe`, and this check accepts an `httpGet`, `tcpSocket`, `exec`, or `grpc` handler.
 
         **Why this matters**
 
-        Without readiness probes, Kubernetes cannot distinguish between containers that are starting up and those that are ready to serve requests:
+        Without a readiness probe a container is treated as ready the instant it starts. Its address joins the Service immediately and requests arrive while the process is still reading configuration, warming caches, or opening connections. Clients get refused connections or errors, and nothing records that the Pod was not ready, because Kubernetes had no way to tell.
 
-          - **Premature traffic routing**: New Pods receive traffic before the application is fully initialized, causing errors for users.
-          - **Deployment failures masked**: Rolling updates may complete even when new Pods are not functioning correctly, leading to degraded service.
-          - **Startup race conditions**: Applications that require time to load configurations, warm caches, or establish connections may fail initial requests.
-          - **Service discovery issues**: Endpoints are added to Services before the application can handle requests, causing intermittent failures.
-          - **Health check confusion**: Without readiness probes, load balancers cannot accurately determine which Pods should receive traffic.
+        For a replicated workload the exposure is continuous rather than occasional. A ReplicaSet creates a replacement Pod every time one is deleted, a node fails, or a Pod is evicted, and each replacement is published cold. On a busy cluster that is a steady trickle of requests hitting processes that are not yet able to answer them, spread thinly enough that it looks like background noise rather than a fault.
 
-        Configuring readiness probes ensures traffic is only routed to containers that are fully prepared to handle requests, improving reliability during deployments and scaling events.
+        Scaling has the same problem in concentrated form. Raising the replica count under load adds several cold Pods at once, they all take a share of traffic immediately, and the error rate rises at exactly the moment the extra capacity was supposed to help.
+
+        Keep readiness distinct from liveness even when both hit the same process. Readiness failing because a dependency is unavailable correctly steers traffic to other replicas; liveness failing on the same condition would restart a container that is working perfectly well.
       audit: |
         Check for the existence of `readinessProbe`:
 
@@ -1721,19 +1720,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that containers define a readinessProbe, which allows Kubernetes to determine when a container is ready to accept traffic.
+        This check verifies that every container in a DaemonSet's Pod template configures a `readinessProbe`.
+
+        A readiness probe is the kubelet's periodic test of whether a container is prepared to do its work. Its result controls Service membership, so while the probe fails the Pod's address is withdrawn from the EndpointSlice of every Service that selects it, and it also drives the rollout logic. It is declared per container under `readinessProbe`, and this check accepts an `httpGet`, `tcpSocket`, `exec`, or `grpc` handler.
 
         **Why this matters**
 
-        Without readiness probes, Kubernetes cannot distinguish between containers that are starting up and those that are ready to serve requests:
+        Without a readiness probe a container counts as ready the moment it starts, before it has loaded its configuration, discovered what it is meant to watch, or opened its outbound connections. Anything that scrapes or queries the agent in that window gets refused connections or empty answers.
 
-          - **Premature traffic routing**: New Pods receive traffic before the application is fully initialized, causing errors for users.
-          - **Deployment failures masked**: Rolling updates may complete even when new Pods are not functioning correctly, leading to degraded service.
-          - **Startup race conditions**: Applications that require time to load configurations, warm caches, or establish connections may fail initial requests.
-          - **Service discovery issues**: Endpoints are added to Services before the application can handle requests, causing intermittent failures.
-          - **Health check confusion**: Without readiness probes, load balancers cannot accurately determine which Pods should receive traffic.
+        The rollout consequence is the one that hurts most for a DaemonSet. The controller uses readiness to decide when a node's Pod is healthy enough to move on to the next node, and `maxUnavailable` is enforced against that signal. With no probe, every new Pod is ready as soon as it starts, so an update walks the entire fleet at full speed. A bad image or a bad configuration is therefore rolled out to every node in the cluster before anything indicates a problem, instead of stalling on the first node it breaks.
 
-        Configuring readiness probes ensures traffic is only routed to containers that are fully prepared to handle requests, improving reliability during deployments and scaling events.
+        Because there is exactly one Pod per node, there is no second replica to absorb the gap while a Pod comes up, which makes an accurate readiness signal the only protection the rollout has.
+
+        Keep the readiness check separate from the liveness check. Readiness should fail while the agent cannot yet serve; liveness should fail only when a restart is the right response.
       audit: |
         Check for the existence of `readinessProbe`:
 
@@ -1782,19 +1781,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that Pods do not use hostAliases to modify the container's /etc/hosts file with custom DNS entries.
+        This check verifies that a Pod does not define `hostAliases`.
+
+        `hostAliases` is a list of address and hostname pairs that the kubelet writes into `/etc/hosts` inside every container of the Pod. Entries there are consulted before cluster DNS for the names they cover, so they silently win over anything the cluster would otherwise resolve. This check requires the field to be absent from the Pod spec.
 
         **Why this matters**
 
-        Using hostAliases to manage DNS entries locally within Pods bypasses centralized DNS management and creates operational and security risks:
+        The entry is written once, when the Pod is created, and nothing updates it afterwards. Cluster DNS exists precisely because addresses in Kubernetes are not stable: Pods are rescheduled, Services are recreated, external endpoints move behind their names. A pinned address stops matching reality the first time any of that happens, and the Pod keeps using it because it never asks DNS.
 
-          - **Configuration drift**: Local DNS overrides can become inconsistent across Pods, leading to unpredictable behavior and difficult-to-debug connectivity issues.
-          - **Security bypass**: Attackers who compromise a Pod definition could redirect traffic to malicious endpoints by adding fraudulent hostAliases entries.
-          - **Maintenance burden**: Changes to DNS mappings require redeploying workloads rather than updating centralized DNS records.
-          - **Service discovery conflicts**: hostAliases can override Kubernetes DNS service discovery, causing Pods to connect to wrong endpoints.
-          - **Audit challenges**: Local DNS modifications are harder to track and audit compared to centralized DNS configurations.
+        The way it fails is what makes it costly. There is no error at the point the override was made and no warning when it goes stale. The application connects somewhere useless and reports a timeout. Anyone diagnosing it from a shell outside the Pod resolves the same name through cluster DNS, gets a perfectly good answer, and concludes the problem lies elsewhere. Only reading `/etc/hosts` inside the container reveals the override.
 
-        Use Kubernetes DNS, CoreDNS configurations, or external DNS services instead of hostAliases for managing DNS entries in a consistent and auditable manner.
+        If the address has since been handed to something else, the outcome is worse than a timeout: the Pod delivers its requests, credentials included, to whatever now answers there.
+
+        Kubernetes already offers both mappings the field is used to fake. A headless Service resolves a name to the real addresses of in-cluster Pods, and an `ExternalName` Service aliases a name to a canonical name outside the cluster. Both are API objects that can be corrected without recreating a single Pod, which keeps name resolution in one managed place.
       audit: |
         Check for the existence of `hostAliases` setting in `spec`:
 
@@ -1825,19 +1824,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that Pods do not use hostAliases to modify the container's /etc/hosts file with custom DNS entries.
+        This check verifies that the Pod template of a CronJob does not define `hostAliases`.
+
+        `hostAliases` is a list of address and hostname pairs that the kubelet writes into `/etc/hosts` inside every container of the Pod, where they take precedence over cluster DNS for the names they cover. This check requires the field to be absent from the Pod template under `spec.jobTemplate.spec.template.spec`.
 
         **Why this matters**
 
-        Using hostAliases to manage DNS entries locally within Pods bypasses centralized DNS management and creates operational and security risks:
+        An address hard-coded in `hostAliases` is a copy of a fact that lives somewhere else, and copies go stale. When the Service, load balancer, or external host behind the name moves, cluster DNS follows within seconds and the pinned entry does not. A CronJob makes that failure especially hard to catch, because the workload is not running when the address changes. The next scheduled run starts, resolves the name to an address nobody serves any more, and either fails on connect or reaches whatever now answers there.
 
-          - **Configuration drift**: Local DNS overrides can become inconsistent across Pods, leading to unpredictable behavior and difficult-to-debug connectivity issues.
-          - **Security bypass**: Attackers who compromise a Pod definition could redirect traffic to malicious endpoints by adding fraudulent hostAliases entries.
-          - **Maintenance burden**: Changes to DNS mappings require redeploying workloads rather than updating centralized DNS records.
-          - **Service discovery conflicts**: hostAliases can override Kubernetes DNS service discovery, causing Pods to connect to wrong endpoints.
-          - **Audit challenges**: Local DNS modifications are harder to track and audit compared to centralized DNS configurations.
+        Because the mapping lives in the manifest instead of in DNS, correcting it means editing and redeploying the CronJob. Anyone debugging the failed run from outside the Pod resolves the same name through cluster DNS, gets the right answer, and goes looking in the wrong place.
 
-        Use Kubernetes DNS, CoreDNS configurations, or external DNS services instead of hostAliases for managing DNS entries in a consistent and auditable manner.
+        Kubernetes already provides the two mappings people reach for `hostAliases` to build. A headless Service gives an in-cluster name that resolves to real Pod addresses, and an `ExternalName` Service aliases a name outside the cluster to a canonical name that DNS keeps current. Both are API objects that can change without redeploying the workload.
+
+        The one target that resists both is a fixed appliance with no DNS name at all. Even then, prefer an `ExternalName` Service or a CoreDNS rewrite rule, so the mapping stays in one managed place rather than in every Pod template that needs it.
       audit: |
         Check for the existence of `hostAliases` setting in `spec`:
 
@@ -1868,19 +1867,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that Pods do not use hostAliases to modify the container's /etc/hosts file with custom DNS entries.
+        This check verifies that the Pod template of a StatefulSet does not define `hostAliases`.
+
+        `hostAliases` is a list of address and hostname pairs that the kubelet writes into `/etc/hosts` in every container of the Pod, where they take precedence over cluster DNS. This check requires the field to be absent from `spec.template.spec`.
 
         **Why this matters**
 
-        Using hostAliases to manage DNS entries locally within Pods bypasses centralized DNS management and creates operational and security risks:
+        A StatefulSet already has the capability `hostAliases` is usually reached for. Its governing headless Service gives every replica a stable DNS name built from the Pod name, the Service, and the namespace, and those names track the Pod's address automatically as it is rescheduled onto a new node with a new address. A static entry in `/etc/hosts` does not track anything. The moment a replica moves, the pinned address points at nothing, or at whatever the cluster assigned that address to next.
 
-          - **Configuration drift**: Local DNS overrides can become inconsistent across Pods, leading to unpredictable behavior and difficult-to-debug connectivity issues.
-          - **Security bypass**: Attackers who compromise a Pod definition could redirect traffic to malicious endpoints by adding fraudulent hostAliases entries.
-          - **Maintenance burden**: Changes to DNS mappings require redeploying workloads rather than updating centralized DNS records.
-          - **Service discovery conflicts**: hostAliases can override Kubernetes DNS service discovery, causing Pods to connect to wrong endpoints.
-          - **Audit challenges**: Local DNS modifications are harder to track and audit compared to centralized DNS configurations.
+        That failure mode hurts more in a clustered database or queue than almost anywhere else, because members find each other by name. A peer that resolves a stale address does not fail loudly. It times out, is marked down, and the cluster rebalances or starts refusing writes while the manifest still reads as correct. Someone debugging from a shell outside the Pod resolves the name through cluster DNS, gets the right answer, and concludes the network is healthy.
 
-        Use Kubernetes DNS, CoreDNS configurations, or external DNS services instead of hostAliases for managing DNS entries in a consistent and auditable manner.
+        Correcting an entry also costs a rolling update. Every replica restarts in ordinal order and the data moves with them, all for what should have been a change to one DNS record.
+
+        Use the headless Service for in-cluster peers, and an `ExternalName` Service when the target sits outside the cluster and its address has to be able to change without redeploying the workload.
       audit: |
         Check for the existence of `hostAliases` setting in `spec`:
 
@@ -1911,19 +1910,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that Pods do not use hostAliases to modify the container's /etc/hosts file with custom DNS entries.
+        This check verifies that the Pod template of a Deployment does not define `hostAliases`.
+
+        `hostAliases` is a list of address and hostname pairs that the kubelet writes into `/etc/hosts` inside every container of the Pod. Entries there take precedence over cluster DNS for the names they cover. This check requires the field to be absent from `spec.template.spec`.
 
         **Why this matters**
 
-        Using hostAliases to manage DNS entries locally within Pods bypasses centralized DNS management and creates operational and security risks:
+        A Deployment's Pods are meant to be interchangeable and short-lived, and `hostAliases` pins an address into each one at the moment it is created. Nothing refreshes it afterwards. When the backend the name points at is redeployed and its Pods get new addresses, cluster DNS follows immediately and the pinned entries do not, so every replica keeps dialing an address that is gone.
 
-          - **Configuration drift**: Local DNS overrides can become inconsistent across Pods, leading to unpredictable behavior and difficult-to-debug connectivity issues.
-          - **Security bypass**: Attackers who compromise a Pod definition could redirect traffic to malicious endpoints by adding fraudulent hostAliases entries.
-          - **Maintenance burden**: Changes to DNS mappings require redeploying workloads rather than updating centralized DNS records.
-          - **Service discovery conflicts**: hostAliases can override Kubernetes DNS service discovery, causing Pods to connect to wrong endpoints.
-          - **Audit challenges**: Local DNS modifications are harder to track and audit compared to centralized DNS configurations.
+        The failure is partial, which is what makes it expensive to diagnose. A rolling update replaces Pods gradually, so replicas created before the backend moved and replicas created after it moved can carry different views of the same name. A fraction of requests fails and the rest succeed, the error rate does not match any single deployment event, and a name lookup run from a debug shell resolves correctly through cluster DNS the whole time.
 
-        Use Kubernetes DNS, CoreDNS configurations, or external DNS services instead of hostAliases for managing DNS entries in a consistent and auditable manner.
+        If the address has been reassigned rather than released, the outcome is worse than an error. Requests carrying application credentials are delivered, successfully, to whatever workload now owns that address.
+
+        Kubernetes already provides the mappings this field is used to fake. A headless Service resolves a name to the real addresses of in-cluster Pods, and an `ExternalName` Service aliases a name to a canonical name outside the cluster. Both are updated in the API without redeploying anything, and both keep the mapping in one place rather than in every Pod template that needs it.
       audit: |
         Check for the existence of `hostAliases` setting in `spec`:
 
@@ -1956,19 +1955,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that Pods do not use hostAliases to modify the container's /etc/hosts file with custom DNS entries.
+        This check verifies that the Pod template of a Job does not define `hostAliases`.
+
+        `hostAliases` is a list of address and hostname pairs the kubelet writes into `/etc/hosts` in every container of the Pod, where they override cluster DNS for the names they cover. This check requires the field to be absent from `spec.template.spec`.
 
         **Why this matters**
 
-        Using hostAliases to manage DNS entries locally within Pods bypasses centralized DNS management and creates operational and security risks:
+        A Job runs once and is expected to reach a terminal state, which makes a stale address in `/etc/hosts` particularly costly. The Pod resolves the pinned name at the moment it needs it, finds nothing listening, and the attempt fails. Kubernetes responds by recreating the Pod, and the replacement inherits the same wrong entry from the same template, so it fails the same way until `backoffLimit` is exhausted and the Job is marked failed.
 
-          - **Configuration drift**: Local DNS overrides can become inconsistent across Pods, leading to unpredictable behavior and difficult-to-debug connectivity issues.
-          - **Security bypass**: Attackers who compromise a Pod definition could redirect traffic to malicious endpoints by adding fraudulent hostAliases entries.
-          - **Maintenance burden**: Changes to DNS mappings require redeploying workloads rather than updating centralized DNS records.
-          - **Service discovery conflicts**: hostAliases can override Kubernetes DNS service discovery, causing Pods to connect to wrong endpoints.
-          - **Audit challenges**: Local DNS modifications are harder to track and audit compared to centralized DNS configurations.
+        Every one of those attempts consumes real work. A Job that loads data, sends notifications, or bills customers may complete part of its task before hitting the unreachable name, so repeated retries against a dead address can leave partial results behind rather than doing nothing at all.
 
-        Use Kubernetes DNS, CoreDNS configurations, or external DNS services instead of hostAliases for managing DNS entries in a consistent and auditable manner.
+        Because the mapping lives in the manifest rather than in DNS, the fix is a redeployment of the Job or of the CronJob that produced it. Anyone diagnosing the failure from outside the Pod resolves the same name through cluster DNS, gets a working address, and starts looking somewhere other than at the manifest.
+
+        Kubernetes already provides the two mappings this field is used to build. A headless Service resolves a name to real in-cluster Pod addresses, and an `ExternalName` Service aliases a name to a canonical name outside the cluster. Both change in the API without touching the workload, so the next run picks up the correct address on its own.
       audit: |
         Check for the existence of `hostAliases` setting in `spec`:
 
@@ -1999,19 +1998,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that Pods do not use hostAliases to modify the container's /etc/hosts file with custom DNS entries.
+        This check verifies that the Pod template of a ReplicaSet does not define `hostAliases`.
+
+        `hostAliases` is a list of address and hostname pairs the kubelet writes into `/etc/hosts` inside every container of the Pod, where they take precedence over cluster DNS for the names they cover. This check requires the field to be absent from `spec.template.spec`.
 
         **Why this matters**
 
-        Using hostAliases to manage DNS entries locally within Pods bypasses centralized DNS management and creates operational and security risks:
+        The entry is baked into each Pod when it is created and is never refreshed. When whatever the name points at is redeployed and picks up new addresses, cluster DNS updates immediately and the pinned copy does not, so every replica keeps dialing an address that has moved or, if it has been reassigned, is now answered by something else entirely.
 
-          - **Configuration drift**: Local DNS overrides can become inconsistent across Pods, leading to unpredictable behavior and difficult-to-debug connectivity issues.
-          - **Security bypass**: Attackers who compromise a Pod definition could redirect traffic to malicious endpoints by adding fraudulent hostAliases entries.
-          - **Maintenance burden**: Changes to DNS mappings require redeploying workloads rather than updating centralized DNS records.
-          - **Service discovery conflicts**: hostAliases can override Kubernetes DNS service discovery, causing Pods to connect to wrong endpoints.
-          - **Audit challenges**: Local DNS modifications are harder to track and audit compared to centralized DNS configurations.
+        A ReplicaSet makes the drift last longer than it would elsewhere, because a ReplicaSet has no rollout mechanism of its own. A Deployment can be nudged into replacing all its Pods with a rollout; a ReplicaSet keeps whichever Pods it already has and only creates new ones when an existing Pod is deleted or a node fails. The stale entry therefore survives indefinitely in the Pods that already exist, and any newly created replica gets it again from the template.
 
-        Use Kubernetes DNS, CoreDNS configurations, or external DNS services instead of hostAliases for managing DNS entries in a consistent and auditable manner.
+        If the ReplicaSet is owned by a Deployment, the template is not really editable here at all. Changing it on the ReplicaSet is undone at the next reconcile, so the field has to be removed from the Deployment and rolled out from there.
+
+        Kubernetes already provides both mappings this field is used to fake. A headless Service resolves a name to real in-cluster Pod addresses, and an `ExternalName` Service aliases a name to a canonical name outside the cluster. Both are changed in the API without redeploying anything.
       audit: |
         Check for the existence of `hostAliases` setting in `spec`:
 
@@ -2042,19 +2041,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that Pods do not use hostAliases to modify the container's /etc/hosts file with custom DNS entries.
+        This check verifies that the Pod template of a DaemonSet does not define `hostAliases`.
+
+        `hostAliases` is a list of address and hostname pairs the kubelet writes into `/etc/hosts` inside every container of the Pod, where they override cluster DNS for the names they cover. This check requires the field to be absent from `spec.template.spec`.
 
         **Why this matters**
 
-        Using hostAliases to manage DNS entries locally within Pods bypasses centralized DNS management and creates operational and security risks:
+        A DaemonSet multiplies whatever is in its template by the number of nodes, so a single pinned address becomes a copy on every machine in the cluster. When the target moves, cluster DNS updates once and all of those copies become wrong at the same moment. A node agent that ships logs or metrics to a collector by a pinned address stops delivering everywhere at once, and because the agent is usually the thing that would have told you, the failure is quiet.
 
-          - **Configuration drift**: Local DNS overrides can become inconsistent across Pods, leading to unpredictable behavior and difficult-to-debug connectivity issues.
-          - **Security bypass**: Attackers who compromise a Pod definition could redirect traffic to malicious endpoints by adding fraudulent hostAliases entries.
-          - **Maintenance burden**: Changes to DNS mappings require redeploying workloads rather than updating centralized DNS records.
-          - **Service discovery conflicts**: hostAliases can override Kubernetes DNS service discovery, causing Pods to connect to wrong endpoints.
-          - **Audit challenges**: Local DNS modifications are harder to track and audit compared to centralized DNS configurations.
+        The blast radius grows as the cluster does. Nodes added after the entry went stale get the same wrong value from the same template, so scaling up spreads the fault rather than diluting it.
 
-        Use Kubernetes DNS, CoreDNS configurations, or external DNS services instead of hostAliases for managing DNS entries in a consistent and auditable manner.
+        Recovery is slower here too. Fixing the template triggers a rolling update across every node, which for an agent holding host state means restarting the whole fleet to correct what should have been a single DNS record.
+
+        There is one motivation for `hostAliases` specific to this workload kind, and it is worth naming: an agent that needs to reach a service before cluster DNS is available. That case is better solved by pointing the agent at the node's own address through the downward API, or by an `ExternalName` Service once DNS is up, than by freezing an address into every Pod. For ordinary in-cluster targets a headless Service already resolves the name to real Pod addresses and keeps doing so as they change.
       audit: |
         Check for the existence of `hostAliases` setting in `spec`:
 
@@ -2085,19 +2084,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that workloads are deployed to a namespace other than `default`, ensuring proper organization and security isolation within the cluster.
+        This check verifies that every Pod runs in a namespace of its own rather than in `default`.
+
+        A Pod carries its namespace in `metadata.namespace`. A Pod created by a controller inherits the namespace of whichever Deployment, StatefulSet, DaemonSet, or CronJob produced it, so a Pod found in `default` usually means its parent is there. This check requires the value to be anything other than `default`.
 
         **Why this matters**
 
-        The default namespace lacks the security controls and resource isolation that dedicated namespaces provide:
+        `default` is where an object goes when nobody says otherwise, so it fills up with whatever anyone applied in a hurry: a debugging Pod from six months ago, half of one team's application, an experiment someone forgot. Nothing in that namespace can be reasoned about as a unit, and every Kubernetes control that separates workloads works on exactly that unit.
 
-          - **No access controls**: Resources in default cannot be easily restricted with RBAC policies, allowing any user with cluster access to view or modify workloads.
-          - **No resource isolation**: Without namespace-specific Resource Quotas and Limit Ranges, workloads compete for cluster resources without constraints.
-          - **Network exposure**: Network Policies cannot effectively isolate traffic when workloads share the default namespace with other applications.
-          - **Operational confusion**: Mixed workloads in default make it difficult to track ownership, apply consistent policies, or audit resources.
-          - **Accidental access**: Developers may inadvertently access or modify production workloads if everything runs in default.
+        NetworkPolicy is the sharpest example. Policies select Pods inside a namespace and reference other namespaces by label, so a Pod in `default` cannot be isolated from its neighbors without a policy that also covers everything else in `default`. Since that policy would break the unrelated workloads sharing the namespace, in practice it is never written and nothing is isolated at all.
 
-        Deploying workloads to dedicated namespaces enables fine-grained RBAC, resource quotas, network segmentation, and clearer organizational boundaries.
+        RBAC and quota behave the same way. A Role that lets someone exec into their own Pod in `default` lets them exec into every Pod in `default`, and a ResourceQuota sized for one application constrains all of them. Pod Security Admission is set by labels on the namespace, so a Pod in `default` gets whatever posture that shared namespace happens to carry.
+
+        Fix this at the controller that creates the Pod rather than on the Pod itself, since the namespace is immutable and a recreated Pod would land back in `default`. Create the target namespace before applying anything into it, because the API server rejects objects naming a namespace that does not exist.
       audit: |
         Check to ensure no workloads are running in the default Namespace. this command should return no Pods:
 
@@ -2130,19 +2129,21 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that workloads are deployed to a namespace other than `default`, ensuring proper organization and security isolation within the cluster.
+        This check verifies that every DaemonSet runs in a namespace of its own rather than in `default`.
+
+        A DaemonSet declares its namespace in `metadata.namespace`, and the Pod it places on every node runs there. This check requires the value to be anything other than `default`.
 
         **Why this matters**
 
-        The default namespace lacks the security controls and resource isolation that dedicated namespaces provide:
+        DaemonSets are the workload kind with the widest reach in a cluster. A log shipper, metrics agent, CNI component, or storage driver runs on every node, usually with a ServiceAccount that can read cluster-scoped information and frequently with host mounts or elevated capabilities. That makes the namespace it lives in the wrong place to be sharing with everything else.
 
-          - **No access controls**: Resources in default cannot be easily restricted with RBAC policies, allowing any user with cluster access to view or modify workloads.
-          - **No resource isolation**: Without namespace-specific Resource Quotas and Limit Ranges, workloads compete for cluster resources without constraints.
-          - **Network exposure**: Network Policies cannot effectively isolate traffic when workloads share the default namespace with other applications.
-          - **Operational confusion**: Mixed workloads in default make it difficult to track ownership, apply consistent policies, or audit resources.
-          - **Accidental access**: Developers may inadvertently access or modify production workloads if everything runs in default.
+        RBAC is the immediate concern. A node agent's ServiceAccount typically needs to read Pods, Nodes, or Secrets, and any RoleBinding written for it in `default` applies to the whole namespace, so a permission granted for the agent is also available to every other ServiceAccount and workload that ended up in `default`.
 
-        Deploying workloads to dedicated namespaces enables fine-grained RBAC, resource quotas, network segmentation, and clearer organizational boundaries.
+        Admission control lands in the same trap from the other direction. Pod Security Admission is configured by labels on the namespace, and an agent that legitimately needs a relaxed profile forces the whole of `default` to be relaxed with it, which means every unrelated Pod anyone applies without naming a namespace inherits the exemption.
+
+        Operationally it is confusing too. Cluster infrastructure that runs everywhere is expected in `kube-system` or a dedicated namespace such as one named for the observability stack, and finding it in `default` alongside application Pods obscures what is platform and what is workload.
+
+        Create the target namespace first, move the DaemonSet and its ServiceAccount and bindings together, and expect one Pod restart per node as the new DaemonSet rolls out.
       audit: |
         Check to ensure no workloads are running in the default Namespace. this command should return no DaemonSets:
 
@@ -2175,19 +2176,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that workloads are deployed to a namespace other than `default`, ensuring proper organization and security isolation within the cluster.
+        This check verifies that every ReplicaSet runs in a namespace of its own rather than in `default`.
+
+        A ReplicaSet names its namespace in `metadata.namespace`, and the Pods it maintains run there. Almost every ReplicaSet in a cluster was created by a Deployment and inherited the Deployment's namespace, so a ReplicaSet found in `default` normally means the Deployment above it is in `default` too. This check requires the value to be anything other than `default`.
 
         **Why this matters**
 
-        The default namespace lacks the security controls and resource isolation that dedicated namespaces provide:
+        The `default` namespace is the fallback for anything applied without one, so it ends up holding several unrelated applications with no boundary between them. Everything Kubernetes uses to separate workloads operates on the namespace: RBAC Roles are namespaced, NetworkPolicy selects Pods within a namespace, ResourceQuota and LimitRange apply to a namespace as a whole, and Pod Security Admission is configured by labels on the namespace object. A workload sharing `default` gets whatever settings the shared namespace happens to have and cannot be given its own.
 
-          - **No access controls**: Resources in default cannot be easily restricted with RBAC policies, allowing any user with cluster access to view or modify workloads.
-          - **No resource isolation**: Without namespace-specific Resource Quotas and Limit Ranges, workloads compete for cluster resources without constraints.
-          - **Network exposure**: Network Policies cannot effectively isolate traffic when workloads share the default namespace with other applications.
-          - **Operational confusion**: Mixed workloads in default make it difficult to track ownership, apply consistent policies, or audit resources.
-          - **Accidental access**: Developers may inadvertently access or modify production workloads if everything runs in default.
+        The situation is easy to miss because a ReplicaSet is rarely the object anyone looks at. Its name is generated from the Deployment plus a template hash, so a list of ReplicaSets in `default` reads as noise, and old ones from previous rollouts stay until `revisionHistoryLimit` prunes them.
 
-        Deploying workloads to dedicated namespaces enables fine-grained RBAC, resource quotas, network segmentation, and clearer organizational boundaries.
+        Fix it at the Deployment. Editing the namespace of a ReplicaSet directly does not work, because the field is immutable and because the Deployment would create a fresh ReplicaSet in the old namespace on the next reconcile.
+
+        Create the target namespace, apply the Deployment there, confirm the new Pods are serving, and then delete the old Deployment so its ReplicaSets are garbage collected with it. A ReplicaSet with no owning Deployment can be recreated directly in the new namespace instead.
       audit: |
         Check to ensure no workloads are running in the default Namespace. this command should return no ReplicaSets:
 
@@ -2220,19 +2221,21 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that workloads are deployed to a namespace other than `default`, ensuring proper organization and security isolation within the cluster.
+        This check verifies that every Job runs in a namespace of its own rather than in `default`.
+
+        A Job declares its namespace in `metadata.namespace`, and the Pods it creates run there. A Job created by a CronJob inherits the namespace of its parent, so a Job found in `default` usually means the CronJob that produced it is there too. This check requires the value to be anything other than `default`.
 
         **Why this matters**
 
-        The default namespace lacks the security controls and resource isolation that dedicated namespaces provide:
+        The `default` namespace collects every object applied without a namespace, which makes it the one place where batch work and long-running services are guaranteed to be mixed. That matters because the controls Kubernetes offers all operate on the namespace as a unit.
 
-          - **No access controls**: Resources in default cannot be easily restricted with RBAC policies, allowing any user with cluster access to view or modify workloads.
-          - **No resource isolation**: Without namespace-specific Resource Quotas and Limit Ranges, workloads compete for cluster resources without constraints.
-          - **Network exposure**: Network Policies cannot effectively isolate traffic when workloads share the default namespace with other applications.
-          - **Operational confusion**: Mixed workloads in default make it difficult to track ownership, apply consistent policies, or audit resources.
-          - **Accidental access**: Developers may inadvertently access or modify production workloads if everything runs in default.
+        A ResourceQuota is the clearest example. Batch work is bursty by nature, and a Job with a high `parallelism` can consume the namespace's Pod or CPU quota in seconds. In a dedicated namespace that ceiling is a deliberate budget for the batch workload. In `default` it is shared with whatever services live there, so a large Job can prevent an unrelated Deployment from scheduling replacement Pods.
 
-        Deploying workloads to dedicated namespaces enables fine-grained RBAC, resource quotas, network segmentation, and clearer organizational boundaries.
+        Access control cannot be separated either. A Job usually needs credentials for the system it processes, and a Role that lets it read those Secrets in `default` lets it read every Secret in `default`.
+
+        Retention makes the clutter permanent. Finished Jobs and their Pods stay until something removes them, and unless `ttlSecondsAfterFinished` is set that is a manual cleanup. In a dedicated namespace the whole batch history can be listed and pruned in one operation, while `default` cannot be deleted at all.
+
+        If the Job was created by a CronJob, move the CronJob rather than the Job, since the controller recreates the Job in its own namespace on the next schedule.
       audit: |
         Check to ensure no workloads are running in the default Namespace. this command should return no Jobs:
 
@@ -2265,19 +2268,21 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that workloads are deployed to a namespace other than `default`, ensuring proper organization and security isolation within the cluster.
+        This check verifies that every Deployment runs in a namespace of its own rather than in `default`.
+
+        A Deployment names the namespace it belongs to in `metadata.namespace`, and the ReplicaSets it manages and the Pods those ReplicaSets create all inherit it. This check requires the value to be anything other than `default`.
 
         **Why this matters**
 
-        The default namespace lacks the security controls and resource isolation that dedicated namespaces provide:
+        The `default` namespace is the fallback for anything applied without naming one, so over time it becomes a shared bin holding several teams' applications with no organizing principle. That is a problem specifically because namespaces are what the rest of Kubernetes uses to scope decisions.
 
-          - **No access controls**: Resources in default cannot be easily restricted with RBAC policies, allowing any user with cluster access to view or modify workloads.
-          - **No resource isolation**: Without namespace-specific Resource Quotas and Limit Ranges, workloads compete for cluster resources without constraints.
-          - **Network exposure**: Network Policies cannot effectively isolate traffic when workloads share the default namespace with other applications.
-          - **Operational confusion**: Mixed workloads in default make it difficult to track ownership, apply consistent policies, or audit resources.
-          - **Accidental access**: Developers may inadvertently access or modify production workloads if everything runs in default.
+        NetworkPolicy is the clearest case. Policies select Pods within a namespace, and cross-namespace rules are written against namespace labels, so an application in `default` cannot be isolated from its neighbors without also isolating every unrelated workload that happens to share the namespace. In practice nobody writes that policy, so nothing is isolated.
 
-        Deploying workloads to dedicated namespaces enables fine-grained RBAC, resource quotas, network segmentation, and clearer organizational boundaries.
+        RBAC has the same shape. Giving a team permission to roll out and inspect its own Deployment means granting it over Deployments in the namespace, and in `default` that is everyone's Deployments. Deleting one workload's ConfigMaps by mistake becomes an ordinary accident rather than an impossible one.
+
+        Quota and admission follow. A ResourceQuota sized for one application caps everything else in `default` too, and Pod Security Admission is configured through labels on the namespace, so a workload in `default` inherits whatever posture that shared namespace carries rather than one chosen for it.
+
+        Moving a Deployment is cheap compared with the other workload kinds, because it holds no data. Create the target namespace, apply the Deployment there, confirm the new Pods are serving, and then delete the old one so a stale ReplicaSet is not left behind.
       audit: |
         Check to ensure no workloads are running in the default Namespace. this command should return no Deployments:
 
@@ -2310,19 +2315,21 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that workloads are deployed to a namespace other than `default`, ensuring proper organization and security isolation within the cluster.
+        This check verifies that every StatefulSet runs in a namespace of its own rather than in `default`.
+
+        A StatefulSet declares its namespace in `metadata.namespace`, and everything it creates lands there with it: the numbered Pods, the PersistentVolumeClaims generated from `volumeClaimTemplates`, and the headless Service that gives those Pods their stable DNS names. This check requires the value to be anything other than `default`.
 
         **Why this matters**
 
-        The default namespace lacks the security controls and resource isolation that dedicated namespaces provide:
+        A StatefulSet is usually the stateful heart of an application, and `default` is the namespace everything unlabeled falls into. Running a database there means the credentials Secret it mounts sits alongside every other object anyone has ever applied without naming a namespace, and any Role that grants read access to Secrets in `default` reaches that Secret too. No finer boundary is available, because the namespace is the boundary.
 
-          - **No access controls**: Resources in default cannot be easily restricted with RBAC policies, allowing any user with cluster access to view or modify workloads.
-          - **No resource isolation**: Without namespace-specific Resource Quotas and Limit Ranges, workloads compete for cluster resources without constraints.
-          - **Network exposure**: Network Policies cannot effectively isolate traffic when workloads share the default namespace with other applications.
-          - **Operational confusion**: Mixed workloads in default make it difficult to track ownership, apply consistent policies, or audit resources.
-          - **Accidental access**: Developers may inadvertently access or modify production workloads if everything runs in default.
+        Storage makes the mistake expensive to undo. The PersistentVolumeClaims a StatefulSet creates are named after the StatefulSet and its ordinal and stay in the namespace where they were created. Moving the workload later is not an edit to one field; it is a data migration, because the claims do not follow the manifest to a new namespace.
 
-        Deploying workloads to dedicated namespaces enables fine-grained RBAC, resource quotas, network segmentation, and clearer organizational boundaries.
+        Quota lands in the wrong place as well. A ResourceQuota on `default` counts this StatefulSet's storage and memory requests together with every unrelated Pod in the namespace, so a limit sized for the database also throttles whatever else happens to live there, and vice versa.
+
+        Pod Security Admission is enforced by namespace label, so a workload in `default` inherits whatever posture that shared namespace happens to carry rather than one chosen for it.
+
+        Choose the namespace when the StatefulSet is first created, and create it before applying the manifest, because the API server rejects an object naming a namespace that does not exist yet.
       audit: |
         Check to ensure no workloads are running in the default Namespace. this command should return no StatefulSets:
 
@@ -2355,19 +2362,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that workloads are deployed to a namespace other than `default`, ensuring proper organization and security isolation within the cluster.
+        This check verifies that every CronJob runs in a namespace of its own rather than in `default`.
+
+        A namespace is the boundary Kubernetes uses for access control, quota, and network policy. A CronJob declares the one it belongs to in `metadata.namespace`, and every Job it spawns and every Pod those Jobs create inherit that value. This check requires it to be anything other than `default`.
 
         **Why this matters**
 
-        The default namespace lacks the security controls and resource isolation that dedicated namespaces provide:
+        The `default` namespace is where every object that names no namespace ends up, so it accumulates unrelated work from everyone who has ever applied a manifest without setting the field. A ResourceQuota or LimitRange attached to it therefore caps the scheduled batch work and the long-lived services together, and a CronJob that fans out to a hundred parallel Pods eats the quota the API gateway sitting next to it needs.
 
-          - **No access controls**: Resources in default cannot be easily restricted with RBAC policies, allowing any user with cluster access to view or modify workloads.
-          - **No resource isolation**: Without namespace-specific Resource Quotas and Limit Ranges, workloads compete for cluster resources without constraints.
-          - **Network exposure**: Network Policies cannot effectively isolate traffic when workloads share the default namespace with other applications.
-          - **Operational confusion**: Mixed workloads in default make it difficult to track ownership, apply consistent policies, or audit resources.
-          - **Accidental access**: Developers may inadvertently access or modify production workloads if everything runs in default.
+        Access control degrades the same way. A CronJob usually runs under a ServiceAccount that needs to read a ConfigMap or a Secret, and a Role granting that in `default` grants it over every other object in `default` as well. The grant cannot be narrowed to the batch workload, because the namespace is the unit of scope.
 
-        Deploying workloads to dedicated namespaces enables fine-grained RBAC, resource quotas, network segmentation, and clearer organizational boundaries.
+        Cleanup is the last piece. Completed Jobs linger until `successfulJobsHistoryLimit` prunes them, and in a dedicated namespace the whole set can be listed, capped by quota, or deleted in one operation. The `default` namespace cannot be deleted at all, so leftovers have to be found by label and removed one at a time.
+
+        Cluster components that ship into `kube-system` or another reserved namespace are already outside `default` and are unaffected. Create the target namespace before moving the CronJob, because the API server rejects an object that names a namespace which does not exist yet.
       audit: |
         Check to ensure no workloads are running in the default Namespace. this command should return no CronJobs:
 
@@ -2403,19 +2410,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that containers do not bind to host ports, which directly exposes the container on the node's network interface.
+        This check verifies that no container in a Pod binds a `hostPort`.
+
+        A port entry under a container's `ports` list normally carries only `containerPort`, which documents what the process listens on inside the Pod network. Adding `hostPort` also reserves that number on the node the Pod is scheduled to and forwards traffic arriving on it straight into the container. This check requires every port entry in the Pod spec to leave `hostPort` unset.
 
         **Why this matters**
 
-        Using host ports creates security and operational risks that undermine Kubernetes' networking model:
+        A host port takes a cluster resource that nothing else can share. Only one Pod holding a given port number can run on a node, so every Pod that binds one reduces the set of nodes on which some other Pod can ever be placed. The workload that loses out finds out through a Pending Pod and a scheduling predicate failure that never mentions ports.
 
-          - **Network exposure**: Host ports bypass Kubernetes Services and expose containers directly to the network, potentially to external traffic.
-          - **Scheduling constraints**: Only one Pod can use a specific host port per node, severely limiting scheduling flexibility and horizontal scaling.
-          - **Port conflicts**: Multiple applications competing for the same host ports can cause deployment failures and unpredictable behavior.
-          - **Security boundary bypass**: Host ports allow direct network access to containers, circumventing network policies and service mesh controls.
-          - **Audit complexity**: Traffic to host ports is harder to monitor, log, and trace through standard Kubernetes observability tools.
+        It also puts the Pod on the node's network directly. Traffic arriving on a host port has not passed through a Service, so it is not load balanced, it does not appear in Service-level metrics, and whatever a service mesh enforces at the Service boundary does not apply to it. Whether the port is reachable from outside the cluster depends on the node's own firewall rules rather than on anything expressed in Kubernetes, which means the exposure is decided somewhere nobody reading the manifest will look.
 
-        Use Kubernetes Services (ClusterIP, NodePort, or LoadBalancer) instead of host ports to properly manage network access and maintain security boundaries.
+        The reservation follows the Pod's placement, so the same manifest exposes a different machine each time the Pod is rescheduled, and the set of addresses on which the application answers changes without anyone editing anything.
+
+        Declare `containerPort` for documentation and publish the Pod through a Service, which is the object built to carry that decision and the one place an exposure choice can be reviewed.
       audit: |
         Check to ensure no Pods are binding any of their containers to a host port:
 
@@ -2456,19 +2463,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that containers do not bind to host ports, which directly exposes the container on the node's network interface.
+        This check verifies that no container in a DaemonSet's Pod template binds a `hostPort`.
+
+        A port entry under a container's `ports` list normally carries only `containerPort`, describing what the process listens on inside the Pod network. Adding `hostPort` reserves that number on the node and forwards traffic arriving there straight into the container, bypassing the Service layer. This check requires every port entry under `spec.template.spec` to leave `hostPort` unset.
 
         **Why this matters**
 
-        Using host ports creates security and operational risks that undermine Kubernetes' networking model:
+        A DaemonSet already runs one Pod per node, so the usual scheduling penalty of a host port does not bite the DaemonSet itself. What it does instead is claim a number in the node's port space on every machine in the cluster, permanently and for every node added later. Any other workload that wants that port on a host becomes unschedulable, and its events say only that a predicate failed, with nothing pointing at the DaemonSet that took the port.
 
-          - **Network exposure**: Host ports bypass Kubernetes Services and expose containers directly to the network, potentially to external traffic.
-          - **Scheduling constraints**: Only one Pod can use a specific host port per node, severely limiting scheduling flexibility and horizontal scaling.
-          - **Port conflicts**: Multiple applications competing for the same host ports can cause deployment failures and unpredictable behavior.
-          - **Security boundary bypass**: Host ports allow direct network access to containers, circumventing network policies and service mesh controls.
-          - **Audit complexity**: Traffic to host ports is harder to monitor, log, and trace through standard Kubernetes observability tools.
+        Two DaemonSets that both want the same port collide outright. The second one places a Pod on every node and every one of them stays Pending, which looks like a broken rollout rather than a port conflict.
 
-        Use Kubernetes Services (ClusterIP, NodePort, or LoadBalancer) instead of host ports to properly manage network access and maintain security boundaries.
+        The exposure is also unmanaged. Traffic arriving on a host port reaches the container without passing through a Service, so it is not covered by whatever the Service layer enforces and does not appear in Service-level metrics. Whether it is reachable from outside the cluster depends entirely on the node's own firewall rules rather than on anything expressed in Kubernetes.
+
+        This is the workload kind where an exception is most defensible. Ingress controllers and node-level network agents sometimes have to be reachable on a fixed node port to do their job. Where that is genuinely required, treat it as a deliberate exception, keep the port allocation documented, and confirm that node firewall rules restrict who can reach it.
       audit: |
         Check to ensure no DaemonSets are binding any of their containers to a host port:
 
@@ -2511,19 +2518,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that containers do not bind to host ports, which directly exposes the container on the node's network interface.
+        This check verifies that no container in a ReplicaSet's Pod template binds a `hostPort`.
+
+        A port entry under a container's `ports` list normally carries only `containerPort`, describing what the process listens on inside the Pod network. Adding `hostPort` reserves that number on whichever node the Pod is scheduled to and forwards traffic arriving there straight into the container. This check requires every port entry under `spec.template.spec` to leave `hostPort` unset.
 
         **Why this matters**
 
-        Using host ports creates security and operational risks that undermine Kubernetes' networking model:
+        Only one Pod holding a given host port can run on a node, so the reservation turns the node count into a hard ceiling on the replica count. A ReplicaSet asked for more replicas than there are eligible nodes never reaches its desired count. It keeps creating Pods that stay Pending, and the status shows a persistent gap between desired and ready with a scheduling predicate failure as the only clue.
 
-          - **Network exposure**: Host ports bypass Kubernetes Services and expose containers directly to the network, potentially to external traffic.
-          - **Scheduling constraints**: Only one Pod can use a specific host port per node, severely limiting scheduling flexibility and horizontal scaling.
-          - **Port conflicts**: Multiple applications competing for the same host ports can cause deployment failures and unpredictable behavior.
-          - **Security boundary bypass**: Host ports allow direct network access to containers, circumventing network policies and service mesh controls.
-          - **Audit complexity**: Traffic to host ports is harder to monitor, log, and trace through standard Kubernetes observability tools.
+        Node maintenance turns the ceiling into an outage. When a node is drained, its Pod is evicted and the ReplicaSet creates a replacement, which needs a node where the port is free. On a cluster already running one such Pod per node there is nowhere to put it, so the replica stays down until the drained node comes back.
 
-        Use Kubernetes Services (ClusterIP, NodePort, or LoadBalancer) instead of host ports to properly manage network access and maintain security boundaries.
+        The reservation is also invisible to everyone else. An unrelated workload that later wants the same port on the host is silently unschedulable, and nothing in its events points at the ReplicaSet holding the port.
+
+        Traffic that arrives on a host port bypasses the Service layer, so it is not load balanced across the replicas and does not show up in Service-level metrics, which defeats most of the reason for running more than one replica. Declare `containerPort` and publish through a Service instead.
       audit: |
         Check to ensure no ReplicaSets are binding any of their containers to a host port:
 
@@ -2566,19 +2573,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that containers do not bind to host ports, which directly exposes the container on the node's network interface.
+        This check verifies that no container in a Job's Pod template binds a `hostPort`.
+
+        A port entry under a container's `ports` list normally carries only `containerPort`. Adding `hostPort` reserves that number on the node the Pod is scheduled to and forwards traffic arriving there straight into the container. This check requires every port entry under `spec.template.spec` to leave `hostPort` unset.
 
         **Why this matters**
 
-        Using host ports creates security and operational risks that undermine Kubernetes' networking model:
+        A host port is a reservation that only one Pod per node can hold, and a Job is a poor fit for holding one. Jobs are frequently run with `parallelism` above one, and every worker Pod carrying the same host port needs a distinct node, so a Job asking for ten parallel workers on a six node cluster runs six and leaves four Pending until slots free up. The Job appears to be running normally while doing a fraction of the expected work.
 
-          - **Network exposure**: Host ports bypass Kubernetes Services and expose containers directly to the network, potentially to external traffic.
-          - **Scheduling constraints**: Only one Pod can use a specific host port per node, severely limiting scheduling flexibility and horizontal scaling.
-          - **Port conflicts**: Multiple applications competing for the same host ports can cause deployment failures and unpredictable behavior.
-          - **Security boundary bypass**: Host ports allow direct network access to containers, circumventing network policies and service mesh controls.
-          - **Audit complexity**: Traffic to host ports is harder to monitor, log, and trace through standard Kubernetes observability tools.
+        Retries make it worse. When a Pod fails and the Job creates a replacement, the port may still be held by the terminating Pod, so the replacement cannot be placed immediately and the retry budget burns down against a scheduling problem rather than the original fault.
 
-        Use Kubernetes Services (ClusterIP, NodePort, or LoadBalancer) instead of host ports to properly manage network access and maintain security boundaries.
+        The reservation is also unnecessary. Batch work is normally something that reaches out to other services, not something other services connect to, so a `hostPort` in a Job template is usually copied from a server manifest and serves no purpose while constraining scheduling for every other workload on the cluster.
+
+        If the Job really does need to be reachable, for instance to expose a metrics endpoint, declare `containerPort` and put a Service in front of it. Traffic that arrives on a host port skips the Service layer, so it is neither load balanced nor visible in Service-level metrics.
       audit: |
         Check to ensure no Jobs are binding any of their containers to a host port:
 
@@ -2621,19 +2628,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that containers do not bind to host ports, which directly exposes the container on the node's network interface.
+        This check verifies that no container in a Deployment's Pod template binds a `hostPort`.
+
+        A port entry under a container's `ports` list normally carries only `containerPort`, describing what the process listens on inside the Pod network. Adding `hostPort` reserves that number on whichever node the Pod is scheduled to and forwards traffic arriving there straight into the container. This check requires every port entry under `spec.template.spec` to leave `hostPort` unset.
 
         **Why this matters**
 
-        Using host ports creates security and operational risks that undermine Kubernetes' networking model:
+        A host port is a per-node reservation, and a Deployment is the workload kind least able to live with one. Only one Pod holding a given host port can run per node, so the effective maximum replica count becomes the node count. Scale past it and the surplus Pods sit Pending with a scheduling predicate failure that says nothing about ports being the cause.
 
-          - **Network exposure**: Host ports bypass Kubernetes Services and expose containers directly to the network, potentially to external traffic.
-          - **Scheduling constraints**: Only one Pod can use a specific host port per node, severely limiting scheduling flexibility and horizontal scaling.
-          - **Port conflicts**: Multiple applications competing for the same host ports can cause deployment failures and unpredictable behavior.
-          - **Security boundary bypass**: Host ports allow direct network access to containers, circumventing network policies and service mesh controls.
-          - **Audit complexity**: Traffic to host ports is harder to monitor, log, and trace through standard Kubernetes observability tools.
+        Rolling updates hit the ceiling sooner. The default strategy starts new Pods before terminating old ones, so during a rollout the Deployment briefly wants more Pods than its steady-state replica count. With a host port in play, the new Pod cannot be placed until the old one on that node has fully terminated, and the rollout stalls or crawls through one node at a time.
 
-        Use Kubernetes Services (ClusterIP, NodePort, or LoadBalancer) instead of host ports to properly manage network access and maintain security boundaries.
+        Horizontal autoscaling is affected the same way. A HorizontalPodAutoscaler that raises the replica count in response to load produces Pods that cannot be scheduled, so the workload does not scale and the autoscaler has no way to report why.
+
+        Traffic arriving on a host port also bypasses the Service layer entirely, so it is not load balanced across replicas and does not appear in Service-level metrics. Declare `containerPort` and publish the workload through a Service, which is the object designed to carry that decision.
       audit: |
         Check to ensure no Deployments are binding any of their containers to a host port:
 
@@ -2676,19 +2683,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that containers do not bind to host ports, which directly exposes the container on the node's network interface.
+        This check verifies that no container in a StatefulSet's Pod template binds a `hostPort`.
+
+        A port entry under a container's `ports` list normally carries only `containerPort`. Adding `hostPort` reserves that number on the node the Pod is scheduled to and forwards traffic arriving there straight into the container. This check requires every port entry under `spec.template.spec` to leave `hostPort` unset.
 
         **Why this matters**
 
-        Using host ports creates security and operational risks that undermine Kubernetes' networking model:
+        A host port is a per-node reservation, which puts a hard ceiling on how many replicas the StatefulSet can run. Two replicas cannot share a node once both want the same host port, so scaling to a replica count above the node count leaves the extra Pods Pending indefinitely, with nothing to show for it beyond a failed scheduling predicate.
 
-          - **Network exposure**: Host ports bypass Kubernetes Services and expose containers directly to the network, potentially to external traffic.
-          - **Scheduling constraints**: Only one Pod can use a specific host port per node, severely limiting scheduling flexibility and horizontal scaling.
-          - **Port conflicts**: Multiple applications competing for the same host ports can cause deployment failures and unpredictable behavior.
-          - **Security boundary bypass**: Host ports allow direct network access to containers, circumventing network policies and service mesh controls.
-          - **Audit complexity**: Traffic to host ports is harder to monitor, log, and trace through standard Kubernetes observability tools.
+        It also undermines the recovery behavior a StatefulSet exists to provide. When a node goes away, the controller recreates the missing ordinal elsewhere, and it can only do that on a node where the port is free. A cluster with a spare node but no spare port keeps the replica down and the set degraded.
 
-        Use Kubernetes Services (ClusterIP, NodePort, or LoadBalancer) instead of host ports to properly manage network access and maintain security boundaries.
+        The reservation is invisible from outside the manifest that made it. Someone who later deploys an unrelated workload wanting the same port on the host gets an unschedulable Pod and no indication that a StatefulSet in another namespace is the reason.
+
+        A StatefulSet's replicas are normally addressed through their governing headless Service, which already gives each Pod a stable name and reaches the container port directly. Declare `containerPort` for documentation, publish through a Service, and leave the node's port space alone. The rare workload that genuinely needs a node-level listener, such as a per-node network agent, is a better fit for a DaemonSet than for a StatefulSet.
       audit: |
         Check to ensure no StatefulSets are binding any of their containers to a host port:
 
@@ -2731,19 +2738,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that containers do not bind to host ports, which directly exposes the container on the node's network interface.
+        This check verifies that no container in a CronJob's Pod template binds a `hostPort`.
+
+        A port entry under a container's `ports` list normally carries only `containerPort`, which documents what the process listens on inside the Pod network. Adding `hostPort` also reserves that port number on whichever node the Pod lands on and forwards traffic arriving there straight into the container. This check requires every port entry in the Pod template to leave `hostPort` unset.
 
         **Why this matters**
 
-        Using host ports creates security and operational risks that undermine Kubernetes' networking model:
+        A host port is a reservation held by exactly one Pod per node. The scheduler will place a Pod that wants a given host port only on a node where nothing else already holds it, so the number of such Pods that can run at once is capped by the node count. For a CronJob this shows up as a run that never starts: the Job is created on schedule, its Pod stays Pending because no node has the port free, and if the previous run is still holding it the schedule quietly falls behind.
 
-          - **Network exposure**: Host ports bypass Kubernetes Services and expose containers directly to the network, potentially to external traffic.
-          - **Scheduling constraints**: Only one Pod can use a specific host port per node, severely limiting scheduling flexibility and horizontal scaling.
-          - **Port conflicts**: Multiple applications competing for the same host ports can cause deployment failures and unpredictable behavior.
-          - **Security boundary bypass**: Host ports allow direct network access to containers, circumventing network policies and service mesh controls.
-          - **Audit complexity**: Traffic to host ports is harder to monitor, log, and trace through standard Kubernetes observability tools.
+        The reservation also outlives the intent behind it. Batch work is rarely something anything else needs to connect to, so a `hostPort` on a CronJob is usually inherited from a copied manifest. It constrains scheduling for every other workload on the cluster and gives the Job nothing in return.
 
-        Use Kubernetes Services (ClusterIP, NodePort, or LoadBalancer) instead of host ports to properly manage network access and maintain security boundaries.
+        Traffic that arrives on a host port skips the Service layer entirely. It is not load balanced, it is not covered by whatever a service mesh enforces at the Service boundary, and it does not appear in Service-level metrics, so the connection is both unmanaged and unmeasured.
+
+        If the container genuinely has to be reachable, declare `containerPort` and publish it through a Service of the appropriate type. That keeps the exposure decision in one object instead of pinning a node's port space from inside a workload manifest.
       audit: |
         Check to ensure no CronJobs are binding any of their containers to a host port:
 
@@ -2787,19 +2794,19 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that TLS certificates used by Ingress resources have more than 15 days remaining before expiration.
+        This check verifies that every TLS certificate served by an Ingress has more than 15 days left before it expires.
+
+        An Ingress lists the certificates it serves under `spec.tls`, where each entry names a Secret holding a certificate and key. The ingress controller loads them and presents them for the hostnames in the entry. This check reads the certificate in each referenced Secret and requires its remaining lifetime to exceed 15 days.
 
         **Why this matters**
 
-        Expired or soon-to-expire TLS certificates cause immediate service disruptions and security risks:
+        Certificate expiry is not a gradual degradation. Up to the last second the service works normally, and then every client refuses the connection at once. Browsers show an interstitial that most users will not click through, and API clients and service-to-service calls fail the handshake outright with no fallback, so an expired certificate is a total outage of everything behind that hostname.
 
-          - **Service outages**: When certificates expire, browsers and clients refuse connections, causing complete service unavailability for HTTPS traffic.
-          - **Security warnings**: Users encounter browser security warnings that damage trust and may lead them to bypass important security protections.
-          - **Compliance violations**: Many security standards require valid TLS certificates; expired certificates can trigger audit failures.
-          - **Emergency remediation**: Certificate renewals done under time pressure are error-prone and may cause additional outages during replacement.
-          - **Man-in-the-middle exposure**: Users accustomed to ignoring certificate warnings become vulnerable to interception attacks.
+        It is also an outage that arrives at an arbitrary time. Certificates expire on a schedule set months earlier by whoever issued them, which is very unlikely to be a weekday morning, and the team on call is usually not the team that provisioned it.
 
-        Implement automated certificate management (such as cert-manager) and monitor certificate expiration dates to ensure timely renewal well before expiration.
+        The 15 day margin exists so the renewal is an ordinary change rather than an emergency. Replacing a certificate means obtaining a new one, updating the Secret, and getting the ingress controller to pick it up, and each of those steps can go wrong. Done with two weeks of runway, a failed attempt is retried the next day; done on the last afternoon, a failed attempt is an incident.
+
+        The durable fix is to stop renewing by hand. Deploy cert-manager or an equivalent controller so that certificates are reissued and the Secrets rewritten automatically well before expiry, and keep this check as the alarm that tells you the automation has stopped working.
       audit: |
         Check to ensure no Ingress Secrets contain TLS certificates near expiration:
 
@@ -2836,19 +2843,19 @@ queries:
         .all(taints.any(effect == "NoSchedule"))
     docs:
       desc: |
-        This check verifies that all control plane nodes have a `NoSchedule` taint to prevent regular workloads from being scheduled on them.
+        This check verifies that every control plane node carries a taint with the `NoSchedule` effect.
+
+        A taint marks a node as unsuitable for Pods that do not explicitly tolerate it. Control plane nodes are identified by the `node-role.kubernetes.io/control-plane` label, and the matching taint keeps ordinary workloads off them while the cluster's own components, which carry the corresponding toleration, continue to run there. This check requires every labeled control plane node to carry at least one `NoSchedule` taint.
 
         **Why this matters**
 
-        Control plane nodes run critical cluster components such as the API server, etcd, controller manager, and scheduler. Allowing user workloads on these nodes creates several risks:
+        Control plane nodes run the API server, etcd, the controller manager, and the scheduler. Those components have no elastic capacity: when the node is short of CPU, API requests queue and watches lag, and when it is short of memory, etcd is a candidate for the same out-of-memory kill as anything else on the machine. A single application Pod with an unbounded memory appetite scheduled onto a control plane node can therefore stall reconciliation across the entire cluster.
 
-        - **Resource contention**: User workloads can consume CPU and memory needed by control plane components, destabilizing the entire cluster.
-        - **Blast radius**: A misbehaving or compromised user pod on a control plane node has closer proximity to sensitive components like etcd, which stores all cluster state and secrets.
-        - **Availability risk**: If a user workload causes a control plane node to become unresponsive, cluster management operations (scaling, deployments, self-healing) stop working.
-        - **Security boundary**: Separating control plane from data plane is a fundamental Kubernetes security principle that limits the impact of workload-level compromises.
-        - **Operational clarity**: Taints make scheduling behavior explicit, preventing accidental placement of workloads on control plane nodes.
+        The failure is also self-amplifying, which is what makes it worse than a normal noisy-neighbor problem. Every recovery mechanism the cluster has, rescheduling Pods, scaling replicas, evicting and replacing, runs through the control plane. If the control plane is the thing that is starved, none of those mechanisms work, and an incident that would have healed itself instead needs manual intervention on the node.
 
-        Ensure all control plane nodes have at least a `NoSchedule` taint to keep user workloads on dedicated worker nodes.
+        Keeping the boundary also limits how much a compromised or misbehaving workload is adjacent to. etcd holds every Secret in the cluster, and a workload that shares its node is a great deal closer to it than one that does not.
+
+        kubeadm applies this taint to every control plane node it bootstraps, so its absence on such a cluster means it was removed deliberately. Managed offerings run the control plane outside the cluster, so no node is labeled and there is nothing to taint. Do not apply it on single-node clusters, where tainting the only node leaves new Pods unschedulable.
       audit: |
         Check control plane node taints:
 
@@ -2877,19 +2884,19 @@ queries:
       k8s.horizontalPodAutoscalers.all(spec["minReplicas"] != null && spec["minReplicas"] >= 2)
     docs:
       desc: |
-        This check ensures that all HorizontalPodAutoscalers (HPAs) are configured with a minimum replica count of at least 2.
+        This check verifies that every HorizontalPodAutoscaler will not scale its target below two replicas.
+
+        A HorizontalPodAutoscaler adjusts the replica count of a workload between a floor and a ceiling based on observed metrics. The floor is `minReplicas` in the autoscaler's spec, and when it is unset the API defaults it to 1. This check requires the field to be present and set to at least 2.
 
         **Why this matters**
 
-        An HPA with `minReplicas: 1` means the autoscaler can scale a workload down to a single replica, eliminating high availability:
+        `minReplicas: 1` means that any quiet period is enough for the autoscaler to remove the redundancy the workload was given. It scales down to a single Pod, and from that moment every ordinary event becomes an outage. A node drained for an upgrade takes the only replica with it. An eviction under memory pressure, a rolling update, or a Pod deleted by mistake does the same. None of those are failures; they are routine cluster operations that a workload with two replicas absorbs without anyone noticing.
 
-        - **Single point of failure**: With one replica, any pod disruption (node failure, OOM kill, deployment rollout) causes complete service downtime.
-        - **Rolling update gaps**: During deployments, the single replica is terminated before or during replacement, causing a brief outage.
-        - **Node maintenance**: Voluntary disruptions like node drains cannot gracefully migrate traffic when only one replica exists.
-        - **Scale-up latency**: Scaling from 1 to 2 replicas takes time (metrics collection, cooldown periods). During this window, the single replica handles all traffic and may become overloaded.
-        - **Pod Disruption Budgets**: PDBs cannot provide meaningful protection with only one replica, since there is no redundancy to preserve.
+        Scaling back up does not arrive in time to help. The autoscaler works from metrics that are collected and averaged over a window, and it applies stabilization delays before acting, so the gap between the load arriving and the second Pod becoming ready is measured in tens of seconds at best. Throughout it, the single replica carries all the traffic, which is exactly the condition most likely to make it fall over.
 
-        Set `minReplicas` to at least 2 for any workload that requires availability, ensuring there is always redundancy even at minimum scale.
+        A PodDisruptionBudget cannot cover the gap either. With one replica, any budget that permits a disruption allows the whole service to go down, and any budget that forbids one blocks node drains indefinitely.
+
+        Some workloads genuinely are singletons, such as a controller that relies on leader election or a job runner that must not process work twice. Those are legitimate exceptions worth documenting, rather than a reason to leave the floor at 1 everywhere else.
       audit: |
         Check HPA minimum replica settings:
 
