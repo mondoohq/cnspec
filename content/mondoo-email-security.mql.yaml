@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-email-security
     name: Mondoo Email Security
-    version: 1.4.0
+    version: 1.4.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -102,20 +102,17 @@ queries:
       dns.reverseRecords.any(rdata.any(_.contains(domainName.fqdn)))
     docs:
       desc: |
-        A reverse DNS PTR record maps the sending mail server's IP address back to a fully qualified domain name within your domain. Reverse DNS queries for IPv4 addresses use the special domain `in-addr.arpa`, where the IPv4 address is represented in reverse octet order followed by the `.in-addr.arpa` suffix. When the PTR record resolves to a hostname whose forward A record points back to the original IP address, the domain is in a forward-confirmed reverse DNS state, which receiving mail servers treat as a reliable signal that the sender is legitimate.
+        This check verifies that the sending mail server's address resolves back to a hostname that resolves forward to the same address.
+
+        A PTR record maps an IP address to a hostname, published under `in-addr.arpa` for IPv4 with the octets reversed. When the hostname that PTR returns has a forward record pointing back to the original address, the address is in a forward-confirmed reverse DNS state. The check requires that the reverse record resolves to a name within the domain being scanned.
 
         **Why this matters**
 
-        - Validates sender identity and prevents spam classification.
-        - Reduces phishing and spoofing by verifying legitimate email servers.
-        - Forward-confirmed reverse DNS provides authentication strong enough to be used for allowlisting email servers.
+        Forward-confirmed reverse DNS is one of the oldest and most widely applied filtering signals in email, and it is applied before any content is examined. A sending address with no PTR record, or one whose PTR does not confirm, is treated as unlikely to be a legitimate mail server, because legitimate mail servers are configured deliberately and compromised machines and consumer connections generally are not.
 
-        **If you don't fix this**
+        The consequence is delivery failure that looks like a mystery. Major providers reject or heavily penalize mail from addresses without matching reverse DNS, sometimes with an SMTP error that names the reason and sometimes by silently filing the message in spam. The mail leaves your server successfully, so the sending side sees no error.
 
-        - Major providers like Gmail and Outlook may reject or silently drop your emails.
-
-        Example:
-        IP `123.123.123.123` should have a PTR record pointing to `mail.example.com`, and a forward lookup of `mail.example.com` should resolve back to `123.123.123.123`.
+        This is also the one control here you may not be able to set yourself. PTR records are published by whoever controls the address block, which is your hosting or connectivity provider, so fixing it usually means a request to them rather than an edit in your own DNS.
       audit: |
         Run the `dig -t PTR <special-reverse-domain>` command and verify that it points to your mail domain.
 
@@ -219,19 +216,19 @@ queries:
     mql: dns.records.any(type == "TXT")
     docs:
       desc: |
-        This check confirms the presence of a TXT record, which provides additional domain ownership verification and policy information.
+        This check verifies that the domain apex returns at least one TXT record.
+
+        TXT records at the apex carry the text-based policies other systems look for, including SPF and the verification strings services publish to prove domain control, for example `v=spf1 include:_spf.google.com ~all`. The check requires that at least one TXT record exists.
 
         **Why this matters**
 
-        - Supports authentication protocols like SPF and domain verification.
-        - Enhances trust by clearly stating domain policies.
+        This is a broad precondition rather than a specific control, and it is worth being straightforward about that. It confirms the apex serves TXT records at all; it does not evaluate what they contain.
 
-        **If you don't fix this**
+        Its value is as an early failure. A domain apex returning no TXT records cannot be publishing SPF, cannot hold a domain verification token, and has not completed the setup steps that mail providers and other services require. When this fails, the more specific checks in this policy that look for SPF and DMARC are failing for the same underlying reason, and fixing the DNS configuration resolves several findings at once.
 
-        - Email services may fail to verify domain ownership, impacting deliverability.
+        The condition usually means something structural: a newly delegated domain whose records were never added, a nameserver migration where TXT records were not carried across, or a zone serving from an unexpected provider.
 
-        Example:
-        TXT record: `v=spf1 include:_spf.google.com ~all`
+        Treat a failure here as a signal to check the zone as a whole rather than to add a placeholder record. A TXT record added only to satisfy this check achieves nothing.
       audit: |
         Run the `dig +short TXT <domain>` command and verify that at least one TXT record is returned.
 
@@ -304,19 +301,19 @@ queries:
     mql: dns.records.any(type == "A")
     docs:
       desc: |
-        This check ensures the existence of an address (A) record at the domain apex, which maps a domain name to an IPv4 address.
+        This check verifies that the domain apex returns an address record.
+
+        An A record maps a name to an IPv4 address, so that `example.com` resolves to something a client can connect to. The check requires at least one A record at the apex.
 
         **Why this matters**
 
-        - Ensures users and mail systems can reliably access domain resources.
-        - Improves overall domain stability and trustworthiness.
+        This is a domain health check rather than a security control, and it belongs in an email policy for a reason worth stating: receiving mail servers use the apparent legitimacy of a sending domain as a filtering input, and a domain that does not resolve at all reads as disposable.
 
-        **If you don't fix this**
+        Throwaway domains registered for a single phishing campaign frequently have mail records and nothing else, because nobody intends to serve a website from them. Reputation systems know this, so a domain with no address record starts from a worse position, and mail sent from it is more likely to be filtered regardless of how correctly SPF, DKIM, and DMARC are configured.
 
-        - Your domain may appear unreachable, causing website and service access failures.
+        A failure here is also often a symptom rather than the problem. An apex with no A record usually means an incomplete delegation, a migration that moved some records and not others, or a zone that is not the one you think is authoritative, and each of those affects more than mail.
 
-        Example:
-        A record for `example.com` resolves to `93.184.216.34`.
+        Note that a domain served entirely over IPv6, or one using an ALIAS or ANAME record at the apex rather than an A record, may fail this check while being correctly configured.
       audit: |
         Run the `dig +short A <domain>` command and verify that an A record is returned.
 
@@ -378,19 +375,19 @@ queries:
       dns.spf.length >= 1
     docs:
       desc: |
-        Ensures Sender Policy Framework (SPF) records correctly specify authorized mail servers, preventing email spoofing.
+        This check verifies that the domain publishes a Sender Policy Framework record.
+
+        SPF is a TXT record at the domain apex naming the servers permitted to send mail using that domain in the envelope sender. A receiving server looks it up and compares the connecting IP address against it. The check requires at least one SPF record to exist, for example `v=spf1 ip4:192.168.0.1 include:_spf.example.com -all`.
 
         **Why this matters**
 
-        - Reduces risk of email fraud by clearly specifying legitimate sending servers.
-        - Improves deliverability by reducing false spam detections.
+        Without SPF, nothing connects a message claiming to come from your domain to any particular server. Anyone can open an SMTP connection anywhere in the world, put your domain in the envelope sender, and the receiving server has no published record to weigh it against.
 
-        **If you don't fix this**
+        That is the mechanic behind domain impersonation. An attacker sending as your finance team, your CEO, or your support address does not need to compromise anything to do it; the absence of a record is what makes the claim unfalsifiable.
 
-        - Attackers can spoof your domain to send phishing emails.
+        The cost falls on your own mail too. Receivers treat an unauthenticated domain as lower reputation, so legitimate mail is more likely to land in spam, and the usual response is to investigate deliverability rather than the missing record causing it.
 
-        Example:
-        SPF record: `v=spf1 ip4:192.168.0.1 include:_spf.example.com -all`
+        SPF alone is not sufficient. It authenticates the envelope sender, which recipients never see, not the `From:` header they do see. It also breaks on forwarding, which is why it needs DKIM and DMARC alongside it, both of which have their own checks in this policy.
       audit: |
         Run the `dig +short TXT <domain>` command and look for a record beginning with `v=spf1`.
 
@@ -452,19 +449,19 @@ queries:
     mql: dns.spf.length <= 1
     docs:
       desc: |
-        Validates that only one SPF record is set per domain, avoiding conflicts and ensuring proper email validation.
+        This check verifies that the domain publishes exactly one SPF record.
+
+        The check counts SPF records at the apex and requires no more than one, so a domain with two or more fails even when each record is individually valid.
 
         **Why this matters**
 
-        - Prevents authentication failures caused by multiple conflicting records.
-        - Simplifies SPF management and reduces potential misconfigurations.
+        RFC 7208 is explicit that a domain publishing more than one SPF record is a permanent error, and receiving servers that follow it stop evaluating rather than choosing between the records or merging them.
 
-        **If you don't fix this**
+        The practical effect is that SPF stops working entirely. Not partially, not with the stricter record winning: the evaluation returns permerror and the receiver falls back to whatever it does for domains with no usable policy. A domain in this state has SPF configured, believes itself protected, and is not.
 
-        - Mail servers may skip SPF checks entirely, weakening your domain protection.
+        Duplicates arrive through ordinary work. A new mail provider is onboarded and their documented TXT record is added alongside the existing one, because adding is safer-looking than editing. Both records are correct in isolation, which is why the mistake survives review.
 
-        Example:
-        Only one TXT record with `v=spf1` exists for `example.com`.
+        Merge them into a single record by combining the mechanisms into one `v=spf1` string, and watch the ten DNS lookup limit while doing it, since each `include:` counts against it. Confirm afterward that exactly one record is returned rather than assuming the edit replaced rather than added.
       audit: |
         Run the `dig +short TXT <domain>` command and count the records beginning with `v=spf1`.
 
@@ -525,19 +522,19 @@ queries:
     mql: dns.spf.all(dnsTxt.length <= 255)
     docs:
       desc: |
-        Checks SPF records for proper length.
+        This check verifies that no SPF record exceeds the DNS length limit for a single character string.
+
+        A TXT record is made of one or more character strings, each capped at 255 bytes. The check requires each SPF record's text to stay within that limit, for example `v=spf1 include:_spf.example.com ~all`.
 
         **Why this matters**
 
-        - Ensures compliance with DNS standards, preventing truncation or parsing errors.
-        - Reduces risks of SPF validation errors.
+        An SPF record longer than 255 bytes has to be split into multiple strings, which receivers are expected to concatenate before parsing. Not all of them do it correctly, and the ones that get it wrong produce a record that parses as malformed rather than as the record you wrote.
 
-        **If you don't fix this**
+        The result is inconsistent authentication. Mail authenticates at some receivers and fails at others, which is considerably harder to diagnose than a uniform failure, because a report of undelivered mail from one recipient looks like a problem at their end.
 
-        - Broken SPF records could cause legitimate emails to fail authentication.
+        Length problems also travel with growth. Records lengthen as services are onboarded, so a record that was fine at creation crosses the limit during a routine addition, and nothing about that change signals it.
 
-        Example:
-        SPF record should be under 255 characters: `v=spf1 include:_spf.example.com ~all`
+        Shorten by removing mechanisms for services no longer in use, replacing long `ip4` lists with an `include:` where the provider offers one, or consolidating multiple provider includes. Watch the ten DNS lookup limit while doing this, since it is a separate constraint that consolidation can push you into.
       audit: |
         Run the `dig +short TXT <domain>` command and measure the length of the record beginning with `v=spf1`.
 
@@ -598,19 +595,19 @@ queries:
     mql: dns.spf.none(dnsTxt == /\s{2,}/)
     docs:
       desc: |
-        Checks SPF records for absence of unnecessary whitespace.
+        This check verifies that the SPF record does not contain runs of consecutive whitespace.
+
+        SPF terms are separated by single spaces. The check fails a record containing two or more whitespace characters in a row, for example `v=spf1  include:_spf.example.com ~all` with a double space.
 
         **Why this matters**
 
-        - Ensures compliance with DNS standards, preventing truncation or parsing errors.
-        - Reduces risks of SPF validation errors.
+        This is a hygiene check rather than a direct exposure, and it earns its place because SPF parsers disagree about how forgiving to be.
 
-        **If you don't fix this**
+        A record with irregular spacing may be parsed correctly by one receiver, parsed with a term skipped by another, and rejected as malformed by a third. That inconsistency is the problem: mail authenticates for some recipients and not others, and the resulting reports look like an intermittent delivery fault rather than a record defect.
 
-        - Broken SPF records could cause legitimate emails to fail authentication.
+        The spacing is almost always accidental. SPF records are edited by hand in a DNS console, often by copying a mechanism from a provider's documentation, and a stray space is invisible in the interface where it was introduced and in the record as displayed afterward.
 
-        Example:
-        SPF record should not contain multiple spaces: `v=spf1 include:_spf.example.com ~all`
+        Rewrite the record with single spaces between terms and no leading or trailing whitespace. Verify by fetching the record rather than by reading the DNS console field, since some interfaces normalize what they display without normalizing what they serve.
       audit: |
         Run the `dig +short TXT <domain>` command and inspect the record beginning with `v=spf1` for runs of consecutive spaces.
 
@@ -672,16 +669,19 @@ queries:
       dns.spf.all(allQualifier == "-" || allQualifier == "~")
     docs:
       desc: |
-        Verifies that the SPF record ends in either ~all (soft fail) or -all (hard fail), ensuring that mail from unauthorized servers is rejected or flagged.
+        This check verifies that the SPF record ends with an enforcing `all` mechanism.
+
+        The final mechanism tells receivers what to do with mail from servers the record does not list. The check requires `-all`, which is a hard fail, or `~all`, which is a soft fail. It fails on `?all`, which is neutral, and on a record with no `all` mechanism at all.
 
         **Why this matters**
 
-        - Prevents unauthenticated servers from sending email on behalf of your domain.
-        - Provides clear enforcement to protect against spoofed messages.
+        Everything before the `all` mechanism lists who may send. The `all` mechanism decides whether that list means anything, and a neutral qualifier makes it advisory.
 
-        **If you don't fix this**
+        With `?all`, an unlisted server produces a neutral result, which receivers treat almost exactly as they treat a domain with no SPF record. The record still resolves, still looks correct in a DNS lookup, and still appears in a compliance review as SPF being configured, while providing no basis to reject anything.
 
-        - Anyone can send mail pretending to be from your domain without SPF filtering stopping it.
+        That gap is why this matters more than it first appears: the failure is silent and looks like success. Someone verifying that SPF exists gets a green answer.
+
+        `-all` is the correct end state and tells receivers to reject unlisted senders outright. `~all` marks the message suspicious instead, which is the right choice while you are still discovering which services legitimately send as your domain. Move to `-all` once the aggregate reports show no legitimate sender failing, and be aware that under DMARC the policy there governs enforcement, so `~all` with `p=reject` still results in rejection.
       audit: |
         Run the `dig +short TXT <domain>` command and inspect the end of the record beginning with `v=spf1`.
 
@@ -743,23 +743,21 @@ queries:
     mql: dns.spf.none(allQualifier == "+")
     docs:
       desc: |
-        This check ensures that the SPF record does not use the `+all` mechanism, which explicitly permits all servers to send email on behalf of your domain.
+        This check verifies that the SPF record does not use the `+all` mechanism.
+
+        `+all` explicitly authorizes every server on the internet to send mail as the domain. The check requires that no SPF record ends with it.
 
         **Why this matters**
 
-        The `+all` mechanism in an SPF record tells receiving mail servers to accept email from any source as authorized, completely defeating the purpose of SPF. This is the most dangerous SPF misconfiguration possible:
+        This is worse than publishing no SPF record at all, and it is the only SPF misconfiguration with that property.
 
-        - **Complete bypass of SPF protection**: Any server in the world is treated as an authorized sender for your domain, making SPF checks meaningless
-        - **Enables unrestricted email spoofing**: Attackers can send phishing emails that pass SPF authentication, appearing fully legitimate to recipients and mail filters
-        - **Undermines DMARC enforcement**: Since DMARC relies on SPF (and DKIM) alignment, a passing SPF result from `+all` can cause DMARC to pass for spoofed messages, even with a strict DMARC policy
-        - **Damages domain reputation**: Mail providers may flag or blocklist your domain if it is seen authorizing all senders, as this pattern is commonly associated with compromised or negligently managed domains
+        With no record, a receiver has no policy and applies its own judgment, which increasingly means treating unauthenticated mail with suspicion. With `+all`, the domain owner has published an explicit statement that every sender is authorized, and a conforming receiver honors it. SPF returns a pass for the attacker.
 
-        SPF records should end with `-all` (hard fail) or `~all` (soft fail) to restrict unauthorized senders.
+        That inverts the control completely. The attacker's phishing message now carries an SPF pass from your domain, which raises its reputation score, helps it through filtering, and can satisfy a DMARC alignment check if the sender is aligned. Your own record is doing the work.
 
-        **If you don't fix this**
+        It usually arrives from troubleshooting. Mail was being rejected, `+all` made the rejections stop, and the change was never revisited because nothing looked broken afterward.
 
-        - Attackers can send emails from any server that pass SPF checks as if they were sent by your organization.
-        - Phishing campaigns using your domain will bypass email security filters that rely on SPF validation.
+        Replace it with the specific mechanisms your senders need and an enforcing `-all` or `~all`. If the original problem was mail being rejected, the fix is finding which sender was missing from the record, not authorizing everyone.
       audit: |
         Run the `dig +short TXT <domain>` command and check the SPF record for the `+all` mechanism.
 
@@ -831,19 +829,19 @@ queries:
     mql: dns.records.none(type == "SPF")
     docs:
       desc: |
-        Ensures deprecated SPF DNS record types are not used, maintaining current standards compliance.
+        This check verifies that the domain does not publish SPF policy using the deprecated SPF DNS record type.
+
+        SPF was originally allocated its own record type, number 99, alongside publication in a TXT record. RFC 7208 removed it in 2014, and SPF policy now lives in TXT records only. The check requires that no record of type SPF exists for the domain.
 
         **Why this matters**
 
-        - Ensures compatibility with modern mail systems.
-        - Reduces likelihood of authentication issues.
+        Modern receivers do not query the SPF record type. A domain publishing policy only in that form is publishing policy nobody reads, which leaves it unauthenticated while appearing configured.
 
-        **If you don't fix this**
+        The more damaging case is a domain publishing both. The two records drift, because an update made in the TXT record is not made in the other, and the deprecated record then holds an older policy: a wider set of permitted senders, or an `all` qualifier that was since tightened. Anything still consulting it applies the stale version.
 
-        - Mail servers may ignore your SPF configuration, exposing your domain to abuse.
+        It also confuses the humans. Someone auditing the domain sees two records claiming to define SPF and has to work out which one is authoritative, and the answer is not visible from the records themselves.
 
-        Example:
-        Use only TXT records for SPF. Do not use deprecated SPF record types.
+        Delete the type 99 record and keep the TXT record. Confirm the TXT record carries the current policy before removing the other one, since on some domains the deprecated record is the one that was maintained.
       audit: |
         Run the `dig +short SPF <domain>` command to query for the deprecated `SPF` DNS record type.
 
@@ -905,19 +903,19 @@ queries:
     mql: dns.dmarc.dnsTxt != empty
     docs:
       desc: |
-        Verifies DMARC is configured to specify handling policies for emails failing authentication.
+        This check verifies that the domain publishes a DMARC record.
+
+        DMARC is a TXT record at `_dmarc.<domain>` that tells receivers what to do when a message claiming to be from the domain fails authentication, and where to send reports about it. The check requires the record to exist, for example `v=DMARC1; p=reject; rua=mailto:dmarc-reports@example.com`.
 
         **Why this matters**
 
-        - Helps prevent domain spoofing and phishing attacks.
-        - Provides clear instructions for handling unauthenticated emails, enhancing domain trust.
+        SPF and DKIM authenticate mail but neither instructs the receiver what to do with a failure, and neither protects the address a recipient actually sees. SPF checks the envelope sender and DKIM checks a signature; the `From:` header displayed in the mail client is covered by neither.
 
-        **If you don't fix this**
+        DMARC is what closes that. It requires the authenticated identity to align with the visible `From:` domain, and it publishes a policy the receiver applies when alignment fails. Without it, an attacker can pass SPF for a domain they control while displaying yours in the `From:` header, and the recipient sees your brand on their message.
 
-        - Attackers can spoof your domain without detection.
+        Without a record you also see nothing. DMARC reporting is how a domain owner learns that spoofing is happening at all, and which senders are failing authentication, and a domain without it has no visibility into either.
 
-        Example:
-        DMARC record: `v=DMARC1; p=reject; rua=mailto:dmarc-reports@example.com`
+        Publish the record starting at `p=none` with a `rua` address, use the reports to find legitimate senders that fail, then move to `quarantine` and `reject`. Deploying enforcement before reading the reports is how legitimate mail gets blocked.
       audit: |
         Run the `dig _dmarc.<domain>` command and verify that the DMARC DNS entry exists.
 
@@ -987,18 +985,19 @@ queries:
     mql: dns.dmarc.version == "DMARC1"
     docs:
       desc: |
-        Ensures the version tag in the DMARC record is v=DMARC1.
+        This check verifies that the DMARC record declares version `DMARC1`.
+
+        The version tag must be the first tag in the record and must read exactly `v=DMARC1`, as in `v=DMARC1; p=reject;`. The check requires that value.
 
         **Why this matters**
 
-        - Required by all mail receivers to parse the policy.
+        The version tag is what identifies the record as a DMARC policy at all. Receivers locate the `_dmarc` TXT record and check this tag first; a record whose version tag is missing, misspelled, or not in the first position is discarded without being read further.
 
-        **If you don't fix this**
+        The consequence is total rather than partial. Every other tag in the record, the policy, the reporting addresses, the alignment modes, is ignored, and the domain is treated as having no DMARC record. There is no partial credit for a record that is otherwise correct.
 
-        - The DMARC policy will be ignored.
+        This fails silently and looks fine. The record resolves, a DNS lookup returns it, and a person reading it sees a policy that appears complete. Only a parser applying the specification rejects it, and parsers do not report back to the domain owner.
 
-        Example:
-        `v=DMARC1; p=reject;`
+        Confirm the tag is exactly `v=DMARC1`, in that case, as the first tag before any other. Lowercase `v=dmarc1`, a leading space, or a policy tag placed first are the common ways this breaks, and each produces a record that no receiver will act on.
       audit: |
         Run the `dig TXT _dmarc.<domain>` command and verify that the DMARC version is set to 1.
 
@@ -1065,20 +1064,19 @@ queries:
     mql: dns.dmarc.policy == /quarantine|reject/
     docs:
       desc: |
-        This check confirms the policy mode is either quarantine or reject. This setting determines how receiving mail servers treat messages that fail DMARC evaluation.
+        This check verifies that the DMARC policy is set to enforce rather than monitor.
+
+        The `p` tag decides what receivers do with mail that fails DMARC evaluation. The check requires `quarantine`, which directs failing mail to the spam folder, or `reject`, which refuses it at the SMTP transaction. It fails on `p=none`.
 
         **Why this matters**
 
-        - Specifies what to do when email fails authentication.
-        - "None" allows spoofed messages to pass unchecked.
+        `p=none` is monitoring. Receivers evaluate the message, record the result, send you a report, and then deliver the mail exactly as they would have without any DMARC record. Nothing is blocked.
 
-        **If you don't fix this**
+        That is the correct starting point and the wrong finishing point, and a great many domains stop there. The record exists, reports arrive, and a compliance review records DMARC as configured, while every spoofed message claiming to be from the domain is still delivered to the recipient's inbox.
 
-        - Spoofed emails will be delivered unimpeded, potentially harming recipients and damaging your domain's reputation.
+        The difference in outcome is the whole value of the protocol. Under `p=none` a phishing message wearing your domain reaches the target. Under `p=reject` the receiving server refuses it during the SMTP transaction and it is never delivered.
 
-        Examples:
-        - `p=reject;` blocks unauthenticated messages outright.
-        - `p=quarantine;` flags unauthenticated messages as suspicious and typically places them in the recipient's spam or junk folder. This is a safer starting point if you're still gathering data or fine-tuning your DMARC implementation.
+        Move through the stages deliberately: run `p=none` long enough to identify every legitimate sender in the aggregate reports, fix the ones failing alignment, then `p=quarantine`, then `p=reject`. Use the `pct` tag to ramp gradually if the sending estate is large. Skipping the report-reading stage is how legitimate mail gets blocked, which is what causes an enforcement rollout to be reverted.
       audit: |
         Run the `dig +short TXT _dmarc.<domain>` command and inspect the `p=` tag in the DMARC record.
 
@@ -1141,19 +1139,19 @@ queries:
     mql: dns.dmarc.aggregateReportUris != empty
     docs:
       desc: |
-        The DMARC record's `rua` tag tells receiving mail servers where to send aggregate authentication reports. These reports summarize how messages claiming to be from your domain performed against SPF, DKIM, and DMARC evaluation.
+        This check verifies that the DMARC record requests aggregate reports.
+
+        The `rua` tag names the address receivers send daily aggregate reports to, for example `rua=mailto:dmarc-reports@example.com`. Those reports summarize how mail claiming to be from the domain performed against SPF, DKIM, and DMARC alignment. The check requires at least one address.
 
         **Why this matters**
 
-        - Lets you monitor authentication pass/fail patterns over time.
-        - Surfaces unauthorized senders and misconfigured legitimate services before they harm deliverability.
+        Aggregate reports are the only feedback channel a domain owner has. Without them, DMARC is a policy published into silence: you know what you asked receivers to do and nothing about what is actually happening.
 
-        **If you don't fix this**
+        They answer the two questions that matter for the rollout. Which senders are failing authentication, which is how you find the marketing platform, ticketing system, or regional office that legitimately sends as your domain and was never added to SPF or DKIM. And who else is sending as your domain, which is how spoofing becomes visible at all.
 
-        - You won't know if your domain is being spoofed.
+        That first question is why the tag is a prerequisite rather than an optional extra. Moving to `p=reject` without having read the reports means enforcing a policy whose effect on your own mail is unknown, and the usual outcome is legitimate mail blocked, an urgent complaint, and the policy reverted to `none` permanently.
 
-        Example:
-        `rua=mailto:dmarc-reports@example.com`
+        Point `rua` at a mailbox that is processed rather than one that is read. The reports are XML, arrive daily from every receiver, and are only useful through a tool that aggregates them.
       audit: |
         Run the `dig +short TXT _dmarc.<domain>` command and inspect the DMARC record for a `rua=mailto:` tag.
 
@@ -1215,19 +1213,19 @@ queries:
     mql: dns.dmarc.forensicReportUris != empty
     docs:
       desc: |
-        The DMARC record's `ruf` tag tells receiving mail servers where to send failure (forensic) reports when an individual message fails SPF, DKIM, and DMARC authentication. These reports include message-level detail such as headers, subject, URLs, and attachments. Some organizations choose not to request forensic reports because they can contain sensitive content, so weigh privacy and compliance obligations before enabling this tag.
+        This check verifies that the DMARC record requests failure reports.
+
+        The `ruf` tag names the address receivers send per-message forensic reports to when an individual message fails authentication. The check requires at least one address.
 
         **Why this matters**
 
-        - Provides visibility into specific failed messages.
-        - Helps identify targeted spoofing attempts and misconfigurations in near real-time.
+        Aggregate reports tell you that messages failed and roughly from where. Failure reports tell you about a specific message, including headers, subject, and often URLs and attachment details, which is what turns a statistic into something investigable.
 
-        **If you don't fix this**
+        That detail is what makes an active phishing campaign against your domain actionable. Knowing that 4,000 messages failed from one address range is useful; seeing the subject line, the spoofed sender, and the payload URL is what lets you warn recipients, get the URL taken down, and recognize the same campaign next time.
 
-        - You'll miss real-time insights into attack attempts or authentication failures.
+        Weigh this against privacy before enabling it. Failure reports can contain content from real messages, including messages from legitimate senders that merely failed alignment, and receiving them means receiving personal data you did not ask for and must then handle under GDPR and comparable regimes. Many organizations deliberately do not request them for that reason.
 
-        Example:
-        `ruf=mailto:security@example.com`
+        Support is also inconsistent. Most large receivers do not send failure reports at all, so the tag yields far less than aggregate reporting. Treat this as a deliberate choice with a documented rationale rather than a setting to switch on because it exists.
       audit: |
         Run the `dig +short TXT _dmarc.<domain>` command and inspect the DMARC record for a `ruf=mailto:` tag.
 
@@ -1303,20 +1301,19 @@ queries:
       props.mondooEmailSecurityDkimSelectors.contains(dns(_+"._domainkey."+domainName.fqdn).params['TXT']['rData'].first == /k=rsa/)
     docs:
       desc: |
-        This check confirms DKIM records exist and correctly provide public keys to validate email authenticity.
+        This check verifies that the domain publishes a DKIM public key for at least one of the selectors this policy checks.
+
+        DKIM signs outbound mail with a private key held by the sending service and publishes the matching public key in DNS at `<selector>._domainkey.<domain>`. The check looks up the selectors carried by this policy's property and requires that at least one returns a record containing a `p=` public key tag, as in `google._domainkey.example.com. IN TXT "v=DKIM1; k=rsa; p=MIGfMA0..."`.
 
         **Why this matters**
 
-        - Ensures email content integrity.
-        - Protects against message tampering and impersonation.
+        DKIM is the only one of the three email authentication mechanisms that survives forwarding. SPF authenticates the connecting server, so it breaks the moment a mailing list or a forwarding rule relays the message from a different address. The DKIM signature travels with the message and still validates.
 
-        **If you don't fix this**
+        That matters for enforcement. Under DMARC a message passes if either SPF or DKIM aligns, so a domain relying on SPF alone finds that forwarded legitimate mail fails, and the reports fill with failures that are not attacks. This is the single most common reason a DMARC enforcement rollout is abandoned.
 
-        - Email recipients cannot verify the origin and integrity of your emails.
+        The signature also covers content. It commits to the headers and body, so a message altered in transit fails validation, which SPF cannot detect at all.
 
-        Example:
-        DKIM record for selector google:
-        `google._domainkey.example.com. IN TXT "v=DKIM1; k=rsa; p=MIGfMA0..."`
+        Note that this check can only look up the selectors it has been given. A domain signing with a selector outside that list fails despite having DKIM configured correctly, so adjust the property to match the sending services actually in use.
       audit: |
         Run the `dig +short TXT <selector>._domainkey.<domain>` command for each DKIM selector your mail provider uses.
 
