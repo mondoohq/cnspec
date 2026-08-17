@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-snowflake-security
     name: Mondoo Snowflake Security
-    version: 2.0.1
+    version: 2.0.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -105,29 +105,19 @@ queries:
       snowflake.account.users.where(disabled == false && hasPassword == true).all(extAuthnDuo == true)
     docs:
       desc: |
-        This check ensures that every active user who can sign in with a password is configured with Duo multi-factor authentication enrolled. By default Snowflake does not require MFA, so a password alone is enough to authenticate unless an administrator enforces additional factors.
+        This check verifies that multi-factor authentication is enrolled for every active user who can sign in with a password.
 
-        **Scope of this check**
-
-        The evaluation targets active users that have a password set, and deliberately excludes users with no password such as service users that rely on key-pair authentication or OAuth, since those identities cannot enroll in Duo and would otherwise produce false positives. It inspects the Duo enrollment flag and does not yet detect TOTP or SAML-based MFA enforced through an authentication policy. If your account enforces MFA through an authentication policy instead of or in addition to Duo, also confirm that an MFA-required policy is attached account-wide:
-
-        ```sql
-        SHOW PARAMETERS LIKE 'AUTHENTICATION_POLICY' IN ACCOUNT;
-        DESC AUTHENTICATION POLICY <policy_name>;
-        ```
+        Snowflake's built-in MFA is delivered through Duo and is enrolled per user rather than switched on account-wide, so an account can have MFA available and still have users who never registered a second factor. Enrollment state is visible in Snowsight under Admin, Users & roles, and as the `ext_authn_duo` column of `SHOW USERS`. This check requires enrollment on every enabled user that has a password set. Users with no password are skipped, because service identities that authenticate with a key pair or OAuth cannot enroll in Duo.
 
         **Why this matters**
 
-        - **Resists credential attacks:** Credential stuffing and brute-force attempts cannot succeed against an account that requires a second factor.
-        - **Defeats phishing:** A stolen password is not enough to sign in, so phishing campaigns fail to grant attackers warehouse access.
-        - **Limits breach impact:** A compromised account without MFA can access, exfiltrate, or modify sensitive data across the entire Snowflake account.
-        - **Addresses a proven attack path:** Snowflake has been the target of high-profile breaches where stolen credentials were used to reach customer data, and MFA would have blocked many of them.
+        Without a second factor the password is the entire authentication decision, and passwords for cloud data platforms circulate widely. They are typed into infostealer-infected laptops, reused from personal accounts, and pasted into scripts and tickets. In 2024 an actor Mandiant tracks as UNC5537 signed in to roughly 165 Snowflake customer accounts using usernames and passwords lifted from infostealer logs, some of them years old. No Snowflake vulnerability was involved. The accounts that fell were the ones where a password was enough.
 
-        **Risk mitigation**
+        What follows a successful sign-in to a data warehouse is bulk reading. One authenticated session can query every table the user's roles reach and unload the results to external storage in a single `COPY INTO` statement, so the distance between a stolen password and a complete customer-data export is minutes rather than weeks of lateral movement.
 
-        - **Enforce MFA broadly:** Enroll Duo MFA for every user who can authenticate with a password, or attach an authentication policy that requires MFA at the account level.
-        - **Prioritize privileged users:** Make MFA mandatory first for users holding ACCOUNTADMIN, SECURITYADMIN, and SYSADMIN roles.
-        - **Use stronger auth for services:** Configure service users with key-pair authentication or OAuth instead of passwords, and audit MFA enrollment status regularly.
+        Because enrollment is per user, partial coverage is the normal failure mode. The security team enrolls, a contract analyst does not, and the contractor's password is the one that leaks. Close out the users holding ACCOUNTADMIN, SECURITYADMIN, and SYSADMIN first, then the rest.
+
+        Where MFA is enforced through an authentication policy with `MFA_ENROLLMENT = REQUIRED` rather than through per-user Duo enrollment, a companion check in this policy is the one that reflects that arrangement. Service identities excluded here should be given key-pair authentication instead, which another companion check verifies.
       audit: |
         ### Audit via Snowsight
 
@@ -242,21 +232,19 @@ queries:
       snowflake.account.roles.where(name == "ACCOUNTADMIN").all(effectiveUsers.length <= 3)
     docs:
       desc: |
-        This check ensures that the ACCOUNTADMIN role is effectively held by no more than three users. ACCOUNTADMIN holds the highest privilege level in Snowflake, so keeping its membership small enforces the principle of least privilege and shrinks the attack surface.
+        This check verifies that account-wide administrative control is concentrated in a small number of users.
 
-        The count includes every user who reaches ACCOUNTADMIN, whether granted the role directly or through an intermediate role in the role hierarchy. Because Snowflake roles can be nested, a user granted a custom role that has in turn been granted ACCOUNTADMIN holds the role in full even though no direct assignment records it. Counting only direct grants would undercount the true set of account administrators.
+        ACCOUNTADMIN sits at the top of the Snowflake role hierarchy. It can read and modify every object in the account, create and drop users and roles, change account parameters, and manage billing. Membership is granted with `GRANT ROLE ACCOUNTADMIN TO USER <name>` and listed by `SHOW GRANTS OF ROLE ACCOUNTADMIN`. This check counts every user who reaches the role, whether by a direct grant or through a custom role that has itself been granted ACCOUNTADMIN, and requires the total to be three or fewer.
 
         **Why this matters**
 
-        - **Reduces high-value targets:** Each user holding ACCOUNTADMIN is a prime target for attackers, so fewer holders means fewer paths to total account compromise.
-        - **Limits blast radius:** ACCOUNTADMIN can manage every object, user, role, and account setting, so excessive assignments increase the risk of accidental or malicious misuse.
-        - **Strengthens accountability:** A small, well-known set of administrators makes audit and attribution of privileged actions far easier to maintain.
+        Each holder is one credential that unlocks the whole warehouse. An attacker who phishes any of them has no escalation step left: they can grant themselves any role, create a new user with a key pair they control, detach the network policy, and read every table in the account. Snowflake's own guidance is to use the role sparingly for exactly this reason.
 
-        **Risk mitigation**
+        Nested grants are where the count grows unnoticed. A team gets a custom role for convenience, that role is granted ACCOUNTADMIN so a one-off migration can run, and a year later fifteen people hold full account control while a direct-grant listing still shows three names. Counting effective holders rather than direct grants is what makes the drift visible.
 
-        - **Cap membership:** Limit ACCOUNTADMIN to two or three trusted administrators and use SECURITYADMIN and SYSADMIN for day-to-day administration.
-        - **Protect the holders:** Ensure every remaining ACCOUNTADMIN user has MFA enabled.
-        - **Review regularly:** Periodically review and prune ACCOUNTADMIN role assignments to remove access that is no longer required.
+        A small, named set also makes attribution possible. When query history shows an unexplained bulk export run as ACCOUNTADMIN, three candidate humans is an investigation and thirty is a dead end.
+
+        Use SECURITYADMIN for user and role management and SYSADMIN for objects and warehouses, leaving ACCOUNTADMIN for the operations that genuinely require it. Every remaining holder should have MFA enrolled and be covered by an account network policy, both of which companion checks in this policy verify.
       audit: |
         ### Audit via Snowsight
 
@@ -350,20 +338,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no active user is configured with the must-change-password flag still set, which indicates the user is relying on a temporary or initial password that has not yet been updated. A pending password change means an unverified credential is still valid for sign-in.
+        This check verifies that no active user is still relying on a password an administrator chose for them.
+
+        When a password is set with `ALTER USER <name> SET PASSWORD = '<value>' MUST_CHANGE_PASSWORD = TRUE`, Snowflake prompts the user to replace it at their next sign-in and clears the flag once they do. The flag appears as the `must_change_password` column of `SHOW USERS`. This check requires it to be false on every enabled user, so a value of true means an administrator-chosen credential is still live.
 
         **Why this matters**
 
-        - **Temporary passwords leak:** Initial passwords are frequently shared over insecure channels such as email or chat, where they can be intercepted.
-        - **Initial passwords are weak:** Administrator-set starting passwords often follow predictable patterns that are easy to guess.
-        - **Signals stale accounts:** A user who never completed their password change may be an inactive or orphaned account that should be disabled.
-        - **Extends the exposure window:** An attacker who obtains a temporary password retains access until that password is finally changed.
+        The password still in force is one that a person other than the account owner picked and transmitted. It was almost certainly delivered over chat, email, or a helpdesk ticket, where a copy now sits in a searchable archive that many people and every mailbox-scraping tool can reach. Until the user signs in and replaces it, that copy is a working login.
 
-        **Risk mitigation**
+        Administrator-chosen starting passwords are also predictable in practice. They follow a house pattern, often a company name plus a season or a sequence, so an attacker who obtains one for any account has a strong guess at the rest.
 
-        - **Follow up promptly:** Contact users who have not changed their initial password and require them to complete the change.
-        - **Bound the lifetime:** Set expiration policies for temporary passwords so they cannot remain valid indefinitely.
-        - **Disable abandoned accounts:** Disable accounts that have not completed initial setup within a reasonable time frame.
+        A flag that has stayed set for weeks usually means the account was never claimed. Provisioning ran, the person changed teams or never started, and an enabled login with a known password now sits in an account nobody watches. Valid credentials on unwatched accounts are precisely what the 2024 campaign against Snowflake customers ran on.
+
+        Reset the password and require the change again for anyone still pending, and disable accounts that go unclaimed past your onboarding window. A companion check in this policy flags active users who have never signed in at all, which is frequently the same population.
       audit: |
         ### Audit via Snowsight
 
@@ -463,20 +450,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Snowflake password policy is configured to require a minimum password length of at least 14 characters. Longer passwords are dramatically more resistant to brute-force and credential-cracking attacks than the shorter defaults users tend to choose.
+        This check verifies that passwords must be long enough to resist guessing.
+
+        A Snowflake password policy is a schema object created with `CREATE PASSWORD POLICY` and put into force with `ALTER ACCOUNT SET PASSWORD POLICY <name>` or by attaching it to individual users. Length is governed by its `PASSWORD_MIN_LENGTH` parameter, which Snowflake defaults to 8. This check requires every password policy in the account to set 14 or higher, and fails when no password policy exists at all, since an account without one falls back to that 8-character default.
 
         **Why this matters**
 
-        - **Defeats fast cracking:** Passwords shorter than 14 characters can be cracked quickly with modern hardware.
-        - **Blunts credential stuffing:** Short, commonly used passwords are far more likely to appear in breach lists used by credential stuffing tools.
-        - **Exceeds the baseline:** NIST SP 800-63B sets a floor of 8 characters, but a 14-character minimum provides substantially stronger protection.
-        - **Protects sensitive data:** Snowflake accounts with weak passwords are prime targets for data exfiltration.
+        Length is the password property that scales against guessing. An 8-character password drawn from the keyspace humans actually use is exhausted quickly by commodity GPU cracking, and each additional character multiplies the work. A Snowflake account is worth that work, because a single valid login reaches whatever tables the user's roles reach.
 
-        **Risk mitigation**
+        The more common attack does not crack anything. Attackers replay credentials harvested from breach dumps and infostealer logs, and short passwords are the ones users reuse between personal and corporate accounts. A 14-character floor pushes people toward passphrases and away from the recycled strings already sitting in those dumps.
 
-        - **Raise the minimum:** Set the minimum password length to 14 or more characters in every password policy.
-        - **Encourage passphrases:** Promote the use of passphrases so users can satisfy length requirements while keeping passwords memorable.
-        - **Layer with MFA:** Combine length requirements with multi-factor authentication for defense in depth.
+        The number is a common regulatory baseline rather than an arbitrary one. NIST SP 800-63B treats 8 characters as a floor rather than a target and asks that much longer passwords be allowed, PCI DSS 4.0 requires at least 12, and CIS benchmarks commonly specify 14.
+
+        Length does nothing against a password that was phished or stolen intact, so pair it with mandatory MFA. Where you can move users onto federated sign-in through a SAML2 or OAuth integration, the password stops being the credential at all.
       audit: |
         ### Audit via SQL
 
@@ -578,20 +564,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that a password policy exists and that every Snowflake password policy allows no more than five failed sign-in attempts before locking the account for at least 15 minutes. Lockout rate-limits password guessing so that brute-force attacks cannot run unchecked.
+        This check verifies that repeated failed sign-in attempts lock an account instead of continuing indefinitely.
+
+        `PASSWORD_MAX_RETRIES` sets how many consecutive failures Snowflake tolerates before locking the user out, and `PASSWORD_LOCKOUT_TIME_MINS` sets how long the lock holds. Both are parameters of a password policy created with `CREATE PASSWORD POLICY` and put into force with `ALTER ACCOUNT SET PASSWORD POLICY <name>`. This check requires every password policy to allow at most five retries and to lock for at least 15 minutes, and fails when the account has no password policy at all.
 
         **Why this matters**
 
-        - **Stops unlimited guessing:** Without lockout, automated brute-force tools can attempt thousands of passwords per second against an account.
-        - **Blunts credential stuffing:** Lockout interrupts systematic attempts to reuse known compromised credentials.
-        - **Surfaces attacks:** Lockout events provide a clear signal of unauthorized access attempts that monitoring can detect.
-        - **Slows automated attacks:** Even strong passwords can eventually be guessed without a forced pause between attempts.
+        With no retry ceiling, an attacker can keep trying passwords against a known username for as long as they like. Snowflake usernames are rarely secret. They follow the corporate email convention and appear in shared worksheets, dashboards, and Terraform, so the username half of the credential is usually free. Given an unlimited attempt budget, guessing a weak password is a matter of leaving the tool running overnight.
 
-        **Risk mitigation**
+        A lockout window changes that arithmetic. Five attempts per 15 minutes caps an attacker at a few hundred guesses per day per account, which will not get through even a modest wordlist, and it makes password spraying across the whole user list slow instead of quiet and fast.
 
-        - **Set a sane retry limit:** Configure the maximum retry count between 3 and 5 attempts so legitimate users are not over-penalized.
-        - **Set a lockout duration:** Apply a reasonable lockout time, such as 15 to 30 minutes, and monitor lockout events for signs of attack.
-        - **Layer with MFA:** Combine lockout with multi-factor authentication for defense in depth.
+        The lockouts are also the signal. One user locked out mistyped their password. Forty users locked out within an hour is a spraying campaign in progress, and that pattern only appears in `LOGIN_HISTORY` if a policy is there to generate the events.
+
+        Keep the retry count at three or higher so ordinary typos do not flood the helpdesk and drive users toward simpler passwords. Lockout slows guessing but does nothing about an attacker who already holds the correct password, so it belongs alongside MFA rather than instead of it.
       audit: |
         ### Audit via SQL
 
@@ -697,24 +682,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the Snowflake account is configured with a network policy attached at the account level. A network policy restricts which IP addresses or ranges can connect, and without one attached Snowflake accepts connections from any address on the internet.
+        This check verifies that the account restricts which networks may connect to it.
 
-        **Scope of this check**
-
-        The evaluation reads the account-level `NETWORK_POLICY` parameter, which returns the name of the policy currently bound to the account. It checks this binding rather than merely whether a policy definition exists, because an account can hold several `CREATE NETWORK POLICY` definitions that sit unattached and enforce no IP gating at all.
+        A network policy is an account object listing the IP ranges and network rules permitted to reach Snowflake. Creating one has no effect on its own. It takes force only when attached, with `ALTER ACCOUNT SET NETWORK_POLICY = <policy_name>`, and the attached policy is reported by `SHOW PARAMETERS LIKE 'NETWORK_POLICY' IN ACCOUNT`. This check requires that parameter to name a policy. Snowflake leaves it empty by default, so a new account accepts connections from any address on the internet.
 
         **Why this matters**
 
-        - **Closes global exposure:** Without a network policy, the account is reachable from any IP address in the world.
-        - **Contains stolen credentials:** A network policy prevents leaked credentials from being used outside trusted networks.
-        - **Adds a defense layer:** IP allowlisting and blocklisting provide protection that operates independently of authentication.
-        - **Meets compliance:** Many frameworks require network-level access restrictions for data platforms.
+        A network policy is what makes a stolen Snowflake credential useless from the attacker's own machine. In the 2024 campaign against Snowflake customer accounts, the actor Mandiant tracks as UNC5537 signed in to roughly 165 organizations with usernames and passwords taken from infostealer logs on unrelated personal devices. The credentials were genuine and nothing stopped them being replayed from anywhere in the world. Accounts that admitted only corporate ranges and VPN egress addresses were not reachable by that traffic at all.
 
-        **Risk mitigation**
+        The control also works independently of authentication, which is why it is worth having alongside MFA rather than in place of it. A phished second factor, a session token pulled out of a browser, or a service credential leaked in a repository all still have to arrive from an approved address.
 
-        - **Restrict to trusted ranges:** Create network policies that allow only corporate networks and VPN egress addresses.
-        - **Enforce account-wide:** Attach a network policy at the account level so the restriction applies broadly, and use network rules for more granular control.
-        - **Keep allowlists current:** Review and update IP allowlists as network infrastructure changes.
+        Because this check reads the attached policy rather than the existence of a definition, it catches the common failure where several `CREATE NETWORK POLICY` statements sit in the account gating nothing. An unattached definition is documentation, not enforcement.
+
+        Attach a policy at the account level for the broad restriction, then use per-user policies or network rules where a workload legitimately connects from a different set of addresses. Accounts serving users on residential or mobile networks need a VPN or an egress gateway in front of Snowflake before this is workable.
       audit: |
         ### Audit via Snowsight
 
@@ -829,19 +809,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Snowflake network policy is configured to allow a wildcard CIDR, meaning `0.0.0.0/0` for IPv4 or `::/0` for IPv6, in its allowed IP list. Either entry permits connections from any address and effectively nullifies the network policy.
+        This check verifies that no network policy admits connections from every address on the internet.
+
+        A network policy gates access through its `ALLOWED_IP_LIST`, inspected with `DESCRIBE NETWORK POLICY <name>` and changed with `ALTER NETWORK POLICY <name> SET ALLOWED_IP_LIST = (...)`. An entry of `0.0.0.0/0` covers the whole IPv4 space and `::/0` covers the whole IPv6 space. This check requires neither to appear in any network policy in the account.
 
         **Why this matters**
 
-        - **Creates false security:** A policy that allows `0.0.0.0/0` or `::/0` exists but offers no real protection, masking the gap.
-        - **Restores global exposure:** Every risk of having no network policy applies equally when a policy allows all addresses.
-        - **Misleads audits:** Compliance checks may incorrectly pass simply because a network policy is present, even though it gates nothing.
+        A policy that allows every address is worse than having no policy, because it reports as protection. Compliance evidence, review checklists, and the account parameter that names the attached policy all agree that network restriction is in place, so nobody goes looking. Meanwhile a credential lifted from an infostealer log is replayable from the attacker's own host exactly as if the policy did not exist.
 
-        **Risk mitigation**
+        Wildcards usually arrive during troubleshooting. A pipeline breaks after a cloud provider changes its egress addresses, someone widens the list to unblock the release, and the temporary entry stays. The policy keeps its name and its attachment and quietly stops gating anything.
 
-        - **Replace wildcards:** Substitute `0.0.0.0/0` and `::/0` entries with specific trusted IP ranges.
-        - **Audit for over-permissiveness:** Review network policies regularly for entries that are broader than necessary.
-        - **Use minimal CIDRs:** Apply the smallest CIDR blocks that still cover your organization's legitimate access points.
+        A policy that pairs an all-allow entry with a `BLOCKED_IP_LIST` is a blocklist rather than an allowlist, and blocklists do not constrain an attacker who can simply use a different address. Ordering does not rescue it: blocked entries are evaluated first, but everything not explicitly blocked is admitted.
+
+        Replace wildcard entries with the specific corporate egress ranges and VPN addresses your users connect from, and prefer network rules where the same set of addresses is reused across several policies.
       audit: |
         ### Audit via Snowsight
 
@@ -946,20 +926,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no active Snowflake user is configured with ACCOUNTADMIN as their default role. When ACCOUNTADMIN is the default, every session for that user automatically starts with the highest privilege level, increasing the risk of accidental or malicious actions.
+        This check verifies that no active user's sessions start with account-wide administrative privilege.
+
+        Every Snowflake user has a default role, set with `ALTER USER <name> SET DEFAULT_ROLE = <role>` and reported as the `default_role` column of `SHOW USERS`. It is the role that every new session, worksheet, driver connection, and scheduled job assumes unless something explicitly calls `USE ROLE`. This check requires that role to be something other than ACCOUNTADMIN on every enabled user.
 
         **Why this matters**
 
-        - **Violates least privilege:** Every query and operation runs with full administrative privileges by default rather than the minimum needed.
-        - **Maximizes blast radius:** Accidental DROP, DELETE, or ALTER operations carry their largest possible impact when run as ACCOUNTADMIN.
-        - **Amplifies session compromise:** If the user's session is hijacked, the attacker immediately holds the highest privileges with no further escalation needed.
-        - **Undermines privilege separation:** Routine work should run under lower-privilege roles, which a privileged default role prevents.
+        The default role decides what happens by accident. A `DROP DATABASE` run against the wrong context, a `DELETE` with a broken predicate, or a script executed by someone who forgot which connection they were on all run with whatever role the session started in. Under ACCOUNTADMIN there is nothing in the account those statements cannot reach.
 
-        **Risk mitigation**
+        It also decides what an attacker inherits for free. A hijacked session, a stolen driver token, a compromised BI tool that connects as the user, or a malicious notebook all adopt the default role. When that role is ACCOUNTADMIN, the intrusion is complete at the moment of access and there is no escalation step for anyone to detect.
 
-        - **Default to least privilege:** Set each user's default role to the minimum privilege level needed for daily tasks, such as SYSADMIN, SECURITYADMIN, or a custom role.
-        - **Elevate only when needed:** Use ACCOUNTADMIN explicitly by switching roles only when a task requires it.
-        - **Review regularly:** Periodically audit user default role assignments to catch privileged defaults.
+        Making elevation deliberate is what gives the control teeth. When an administrator types `USE ROLE ACCOUNTADMIN` for the few operations that require it, privileged actions stand out in `QUERY_HISTORY` instead of every statement that person ran all day carrying the same top-level role.
+
+        Set each default to the least-privileged role covering the person's daily work, such as a team role or SYSADMIN, and keep the ACCOUNTADMIN grants themselves rare, which a companion check in this policy verifies.
       audit: |
         ### Audit via Snowsight
 
@@ -1059,19 +1038,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Snowflake password policy is configured to require a mix of character types, with at least one uppercase letter, one lowercase letter, one numeric digit, and one special character. Complexity requirements increase resistance to dictionary and brute-force attacks.
+        This check verifies that passwords must combine several character types.
+
+        A password policy governs composition through `PASSWORD_MIN_UPPER_CASE_CHARS`, `PASSWORD_MIN_LOWER_CASE_CHARS`, `PASSWORD_MIN_NUMERIC_CHARS`, and `PASSWORD_MIN_SPECIAL_CHARS`, set on the policy created with `CREATE PASSWORD POLICY` and put into force with `ALTER ACCOUNT SET PASSWORD POLICY <name>`. This check requires each of the four to be at least 1. Snowflake asks for an uppercase letter, a lowercase letter, and a digit by default but does not require a special character.
 
         **Why this matters**
 
-        - **Prevents trivial passwords:** Without complexity rules, users may choose simple, easily guessable passwords such as all-lowercase strings.
-        - **Defeats dictionary attacks:** Passwords that mix character types are far harder to match against wordlists.
-        - **Enlarges the search space:** Requiring multiple character classes forces passwords into a larger keyspace, making brute-force attacks less feasible.
+        Where no special character is required, the practical keyspace collapses to the shape people actually produce: a capitalized word followed by digits. Rule-based cracking is built around that shape. The standard rule sets shipped with password-cracking tools capitalize the first letter, append a year, and substitute a zero for an o, so a password that satisfies three of the four requirements and nothing more is recovered in the same pass as the raw dictionary word underneath it.
 
-        **Risk mitigation**
+        The same predictability is what makes credential reuse work. A password of that shape for a Snowflake account is usually the password for several consumer sites too, and one of those breaches is what puts it in the dump an attacker replays.
 
-        - **Require every class:** Mandate at least one character from each category: uppercase, lowercase, numeric, and special.
-        - **Pair with length:** Combine complexity requirements with a strong minimum length for maximum protection.
-        - **Layer with MFA:** Use multi-factor authentication as an additional layer of protection.
+        Complexity is the smaller half of password strength, and standards disagree about it. NIST SP 800-63B now advises against composition rules on the grounds that they push users toward predictable substitutions, while CIS benchmarks and PCI DSS still require them. Treat the length minimum as the control that does the real work and complexity as a floor under the worst choices.
+
+        Neither helps against a password that was phished or stolen intact, so keep MFA mandatory alongside both.
       audit: |
         ### Audit via SQL
 
@@ -1183,19 +1162,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Snowflake password policy is configured to enforce a maximum password age of no more than 90 days. Regular rotation limits how long a compromised credential remains usable.
+        This check verifies that passwords expire rather than remaining valid forever.
+
+        `PASSWORD_MAX_AGE_DAYS` on a password policy sets how many days a password stays usable before Snowflake forces a change. A value of 0 disables expiry entirely. The parameter is set on the policy created with `CREATE PASSWORD POLICY` and put into force with `ALTER ACCOUNT SET PASSWORD POLICY <name>`. This check requires every password policy to set a non-zero value of 90 days or less.
 
         **Why this matters**
 
-        - **Bounds credential exposure:** Without a maximum age, a compromised password stays valid until the user voluntarily changes it.
-        - **Reduces breach-list risk:** Stale, long-lived passwords are more likely to surface in credential dumps and breach databases.
-        - **Forces refresh:** Regular rotation ensures that even an undetected compromise has a limited useful lifetime.
+        Most Snowflake credential compromise is silent. An infostealer scrapes a browser profile or a credential file, the password goes into a log, and the log is bundled and sold months later. Nobody at the affected organization has any indication that anything happened. Expiry is what puts a ceiling on how long that quietly stolen password keeps working, independent of whether anyone ever notices the theft.
 
-        **Risk mitigation**
+        A password with no expiry also outlives the circumstances it was issued under. It survives the departure of the colleague who helped set it up, the laptop that was reimaged, the contractor engagement that ended, and the shared credential that was supposed to be temporary. Each of those is a copy that is still valid years later.
 
-        - **Cap the age:** Set the maximum password age to 90 days or less.
-        - **Layer with MFA:** Combine password rotation with multi-factor authentication for defense in depth.
-        - **Track rotation:** Notify users ahead of expiration and monitor for users who have not rotated passwords on schedule.
+        Expiry has costs and is not universally recommended: NIST SP 800-63B argues against arbitrary periodic rotation and asks for forced change on evidence of compromise instead, because frequent rotation drives users toward incremental passwords. The requirement persists because CIS benchmarks and PCI DSS still mandate it, and because for a data warehouse the alternative of relying on compromise detection is weak.
+
+        Pair rotation with password history so each change produces a genuinely new secret, and with MFA so an intercepted password is not sufficient on its own. Both are verified by companion checks in this policy.
       audit: |
         ### Audit via SQL
 
@@ -1297,19 +1276,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Snowflake password policy is configured to enforce a password history of at least five previous passwords. Password history prevents users from cycling back to recently used passwords, which may already be compromised.
+        This check verifies that users cannot return to a password they have recently used.
+
+        `PASSWORD_HISTORY` on a password policy sets how many previous passwords Snowflake remembers and refuses to accept again. Snowflake defaults it to 0, which remembers none. The parameter is set on the policy created with `CREATE PASSWORD POLICY` and put into force with `ALTER ACCOUNT SET PASSWORD POLICY <name>`. This check requires every password policy to remember at least five.
 
         **Why this matters**
 
-        - **Stops password recycling:** Without history enforcement, users can alternate between two passwords and effectively bypass rotation requirements.
-        - **Blocks compromised reuse:** Previously breached passwords can be reused, negating the benefit of rotation.
-        - **Guarantees genuine change:** History enforcement ensures each rotation produces a genuinely new password.
+        Without history, rotation is a formality. A user prompted to change their password sets it back to the one they have always used, or alternates between two, and the maximum-age requirement is satisfied on paper while the secret never actually changes. Every day of exposure the rotation was supposed to end continues.
 
-        **Risk mitigation**
+        That matters most in the case rotation exists for. When a password has leaked into a breach dump and the organization forces a change, an attacker holding the old value simply retries it a few weeks later. History is what makes the forced change a real invalidation rather than a pause.
 
-        - **Retain prior passwords:** Set password history to at least five previous passwords.
-        - **Combine controls:** Pair password history with maximum age and complexity requirements.
-        - **Educate users:** Explain to users why each new password must be genuinely unique.
+        Recycling is also what an attacker predicts. Someone who has one historical password for a user can usually guess the next few, because the sequence is the same base word with a rising number, and history at least prevents the exact reuse at the end of that pattern.
+
+        Five entries is a common baseline and works alongside the maximum-age requirement rather than replacing it: history without expiry never forces a change, and expiry without history never forces a different secret. A companion check in this policy verifies the maximum age.
       audit: |
         ### Audit via SQL
 
@@ -1411,20 +1390,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every locally created Snowflake database is configured with Time Travel retention enabled, meaning a retention time greater than 0 days. Databases imported from shares are excluded because their retention cannot be changed. Time Travel allows querying, cloning, and restoring historical data, protecting against accidental or malicious modifications and deletions.
+        This check verifies that databases keep enough history to recover data that is deleted or overwritten.
+
+        Time Travel is governed by `DATA_RETENTION_TIME_IN_DAYS`, set with `CREATE DATABASE ... DATA_RETENTION_TIME_IN_DAYS = <n>` or `ALTER DATABASE <name> SET DATA_RETENTION_TIME_IN_DAYS = <n>`, and inherited from the account default when unset. A value of 0 turns Time Travel off. This check requires a value above 0 on every database created in the account. Databases mounted from a share are excluded because their retention is controlled by the provider account, not by yours.
 
         **Why this matters**
 
-        - **Makes data loss recoverable:** Without retention, accidental DROP or DELETE operations cannot be undone.
-        - **Counters malicious destruction:** Data destroyed by a compromised account is irreversible when retention is set to 0.
-        - **Enables investigation:** Retention preserves the ability to audit and investigate what data existed before a change.
-        - **Supports compliance:** Many frameworks mandate data recovery capabilities for production data stores.
+        With retention at 0, destruction is immediate and final. `DROP TABLE` and `UNDROP TABLE` stop being a pair, `DELETE` cannot be reversed, and an `INSERT OVERWRITE` that a pipeline bug pointed at the wrong target has no prior version to restore from. Recovery then means whatever copy exists outside Snowflake, which for a warehouse fed by streaming and transformed in place is frequently nothing.
 
-        **Risk mitigation**
+        That is a control against attackers as much as against mistakes. Extortion against data platforms works either by taking the data or by taking it away, and a compromised role with DELETE and DROP privileges can do enormous, permanent damage in a few statements if there is no history behind them.
 
-        - **Enable retention everywhere:** Set retention time to at least 1 day for all databases and monitor any database left at zero.
-        - **Extend for critical data:** Use longer retention periods, up to 90 days on Enterprise edition, for sensitive or critical databases.
-        - **Set a safe default:** Raise the account-level default so newly created databases inherit a non-zero retention value.
+        Retention is also the investigation surface. Querying a table `AT` or `BEFORE` a timestamp is how you establish what a row contained before a suspicious update, which records existed before a bulk delete, and when the change actually happened. Without it the evidence disappears at the same moment as the data.
+
+        Retention consumes storage, so a deliberate 0 on scratch or staging databases that are rebuilt from source each night is defensible. Set a non-zero account default so new databases inherit protection, and use longer windows, up to 90 days on Enterprise edition, for databases holding regulated or irreplaceable data.
       audit: |
         ### Audit via SQL
 
@@ -1770,19 +1748,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that at least one authentication policy exists and that every authentication policy sets MFA enrollment to required. Snowflake ships with no authentication policy attached, and in that default state multi-factor authentication is optional, so a user who never enrolls a second factor can sign in with a password alone. Requiring MFA enrollment through a policy is what turns account-wide MFA from opt-in into mandatory.
+        This check verifies that multi-factor authentication is mandatory rather than optional.
+
+        An authentication policy is created with `CREATE AUTHENTICATION POLICY` and put into force with `ALTER ACCOUNT SET AUTHENTICATION POLICY <name>` or by attaching it to individual users. Its `MFA_ENROLLMENT` property takes `OPTIONAL` or `REQUIRED`, and `REQUIRED` obliges a user to register a second factor before they can complete an interactive sign-in. This check requires the account to have at least one authentication policy and every policy to set `MFA_ENROLLMENT = REQUIRED`. Snowflake attaches no authentication policy by default, which leaves enrollment voluntary.
 
         **Why this matters**
 
-        - **Enforces MFA account-wide:** A policy that requires enrollment applies to every user in scope, closing the gap left by relying on individual users to opt in.
-        - **Resists credential theft:** Stolen or phished passwords cannot complete a sign-in when a second factor is mandatory.
-        - **Removes the silent default:** With no authentication policy present, MFA is never enforced, so the absence of a policy is itself the exposure this check surfaces.
+        Voluntary MFA is partial MFA, and the accounts that skip enrollment are not a random sample. They belong to the users who are busiest, most senior, or least engaged with the platform, and those are the passwords that end up in infostealer logs. In 2024 an actor Mandiant tracks as UNC5537 reached roughly 165 Snowflake customer accounts using credentials from exactly that source. What the affected accounts had in common was that a password on its own was enough to get in.
 
-        **Risk mitigation**
+        A policy is what turns MFA from a feature that exists into a rule that applies. Per-user enrollment always leaves a tail of users who never got around to it, and no amount of reminding closes that tail permanently, because every newly created user starts outside it again.
 
-        - **Attach a required-MFA policy account-wide:** Create an authentication policy with enrollment set to required and bind it to the account so it covers all interactive users.
-        - **Prioritize privileged users:** Confirm the policy scope reaches users holding ACCOUNTADMIN, SECURITYADMIN, and SYSADMIN first.
-        - **Review policy scope regularly:** Audit which policy is attached and which users it governs so newly created users inherit the requirement.
+        The requirement is also what makes the rest of the identity controls meaningful. Password length, expiry, and history all reduce the odds of a password being guessed, but none of them touch a password that was phished or scraped. Only a second factor does.
+
+        Coverage matters as much as the value: a policy attached to one user requires nothing of anyone else, so confirm which policy is attached at the account level and which users it governs. Policies scoped to service identities that authenticate with key pairs legitimately do not require MFA, and those are managed through the method list rather than through enrollment.
       audit: |
         ### Audit via Snowsight
 
@@ -1906,19 +1884,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no authentication policy allows a user to sign in with a password as the only factor. A policy satisfies the requirement when it either requires MFA enrollment or excludes both the `PASSWORD` and `ALL` authentication methods, so any policy that keeps password sign-in available must also mandate a second factor. By default Snowflake permits all authentication methods, so a policy that lists `PASSWORD` or `ALL` without requiring MFA leaves single-factor password access open.
+        This check verifies that no authentication policy leaves password-only sign-in available.
+
+        The `AUTHENTICATION_METHODS` property of an authentication policy lists which methods users covered by it may use, drawn from `ALL`, `SAML`, `PASSWORD`, `OAUTH`, and `KEYPAIR`. Snowflake defaults it to `ALL`. A policy satisfies this check if it either sets `MFA_ENROLLMENT = REQUIRED` or omits both `PASSWORD` and `ALL` from the method list, so any policy that still permits passwords must also demand a second factor.
 
         **Why this matters**
 
-        - **Closes the single-factor path:** A password by itself is the weakest credential, and a policy that permits it without MFA lets a stolen password complete a sign-in.
-        - **Catches misconfigured policies:** An account can attach a policy that technically exists yet still allows password-only access, which looks compliant but is not.
-        - **Aligns password use with MFA:** Where password authentication remains enabled, pairing it with mandatory MFA preserves usability without leaving a single-factor gap.
+        The failure this catches is a policy that exists and is attached but leaves the original hole open. An account can pass a review for having an authentication policy in place while that policy permits every method and requires no enrollment, which is the same authentication posture as having no policy at all. An attacker with a valid username and password needs nothing further.
 
-        **Risk mitigation**
+        Password-only access is also the state that credential-theft economics are built around. Infostealer logs and breach dumps are sold in bulk precisely because a meaningful fraction of the credentials in them still work somewhere, and a Snowflake account reachable with a password alone is one of the highest-value places they can work.
 
-        - **Require MFA wherever password is allowed:** Set enrollment to required on any policy that lists the password method so no single-factor login remains.
-        - **Restrict the method list:** Remove `PASSWORD` and `ALL` from policies that should rely only on federated or key-based authentication.
-        - **Review every attached policy:** Confirm that each policy governing interactive users forecloses password-only sign-in.
+        There are two shapes that close it. A federated account restricts the list to `SAML` or `OAUTH` so authentication happens at the identity provider, where conditional access and device posture apply. An account that keeps passwords sets `MFA_ENROLLMENT = REQUIRED` so a password is only ever half of a sign-in.
+
+        Policies scoped to service users that authenticate with `KEYPAIR` legitimately exclude passwords and need no MFA requirement; they satisfy this check through the method list. Removing `PASSWORD` from a policy governing human users breaks their sign-in immediately, so confirm the federated path works before narrowing the list.
       audit: |
         ### Audit via Snowsight
 
@@ -2017,19 +1995,19 @@ queries:
       snowflake.account.users.where(disabled == false).all(minsToBypassMfa == "")
     docs:
       desc: |
-        This check ensures that no active user has a temporary MFA bypass window in effect. An administrator can grant a user a time-boxed bypass so they can sign in without their second factor, typically to recover from a lost device, and while that window is open the user authenticates with a password alone. Snowflake leaves the bypass unset by default, so any user carrying a bypass value has had MFA suspended for a period.
+        This check verifies that no active user has multi-factor authentication temporarily suspended.
+
+        `ALTER USER <name> SET MINS_TO_BYPASS_MFA = <minutes>` opens a window during which that user can sign in with a password alone, normally so someone who has lost their phone can get back in and re-enroll. While the window is open, MFA is not enforced for them. The remaining minutes appear as the `mins_to_bypass_mfa` column of `SHOW USERS`, and Snowflake leaves the property unset unless an administrator sets it. This check requires it to be unset on every enabled user.
 
         **Why this matters**
 
-        - **Suspends MFA on a live account:** For the duration of the window the account is protected by a single factor, reversing the protection MFA provides.
-        - **Bypasses outlive their purpose:** A window opened for a one-time recovery is easy to forget, leaving MFA disabled far longer than intended.
-        - **Targets known accounts:** An attacker who learns that a bypass is active gains a predictable interval in which a stolen password is enough to sign in.
+        A bypass is a deliberate, targeted removal of the strongest authentication control on one account, and it lands on the accounts that can least afford it. The people who call the helpdesk about a lost device are usually heavy platform users with broad access, so the bypass window opens on exactly the identity an attacker would pick.
 
-        **Risk mitigation**
+        Windows outlive their reason. A generous bypass granted on a Friday so someone can work the weekend runs to Monday and beyond because nothing prompts anyone to clear it, and the user, whose sign-ins now succeed, has no reason to mention it. MFA has been off on a live account for days.
 
-        - **Clear stale bypasses:** Remove the bypass on any active user who no longer needs it so MFA is immediately back in force.
-        - **Keep windows short:** When a bypass is unavoidable, grant the smallest window that lets the user re-enroll their device.
-        - **Re-enroll promptly:** Have the affected user register a new MFA device and confirm the bypass has expired.
+        Helpdesk-driven bypasses are also a well-worn social engineering target. An attacker who already holds a stolen password calls the service desk claiming a lost phone; the bypass is what converts that password into a working session. This is the same account-recovery weakness that has been used against MFA at other large platforms, and it does not require breaking any cryptography.
+
+        Grant the smallest window that lets the user re-enroll, verify identity out of band before granting one at all, and clear the property as soon as the new device is registered rather than waiting for it to expire.
       audit: |
         ### Audit via Snowsight
 
@@ -2167,19 +2145,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that machine identities of type SERVICE and LEGACY_SERVICE have no password set and instead authenticate with a key pair or OAuth. Snowflake allows a password to be assigned to any user, so a service account can end up with a password unless administrators deliberately provision it with programmatic credentials only.
+        This check verifies that machine identities authenticate with cryptographic credentials rather than a password.
+
+        A user's type is set with `ALTER USER <name> SET TYPE = SERVICE`, and SERVICE and LEGACY_SERVICE are the types that automation connects as. Snowflake blocks password sign-in for the SERVICE type, but a password can still sit on the object from before the type was changed, and a LEGACY_SERVICE user can authenticate with one outright. This check requires both types to have no password set, so that authentication happens through `RSA_PUBLIC_KEY` or an OAuth security integration instead.
 
         **Why this matters**
 
-        - **Machines cannot use MFA:** A service account authenticating with a password alone has no second factor, so a leaked password grants direct access.
-        - **Passwords spread through automation:** Service passwords are embedded in scripts, CI systems, and configuration files, multiplying the places they can leak.
-        - **Key pairs are stronger:** RSA key-pair and OAuth authentication rely on cryptographic secrets that are far harder to guess, phish, or reuse than a static password.
+        A service password is a single factor with no possibility of a second. There is no human to approve a prompt, so MFA, the control that carries the most weight everywhere else in this policy, simply does not apply. That leaves one static string protecting an identity that usually holds broad read access, because pipelines are granted whatever they need to see across the warehouse.
 
-        **Risk mitigation**
+        Service passwords also multiply. The same value ends up in CI variables, an Airflow connection, a dbt profile, a container image layer, a Terraform state file, and a developer's local environment file. Each copy is somewhere it can leak from, none of them are inventoried, and none of them change when someone rotates the password in Snowflake.
 
-        - **Provision programmatic credentials only:** Create SERVICE users with an RSA public key or an OAuth integration and never assign them a password.
-        - **Rotate keys on a schedule:** Rotate RSA key pairs regularly and remove keys that are no longer in use.
-        - **Migrate legacy identities:** Move any LEGACY_SERVICE account still using a password to a SERVICE user with key-pair or OAuth authentication.
+        Key-pair authentication changes the exposure fundamentally. The private key stays on the host that needs it, Snowflake holds only the public half, and a leaked Snowflake-side record gives an attacker nothing to sign in with. Rotation is a clean cutover using `RSA_PUBLIC_KEY_2` alongside the existing key.
+
+        Scope each service identity to a role holding only the privileges its workload needs, and attach a network policy limited to the pipeline's egress addresses so a stolen key is only usable from the right place. Any LEGACY_SERVICE identity still in use should be migrated, which a companion check in this policy tracks.
       audit: |
         ### Audit via Snowsight
 
@@ -2266,19 +2244,19 @@ queries:
       snowflake.account.users.where(disabled == false).none(type == "LEGACY_SERVICE")
     docs:
       desc: |
-        This check ensures that no active user carries the LEGACY_SERVICE type. LEGACY_SERVICE is the pre-programmatic-authentication service identity that Snowflake retains for backward compatibility, and it can still authenticate with a password rather than the key-pair or OAuth credentials required of a modern SERVICE user.
+        This check verifies that no active machine identity still uses the legacy service user type.
+
+        Snowflake classifies users by type, and LEGACY_SERVICE exists for automation created before the modern SERVICE type, which is why it is the one machine type that can still authenticate with a password. The type is visible as the `type` column of `SHOW USERS` and changed with `ALTER USER <name> SET TYPE = SERVICE` once the account authenticates with `RSA_PUBLIC_KEY` or OAuth. This check requires no enabled user to carry the LEGACY_SERVICE type.
 
         **Why this matters**
 
-        - **Weaker authentication:** Legacy service identities can sign in with a static password and cannot be constrained to programmatic credentials the way SERVICE users are.
-        - **Outside current controls:** Legacy accounts predate the SERVICE user model, so newer authentication policies and guardrails may not apply to them cleanly.
-        - **Signals unfinished migration:** An active LEGACY_SERVICE user usually means an automation workload was never moved onto modern programmatic authentication.
+        The type is what keeps password sign-in available to an identity nobody is watching. A LEGACY_SERVICE password is a single-factor credential on an account with pipeline-level read access, and there is no owner who would notice a sign-in from an unexpected place at an unusual hour, because nobody looks at that account's login history at all.
 
-        **Risk mitigation**
+        User types are also how account-wide controls are targeted. Authentication policies are commonly scoped by type so that human users face MFA while programmatic identities face key-pair requirements. An account left classified as legacy sits outside whichever bucket you thought you had covered, and the gap is invisible from the policy definition.
 
-        - **Migrate to SERVICE users:** Recreate each workload as a SERVICE user that authenticates with an RSA key pair or OAuth.
-        - **Remove the legacy account:** Once the workload runs under a modern SERVICE user, drop or disable the LEGACY_SERVICE identity.
-        - **Block new legacy accounts:** Establish a standard that all new automation identities are provisioned as SERVICE users.
+        In practice an active LEGACY_SERVICE user is an unfinished migration. A workload was moved partway onto modern authentication and the old identity, along with its grants and its password, was left enabled as a fallback that nobody ever removed.
+
+        Recreate each workload as a SERVICE user with a key pair or an OAuth integration, cut the pipeline over, then disable the legacy identity before dropping it so its grants stay inspectable during the transition.
       audit: |
         ### Audit via Snowsight
 
@@ -2358,19 +2336,19 @@ queries:
       snowflake.account.users.where(disabled == false).all(daysSinceLastLogin <= 90)
     docs:
       desc: |
-        This check ensures that every active user has signed in within the last 90 days. Snowflake does not automatically disable accounts that stop being used, so a dormant account remains a valid, sign-in-capable identity indefinitely until an administrator acts on it. Users that have never logged in are covered by a separate check and are not counted as dormant here.
+        This check verifies that every enabled user has signed in recently enough to still be considered in use.
+
+        Snowflake records the last successful authentication per user, reported as the `last_success_login` column of `SHOW USERS` and in the `LOGIN_HISTORY` view of `SNOWFLAKE.ACCOUNT_USAGE`. Nothing disables an account for inactivity; it stays valid until an administrator runs `ALTER USER <name> SET DISABLED = TRUE`. This check requires the most recent successful sign-in on every enabled user to fall within the last 90 days. Users who have never signed in at all are handled by a companion check in this policy and are not counted here.
 
         **Why this matters**
 
-        - **Dormant accounts go unwatched:** An account no one uses is also an account no one is monitoring, so misuse can go unnoticed for a long time.
-        - **Expands the attack surface:** Every idle but enabled credential is one more way into the account that an attacker can target.
-        - **Reflects stale access:** Long-unused accounts often belong to people who changed roles or left, meaning their access should already have been revoked.
+        A dormant account is a live credential with nobody watching it. The ordinary detection signal for account compromise is the real owner noticing something they did not do, and on a dormant account that person is not looking. Intrusions into Snowflake customer accounts in 2024 ran for weeks in some cases for precisely this reason: the sign-ins looked like nothing to anyone.
 
-        **Risk mitigation**
+        Dormant accounts usually represent stale access rather than absent people. The contractor whose engagement ended, the analyst who moved to a team that does not use the warehouse, the account stood up for a proof of concept. Their role grants are untouched, so their reach into the data has not narrowed at all since the day they stopped using it.
 
-        - **Disable idle accounts:** Disable users that have not signed in within your inactivity threshold, and drop them once you confirm they are no longer needed.
-        - **Review access periodically:** Run a recurring access review that flags accounts with no recent login activity.
-        - **Automate offboarding:** Tie account de-provisioning to your joiner-mover-leaver process so departures disable access promptly.
+        Their passwords are also the oldest in the account and the least likely to have been rotated under whatever policy you have since attached, which makes them the ones most likely to appear in a breach dump that predates it.
+
+        Disable before dropping, so grants and ownership stay inspectable while you confirm nothing depended on the account. Ninety days is a baseline: users touching regulated data warrant a shorter window, and genuinely seasonal or quarterly-reporting users are a case for a documented exception rather than for widening the threshold for everyone.
       audit: |
         ### Audit via Snowsight
 
@@ -2455,19 +2433,19 @@ queries:
       snowflake.account.users.where(disabled == false).all(daysSinceLastLogin != -1)
     docs:
       desc: |
-        This check ensures that every active user has signed in at least once. An enabled account that has never authenticated is usually an orphaned provisioning artifact, such as a user created for onboarding that was never claimed or a leftover from a test or migration. Freshly provisioned accounts are expected here too, so they should be onboarded promptly or disabled rather than left enabled and unused.
+        This check verifies that every enabled user has actually been used at least once.
+
+        Snowflake reports the most recent successful authentication as the `last_success_login` column of `SHOW USERS`, and it stays empty for an account that has never been signed in to. This check requires every enabled user to have a value there, so an empty one marks an account that was created and never claimed.
 
         **Why this matters**
 
-        - **Orphaned credentials linger:** An account created but never used is easy to forget, yet it remains a valid path into the environment.
-        - **No baseline of normal use:** With no login history there is nothing to compare against, so unexpected first-time use is harder to spot as anomalous.
-        - **Signals broken provisioning:** A never-used account often means an onboarding step failed or a temporary account was never cleaned up.
+        An account nobody has ever used is an account nobody will miss. There is no normal access pattern for it, so there is nothing for anomalous use to look anomalous against, and no owner who will report that their access is behaving strangely. If someone else starts using it, the first indication is whatever the intruder does with it.
 
-        **Risk mitigation**
+        These accounts also tend to still carry the password an administrator set at creation, transmitted over chat or a ticket and never replaced, which makes them the easiest credentials in the account to obtain. A companion check in this policy flags users still pending that forced password change, and the two populations overlap heavily.
 
-        - **Onboard or disable promptly:** Require that newly created accounts be claimed within a short window, and disable those that are not.
-        - **Clean up test artifacts:** Remove accounts left behind by migrations, proofs of concept, and test runs.
-        - **Review provisioning:** Reconcile the user list against your identity source so every account maps to a real, active owner.
+        Never-used accounts are where over-granting hides as well. Roles are assigned at provisioning time based on the job someone was expected to do, and because the account was never exercised, nobody ever discovered that the grants were wrong or far broader than the work required.
+
+        Newly created users legitimately show up here for a day or two, so treat the finding as an onboarding service level: an account is claimed within a short window or it is disabled. Accounts left over from migrations, test runs, and proofs of concept should be removed outright.
       audit: |
         ### Audit via Snowsight
 
@@ -2579,19 +2557,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the account sets `PREVENT_UNLOAD_TO_INLINE_URL` to true, so the `COPY INTO <location>` command cannot write data to an ad-hoc URL supplied directly in the statement. By default this parameter is false, and any role that can run an unload command may export table data to an arbitrary cloud location of its choosing.
+        This check verifies that data can only be unloaded to storage locations the account has approved.
+
+        `ALTER ACCOUNT SET PREVENT_UNLOAD_TO_INLINE_URL = TRUE` stops `COPY INTO <location>` from writing to a URL typed directly into the statement. Snowflake defaults the parameter to false, which lets any role that can read a table and run an unload write the results to an arbitrary cloud URL with credentials supplied inline. This check requires the parameter to be true, so unload must target a named stage instead.
 
         **Why this matters**
 
-        - **Closes an exfiltration path:** An inline URL lets a user copy query results straight to storage they control, bypassing every stage and integration an administrator has approved.
-        - **Forces governed exports:** With the parameter set, unload must target a named stage backed by a storage integration, so data leaves only through locations the account already trusts.
-        - **Restores visibility:** Exports that flow through named stages and integrations are attributable and reviewable, while inline-URL writes leave little trace of where data went.
+        This is the most direct exfiltration path Snowflake offers. One statement reads a table and writes it to a bucket the attacker controls, at warehouse throughput, with no new object created, no integration granted, and nothing left behind but a row in `COPY_HISTORY`. It requires no privilege beyond reading the data and running an unload, which is what analytics roles have by design.
 
-        **Risk mitigation**
+        Setting the parameter moves the destination decision away from whoever writes the query. Every export then has to go through a named stage, which is an object an administrator created and granted, backed by a storage integration that names the buckets the account is allowed to reach. The set of places data can go becomes a short administered list rather than whatever string someone types.
 
-        - **Approve destinations centrally:** Define storage integrations and named stages for the cloud buckets your organization sanctions, and require unload to use them.
-        - **Pair with stage governance:** Combine this parameter with a requirement that stage creation reference a storage integration, so no ungoverned egress path remains.
-        - **Review unload activity:** Monitor `COPY` history for unexpected destinations and investigate exports to locations outside your approved set.
+        It also makes egress reviewable. Exports through named stages are attributable to a stage and an integration you can enumerate and audit, whereas an inline URL is a literal buried in a query that nobody reads until after an incident.
+
+        Pair it with `REQUIRE_STORAGE_INTEGRATION_FOR_STAGE_CREATION`, verified by a companion check, or a user simply creates a stage pointing at their own bucket and unloads through that instead. Teams that rely on ad-hoc unloads to developer buckets will need named stages provisioned before this is turned on.
       audit: |
         ### Audit via Snowsight
 
@@ -2679,19 +2657,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the account sets `REQUIRE_STORAGE_INTEGRATION_FOR_STAGE_CREATION` to true, so every new external stage must reference a storage integration rather than carry inline cloud credentials. By default this parameter is false, and a stage can be created with an access key or SAS token embedded directly in its definition.
+        This check verifies that external stages can only be created against storage the account has approved.
+
+        `ALTER ACCOUNT SET REQUIRE_STORAGE_INTEGRATION_FOR_STAGE_CREATION = TRUE` obliges every `CREATE STAGE` that names an external URL to reference a storage integration, and to fail if the URL falls outside that integration's `STORAGE_ALLOWED_LOCATIONS`. Snowflake defaults the parameter to false, which lets a stage be created against any bucket with an access key or SAS token embedded in the statement. This check requires the parameter to be true.
 
         **Why this matters**
 
-        - **Centralizes trust:** A storage integration names the exact cloud buckets an account may reach, so stages built on it can only point at locations an administrator has approved.
-        - **Removes embedded secrets:** Requiring an integration stops long-lived access keys and tokens from being written into stage metadata where any role with visibility can read them.
-        - **Governs new egress paths:** Because the requirement applies at creation time, no team can quietly stand up an external stage that reaches an unsanctioned bucket.
+        Without it, anyone who can create a stage picks their own destination and supplies their own credentials. The result is a stage that points at a bucket your organization has never heard of, sitting in the account looking exactly like every other stage, and every subsequent `COPY INTO` through it reads as ordinary pipeline work. It is a durable egress channel established with a single statement.
 
-        **Risk mitigation**
+        The parameter moves the trust decision to creation time. A storage integration is created by an account administrator, names the exact buckets and prefixes Snowflake may reach, and is granted with `GRANT USAGE ON INTEGRATION`. Requiring one means the reachable destinations are an enumerable list rather than the union of everything anyone has ever typed.
 
-        - **Define integrations first:** Create storage integrations for each cloud account and bucket prefix your organization sanctions, and grant usage only to the roles that need it.
-        - **Rotate at the integration:** Manage credentials through the integration and the cloud IAM role it assumes, so rotation happens in one place instead of across many stage definitions.
-        - **Audit existing stages:** Review stages created before the parameter was enabled and migrate any that still embed inline credentials.
+        It also removes long-lived cloud secrets from stage definitions. An integration authenticates through a cloud IAM role that Snowflake assumes, so there is no static key to embed, copy into a Terraform module, or paste into a worksheet.
+
+        The parameter governs new stages only. Audit what already exists before relying on it, since stages created earlier keep their inline credentials, which a companion check in this policy flags.
       audit: |
         ### Audit via Snowsight
 
@@ -2779,19 +2757,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that external stages authenticate through a storage integration and do not carry an inline `credentials` value in their definition. By default Snowflake lets a stage hold cloud credentials such as an access key or SAS token directly, and those secrets then sit in object metadata that any role with visibility on the stage can read.
+        This check verifies that external stages authenticate through an administered storage integration rather than embedded cloud credentials.
+
+        An external stage can be defined either with `STORAGE_INTEGRATION = <name>`, which authenticates through a cloud IAM role Snowflake assumes, or with a `CREDENTIALS` clause carrying an access key or SAS token in the stage definition itself. Which form a stage uses is visible from `DESCRIBE STAGE <name>`. This check requires every external stage to use the integration form and hold no inline credentials.
 
         **Why this matters**
 
-        - **Keeps secrets out of metadata:** A storage integration references a cloud IAM role, so no long-lived key or token is written into the stage where it can be read or leaked.
-        - **Narrows the blast radius:** Inline credentials often grant broad access to a bucket, whereas an integration constrains a stage to the exact locations an administrator has approved.
-        - **Simplifies rotation:** Credentials managed through the integration and its cloud IAM role rotate in one place, instead of being copied into every stage that needs them.
+        The credential in the stage is a real, long-lived cloud key, and it is almost always broader than the stage needs. Whoever created the stage used a key they already had rather than minting one scoped to that bucket and prefix, so the key that leaks with the stage typically opens far more of the cloud account than Snowflake ever touched.
 
-        **Risk mitigation**
+        The key also had to get into the statement, and that journey leaves copies. It was typed into a worksheet whose history persists, committed to a Terraform module, stored in plaintext in state, or passed through a CI job's environment. Each of those outlives the stage and none of them are updated when someone rotates the key.
 
-        - **Replace inline credentials:** Recreate external stages to reference a `STORAGE_INTEGRATION` and drop the embedded `CREDENTIALS` clause.
-        - **Enforce at creation:** Set the account so stage creation requires a storage integration, preventing new stages from embedding secrets.
-        - **Rotate exposed keys:** Treat any access key or token that was stored inline as compromised and rotate it at the cloud provider.
+        Static keys do not expire on their own either, so the exposure is open-ended. A storage integration replaces the secret entirely: the trust relationship lives in cloud IAM, is scoped to specific buckets and prefixes, and is rotated there rather than by rewriting stage definitions across the account.
+
+        Recreate any stage that embeds credentials against an integration, treat the embedded key as exposed and rotate it at the cloud provider, and set `REQUIRE_STORAGE_INTEGRATION_FOR_STAGE_CREATION` so the pattern cannot come back.
       audit: |
         ### Audit via Snowsight
 
@@ -2894,19 +2872,19 @@ queries:
       snowflake.account.functions.where(externalAccessIntegrations != empty).all(isSecure == true)
     docs:
       desc: |
-        This check ensures that every user-defined function granted external network access is defined as a secure function. By default a function is not secure, so its definition, including the body that encodes which external endpoints it reaches and how it handles secrets, is visible to roles that can see the function but do not own it.
+        This check verifies that code able to reach external networks does not expose its definition to unprivileged roles.
+
+        A user-defined function that lists `EXTERNAL_ACCESS_INTEGRATIONS` can open outbound connections from Snowflake. Declaring it with `CREATE SECURE FUNCTION`, or applying `ALTER FUNCTION <name> SET SECURE`, hides the body from every role except the owner. Without it, the body is readable through `GET_DDL` and the `INFORMATION_SCHEMA` function views by any role that can see the function. Snowflake creates functions non-secure by default. This check requires every function holding an external access integration to be secure.
 
         **Why this matters**
 
-        - **Hides egress detail:** A function with an external access integration reaches outside Snowflake, and a secure function keeps its body, which names those endpoints and any secret handling, from roles without ownership.
-        - **Protects embedded logic:** Marking the function secure prevents unprivileged roles from reading credentials references, request formats, and other sensitive logic in the definition.
-        - **Limits reconnaissance:** Concealing the body denies an attacker with limited access a map of the external systems the account talks to and how.
+        The body of an external-access function is a map of the account's outbound reach. It names the hosts it calls, the request format and API version, and how it retrieves the secret it authenticates with. A role holding nothing more than usage on the function can read all of that and use it to reach the same external system directly.
 
-        **Risk mitigation**
+        It is most valuable to an attacker as a stepping stone rather than as an end in itself. Someone who has landed a low-privilege role inside the warehouse is looking for what the account is already permitted to talk to on the outside, because an allowlisted endpoint is a working egress path for data. A readable function definition hands over that list along with the credentials pattern needed to use it.
 
-        - **Mark external functions secure:** Recreate or alter any function that uses an external access integration so it is a secure function.
-        - **Review integrations and secrets:** Confirm each external access integration is scoped to the endpoints it needs and that the secrets it uses are held in Snowflake secret objects, not inline.
-        - **Restrict usage grants:** Grant usage on external-access functions only to the roles that require them, so the surface that can invoke egress stays small.
+        The same visibility exposes business logic that was never meant to be shared: request signing schemes, tenant identifiers, and internal service paths that are useful well beyond Snowflake.
+
+        Marking a function secure is not a substitute for scoping. The integration behind it should be bound to explicit network rules, which a companion check in this policy verifies, and its secrets should be Snowflake secret objects rather than literals in the body. Note that a secure function's definition is hidden from teams that legitimately maintain it, so assign ownership deliberately before applying it.
       audit: |
         ### Audit via Snowsight
 
@@ -3051,19 +3029,19 @@ queries:
           mondoo.com/filter-icon: snowflake
     docs:
       desc: |
-        This check ensures that every enabled external access integration is bound to explicit network rules that constrain where its egress traffic may go. An external access integration without allowed network rules leaves the hosts that user-defined functions and stored procedures can reach unconstrained, so the code they run can open outbound connections to arbitrary destinations.
+        This check verifies that outbound network access from user-defined code is confined to approved destinations.
+
+        An external access integration is what permits a user-defined function or stored procedure to make outbound connections. Its `ALLOWED_NETWORK_RULES` property binds it to egress network rules, each created with `CREATE NETWORK RULE ... MODE = EGRESS` and enumerating the host and port destinations that are permitted. This check requires every enabled external access integration to name at least one allowed network rule, since an integration that names none constrains nothing.
 
         **Why this matters**
 
-        - **Blocks arbitrary egress:** Scoping an integration to named egress network rules stops UDF and procedure code from reaching hosts you never approved.
-        - **Contains data exfiltration:** An attacker who lands code execution inside Snowflake cannot ship data to an external endpoint that the integration's rules do not permit.
-        - **Enforces intent:** Named rules document exactly which external services the account is allowed to call, so drift and over-broad access surface during review.
+        Code running inside Snowflake through an unconstrained integration can open a connection to any host it chooses. That is a general-purpose egress channel sitting inside the data platform: a stored procedure can select from a table and post the rows to an endpoint the attacker controls, running on the warehouse, at warehouse throughput, on whatever schedule a task gives it.
 
-        **Risk mitigation**
+        Unlike an unload, this path leaves no record naming a destination. `COPY_HISTORY` shows where a `COPY INTO` wrote; an outbound HTTP call from a procedure body shows up as the procedure having run. Investigating it after the fact means reading the code, which a companion check in this policy keeps hidden from unprivileged roles for good reasons of its own.
 
-        - **Bind every integration:** Attach one or more egress network rules to each external access integration before enabling it.
-        - **Keep the allowlist tight:** List only the specific host and port destinations each workload legitimately needs, and remove entries that are no longer used.
-        - **Review regularly:** Re-examine allowed network rules as external dependencies change so the egress surface stays minimal.
+        Named network rules make the destination list explicit and reviewable. They turn the question of what the account may talk to from something buried in function bodies into an object an administrator can enumerate, diff, and approve.
+
+        Keep rules narrow and per workload rather than sharing one broad rule across every integration, and grant usage on each integration only to the roles that run the code needing it.
       audit: |
         ### Audit via Snowsight
 
@@ -3197,19 +3175,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every enabled API integration limits the URL prefixes that external functions may call through it. When the allowed prefixes list is empty, the integration places no ceiling on which endpoints an external function can invoke, so a function bound to it can reach any URL the integration's cloud credentials permit.
+        This check verifies that external functions can only call endpoints the account has approved.
+
+        An API integration holds the cloud credentials Snowflake uses to invoke external functions through a proxy service such as AWS API Gateway or Azure API Management. Its `API_ALLOWED_PREFIXES` property lists the URL prefixes that external functions bound to it may call, set with `CREATE API INTEGRATION` or `ALTER API INTEGRATION <name> SET API_ALLOWED_PREFIXES = (...)`. This check requires every enabled API integration to list at least one prefix.
 
         **Why this matters**
 
-        - **Constrains external calls:** An allowed-prefixes list restricts external functions to the specific API gateway paths you approved instead of the entire provider surface.
-        - **Limits credential abuse:** The integration holds cloud credentials, so narrowing its reachable endpoints shrinks what a misused function can do with them.
-        - **Surfaces intent:** Explicit prefixes document the exact services the account calls outbound, making over-broad access visible during review.
+        The integration carries a cloud IAM role, and an external function invoked through it inherits whatever that role can do at the proxy. The prefix list is the difference between "call this one gateway stage" and "call anything this account's gateway fronts". With the list empty, the choice of target moves to whoever can create an external function.
 
-        **Risk mitigation**
+        That is a concrete escalation, not a theoretical one. An attacker who can define an external function on an unconstrained integration points it at an internal or administrative endpoint behind the same gateway, and Snowflake makes the call for them using the integration's credentials from Snowflake's own network, which is frequently an address the gateway trusts more than the attacker's.
 
-        - **Set prefixes on every integration:** Populate `api_allowed_prefixes` with the specific gateway URLs each workload needs before enabling the integration.
-        - **Scope to the path:** Include the full stage or resource path in each prefix rather than a bare host, so unrelated endpoints on the same host stay out of reach.
-        - **Prune stale entries:** Remove prefixes for functions and endpoints that are no longer in use.
+        Explicit prefixes also document the account's outbound dependencies. When the list is a handful of named gateway paths, an addition during review is visible; when it is empty, there is nothing to review.
+
+        Include the full resource path in each prefix rather than a bare host, because gateway stages on the same host commonly front unrelated services, and remove prefixes for functions and endpoints that have been retired.
       audit: |
         ### Audit via Snowsight
 
@@ -3325,19 +3303,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every enabled storage integration restricts stages to specific cloud storage locations and does not use the `*` wildcard that permits all locations. A storage integration with an empty or wildcard allowed-locations list lets stages built on it read from and write to any bucket or container the integration's cloud credentials can reach.
+        This check verifies that storage integrations confine stages to specific cloud storage locations.
+
+        A storage integration's `STORAGE_ALLOWED_LOCATIONS` property lists the bucket and prefix URLs that stages built on it may read from and write to, set with `CREATE STORAGE INTEGRATION` or `ALTER STORAGE INTEGRATION <name> SET STORAGE_ALLOWED_LOCATIONS = (...)`. A single `*` entry permits every location the integration's cloud role can reach. This check requires every enabled storage integration to list at least one location and to contain no wildcard.
 
         **Why this matters**
 
-        - **Confines data movement:** A scoped allowed-locations list limits where external stages can load from and unload to, keeping data inside approved storage.
-        - **Prevents exfiltration paths:** Without a restriction, a stage on the integration can unload query results to an arbitrary bucket the credentials permit.
-        - **Blocks the wildcard trap:** A `*` entry looks configured but gates nothing, so an integration appears restricted while allowing every location.
+        The integration is the trust boundary for data leaving the warehouse. A stage built on an unrestricted one can unload query results to any bucket the underlying cloud IAM role can write, and that role is often scoped broadly because it was created once and reused for everything. The reachable surface is then the cloud account, not the two buckets anyone intended.
 
-        **Risk mitigation**
+        The wildcard is the more dangerous of the two failures because it reports as configured. A reviewer opening the integration sees a populated allowed-locations list and moves on, when in fact the list places no ceiling on anything. An empty list at least looks unfinished.
 
-        - **List explicit locations:** Populate `storage_allowed_locations` with the exact bucket or container paths each workload uses.
-        - **Never use the wildcard:** Remove any `*` entry and replace it with the specific storage URLs your workloads require.
-        - **Review regularly:** Re-examine allowed locations as storage layouts change so the set stays minimal.
+        Restriction at the integration is also what stops a legitimate-looking stage from being an exfiltration path. Anyone with the privilege to create stages can point one at a destination of their choosing; the allowed-locations list is what decides whether Snowflake will actually write there.
+
+        Scope the cloud IAM role as well, since `STORAGE_ALLOWED_LOCATIONS` restricts Snowflake while the IAM policy restricts everything. Use `STORAGE_BLOCKED_LOCATIONS` for sub-paths that must stay unreachable inside an otherwise allowed prefix, and revisit the list as storage layouts change.
       audit: |
         ### Audit via Snowsight
 
@@ -3514,19 +3492,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that at least one session policy exists and that every session policy terminates an idle session within 60 minutes of inactivity. Snowflake applies a default idle timeout of 240 minutes, which leaves an authenticated session usable for hours after a user walks away. The 60-minute ceiling here is an organizational baseline that can be tightened further.
+        This check verifies that idle sessions are terminated within a bounded period.
+
+        `SESSION_IDLE_TIMEOUT_MINS` on a session policy sets how long a session may sit without activity before Snowflake ends it. The policy is created with `CREATE SESSION POLICY` and put into force with `ALTER ACCOUNT SET SESSION POLICY <name>` or by attaching it to individual users. Snowflake's default is 240 minutes. This check requires the account to have at least one session policy and every policy to cap idle time at 60 minutes or less.
 
         **Why this matters**
 
-        - **Closes abandoned sessions:** An idle session on an unlocked, unattended workstation is a ready-made entry point for anyone with physical or remote access to that machine.
-        - **Shrinks token exposure:** The longer a session token stays valid, the longer a stolen or hijacked token remains useful to an attacker.
-        - **Enforces re-authentication:** A bounded idle timeout forces users back through authentication, giving controls such as MFA and network policies another chance to intervene.
+        An established session is a bearer credential that has already cleared MFA and the account's network policy. For as long as it lives, an attacker who obtains the session token, whether from a compromised endpoint, a stolen browser profile, or infostealer malware, does not need the password or the second factor at all. Every control the login passed is behind them.
 
-        **Risk mitigation**
+        Four hours of idle validity is a long time for such a token to remain useful. Cutting it to an hour bounds how long a session stolen from a laptop that has since been closed and carried out of the building keeps working, and it forces a fresh authentication that MFA and the network policy get to evaluate again.
 
-        - **Set an account-wide baseline:** Attach a session policy with a bounded `SESSION_IDLE_TIMEOUT_MINS` at the account level so every user inherits it.
-        - **Tighten for sensitive roles:** Apply a shorter timeout through a dedicated session policy for users who hold privileged roles or access regulated data.
-        - **Review periodically:** Confirm the session policy stays attached and that no override loosens the timeout beyond the baseline.
+        It also closes the unattended workstation. A logged-in connection on a machine someone walked away from is usable by anyone who reaches the keyboard, and no authentication step stands between them and the data.
+
+        Idle timeout measures inactivity, not total session length, so long-running queries and ETL jobs are unaffected. Drivers that hold a connection open between infrequent batches may need reconnect logic before the limit is tightened. Sixty minutes is an organizational baseline; users with access to regulated data warrant less.
       audit: |
         ### Audit via Snowsight
 
@@ -3630,19 +3608,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that at least one session policy exists and that every session policy times out an inactive Snowsight web session within 30 minutes. Interactive browser sessions run on shared and mobile devices where an unattended screen is more likely, so their idle limit should sit tighter than the limit for programmatic sessions. Snowflake leaves the UI idle timeout unbounded by default until a session policy sets it.
+        This check verifies that inactive Snowsight browser sessions are closed on a tighter schedule than programmatic ones.
+
+        `SESSION_UI_IDLE_TIMEOUT_MINS` on a session policy governs how long a Snowsight web session may sit idle before Snowflake ends it, separately from the limit applied to driver and connector sessions. The policy is created with `CREATE SESSION POLICY` and put into force with `ALTER ACCOUNT SET SESSION POLICY <name>`. This check requires the account to have at least one session policy and every policy to cap the browser idle time at 30 minutes or less.
 
         **Why this matters**
 
-        - **Protects interactive sessions:** A logged-in Snowsight tab left open on an unattended laptop exposes worksheets, data previews, and administrative controls to anyone at the keyboard.
-        - **Matches the higher UI risk:** Browser sessions travel to laptops, kiosks, and mobile devices far more than programmatic connections, so they warrant a shorter idle window.
-        - **Layers with the session idle limit:** A separate, tighter UI limit lets you keep automated connections workable while still closing human sessions quickly.
+        A Snowsight tab is a fully privileged console. Left open, it exposes worksheets and their result sets, table previews, and, for an administrator, the pages that create users, grant roles, and change account parameters. Anyone who reaches the machine inherits all of it with no authentication step in between.
 
-        **Risk mitigation**
+        Browser sessions also live where the physical risk is: personal laptops, home machines, conference room displays, and phones. A programmatic connection runs on a server in a data center; a Snowsight session travels.
 
-        - **Set a tighter UI ceiling:** Configure `SESSION_UI_IDLE_TIMEOUT_MINS` to 30 minutes or less in the account session policy.
-        - **Reduce for privileged consoles:** Apply an even shorter UI timeout to policies covering administrators who use Snowsight for account management.
-        - **Keep the policy attached:** Confirm the account-level session policy remains in place so the UI timeout applies to every interactive user.
+        Browser session cookies are specifically what infostealer malware is written to harvest, because cookie theft is the standard way to sidestep an MFA-protected web application entirely. A short idle timeout shortens the window in which a stolen cookie is still worth anything to the buyer of that log.
+
+        Keeping the browser limit separate from the programmatic one is what makes a tight value practical, since automated connections can keep a longer allowance without weakening the human sessions. Thirty minutes is a baseline; administrators who use Snowsight for account management warrant less.
       audit: |
         ### Audit via Snowsight
 
@@ -3746,19 +3724,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Snowflake network policy specifies at least one allowed entry, meaning a non-empty allowed IP list or at least one allowed network rule. A network policy that lists no allowed IPs and no allowed network rules gates nothing and provides a false sense of network restriction. Snowflake does not require either list to be populated when a policy is created.
+        This check verifies that every network policy actually states which networks it permits.
+
+        A network policy restricts access through `ALLOWED_IP_LIST`, which holds CIDR ranges, or `ALLOWED_NETWORK_RULE_LIST`, which holds ingress network rules. Snowflake does not require either to be populated, so a policy created with only a blocked list, or with nothing at all, is a valid object. This check requires every network policy to carry at least one entry across the two allow lists.
 
         **Why this matters**
 
-        - **Prevents empty gates:** A network policy with no allow entries applies no restriction, so the account remains reachable from anywhere the policy was meant to block.
-        - **Avoids misleading audits:** A named, attached policy can make a review appear compliant even though it enforces nothing.
-        - **Anchors allow-list intent:** Requiring a concrete allow entry forces administrators to state which networks are actually permitted rather than leaving the decision implicit.
+        An empty allow list is not an implicit deny. It is an absent allowlist, which means the policy imposes no restriction and connections continue to arrive from wherever they like. The account is in exactly the position it would be in with no network policy attached.
 
-        **Risk mitigation**
+        It is worse than that position in one respect: it reports as protected. A reviewer, a compliance questionnaire, and the account parameter naming the attached policy all agree that network restriction is in force, so the gap survives every review that looks for a policy rather than at one.
 
-        - **Populate the allow list:** Add the specific trusted CIDR ranges or network rules the policy is meant to permit.
-        - **Attach only meaningful policies:** Do not activate a network policy until it defines the networks it allows.
-        - **Review for empties:** Periodically check that every defined policy still carries at least one allow entry.
+        Policies carrying only a blocked list are the usual shape of this failure. Blocking a handful of known-bad ranges is a blocklist, and a blocklist does not constrain an attacker who can pick any other address, which for anyone replaying stolen credentials from a rented host is trivially cheap.
+
+        Populate the allow list with the corporate egress ranges and VPN addresses your users actually connect from, and prefer network rules over raw CIDR lists where the same set is reused across several policies, so the addresses are maintained in one place.
       audit: |
         ### Audit via Snowsight
 
@@ -3861,19 +3839,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every enabled SAML2 single sign-on integration signs the SAML authentication requests it sends to the identity provider. Signing the `AuthnRequest` cryptographically binds it to Snowflake, so the identity provider can reject requests that were forged, altered, or replayed by a third party. Snowflake leaves request signing off by default when a SAML2 integration is created.
+        This check verifies that single sign-on requests sent to the identity provider are cryptographically signed.
+
+        A SAML2 security integration connects Snowflake to an external identity provider. Setting `SAML2_SIGN_REQUEST = TRUE`, through `CREATE SECURITY INTEGRATION ... TYPE = SAML2` or `ALTER SECURITY INTEGRATION <name> SET SAML2_SIGN_REQUEST = TRUE`, makes Snowflake sign the `AuthnRequest` it sends, so the identity provider can confirm the request came from Snowflake and was not altered in transit. Snowflake leaves it false by default. This check requires it to be true on every enabled SAML2 integration.
 
         **Why this matters**
 
-        - **Protects the SSO handshake:** A signed authentication request lets the identity provider verify the request genuinely originated from Snowflake before it prompts a user to authenticate.
-        - **Blocks tampering and replay:** Without a signature, an attacker who can intercept or craft an `AuthnRequest` can alter its parameters or replay it against the identity provider.
-        - **Hardens federated login:** Request signing closes a gap in the federation trust that MFA and password controls on the identity provider cannot cover on their own.
+        An unsigned `AuthnRequest` is an unauthenticated message that the identity provider is being asked to act on. Anyone who can craft one can drive the provider's authentication flow while claiming to be Snowflake. That is the basis for login cross-site request forgery and forced-authentication patterns against SAML deployments, where a user is silently walked through a sign-in they did not initiate.
 
-        **Risk mitigation**
+        It also leaves request parameters open to tampering. An attacker who can intercept or reissue the request can alter what it asks for, including the requested authentication context, and a weakened context can mean the identity provider skips a step-up challenge it would otherwise have demanded.
 
-        - **Enable request signing:** Set `SAML2_SIGN_REQUEST` to true on every enabled SAML2 integration.
-        - **Register the certificate:** Provide Snowflake's signing certificate to the identity provider so it can validate the signature.
-        - **Review new integrations:** Confirm request signing is enabled whenever a SAML2 integration is added or reconfigured.
+        Federation is where the strongest identity controls usually live. If the identity provider is what enforces MFA, conditional access, and device posture, then the integrity of the request reaching it is the integrity of all of those, and a signature is what establishes it.
+
+        Enabling this requires the identity provider to hold Snowflake's signing certificate, which `DESCRIBE SECURITY INTEGRATION <name>` returns, so coordinate the change with the provider or federated sign-in will fail at cutover.
       audit: |
         ### Audit via Snowsight
 
@@ -3967,19 +3945,19 @@ queries:
       snowflake.account.tasks.all(owner == null || owner.name != "ACCOUNTADMIN" && owner.name != "SECURITYADMIN")
     docs:
       desc: |
-        This check ensures that no scheduled task is owned by the ACCOUNTADMIN or SECURITYADMIN role. A task runs on its schedule with the privileges of its owning role, so a task owned by a top-level administrative role executes recurring code with account-wide power. Snowflake assigns ownership to the role that creates the task, which is easily an administrative role during setup.
+        This check verifies that scheduled jobs do not run with account-wide administrative privilege.
+
+        A Snowflake task executes SQL on a schedule using the rights of the role that owns it. Ownership defaults to whichever role ran `CREATE TASK` and is moved with `GRANT OWNERSHIP ON TASK <name> TO ROLE <role>`; `SHOW TASKS` lists the current owner. This check requires that no task is owned by ACCOUNTADMIN or SECURITYADMIN.
 
         **Why this matters**
 
-        - **Removes a persistence vector:** A task owned by ACCOUNTADMIN runs attacker-supplied SQL on a schedule with full account privileges, giving a foothold that survives after the initial access is closed.
-        - **Prevents privilege escalation:** Anyone able to alter a privileged task's definition inherits the owning role's rights every time the task fires.
-        - **Enforces least privilege for automation:** Scheduled jobs should run with only the privileges their work requires, not the highest role in the account.
+        A task owned by ACCOUNTADMIN is unattended code execution at the top of the role hierarchy. An attacker who briefly reaches a privileged role can create or alter one and walk away with persistence: the SQL fires on its schedule long after the session that planted it is closed, and it can rebuild whatever access it needs each time, granting roles, replacing a user's public key, or exporting a table.
 
-        **Risk mitigation**
+        Background execution is also where activity is least likely to be questioned. A privileged statement at three in the morning under a scheduled context does not read as an intrusion in `QUERY_HISTORY`; it reads as the schedule doing what schedules do.
 
-        - **Own tasks with scoped roles:** Transfer task ownership to a purpose-built role that holds only the privileges the task needs.
-        - **Keep admin roles interactive:** Reserve ACCOUNTADMIN and SECURITYADMIN for human, interactive administration rather than unattended scheduled execution.
-        - **Review task ownership:** Periodically confirm no task has been created or transferred under a privileged administrative role.
+        Ownership is itself a privilege boundary, which makes it an escalation path in the other direction. Anyone who can modify a privileged task's definition inherits the owner's rights every time it runs, so a narrow grant on one task becomes effective account administration.
+
+        Give each task a purpose-built role holding only the privileges its statements need, and keep ACCOUNTADMIN and SECURITYADMIN for interactive administration. Tasks that genuinely need account-level operations should still run under a narrow role granted exactly those privileges rather than under the administrative role itself.
       audit: |
         ### Audit via Snowsight
 
