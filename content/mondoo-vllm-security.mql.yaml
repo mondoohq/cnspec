@@ -85,18 +85,17 @@ queries:
       vllm.server.corsConfigured == false || vllm.server.corsAllowsAnyOrigin == false
     docs:
       desc: |
-        This check ensures that the vLLM server is configured to reject arbitrary browser origins during cross-origin resource sharing preflight negotiation. vLLM applies CORS middleware with a wildcard origin by default, so the allowed origins must be explicitly scoped to a known list of trusted applications.
+        This check verifies that the vLLM server accepts cross-origin browser requests only from an explicit list of trusted web applications.
+
+        vLLM installs CORS middleware with a wildcard origin by default, so a stock server answers the browser preflight from any site on the internet with a header that permits it. The allowlist is set on the `vllm serve` launch command through the origin-scoping flag your release exposes, commonly `--allowed-origins`. Both the flag name and the value format have changed between releases, so confirm the current form against `vllm serve --help`. Where a reverse proxy or API gateway fronts the server, the same allowlist has to be enforced there and any wildcard or reflected origin header stripped.
 
         **Why this matters**
 
-        - **Browser attack surface:** A wildcard origin lets any website a user visits issue authenticated requests to the inference API from the victim's browser session.
-        - **Prompt and data abuse:** Untrusted web pages can submit prompts and read completions, exposing proprietary inputs and model responses to third parties.
-        - **Capacity consumption:** Unrestricted origins make it easy to drive model traffic from arbitrary client-side code, consuming GPU capacity that should be reserved for sanctioned applications.
+        A wildcard origin turns every browser that can reach the server into a client of it. The attacker publishes an ordinary web page and gets one person inside the network to open it. Script on that page then issues requests straight to the inference API from the victim's browser, and because the response permits the attacker's origin, the browser hands the model output back to the attacker's script. No network access to the GPU host is needed, only a person who has it.
 
-        **Risk mitigation**
+        What that script does with the access is what any client can do. It submits prompts and reads completions, so a proprietary system prompt, a retrieved document, or a tool result the deployment returns flows straight to a third-party page. It can also loop, spending GPU time budgeted for sanctioned applications and pushing production requests into the queue behind it.
 
-        - **Origin allowlisting:** Limiting CORS to the exact origins that need access blocks cross-origin requests from every other site.
-        - **Boundary enforcement:** Applying CORS policy at a reverse proxy or API gateway keeps the rule consistent even when vLLM is reachable through multiple paths.
+        If the server is only ever called by backend services, no browser origin is legitimate and the allowlist should be empty rather than merely narrow.
       audit: |
         ### Audit via HTTP request
 
@@ -153,18 +152,17 @@ queries:
       vllm.endpoints.where(category == "custom-inference").none(anonymousAccessible == true)
     docs:
       desc: |
-        This check ensures that non-`/v1` inference routes such as `/invocations`, `/inference/v1/generate`, `/pooling`, `/classify`, `/score`, and `/rerank` are configured to reject anonymous requests. The vLLM built-in API key only guards a subset of route prefixes, and the exact prefixes it covers vary by release, so root-level inference endpoints stay reachable unless an upstream control protects them. Confirm which prefixes the API key protects in your release against `vllm serve --help` and the security documentation for that version before relying on it.
+        This check verifies that the inference routes outside the `/v1` prefix refuse anonymous requests.
+
+        vLLM also serves generation and scoring on root-level paths: `/invocations`, `/pooling`, `/classify`, `/score`, and `/rerank`, and on some releases `/inference/v1/generate`. The key set with `--api-key` guards only a subset of route prefixes, and which prefixes it covers has changed between releases, so confirm the protected set for your version against `vllm serve --help` and the security documentation for that release. Anything left outside that set has to be authenticated or denied at the reverse proxy, API gateway, ingress controller, or firewall in front of the server.
 
         **Why this matters**
 
-        - **Authentication bypass:** Root-level routes commonly sit outside the built-in API-key boundary, so anonymous access defeats the intended authentication model.
-        - **Unauthorized model use:** Open inference routes let anyone who can reach the endpoint generate completions, embeddings, or rankings without credentials.
-        - **Capacity abuse:** Unauthenticated inference traffic consumes GPU and memory capacity reserved for sanctioned workloads.
+        These routes reach the same model and the same GPUs as the guarded ones, so they are a way around the credential rather than a lesser surface. An attacker who gets an authentication failure from the main completions path tries `/invocations` next, and if it answers, the API key bought nothing. This is the finding an operator is least likely to notice, because the deployment looks authenticated from the client side and an audit that only exercises the main path passes.
 
-        **Risk mitigation**
+        The abuse that follows is unmetered use of paid capacity, plus whatever the pooling, scoring, and ranking paths reveal. `/pooling` returns embeddings, which leak information about the text the model was fed and can be used to compare or reconstruct it. `/score` and `/rerank` expose the ranking behavior a retrieval pipeline depends on, so a caller can probe how the system will treat content before submitting it.
 
-        - **Edge enforcement:** Requiring authentication at a reverse proxy, API gateway, or ingress controller closes the gap left by route-scoped API keys.
-        - **Surface reduction:** Denying unused inference routes entirely removes them as an attack and abuse path.
+        Most deployments use only one or two of these paths. The remainder should be denied outright at the edge rather than authenticated, since a route that no client calls is a route only an attacker will reach for.
       audit: |
         ### Audit via HTTP request
 
@@ -220,18 +218,19 @@ queries:
       vllm.server.devEndpointsExposed == false
     docs:
       desc: |
-        This check ensures that development-oriented routes such as `/server_info`, cache reset routes, sleep and wake routes, and collective RPC routes are configured to be unreachable by anonymous clients. These routes exist for debugging and internal coordination and are not required by normal inference clients.
+        This check verifies that vLLM's development and debugging routes are not reachable by anonymous clients.
+
+        Setting the `VLLM_SERVER_DEV_MODE` environment variable registers a group of routes that ordinary inference clients never call: `/server_info`, the cache reset paths, `/sleep`, `/wake_up`, `/is_sleeping`, and `/collective_rpc`. Removing the variable from the systemd unit, the Compose file, or the pod spec and restarting the server removes all of them. Where debugging genuinely requires them, they should additionally be blocked at the proxy, gateway, ingress, or firewall and reachable only from a trusted internal network.
 
         **Why this matters**
 
-        - **Runtime disclosure:** Development routes can reveal internal configuration and runtime state that aid an attacker's reconnaissance.
-        - **Behavior manipulation:** Cache reset, sleep, and wake routes let a caller alter how the server behaves outside the supported administration path.
-        - **Unintended control surface:** Collective RPC and server-info routes broaden the attack surface well beyond ordinary completion traffic.
+        `/server_info` hands over the server's own configuration. That includes the model identifier and path, the parallelism layout, and the launch arguments the process is running with, which tells an attacker where the weights live on disk, how large the deployment is, and which of the other optional surfaces were switched on. Reconnaissance that would otherwise take patient probing becomes a single GET.
 
-        **Risk mitigation**
+        The rest of the group are actions rather than reads. `/sleep` releases the model from accelerator memory and `/wake_up` brings it back, so an unauthenticated caller can put a production server to sleep, and repeated calls turn into an outage whose recovery cost is the time it takes to reload the weights. Resetting the prefix cache throws away work that many concurrent requests depend on and drops throughput sharply.
 
-        - **Route disablement:** Turning off development routes when they are not needed removes the exposure entirely.
-        - **Network restriction:** Blocking these routes at the proxy, gateway, ingress, or firewall keeps any required debug access on trusted internal networks.
+        `/collective_rpc` is the most serious of them, because it exists to invoke methods across the worker processes that hold the model. A route that runs a named method inside the serving workers is not something an untrusted caller should be able to reach at all.
+
+        Production deployments have no reason to set the variable, so the fix is removal rather than restriction.
       audit: |
         ### Audit via HTTP request
 
@@ -284,18 +283,19 @@ queries:
       vllm.server.docsExposed == false
     docs:
       desc: |
-        This check ensures that the FastAPI `/docs` interactive documentation interface is configured to be unreachable by anonymous clients. vLLM serves the FastAPI documentation pages by default unless `--disable-fastapi-docs` is set, so an exposed `/docs` page is common in unhardened deployments.
+        This check verifies that vLLM's interactive API documentation is not reachable by anonymous clients.
+
+        The server is a FastAPI application, so it publishes a Swagger UI at `/docs` and a ReDoc page at `/redoc` unless it is started with `--disable-fastapi-docs`, which removes those pages along with `/openapi.json`. Where the documentation has to stay available, restrict all three paths to trusted networks or authenticated administrators at the reverse proxy or gateway instead.
 
         **Why this matters**
 
-        - **Endpoint discovery:** The interactive documentation enumerates available routes, making it easy for an attacker to map the API.
-        - **Request blueprinting:** It reveals request shapes and parameters that help an attacker craft valid calls against sensitive routes.
-        - **Operational disclosure:** It can surface optional or operational endpoints that an attacker would otherwise have to guess.
+        The documentation page is the deployment's own route map, rendered for the attacker and fitted with a form for calling each route. Reconnaissance against an unfamiliar API otherwise means guessing paths and payload shapes. The `/docs` page replaces that with a list, and the list is generated from the running server, so it reflects the routes this particular deployment registered rather than the ones the manual describes.
 
-        **Risk mitigation**
+        That difference is the real disclosure. Optional and conditionally registered routes appear only when they were switched on, so the page tells an attacker which of the operational, development, and profiler surfaces exist on this host. Their presence also implies the flags and environment variables that created them, which narrows how the server was launched and what else may be enabled.
 
-        - **Documentation disablement:** Starting vLLM with `--disable-fastapi-docs` removes the `/docs`, `/redoc`, and `/openapi.json` pages.
-        - **Access restriction:** When documentation must remain available, limiting it to trusted networks or authenticated administrators keeps it out of reach of anonymous users.
+        Interactivity closes the loop. The Swagger page lets a visitor build and send a request from the browser with correct parameters on the first attempt, so an unprotected route discovered on the page can be exercised on the page.
+
+        A vLLM server whose clients are internal applications has no reader for these pages, and the flag that removes them costs nothing to set.
       audit: |
         ### Audit via HTTP request
 
@@ -347,18 +347,19 @@ queries:
       vllm.metrics.loadEndpointExposed == false
     docs:
       desc: |
-        This check ensures that the `/load` endpoint is configured to be unreachable by anonymous clients. The load endpoint reports current server utilization, and that operational signal should only be available to trusted monitoring or autoscaling infrastructure.
+        This check verifies that vLLM's load tracking endpoint is not reachable by anonymous clients.
+
+        The `/load` route reports how many requests the server currently has in flight. It is registered on every server and served outside the scope of the built-in API key, and the `--enable-server-load-tracking` flag decides only whether the figure is counted, not whether the route exists, so dropping the flag leaves the path answering anonymous callers with a load of zero. The control is a rule at the reverse proxy, API gateway, ingress controller, or firewall that limits the path to the monitoring and autoscaling components that consume it.
 
         **Why this matters**
 
-        - **Operational intelligence:** Load data reveals utilization patterns that help an attacker understand how the deployment behaves.
-        - **Attack timing:** Visible capacity figures let an attacker time denial-of-service attempts for periods when the server is already under pressure.
-        - **Tenant inference:** Activity patterns in load data can expose when and how heavily tenants are using the service.
+        A public load figure gives an attacker a feedback signal, which is the thing that makes resource exhaustion efficient. Rather than guessing how much traffic a denial-of-service attempt needs, they poll the route while they ramp, watch the number climb, and stop at the point where the server is saturated. The attack then uses the least traffic that works, which keeps it under rate limits and volumetric alerting.
 
-        **Risk mitigation**
+        The same signal reveals when to strike. Sampling `/load` over a day produces the deployment's utilization curve, so the flood can be timed for a period that is already busy, when there is no spare capacity to absorb it and recovery is slowest.
 
-        - **Client blocking:** Denying `/load` to untrusted clients keeps utilization data private.
-        - **Trusted exposure:** When load data is needed for autoscaling or monitoring, serving it only to trusted infrastructure over an authenticated or private path limits who can see it.
+        On a shared deployment the curve also exposes customers. Activity that rises and falls with a particular tenant's working hours tells an observer when that tenant is using the service and roughly how much, which is commercial information neither party intended to publish.
+
+        Autoscalers and dashboards are the only legitimate readers, and both can be reached over a private path or an authenticated one.
       audit: |
         ### Audit via HTTP request
 
@@ -411,18 +412,19 @@ queries:
       vllm.metrics.prometheusExposed == false
     docs:
       desc: |
-        This check ensures that the `/metrics` Prometheus endpoint is configured to be unreachable by anonymous clients. vLLM exposes a Prometheus metrics endpoint for observability, and that detailed operational data should only be scraped by the monitoring system.
+        This check verifies that vLLM's Prometheus metrics are not scrapeable by anonymous clients.
+
+        The server exposes `/metrics` in Prometheus text format for the monitoring system to collect. Access is controlled in front of vLLM rather than on the launch command, through a network allowlist, mutual TLS, or an authentication requirement at the reverse proxy, API gateway, ingress controller, or firewall, so that only the scraper reaches the path.
 
         **Why this matters**
 
-        - **Operational intelligence:** Metrics expose model activity, request pressure, cache behavior, and deployment capacity to anyone who can read them.
-        - **Attack timing:** Runtime characteristics in the metrics help an attacker time denial-of-service attempts and capacity abuse.
-        - **Targeted exploitation:** Detailed serving statistics give an attacker context for tuning a more precise attack against the deployment.
+        Metrics are a live readout of the deployment's internals, and they are precise in exactly the way an attacker wants. The series report which models are loaded, how many requests are in flight, how deep the waiting queue is, how much of the key-value cache is in use, and how long generation is taking. Together those describe capacity and headroom, which is the information needed to size an attack. An attacker reads the point at which the queue starts growing, then sends just enough traffic to hold the server there while staying under whatever rate limit is in place.
 
-        **Risk mitigation**
+        Timing follows from the same data. Utilization curves show the deployment's busy hours, so a flood can be launched when there is no headroom left to absorb it, and the resulting outage looks like organic load to whoever is paged.
 
-        - **Monitoring-only access:** Restricting `/metrics` to the monitoring system keeps operational data away from untrusted clients.
-        - **Transport controls:** Enforcing network allowlists, mTLS, authentication, or a private scrape path before requests reach vLLM prevents anonymous collection.
+        The counters also leak business detail. Request volumes and model names describe which workloads run here and how heavily they are used, and on a shared server the shape of the traffic reveals when a particular tenant is active.
+
+        Monitoring needs this endpoint, so the goal is to keep it and narrow who can reach it rather than to turn it off.
       audit: |
         ### Audit via HTTP request
 
@@ -468,19 +470,19 @@ queries:
       vllm.endpoints.where(category == "openai" && present == true).all(requiresAuth == true)
     docs:
       desc: |
-        This check ensures that the OpenAI-compatible routes such as `/v1/completions` and `/v1/chat/completions` are configured to reject anonymous requests with an authentication-style response. vLLM serves these routes without authentication unless `--api-key` is set, so an unhardened deployment exposes its primary inference surface to anyone who can reach it.
+        This check verifies that the OpenAI-compatible inference routes reject requests that carry no credential.
+
+        `/v1/completions`, `/v1/chat/completions`, and the rest of the `/v1/*` surface are how clients normally talk to vLLM, and they answer anonymous callers unless the server is started with a key. Supply one on the launch command with `--api-key`, or through the `VLLM_API_KEY` environment variable, and vLLM then requires an `Authorization: Bearer` header on the route prefixes it guards. This check requires those routes to answer an unauthenticated request with an authentication failure rather than a completion.
 
         **Why this matters**
 
-        - **Primary inference exposure:** The OpenAI-compatible routes are the main model surface, and anonymous access lets anyone submit prompts and read completions.
-        - **GPU capacity abuse:** Unauthenticated callers can consume expensive GPU capacity that should be reserved for paying or sanctioned clients.
-        - **Data and behavior extraction:** Open inference access can expose sensitive model behavior and data returned by connected application workflows.
+        An unauthenticated inference endpoint is compute that other people can spend. A single accelerator costs more per hour than most of the fleet, and anyone who finds the port can run their own workload on it continuously: resale through a proxy service, bulk synthetic data generation, or a job that keeps every GPU busy and pushes production traffic into an unbounded queue. The bill arrives either way.
 
-        **Risk mitigation**
+        It is also a read primitive into the deployment. The system prompt, the retrieval context, and any tool or function output the server returns come back inside the completion, so an anonymous caller can pull out the instructions, the document snippets, and the internal knowledge the application was built around. Where the model has been given tools, calling the model is calling the tools.
 
-        - **API-key enforcement:** Setting `--api-key` makes vLLM require an `Authorization: Bearer` token on `/v1/*` routes and reject requests without it.
-        - **Gateway authentication:** Placing the server behind an authenticated gateway or reverse proxy adds a second layer that blocks anonymous traffic.
-        - **Token control:** Distributing the token only to trusted clients keeps the authentication boundary meaningful.
+        The exposure widens if the server was started on all interfaces, which is the default. A host with a public address then publishes the model to the internet, and untargeted scanners find an open vLLM port quickly.
+
+        Enforce authentication at a fronting gateway or reverse proxy as well. The built-in key covers only a set of route prefixes, and a companion check in this policy covers the inference routes that fall outside it.
       audit: |
         ### Audit via HTTP request
 
@@ -537,18 +539,19 @@ queries:
       vllm.server.openapiExposed == false
     docs:
       desc: |
-        This check ensures that the `/openapi.json` specification document is configured to be unreachable by anonymous clients. vLLM serves the OpenAPI document by default unless `--disable-fastapi-docs` is set, so a machine-readable map of the API is often available without hardening.
+        This check verifies that the machine-readable OpenAPI specification is not served to anonymous clients.
+
+        FastAPI generates the document that vLLM publishes at `/openapi.json` from the routes the process registered at startup. Starting the server with `--disable-fastapi-docs` removes it together with the human-facing documentation pages. Teams that need the specification should be served it from an authenticated internal documentation system, or the path should be restricted at the reverse proxy or gateway.
 
         **Why this matters**
 
-        - **Automated reconnaissance:** The OpenAPI document gives attack tooling a machine-readable list of every route and parameter.
-        - **Hidden route disclosure:** It can reveal optional endpoints and operational capabilities that are otherwise hard to enumerate.
-        - **Faster attack development:** A complete specification removes the guesswork an attacker would otherwise need to craft valid requests.
+        The difference between this document and the rendered documentation page is that no human has to read it. An attacker feeds `/openapi.json` to a fuzzer or an API scanner and it emits well-formed requests for every route and every parameter automatically, with the right methods, the right content types, and schema-valid bodies. Work that would take an afternoon of manual probing becomes a single import, and it scales across every vLLM host a port scan turns up.
 
-        **Risk mitigation**
+        The document is generated from the live application rather than written by hand, so it is an accurate inventory of what this deployment enabled. Routes that exist only under a development or profiler setting appear in the specification when those settings are active, which turns a document meant for client developers into confirmation of exactly which unprotected surfaces are worth attacking on this host.
 
-        - **Specification disablement:** Starting vLLM with `--disable-fastapi-docs` removes `/openapi.json` along with the documentation pages.
-        - **Internal-only delivery:** Serving the specification from an authenticated internal documentation system keeps it available to developers without exposing it publicly.
+        Being valid input to code generators makes it worse than a listing. A client library built from the specification gives an attacker a typed, working interface to the server before they have sent a single request against it.
+
+        The specification is only useful to people writing clients, and those people can be given it through a channel that knows who they are.
       audit: |
         ### Audit via HTTP request
 
@@ -600,18 +603,17 @@ queries:
       vllm.endpoints.where(category == "operational-control").none(anonymousAccessible == true)
     docs:
       desc: |
-        This check ensures that operational control routes such as `/pause`, `/resume`, and `/scale_elastic_ep` are configured to reject anonymous requests. These routes change server availability and runtime behavior and belong only to an authenticated administration path.
+        This check verifies that the routes which change vLLM's runtime state refuse anonymous requests.
+
+        `/pause` and `/resume` stop and restart request processing, and `/scale_elastic_ep` changes the number of serving workers. The first two exist only while the `VLLM_SERVER_DEV_MODE` environment variable is set in the server environment, so removing that line from the systemd unit, the Compose file, or the pod spec removes both routes outright. `/scale_elastic_ep` is registered on every server that supports generation and sits outside the built-in key's scope, so it has to be blocked or authenticated at the reverse proxy, API gateway, ingress controller, or firewall.
 
         **Why this matters**
 
-        - **Availability impact:** Anonymous access to pause and resume routes lets an attacker stop or disrupt the inference service.
-        - **Capacity manipulation:** Scaling routes let an unauthenticated caller alter serving capacity outside the supported administration flow.
-        - **Unauthorized state changes:** Operational routes trigger runtime changes that should never originate from untrusted callers.
+        An unauthenticated `/pause` is an outage delivered by one HTTP request. There is no exploit to write and no credential to steal: the attacker sends a POST, request processing halts, and every application that depends on the model starts timing out. Because the process stays up and the port stays open, health checks that only test connectivity keep reporting the service as fine, so the outage lasts until someone reads the logs.
 
-        **Risk mitigation**
+        `/scale_elastic_ep` is the same problem aimed at cost and capacity. A caller can scale the deployment down until latency collapses, or scale it up and leave expensive accelerators running against no traffic. Neither action passes through the change process that governs the deployment, and neither leaves an attributable actor behind it.
 
-        - **Network blocking:** Blocking operational control routes from untrusted networks removes the ability to invoke them anonymously.
-        - **Administrative plane:** Exposing required operational routes only through an authenticated administrative plane limits use to trusted operators and automation.
+        These routes exist for operators, so the answer is rarely to keep them and put a password in front. Unset the development mode variable in production and deny the scaling path at the edge, exposing either one only through an administrative plane that is already authenticated for the people and automation that legitimately drive it.
       audit: |
         ### Audit via HTTP request
 
@@ -667,18 +669,19 @@ queries:
       vllm.server.profilerEndpointsExposed == false
     docs:
       desc: |
-        This check ensures that profiler routes such as `/start_profile` and `/stop_profile` are configured to be unreachable by anonymous clients. Profiling is a diagnostic feature that should never be available to ordinary inference clients.
+        This check verifies that vLLM's profiler control routes are not reachable by anonymous clients.
+
+        `/start_profile` and `/stop_profile` are registered only when a profiler has been selected. From release 0.13.0 onward that selection is the `--profiler-config` flag on the launch command, and earlier releases read the `VLLM_TORCH_PROFILER_DIR` environment variable instead, so a production server should carry neither. If a diagnostics window requires profiling, enable it for the window, restrict both paths to authenticated operators on an administrative network at the proxy or firewall, and remove the configuration afterwards.
 
         **Why this matters**
 
-        - **Runtime disclosure:** Profiling output can expose internal runtime details and serving internals to an attacker.
-        - **Performance degradation:** Starting a profile consumes resources and slows the server, which can be used to degrade service.
-        - **Administrative control surface:** Profiler routes give an attacker a control surface for triggering diagnostic actions outside the administration path.
+        Starting a profile is the cheapest denial of service available against an inference server. One unauthenticated POST attaches the profiler to every serving step, and the instrumentation overhead is large enough that latency degrades immediately for every client on the box. The attacker sends no inference traffic at all, so nothing about the request volume looks abnormal, and the server keeps answering, badly, until an operator works out why.
 
-        **Risk mitigation**
+        The profile also writes trace files to disk for as long as it runs. A caller who starts a profile and never stops it fills the volume those traces are written to, and where that volume is shared with logs or the model cache, filling it takes the service down for reasons that look unrelated to the original request.
 
-        - **Route disablement:** Keeping profiler routes disabled outside controlled diagnostics windows removes the exposure.
-        - **Operator-only access:** Restricting any required profiling to authenticated operators on trusted administrative networks limits who can invoke it.
+        Traces are a disclosure in their own right. They record the model's execution graph, layer shapes, and kernel timings, which describe the architecture and size of the deployed model to anyone who can retrieve the output.
+
+        Profiling belongs to a controlled window with a named operator, not to a route that answers the internet.
       audit: |
         ### Audit via HTTP request
 
@@ -731,18 +734,19 @@ queries:
       vllm.endpoints.where(path.in(["/tokenize", "/detokenize"])).none(anonymousAccessible == true)
     docs:
       desc: |
-        This check ensures that the `/tokenize` and `/detokenize` routes are configured to reject anonymous requests. These helper routes expose tokenizer behavior and consume server resources without invoking the primary completion API.
+        This check verifies that the `/tokenize` and `/detokenize` helper routes refuse anonymous requests.
+
+        These two routes convert text to token identifiers and back using the deployed model's tokenizer. They sit outside the `/v1` prefix, so a key set with `--api-key` does not cover them, and the only place to restrict them is the reverse proxy, API gateway, ingress controller, or firewall in front of vLLM. Applications that genuinely need them should be made to authenticate before the request is forwarded.
 
         **Why this matters**
 
-        - **Reconnaissance value:** Tokenization responses reveal tokenizer behavior that helps an attacker understand the deployed model.
-        - **Resource consumption:** Anonymous callers can drive tokenization traffic that consumes server resources outside the metered inference path.
-        - **Expanded surface:** Open tokenization routes broaden the unauthenticated API surface and support abuse workflows.
+        The tokenizer identifies the model. An attacker submits a handful of probe strings, compares the token identifiers that come back against the published tokenizers of the common model families, and learns which checkpoint is loaded without ever being allowed to run inference. That answer decides which jailbreak and prompt-injection techniques are worth trying against the deployment and which published weaknesses apply to it.
 
-        **Risk mitigation**
+        The routes are also cheap to call and expensive to serve. Tokenizing a large payload consumes CPU and memory on the API process, and because this work never enters the completion path it is invisible to the request counters and cost dashboards operators watch. A caller who is otherwise locked out of inference can keep the server busy through the side door.
 
-        - **Edge restriction:** Restricting `/tokenize` and `/detokenize` at the reverse proxy, gateway, ingress, or firewall removes anonymous access.
-        - **Authentication requirement:** Requiring authentication before these requests reach vLLM ensures only known clients can use them.
+        Round-tripping text through `/detokenize` can additionally recover what a client sent. Token identifier sequences captured elsewhere, from a log or a browser payload, turn back into readable prompt text with a single unauthenticated request.
+
+        If no client-side code needs tokenization, deny both routes at the edge instead of authenticating them.
       audit: |
         ### Audit via HTTP request
 
@@ -790,18 +794,19 @@ queries:
       vllm.server.tokenizerInfoExposed == false
     docs:
       desc: |
-        This check ensures that the `/tokenizer_info` route is configured to be unreachable by anonymous clients. The endpoint returns tokenizer metadata that describes the deployed model family and serving configuration.
+        This check verifies that vLLM's tokenizer metadata endpoint is not reachable by anonymous clients.
+
+        The `/tokenizer_info` route returns the tokenizer configuration for the loaded model, including its class, its special tokens, and chat template details. It exists only when the server is launched with `--enable-tokenizer-info-endpoint`, so dropping that flag from the launch command removes the route entirely. If a trusted client genuinely needs the metadata, keep the flag and restrict the path with authentication and network controls at the proxy, gateway, ingress, or firewall.
 
         **Why this matters**
 
-        - **Model fingerprinting:** Tokenizer metadata reveals the model family in use, narrowing what an attacker needs to research.
-        - **Configuration disclosure:** It exposes serving configuration details that aid reconnaissance against the deployment.
-        - **Payload tuning:** Knowing the tokenizer lets an attacker tune prompts and payloads more precisely for the target model.
+        This endpoint answers the first question an attacker has about an inference deployment, which is what is running behind it. The tokenizer class and special-token set identify the model family, and the chat template gives the exact turn markers the model expects. That combination is what a prompt-injection payload is built from: knowing the delimiters lets an attacker forge a system turn inside user-supplied text, so the model reads injected instructions as if the application had sent them.
 
-        **Risk mitigation**
+        Model identity also tells the attacker which published jailbreaks to try. Techniques are family-specific, and knowing the family in advance removes the trial-and-error phase that would otherwise show up as a burst of refused requests in the logs.
 
-        - **Endpoint disablement:** Keeping tokenizer information disabled unless a trusted client needs it removes the disclosure.
-        - **Access controls:** When the endpoint is required, protecting it with authentication and network controls keeps the metadata private.
+        The metadata says something about deployment shape too. A tokenizer whose configuration has been customized indicates fine-tuning or added control tokens, which marks the deployment as carrying proprietary model work rather than serving a stock checkpoint.
+
+        Nothing in normal inference requires this route, so leaving the flag off is the usual answer rather than an exception.
       audit: |
         ### Audit via HTTP request
 
@@ -847,18 +852,19 @@ queries:
       vllm.server.usesTls == true
     docs:
       desc: |
-        This check ensures that the vLLM API is configured to be served over HTTPS rather than plaintext HTTP. vLLM listens on plain HTTP unless `--ssl-keyfile` and `--ssl-certfile` are supplied or a TLS-terminating proxy sits in front of it.
+        This check verifies that clients reach the vLLM inference API over TLS rather than plaintext HTTP.
+
+        The OpenAI-compatible server that `vllm serve` starts listens in the clear unless it is handed a certificate. You give it one on the launch command with `--ssl-keyfile` and `--ssl-certfile`, or you terminate TLS in front of it with a reverse proxy, load balancer, API gateway, or service mesh and keep the plaintext backend listener off any network a client can route to. This check requires that the published endpoint answers over HTTPS.
 
         **Why this matters**
 
-        - **Prompt confidentiality:** Prompts can contain proprietary source code, customer data, and credentials, and plaintext HTTP exposes them to anyone on the network path.
-        - **Response integrity:** Without TLS, intermediate systems can modify completions, embeddings, and operational metadata in transit.
-        - **Credential protection:** API-key bearer tokens sent over plain HTTP are visible to network observers and can be stolen.
+        Everything crossing this connection is sensitive. Prompts carry proprietary source code, customer records, and pasted secrets, and completions carry whatever the model made of them. On plain HTTP all of it is readable by anyone on the path: another workload on the same subnet, a compromised switch, or the operator of any hop between the client and the GPU host.
 
-        **Risk mitigation**
+        The credential that guards the API travels the same wire. A server started with `--api-key` expects clients to present that key as an `Authorization: Bearer` header on every request, so over HTTP the key is transmitted in the clear thousands of times a day. An attacker who captures a single request holds a working key, and from there spends the GPU capacity, queries the model directly, and reaches whatever data or tools the deployment has wired the model into.
 
-        - **TLS termination:** Terminating TLS with a reverse proxy, load balancer, gateway, or service mesh encrypts all client traffic.
-        - **Backend isolation:** Exposing only the HTTPS endpoint and restricting direct access to the backend HTTP listener prevents plaintext connections.
+        Plaintext also leaves responses writable, not merely readable. Someone in the path can rewrite a completion before it arrives, so an application that acts on model output ends up acting on text the attacker chose.
+
+        Where TLS is terminated by an ingress controller or a service mesh sidecar, the vLLM process itself will still be listening on HTTP by design, and the thing to confirm in that layout is that the plaintext port is bound to the internal network alone.
       audit: |
         ### Audit via HTTP request
 
@@ -914,18 +920,19 @@ queries:
       vllm.server.version == empty
     docs:
       desc: |
-        This check ensures that the `/version` endpoint is configured so that it does not disclose the vLLM software version to anonymous clients. The version endpoint returns the exact running release, which is precisely the detail an attacker needs to match a deployment to known vulnerabilities.
+        This check verifies that the running vLLM release is not disclosed to anonymous clients.
+
+        The `/version` route returns the exact software version of the server as JSON. No launch flag removes it, so the control is a rule at the reverse proxy, API gateway, ingress controller, or firewall that blocks the path before it reaches untrusted clients. Version inventory belongs in internal asset management, where patch status can be tracked without publishing it.
 
         **Why this matters**
 
-        - **Deployment fingerprinting:** An exposed version string lets an attacker identify the exact release in use.
-        - **Vulnerability matching:** vLLM has had high-impact vulnerabilities in its serving and model-loading surfaces, and a precise version lets an attacker map straight to a known exploit.
-        - **Targeting precision:** Version data increases the accuracy of automated scanning against the deployment.
+        A precise version turns a general attack into a targeted one. vLLM moves quickly and has shipped high-impact vulnerabilities in its serving and model-loading paths, several of them leading to code execution on the host. An attacker holding the exact release looks it up against published advisories and knows, before touching anything else, whether this host is worth an exploit and which one to use.
 
-        **Risk mitigation**
+        Without that string the same attacker has to fingerprint the server by behavior, and fingerprinting is noisy. It means sending unusual requests, watching error shapes, and probing routes that may not exist, all of which produce log entries and alerts. Reading a version is one clean request that looks like a health check.
 
-        - **Endpoint blocking:** Blocking `/version` at the reverse proxy, gateway, ingress, or firewall keeps the release private.
-        - **Internal inventory:** Tracking version information in internal asset management rather than the public API removes the need to expose it.
+        At internet scale this is what selects targets. Mass scanners record the version string from every reachable host, so when an advisory lands, whoever holds that dataset already knows which addresses run an affected build. Exposure is then measured in hours rather than the weeks a patch cycle usually takes.
+
+        Blocking the path does not patch anything, so pair it with a process that tracks vLLM releases and applies security updates on a schedule.
       audit: |
         ### Audit via HTTP request
 
