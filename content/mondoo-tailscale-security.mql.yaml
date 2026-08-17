@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-tailscale-security
     name: Mondoo Tailscale Security
-    version: 1.3.3
+    version: 1.3.4
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -105,19 +105,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every device connected to the tailnet has been explicitly authorized by an administrator. Unauthorized devices may have joined without proper review and can reach internal services until they are removed.
+        This check verifies that every machine on the tailnet has been explicitly authorized, so that no device carries traffic before an administrator has approved it.
+
+        Device authorization is the state Tailscale records for each machine after it signs in. On a tailnet with device approval turned on, a newly enrolled machine sits in a pending state and cannot exchange traffic with peers until an administrator marks it authorized. Administrators see and change that state on the **Machines** page of the Tailscale admin console, and infrastructure code sets it through the `tailscale_device_authorization` resource. This check requires the authorized state on every machine.
 
         **Why this matters**
 
-        - **Controls who joins the network:** Device authorization is the gate that decides which machines are allowed onto the tailnet.
-        - **Catches stale and rogue endpoints:** Unauthorized devices may belong to former employees or to systems that have been compromised.
-        - **Prevents silent enrollment:** Without authorization enforcement, any user with access can add a device with no administrator review.
+        An unauthorized machine sitting on the tailnet is a machine nobody decided to trust. An attacker who phishes one set of employee credentials signs in the Tailscale client on their own laptop and, on a tailnet that never enforces the authorization decision, immediately holds a routable address alongside every production server, database, and workstation the ACL policy permits. The mesh has no perimeter to cross afterward, so enrollment is the whole attack.
 
-        **Risk mitigation**
+        Unauthorized machines also accumulate from ordinary churn. A contractor rebuilds a laptop, an engineer enrolls a personal phone to test something, a decommissioned build agent re-registers from a recycled image. Each one appears in the machine list, and each one that quietly ends up on the network without review extends the tailnet to hardware that no longer has an owner.
 
-        - **Enforce device approval:** Require authorization for all new devices so they remain pending until an administrator reviews them.
-        - **Review the device list:** Regularly audit connected devices and remove any that are unknown or no longer needed.
-        - **Layer in tag-based ACLs:** Use device tags and ACL rules to restrict what a device can reach even after it has been authorized.
+        Leaving machines pending indefinitely has its own cost. Operators learn to ignore the list, and a genuinely hostile enrollment blends into a backlog of stale requests nobody works through.
+
+        On a tailnet that has never turned on device approval, Tailscale marks each machine authorized as it enrolls, so this check passes without anyone having reviewed anything. Read it alongside the companion check in this policy that requires device approval at the tailnet level, so that the decision is both recorded and deliberately made.
       audit: |
         ### Audit via Admin Console
 
@@ -242,19 +242,17 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that key expiry is not disabled on tailnet devices, so that each device must periodically re-authenticate. When key expiry is disabled, a device stays authenticated indefinitely and there is no forced re-verification of its owner.
+        This check verifies that node key expiry remains in force on every machine, so that each one must re-authenticate on a schedule rather than holding tailnet access permanently.
+
+        Every Tailscale machine holds a node key that proves its membership, and by default that key expires after the tailnet's configured key duration, at which point the machine must sign in again through the identity provider. An administrator can waive that for an individual machine using **Disable key expiry** on the **Machines** page of the admin console, expressed as `key_expiry_disabled` in the `tailscale_device_key` resource. This check requires that no machine has expiry disabled.
 
         **Why this matters**
 
-        - **Limits credential lifetime:** Key expiry caps how long a single device key remains valid before re-authentication is required.
-        - **Bounds the impact of compromise:** A device with expiry disabled grants permanent tailnet access if its key is stolen.
-        - **Reclaims access from lost devices:** Lost or stolen devices keep network access until expiry forces them out or an administrator removes them.
+        Disabling key expiry converts a renewable credential into a permanent one. A laptop stolen from a car, a phone left in a taxi, or a server image handed to a departing contractor keeps a working node key and stays reachable on the tailnet indefinitely, because nothing ever forces it back through the login flow where the account could have been suspended. Offboarding a person in the identity provider does not evict their machines. Expiry is what makes the identity provider's decision take effect on the network.
 
-        **Risk mitigation**
+        The setting is also useful to an attacker who already holds admin access. Turning key expiry off on a node they control converts a foothold that would have lapsed in weeks into indefinite persistence, and it does so through a supported configuration change rather than through malware that endpoint tooling would flag.
 
-        - **Re-enable key expiry:** Turn key expiry back on for any device where it has been disabled.
-        - **Match expiry to device risk:** Use shorter durations for higher-risk endpoints such as mobile devices.
-        - **Monitor for drift:** Watch for devices with disabled key expiry and correct them as they appear.
+        Operators usually disable expiry to stop something from breaking, such as a subnet router that drops the office network when its key lapses, or a CI runner with no interactive login. Those cases are real, and the answer is tagged or ephemeral nodes, whose keys are governed by `tagOwners` and short-lived auth keys rather than by a user session, instead of blanket exemptions on ordinary user machines. Expect tagged devices to surface here for that reason. Pair this with the companion check in this policy that caps the tailnet-wide key duration, since expiry that is enabled but measured in years buys very little.
       audit: |
         ### Audit via Admin Console
 
@@ -360,19 +358,17 @@ queries:
           mondoo.com/filter-icon: tailscale
     docs:
       desc: |
-        This check ensures that tailnet devices are running the latest available Tailscale client release. Outdated clients may carry known vulnerabilities or lack current security features.
+        This check verifies that machines on the tailnet are running a current Tailscale client, with no update waiting to be installed.
+
+        Tailscale reports per machine whether a newer client release is available, and the admin console shows that as an update badge next to the machine on the **Machines** page. The client terminates the WireGuard tunnel, enforces the packet filter that the coordination server distributes, and, on nodes that use it, answers Tailscale SSH, so it is privileged software on every endpoint. This check requires that no machine reports a pending update, and it skips machines shared in from other tailnets, which the owning tailnet patches.
 
         **Why this matters**
 
-        - **Closes known vulnerabilities:** Older client versions may contain flaws that are already public and exploitable.
-        - **Delivers current protections:** Security features, protocol improvements, and bug fixes ship only in newer releases.
-        - **Maintains compatibility:** Outdated clients may not support the latest authentication, encryption, and tailnet security settings.
+        The Tailscale client runs with elevated privileges and listens on the network by design, so a defect in it is directly reachable by any peer the ACL policy lets talk to the machine. Once a fix ships, the corresponding weakness is public. An attacker who already holds one node on the tailnet then has a catalog of unpatched peers to work through, and the mesh gives them a direct path to each one without crossing a firewall or a jump host.
 
-        **Risk mitigation**
+        Version drift is rarely uniform. The laptops people use daily update quickly. The machines that fall behind are the headless ones that matter most, such as subnet routers bridging an on-premises range and long-lived cloud instances nobody logs into, and those are exactly the nodes whose compromise reaches past the tailnet into a physical network.
 
-        - **Apply updates promptly:** Identify devices with an available update and ensure the client is upgraded.
-        - **Enable automatic updates:** Turn on automatic client updates wherever the platform supports them.
-        - **Fold into patch management:** Include Tailscale client updates in the organization's standard patch management process.
+        A short lag after a release is normal and is not by itself an incident. Treat this as a fleet hygiene signal and pair it with the companion check in this policy that turns on automatic client updates for the tailnet, which is what keeps the count from climbing again after a manual sweep.
       audit: |
         ### Audit via Admin Console
 
@@ -464,19 +460,19 @@ queries:
           mondoo.com/filter-icon: tailscale
     docs:
       desc: |
-        This check ensures that no device in the tailnet reports a tailnet lock signature error. A lock error means a device's node key has not been properly signed by a trusted device, which can break connectivity in a locked tailnet or signal an improperly added device.
+        This check verifies that no machine reports a tailnet lock signature error, meaning every node key on the tailnet carries a valid signature from a trusted signing node.
+
+        Tailnet lock is Tailscale's defense against a compromised coordination plane. With it enabled, a machine may only join once one of the tailnet's designated signing nodes has cryptographically signed its node key, and every other machine independently verifies that signature before exchanging traffic. Administrators manage signing nodes and review each machine's state under **Tailnet lock** in the admin console, and a machine whose signature is missing, invalid, or unverifiable is shown with a lock error. This check requires an empty error on every machine.
 
         **Why this matters**
 
-        - **Confirms device verification:** Tailnet lock requires node keys to be signed by trusted devices, and an error means that verification did not succeed.
-        - **Surfaces unauthorized additions:** A lock error can indicate that a device was added without proper authorization.
-        - **Preserves connectivity:** Unresolved lock errors can prevent a device from communicating correctly within the tailnet.
+        Without tailnet lock, the coordination plane is trusted to state which public keys belong to the tailnet. Anyone who controls or successfully impersonates that plane can hand your machines a key of their choosing and become a peer that every node accepts, with no signature for the endpoints to check. Tailnet lock removes that trust by requiring a signature the coordination plane cannot produce, so a lock error is the alarm firing: a key is circulating that no trusted node vouched for.
 
-        **Risk mitigation**
+        A lock error also breaks connectivity in a way that pushes operators toward the wrong fix. The affected machine cannot talk to locked peers, someone is under pressure to restore service, and the fastest path looks like disabling tailnet lock for the whole tailnet. That trades one unverified node for a tailnet with no key verification at all, which is precisely what an attacker who planted the node wants.
 
-        - **Resolve errors promptly:** Review every device reporting a tailnet lock error and address it without delay.
-        - **Sign legitimate devices:** Use a trusted signing node to sign node keys for devices that belong on the tailnet.
-        - **Remove unverifiable devices:** Delete any device that cannot be properly verified through the tailnet lock process.
+        Errors arise from mundane causes too. A machine re-keys while every signing node is offline, a signing node is removed without a replacement being nominated, or a client too old to support lock enrolls. Each of these is resolved by signing the key from a trusted node or by removing the machine, and none of them is a reason to leave the error standing.
+
+        On a tailnet that has not enabled tailnet lock at all, no machine reports an error and this check passes trivially. Enabling lock is the prerequisite that gives the result meaning, and it is worth the operational weight mainly for tailnets whose threat model includes the coordination plane itself.
       audit: |
         ### Audit via Admin Console
 
@@ -556,19 +552,19 @@ queries:
       tailscale.users.none(status == "needs-approval")
     docs:
       desc: |
-        This check ensures that no users are stuck in a "needs-approval" state. Users pending approval have requested tailnet access but have not yet been reviewed by an administrator, which can indicate a backlog in access management.
+        This check verifies that no user account is sitting unreviewed in the needs-approval state, so that every pending request to join the tailnet has been decided.
+
+        On a tailnet with user approval turned on, a person who signs in through the identity provider is created as a user in the **Needs approval** state and cannot use the tailnet until an administrator approves them. Administrators work that queue on the **Users** page of the Tailscale admin console. This check requires the queue to be empty, meaning every request has been either approved or denied.
 
         **Why this matters**
 
-        - **Keeps legitimate users productive:** Users left pending may be blocked from resources they are entitled to use.
-        - **Signals process gaps:** A growing backlog of pending requests suggests that access review is not running effectively.
-        - **Forces a clear decision:** Every pending request should be promptly approved or denied rather than left unresolved.
+        A standing backlog is how a real access-control gate degrades into a rubber stamp. When ten requests are waiting and nine are obviously colleagues, the tenth is approved in the same click-through and the administrator retains no memory of having looked at it. An attacker relies on exactly that: a signup from a look-alike address, or from an identity-provider account that should have been deprovisioned, is far more likely to be waved through in a batch than examined on its own.
 
-        **Risk mitigation**
+        The backlog also buries the signal that matters. A pending request from an account nobody recognizes is strong evidence that the identity provider is admitting people it should not, whether through an over-broad domain allowlist, a stale guest account, or a self-service signup path someone forgot about. That evidence is only useful while the queue is short enough to read.
 
-        - **Review approvals regularly:** Work through pending user requests on a routine cadence.
-        - **Approve or deny explicitly:** Approve expected users and deny unknown or unexpected access requests.
-        - **Enable approval notifications:** Configure alerts so administrators are informed of new approval requests.
+        There is a productivity cost as well, and it is what erodes the control in practice. Colleagues blocked for days learn to route around the tailnet, and pressure builds to switch user approval off entirely.
+
+        The remedy is to work the queue rather than to widen the gate: approve the people you expect, deny the ones you do not, and configure notifications so requests reach an administrator instead of waiting to be noticed. Pair this with the companion check in this policy that requires user approval to be enabled, since an empty queue on a tailnet that never asks for approval means nothing.
       audit: |
         ### Audit via Admin Console
 
@@ -637,19 +633,19 @@ queries:
       tailscale.users.where(role == "admin").length <= 3
     docs:
       desc: |
-        This check ensures that the number of users holding owner and admin roles is kept small. Owner and admin roles carry elevated permissions that can modify tailnet configuration, manage devices, and control user access.
+        This check verifies that full control of the tailnet is concentrated in a small number of accounts, with at most two Owners and three Admins.
+
+        Tailscale assigns each person a role on the **Users** page of the admin console. Owners and Admins can rewrite the ACL policy file, approve devices and users, issue and revoke auth keys, change key expiry, and alter tailnet lock. The Member role, by contrast, grants connectivity and nothing administrative. This check counts the accounts holding each privileged role and requires the totals to stay at or below two Owners and three Admins.
 
         **Why this matters**
 
-        - **Shrinks the attack surface:** Each admin or owner account is a high-value target, so fewer of them means fewer paths to full control.
-        - **Contains compromise:** A compromised privileged account can rewrite ACLs, approve devices, and change tailnet settings.
-        - **Preserves accountability:** A small set of administrators makes it easier to maintain clear audit trails and ownership.
+        Every privileged account is a complete path to the tailnet. An attacker who phishes one Admin does not need to move laterally at all. They edit the ACL policy file to grant themselves reach, issue a reusable auth key, enroll a node of their own, and disable key expiry on it so the access survives the password reset. All of that is supported administrative activity, so none of it looks like an intrusion in isolation, and the number of privileged accounts is the number of chances that attack has to succeed once.
 
-        **Risk mitigation**
+        Privileged roles spread through ordinary convenience. Someone needs to approve a device while the usual administrator is on vacation, a platform engineer needs to edit one ACL rule for a project, a contractor is elevated for a migration. Each grant is defensible and none is ever revisited, which is how a tailnet arrives at a dozen Admins nobody can account for.
 
-        - **Apply least privilege:** Keep owner roles to one or two primary owners and admin roles to a handful of trusted administrators.
-        - **Default to member roles:** Assign the member role to users who only need device connectivity.
-        - **Prune role assignments:** Regularly review owner and admin assignments and downgrade users who no longer need them.
+        A small privileged set also makes the audit trail usable. When five accounts can change the ACL policy, an unexpected change has five plausible explanations and can be resolved with five conversations. When thirty can, the configuration audit log still records who acted but no longer supports any judgment about whether the action was expected.
+
+        These thresholds are a conservative default rather than a universal rule, and a large organization with genuinely separated duties may justify more. Where that is the case, the number should be a decision with names attached rather than the residue of past convenience, and every privileged account should be covered by strong multi-factor authentication at the identity provider.
       audit: |
         ### Audit via Admin Console
 
@@ -718,19 +714,19 @@ queries:
       tailscale.users.none(status == "idle")
     docs:
       desc: |
-        This check ensures that no users in the tailnet have remained idle for an extended period. Idle users have not been seen for more than 28 days and may represent dormant accounts that widen the attack surface.
+        This check verifies that the tailnet carries no dormant user accounts, meaning no account that Tailscale has marked idle after a prolonged period without activity.
+
+        Tailscale tracks when each person was last seen and marks an account **Idle** once it has gone unused for an extended stretch, currently 28 days. The status appears alongside the account on the **Users** page of the admin console. An idle account is still a full member of the tailnet: its devices remain enrolled, its role remains in force, and the ACL policy still grants it whatever access it had. This check requires that no account is in the idle state.
 
         **Why this matters**
 
-        - **Flags abandoned accounts:** Idle accounts often belong to former employees or contractors who no longer need access.
-        - **Reduces an attacker target:** Dormant accounts are attractive targets, especially where credentials may be reused or already compromised.
-        - **Enforces least privilege:** Unused accounts still hold network access and may carry overly permissive configurations.
+        Dormant accounts are how offboarding failures become durable. A contractor's engagement ends, an employee moves to a role that no longer needs the network, a team is reorganized, and in each case the person stops using Tailscale long before anyone remembers to remove them. The account keeps its access throughout, and if the underlying identity is ever compromised, whether through credential reuse disclosed in an unrelated breach or through a personal account that corporate controls never covered, the attacker inherits a live path onto the tailnet.
 
-        **Risk mitigation**
+        Unused accounts are attractive precisely because they are unused. Nobody notices an unfamiliar sign-in on an account whose owner is not there to be surprised by it, and nobody questions traffic from a machine that has been quiet for a month. The account provides the same reach as an active one while generating none of the ambient activity that would make an intrusion stand out.
 
-        - **Review idle users:** Routinely check idle users and confirm whether they still require access.
-        - **Suspend or remove dormant accounts:** Disable or delete users who no longer need tailnet access.
-        - **Strengthen offboarding:** Ensure the offboarding process explicitly removes tailnet access for departing personnel.
+        The idle status is also a cross-check on the identity provider. An account still active in Tailscale but idle for months usually means someone left and the deprovisioning path did not reach every system, which is worth knowing beyond this one tailnet.
+
+        Idleness is not by itself proof that access should end. Seasonal staff, people returning from extended leave, and break-glass accounts that are deliberately kept unused all appear here. The requirement is that each one is a decision somebody made rather than an account nobody has looked at, so review the idle list on a routine cadence and suspend or delete what is no longer needed.
       audit: |
         ### Audit via Admin Console
 
@@ -815,19 +811,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the tailnet requires administrators to manually approve every new device before it can connect. When device approval is enforced, an attacker who steals a user's credentials still cannot silently enroll a new endpoint into the tailnet.
+        This check verifies that the tailnet requires an administrator to approve each new machine before it can carry traffic.
+
+        Device approval is a tailnet-wide setting under **Settings > Device management** in the Tailscale admin console, expressed as `devices_approval_on` in the `tailscale_tailnet_settings` resource. With it on, a machine that completes sign-in is enrolled but held in a pending state and cannot reach peers until an administrator authorizes it. With it off, authentication alone puts a working node on the network. This check requires the setting to be enabled.
 
         **Why this matters**
 
-        - **Stops credential-to-access shortcuts:** Without approval, any successful authentication produces a connected device immediately, so phished credentials become network access.
-        - **Adds a human review step:** Manual approval gives administrators a chance to catch unfamiliar device names, locations, or platforms.
-        - **Keeps BYOD visible:** Compromised or unmanaged personal devices cannot join a corporate tailnet without IT seeing them first.
+        Without device approval, a stolen credential becomes network access in one step. An attacker who phishes a password and defeats or bypasses the second factor installs the Tailscale client on hardware they control, signs in, and holds a tailnet address next to production. There is no concentrator to reach, no jump host to authenticate to, and no allowlisted source address to spoof. The coordination plane routes them straight to whatever the ACL policy permits for that person.
 
-        **Risk mitigation**
+        Approval inserts a human at the one moment when the anomaly is most visible. A new machine carries a name, an operating system, and a first-seen time, and a Windows desktop appearing for an engineer who has only ever used a Mac is the kind of thing a person recognizes in seconds and a rule never will. It is also the only point in the lifecycle where the decision is cheap, because once the node is on the mesh, removing it competes with whatever work it appears to be doing.
 
-        - **Enable device approval:** Require approval so new devices stay pending until an administrator reviews them.
-        - **Alert on new requests:** Pair device approval with notifications so administrators act on requests promptly.
-        - **Combine with tag-based ACLs:** Ensure an unapproved device cannot reach sensitive resources even briefly.
+        The setting matters just as much for machines that are not anyone's laptop. Personal phones, home lab servers, and forgotten cloud instances all enroll through the same path, and approval is what keeps a corporate tailnet from silently absorbing them.
+
+        Approval does add friction, and on tailnets that enroll machines continuously through automation the answer is not to turn it off but to enroll those machines with tagged, pre-approved auth keys governed by `tagOwners`, so scripted enrollment has an explicit owner while human enrollment still stops for review. Pair this with the companion check in this policy that requires every machine to be in the authorized state.
       audit: |
         ### Audit via Admin Console
 
@@ -932,19 +928,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the tailnet requires administrators to manually approve every new user before they can join. When user approval is enforced, identity-provider misconfigurations and overly broad SSO scopes cannot grant immediate tailnet access.
+        This check verifies that the tailnet requires an administrator to approve each new person before they can join.
+
+        User approval is a tailnet-wide setting under **Settings > User management** in the Tailscale admin console, expressed as `users_approval_on` in the `tailscale_tailnet_settings` resource. With it on, a person who authenticates through the connected identity provider is created in a pending state and gains no access until an administrator approves the account. This check requires the setting to be enabled.
 
         **Why this matters**
 
-        - **Contains SSO misconfiguration:** Without approval, anyone who can sign in through the configured identity provider lands inside the tailnet, so a relaxed allowlist becomes network membership.
-        - **Catches lingering identities:** Former employees retained in the identity provider for legitimate reasons could otherwise keep Tailscale access.
-        - **Adds a review checkpoint:** Manual approval places a human decision between identity provisioning and network access.
+        Without user approval, membership of the tailnet is exactly whatever the identity provider says it is, and that boundary is usually looser than anyone intends. A domain-wide allowlist admits every account in the directory, including service accounts, shared mailboxes, and the guest identities issued to partners and vendors. A self-service signup path enabled during a trial admits anyone who can receive mail at the domain. In each case the first person to notice the gap is whoever walks through it.
 
-        **Risk mitigation**
+        Approval also compensates for the lag in deprovisioning. Directories retain departed employees as disabled or converted accounts for legal and archival reasons, and every one of those is an identity that might still complete a sign-in. Requiring an administrator to admit each new person means an identity that should not be there stops at a human decision rather than landing on the network.
 
-        - **Enable user approval:** Require approval so new users stay pending until an administrator reviews them.
-        - **Alert on new requests:** Configure notifications so administrators are aware of new approval requests.
-        - **Document approval criteria:** Define the standard reviewers apply so access decisions stay consistent.
+        The queue itself is a detection surface. A request from an account nobody recognizes is direct evidence that the identity provider is admitting more than it should, and that signal exists only if the tailnet asks the question.
+
+        The trade-off is delay for new joiners, so configure notifications that route requests to an administrator promptly and write down the standard reviewers apply. Pair this with the companion check in this policy that requires the pending-approval queue to be empty, since a gate nobody attends is a gate that eventually gets switched off.
       audit: |
         ### Audit via Admin Console
 
@@ -1049,19 +1045,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the tailnet is configured to automatically update the Tailscale client on devices. Automatic updates close the window between disclosure of a Tailscale client vulnerability and rollout of the fix across the fleet.
+        This check verifies that the tailnet turns on automatic Tailscale client updates for the machines that support them.
+
+        Automatic updates are a tailnet-wide default under **Settings > Device management** in the Tailscale admin console, recorded as `devices_auto_updates_on` in the `tailscale_tailnet_settings` resource. When it is on, eligible machines install new Tailscale client releases themselves rather than waiting for someone to push them. This check requires the setting to be enabled.
 
         **Why this matters**
 
-        - **Removes manual patching gaps:** When automatic updates are off, every device must be patched by hand, and vulnerabilities stay exploitable on out-of-date endpoints.
-        - **Prevents version drift:** Devices used by infrequent sign-ins or headless agents can fall far behind the latest release.
-        - **Speeds remediation:** Automatic updates give a faster mean time to remediation for client-side vulnerabilities.
+        The interval between a client release that fixes a security defect and the moment the last machine installs it is a window in which the weakness is public and the fleet is still exposed. Manual patching stretches that window to the length of the slowest team's change process, and on a mesh network the slowest node is the one that counts, because every peer the ACL policy allows can reach it directly without crossing a firewall or a bastion where compensating controls might apply.
 
-        **Risk mitigation**
+        Manual updating also fails unevenly, and it fails in the worst places. Interactive workstations get attention because people see the prompts. Headless machines do not, so subnet routers, exit nodes, and long-lived cloud instances drift furthest behind, and those are precisely the nodes whose compromise reaches past the tailnet into an on-premises range or a cloud account.
 
-        - **Enable tailnet auto-updates:** Turn on automatic updates so all eligible devices opt in by default.
-        - **Watch individual devices:** Use the per-device update check to spot endpoints that still need attention.
-        - **Track advisories:** Subscribe to Tailscale security advisories so the team knows when a critical update ships.
+        Turning updates on shifts the default from opt-in patching to opt-out, which is what keeps the fleet current after the one-time sweep that follows an advisory.
+
+        Machines whose Tailscale client comes from a distribution package manager or a golden image do not update themselves through this mechanism, so pair this setting with the companion check in this policy that flags machines with a pending client update, which is what shows whether the policy is actually reaching them.
       audit: |
         ### Audit via Admin Console
 
@@ -1164,19 +1160,17 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the tailnet's default device key duration is set to a finite value of 180 days or less. A short key duration limits the useful lifetime of a stolen device credential.
+        This check verifies that node keys on the tailnet expire on a bounded schedule, with the tailnet-wide key duration set to a finite value of 180 days or less.
+
+        The key duration is set under **Settings > Device management** in the Tailscale admin console and appears as `devices_key_duration_days` in the `tailscale_tailnet_settings` resource. It governs how long a machine's node key stays valid before the machine must sign in again through the identity provider, and a value of `0` means keys never expire. This check requires a duration greater than zero and no more than 180 days.
 
         **Why this matters**
 
-        - **Bounds credential lifetime:** Device keys are long-lived credentials, and the longer they stay valid, the larger the impact of a single compromise.
-        - **Limits stolen-key abuse:** A key with a multi-year lifetime grants persistent access until the device is manually revoked.
-        - **Surfaces stale devices:** Forgotten or unmanaged devices accumulate valid credentials that no one is monitoring.
+        The key duration is the ceiling on how long a compromised or abandoned machine keeps its place on the tailnet. A node key is a bearer credential, so whoever holds it is that machine, and no password prompt stands between the key and the network. Extracted from a stolen laptop, recovered from a disk image, or lifted from a backup of a server's state directory, it keeps working until it expires. Setting the duration to a year, or leaving it at `0`, makes the answer to how long a leaked key works "until somebody happens to notice", which is not a control.
 
-        **Risk mitigation**
+        Expiry is also what gives identity-provider decisions teeth. Suspending an account stops new sign-ins but does not reach out and disconnect machines already holding valid keys. Re-authentication is the moment the suspension is enforced, so the key duration sets how long an offboarded person's devices stay on the network after their account is closed.
 
-        - **Cap the duration:** Set the tailnet device key duration to 180 days or less, choosing a shorter window for higher-risk environments.
-        - **Never disable expiry:** Avoid setting the duration to 0, which disables key expiry entirely.
-        - **Catch per-device exceptions:** Use the per-device key expiry check to find devices where expiry has been individually disabled.
+        Shorter is not free. Every expiry is an interactive sign-in, and the machines with nobody sitting at them, such as subnet routers and CI runners, are the ones that break when a key lapses. The fix for those is tagged and ephemeral nodes, whose lifecycle is governed by `tagOwners` and short-lived auth keys, rather than raising the duration for the whole tailnet. Pair this with the companion check in this policy that flags individual machines with key expiry disabled, since a well-chosen duration does nothing for machines exempted from it.
       audit: |
         ### Audit via Admin Console
 
@@ -1283,19 +1277,17 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that the tailnet ACL policy does not contain a rule that accepts traffic from every source to every destination on every port. Tailscale's default starter policy includes such a rule, and it must be removed before the policy provides any meaningful network segmentation.
+        This check verifies that the tailnet ACL policy provides real segmentation, by requiring that no rule accepts traffic from every source to every destination and port.
+
+        The ACL policy file, edited under **Access controls** in the Tailscale admin console, is the only thing that limits which machines on a tailnet can talk to which. Tailscale ships a starter policy containing a single rule with a `src` of `*` and a `dst` of `*:*`, which lets everything reach everything, and it is meant to be replaced as soon as the tailnet holds more than a handful of machines. This check requires that no `accept` rule combines a wildcard source with a wildcard destination and port.
 
         **Why this matters**
 
-        - **Prevents a flat network:** An accept rule with a source of `*` and destination of `*:*` collapses the entire ACL into a permissive flat network.
-        - **Enables lateral movement:** Any compromised device can pivot to every other device, service, and port on the tailnet.
-        - **Masks tighter rules:** Tag-based segmentation, group restrictions, and per-service rules added later are overridden by the catch-all and provide no protection.
+        With a catch-all accept rule in place, the tailnet is one flat network in which every machine can reach every port of every other machine. One phished laptop, one compromised CI runner, or one vulnerable device in a branch office, and the attacker's next hop is the database, the Kubernetes API, the SSH port on every server, and the management interface of anything a subnet router advertises. There is no internal firewall to negotiate, because the tailnet's packet filter is the internal firewall and it has been told to allow everything.
 
-        **Risk mitigation**
+        The failure mode is quiet in a way that is easy to miss. The catch-all does not conflict with the specific rules a team adds later. It simply makes them redundant. An operator can spend a quarter building careful tag-based and group-based rules, confirm each one works, and never notice that deleting them would change nothing, because the wildcard rule already permitted the traffic. Least-privilege intent and least-privilege enforcement diverge without a single error appearing anywhere.
 
-        - **Replace the catch-all:** Swap any accept rule whose source is `*` and destination is `*:*` for explicit per-group or per-tag allow rules.
-        - **Validate with policy tests:** Use Tailscale's policy tests to confirm intended access still works after tightening the ACL.
-        - **Adopt a least-privilege baseline:** Ensure every new rule names specific sources, destinations, and ports.
+        Wildcards remain useful in narrower positions. A destination of `*:*` restricted to a small administrative group, or a wildcard source restricted to one service port, is a deliberate rule with bounded reach, and this check does not object to either. What it rejects is the combination that removes every boundary at once. Replace it with rules that name specific sources, destinations, and ports, and use Tailscale's policy tests to confirm intended access still works before the change lands.
       audit: |
         ### Audit via Admin Console
 
@@ -1416,19 +1408,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every active pre-auth key has a non-zero `expires` timestamp. A pre-auth key with no expiration acts as a long-lived bearer credential that can enroll arbitrary devices into the tailnet for the life of the tailnet itself; a leaked copy stays valid indefinitely.
+        This check verifies that every active pre-auth key has a finite expiration, so that no credential capable of enrolling machines onto the tailnet stays valid forever.
+
+        Pre-auth keys are issued under **Settings > Keys** in the admin console, or through the `tailscale_tailnet_key` resource, and they exist so machines can join without an interactive login. Anyone holding one can enroll a node, which makes the key a bearer credential for network membership. Tailscale records an expiration on each key, and a key created without one carries a zero timestamp and never lapses. This check requires a finite expiration on every key that is still valid and not revoked.
 
         **Why this matters**
 
-        - **Indefinite blast radius:** A non-expiring pre-auth key in a CI pipeline, container image, or shared credential store remains usable years after the original use case is gone, so a single leak can re-enroll attacker-controlled nodes long after the team rotated other secrets.
-        - **Provisioning-lifecycle drift:** Pre-auth keys are issued for specific automation runs; without an expiration the credential outlives the workflow that needed it, accumulating dormant access.
-        - **Audit visibility gap:** Tailscale does not warn on keys that simply never expire. Expired keys disappear from the active set; non-expiring keys must be enumerated manually.
-        - **Compliance hard requirement:** Most authentication-credential controls require a documented lifetime on every secret used to authenticate devices or services. A non-expiring key cannot satisfy that.
+        A pre-auth key with no expiration is a permanent key to the network, living wherever the automation that used it left it. That is typically a CI secret store, a cloud-init script, a container image layer, a Terraform state file, or a wiki page written the week the pipeline was built. An attacker who reaches any one of those copies, months or years later, enrolls a machine of their own as a legitimate node and starts from inside the mesh rather than outside it.
 
-        **Risk mitigation**
+        Non-expiring keys are also the ones least likely to be noticed. Expired keys drop out of the active list on their own, so the list an administrator reviews fills steadily with exactly the credentials that never age out, and nothing draws attention to a key whose expiry is never. The credential outlives the pipeline it was created for, the team that owned it, and often the last person who could say what it was for.
 
-        - **Bounded credential lifetime:** Setting an explicit expiration means a leaked key automatically becomes useless after the configured window, capping the damage from any single exposure event.
-        - **Forces rotation discipline:** A finite lifetime requires operators to reissue keys on a defined cadence, which surfaces unused automation and keeps the active-key list honest.
+        Rotation discipline follows from the expiry date. A finite lifetime forces someone to reissue the key on a schedule, and that recurring moment is when unused automation gets discovered and retired. Without it, nobody ever has a reason to look.
+
+        Long-lived automation is the usual justification for a key that never expires, and the better answer is an OAuth client that mints short-lived keys on demand, or ephemeral nodes that clean themselves up when the job ends. Pair this with the companion check in this policy that rejects reusable keys, since expiry bounds how long a leaked key works and reusability bounds how many machines it can enroll in that time.
       audit: |
         ### Audit via Admin Console
 
@@ -1555,19 +1547,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no active, valid pre-auth key is marked `reusable`. A reusable key can enroll an unbounded number of devices for as long as it remains valid; a single-use key burns itself the moment the first device authenticates, capping the damage of a leak to one enrollment.
+        This check verifies that pre-auth keys enroll one machine each, by requiring that no active key is marked reusable.
+
+        A pre-auth key created under **Settings > Keys** in the admin console, or through the `tailscale_tailnet_key` resource, can be marked **Reusable**, which lets it enroll any number of machines until it expires or is revoked. A single-use key is consumed by the first machine that presents it. This check requires that no key which is still valid and unrevoked carries the reusable flag.
 
         **Why this matters**
 
-        - **Multiplication of leak impact:** A reusable key that ends up in source control or a CI log can enroll dozens or hundreds of attacker-controlled nodes before anyone notices the exposure. A single-use key allows at most one rogue enrollment per leak event.
-        - **Lost provenance:** Devices enrolled with the same reusable key share no distinguishing per-device origin metadata; investigating which enrollment was malicious becomes harder when the credential is shared across legitimate uses.
-        - **Convenience trap:** Reusable keys are tempting for CI scenarios where many runners need to join, but the right pattern is short-lived ephemeral keys issued per job, not one long-lived shared credential.
-        - **Defence in depth on top of expiry:** Even if every key has an expiration, a reusable key remains exploitable across many enrollments within its window; non-reusable narrows the window from "many uses for N days" to "one use for N days".
+        Reusability decides what a leak is worth. A single-use key that ends up in a build log or a public repository buys an attacker one node on the tailnet, and if the legitimate machine already claimed it, none at all. A reusable key in the same place buys as many nodes as the attacker cares to enroll, for as long as the key stays valid, and each one arrives as an ordinary member of the network rather than as an intrusion attempt against its edge.
 
-        **Risk mitigation**
+        The multiplication also defeats containment. Revoking a single-use key after an incident costs nothing, because it was already spent. Revoking a reusable key means first finding every legitimate pipeline that depends on it, which is why the revocation gets postponed while the exposure continues.
 
-        - **Per-enrollment accountability:** A single-use key produces exactly one device record, making credential-to-device attribution unambiguous.
-        - **Damage cap on leak:** With reusability disabled, a leaked key compromises at most one enrollment slot, not every machine the credential could ever onboard.
+        Shared keys erase provenance as well. When twenty machines enrolled with the same credential, the enrollment record cannot distinguish the one that was not supposed to be there, and the investigation falls back to correlating timestamps and hostnames from whatever the machines themselves report.
+
+        Reusable keys are usually reached for when many machines must join unattended. The pattern that solves the same problem safely is an OAuth client that mints a fresh single-use key per enrollment, combined with tagged, ephemeral nodes that remove themselves when the workload ends. Pair this with the companion check in this policy that requires every active key to carry a finite expiration.
       audit: |
         ### Audit via Admin Console
 
@@ -1673,19 +1665,19 @@ queries:
       tailscale.logstreams.one(logType == "configuration")
     docs:
       desc: |
-        This check ensures that the tailnet has at least one logstream configured for the `configuration` log type — Tailscale's admin audit log. Without an export, the audit trail of administrative actions lives only in the Tailscale console and is unavailable to a SIEM, retention policy, or off-platform incident responder.
+        This check verifies that the tailnet exports its administrative audit trail off the platform, by requiring a configured log stream for the configuration log type.
+
+        Tailscale records administrative activity in the configuration audit log: role changes, device and user approvals, ACL policy edits, auth key creation and revocation, and tailnet lock changes. Log streaming is set up on the **Logs** page of the admin console and delivers those events continuously to a destination such as a SIEM or an object store. This check requires that a stream for the configuration log exists.
 
         **Why this matters**
 
-        - **No external audit record:** Membership changes, ACL edits, key creation and revocation, and tailnet lock changes are recorded in the configuration log. Without an export, any forensic investigation depends entirely on Tailscale's UI being reachable and on Tailscale retaining the data.
-        - **Insider-action visibility:** Detecting a malicious or coerced administrator requires correlating Tailscale events with SIEM data from identity, endpoint, and network sources. The only mechanism for that correlation is the logstream export.
-        - **Compliance evidence:** Frameworks that mandate audit log retention require the events to be held outside the system that generated them and outside the control of the same administrators whose actions are being recorded.
-        - **Incident-response timeline:** Reconstructing the chronology of a tailnet incident after the fact (who added the rogue device, who broadened the ACL, who issued the long-lived key) is impossible without persistent off-platform copies of the configuration log.
+        Without an export, the record of who changed the tailnet lives only in the system whose administrators are the people the record is about. An attacker who reaches an Owner account can widen the ACL policy, issue a key, and enroll a node, and the evidence of all three stays inside a console they control, under a retention period they did not choose. Shipping audit events elsewhere is what makes the copy survive both the incident and the account that caused it.
 
-        **Risk mitigation**
+        Detection is the second reason, and it needs the events to sit next to other data. A key created minutes after an unfamiliar sign-in, an ACL edit immediately following a role change, a burst of device approvals outside working hours: each is unremarkable alone and obvious in sequence, and the correlation only happens where identity, endpoint, and cloud audit data already live. That is the SIEM, not the Tailscale console.
 
-        - **Independent retention:** A SIEM or object-store destination keeps audit events under retention rules that the auditing administrator cannot edit.
-        - **Cross-source correlation:** Once tailnet events sit alongside identity-provider, endpoint, and cloud-audit data, abnormal sequences (key creation followed by ACL widening, for example) can be detected with existing detection rules.
+        Incident reconstruction depends on the same export. Answering how a rogue node got onto the tailnet, when the policy stopped enforcing what people believed it enforced, and which credential was used requires a timeline reaching further back than in-product history, and reaching it from a system the responder trusts.
+
+        A stream that exists but points at a destination nobody watches provides evidence after the fact and no detection before it, so pair this with alerting on the events that matter most: ACL changes, privileged role grants, and auth key creation. Note also that network flow logs are streamed separately, so a tailnet already sending those still needs the configuration stream enabled.
       audit: |
         ### Audit via Admin Console
 
@@ -1792,19 +1784,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every tailnet webhook endpoint URL uses the `https://` scheme. Tailscale webhooks deliver configuration-change events (device approval requests, ACL updates, key expiry warnings, user provisioning) to the receiver; sending those events over plaintext HTTP leaks sensitive operational metadata to anyone on the network path.
+        This check verifies that tailnet event notifications are delivered over an encrypted channel, by requiring every webhook endpoint URL to use the `https://` scheme.
+
+        Webhooks are configured under **Settings > Webhooks** in the admin console, or through the `tailscale_webhook` resource, and Tailscale posts tailnet events to them: device approval requests, user role changes, ACL policy edits, key expiry notices, and node enrollment. This check requires that every endpoint URL begins with `https://`.
 
         **Why this matters**
 
-        - **Plaintext leak of operational signals:** A webhook payload carries the email of the user who needs approval, the device ID and OS, the action that triggered the event, and the tailnet identifier. Sent over HTTP, every entry on the network path can read or modify it.
-        - **HMAC alone is not confidentiality:** Tailscale signs webhook payloads, but the signature only authenticates the sender; it does not encrypt the body. HTTPS is what protects the body from disclosure.
-        - **Phishing and social-engineering material:** Tailnet event payloads contain enough internal context to craft convincing phishing of the same administrators who would normally see those events in the console.
-        - **Compliance hard requirement:** Frameworks that mandate encryption in transit treat outbound webhook traffic as in-scope; an `http://` webhook is a direct violation.
+        A webhook body is a live feed of who is joining the network, which machines exist, and how the tailnet's access rules are changing. Delivered over plain `http://`, every hop between Tailscale and the receiver can read it, which hands an attacker on the path a continuously updated inventory of user email addresses, device identifiers, operating systems, and administrative activity. That is reconnaissance material of a quality that normally requires an intrusion to obtain, gathered passively instead.
 
-        **Risk mitigation**
+        Signing does not close the gap. Tailscale signs webhook payloads so a receiver can confirm they came from Tailscale, and that authentication is worth having, but a signature does not conceal the body. Confidentiality on the wire comes from the transport, and only `https://` provides it.
 
-        - **Confidentiality on the wire:** Switching every receiver to `https://` keeps the payload encrypted between Tailscale and the receiver, eliminating passive read by anyone on the path.
-        - **Tamper resistance:** HTTPS protects the request from in-flight modification, so an attacker on the path cannot rewrite the body in a way that the signature alone would catch but that downstream automation might mishandle.
+        The plaintext channel is an opening for interference as well. An attacker positioned on the path can drop the notification that would have alerted an administrator to an unexpected device approval, buying time on an enrollment they performed themselves.
+
+        An endpoint on an internal network is not an exception worth making. The receiver is usually an internal automation service, and internal networks are exactly where an attacker who already holds one host does their listening. Point every receiver at an `https://` URL and verify the payload signature at the far end, so the events are both private and attributable.
       audit: |
         ### Audit via Admin Console
 
