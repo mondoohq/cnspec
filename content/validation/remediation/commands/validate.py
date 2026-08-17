@@ -15,6 +15,7 @@ from nutanix import validate_nutanix
 from oci import validate_oci
 from openapi import API_PROVIDERS, validate_api_provider
 from openstack import validate_openstack
+from proxmox import validate_proxmox
 from vercel import validate_vercel
 
 # CLI validators, dispatched by name. The Cobra CLI and REST API
@@ -29,6 +30,7 @@ CLI_VALIDATORS = {
     "vercel": validate_vercel,
     "alicloud": validate_alicloud,
     "openstack": validate_openstack,
+    "proxmox": validate_proxmox,
 }
 
 VALIDATORS = list(CLI_VALIDATORS) + list(COBRA_CLIS) + list(API_PROVIDERS)

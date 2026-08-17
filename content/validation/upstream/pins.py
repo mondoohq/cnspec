@@ -57,6 +57,7 @@ WORKFLOW = REPO_ROOT / ".github" / "workflows" / "validate-remediation.yaml"
 OPENAPI_MODULE = VALIDATION_DIR / "remediation" / "commands" / "openapi.py"
 TERRAFORM_VALIDATOR = VALIDATION_DIR / "remediation" / "code" / "terraform.py"
 API_SPECS_DUMP = VALIDATION_DIR / "upstream" / "dump" / "api_specs.py"
+PROXMOX_DUMP = VALIDATION_DIR / "upstream" / "dump" / "proxmox.py"
 CMD_DATA = DATA_DIR
 
 USER_AGENT = "cnspec-validation-drift-check"
@@ -749,6 +750,13 @@ def check_spec_dumps() -> list[Pin]:
             head_commit_for_path("portainer/portainer", "api/docs/openapi.yaml")[:10],
             "bump PORTAINER_SPEC_SHA in upstream/dump/api_specs.py and re-run it",
             files=[API_SPECS_DUMP, CMD_DATA / "portainer_openapi.json"],
+        ),
+        Pin(
+            "proxmox API schema", "spec-dump",
+            meta_of("proxmox_api.json").get("pin", "unknown")[:10],
+            head_commit_for_path("proxmox/pve-docs", "api-viewer/apidata.js")[:10],
+            "bump PVE_DOCS_SHA in upstream/dump/proxmox.py and re-run it",
+            files=[PROXMOX_DUMP, CMD_DATA / "proxmox_api.json"],
         ),
     ]
 
