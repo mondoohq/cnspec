@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-arista-eos-security
     name: Mondoo Arista EOS Security
-    version: 1.2.4
+    version: 1.2.5
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -147,18 +147,17 @@ queries:
       arista.eos.runningConfig.content.lines.one(_ == /aaa accounting commands all default start-stop/)
     docs:
       desc: |
-        This check verifies that AAA accounting is configured to log all command executions. Command accounting creates a detailed audit trail of every command run on the device, which is essential for security monitoring and compliance.
+        This check verifies that every command executed on the switch is recorded to an accounting trail.
+
+        AAA command accounting sends a record for each command a user runs, carrying the user, the timestamp, and the command text. It is turned on with `aaa accounting commands all default start-stop logging` in global configuration mode, and this check requires that method list to be present in the running configuration.
 
         **Why this matters**
 
-        Without command accounting enabled, the device has no record of what administrators have done. If command accounting is not configured:
+        A switch is the network, so an attacker who reaches the CLI can mirror a port to a machine they control, move an interface into a VLAN it should never reach, or withdraw a route and partition a data center. Without command accounting none of that leaves a trace on the device. The change appears in the running configuration as a fact with no author and no time, so responders cannot tell whether an operator made it last quarter or an intruder made it an hour ago.
 
-        - There is no forensic evidence of commands executed during a security incident.
-        - Compliance requirements from frameworks like DISA STIG, PCI DSS, and HIPAA cannot be met.
-        - It becomes impossible to determine who made configuration changes or when they occurred.
-        - Accountability for privileged operations is lost, undermining trust in administrative actions.
+        Command accounting is also the only evidence that survives an attacker's cleanup. Anyone with enable access can edit the configuration back to a benign state, but records already shipped off the box cannot be edited from the CLI. That is why the accounting method list is paired with `logging host`: records that stay on the switch are exactly as deletable as the configuration they describe.
 
-        Enabling command accounting ensures that all activity is logged and available for audit, investigation, and compliance reporting.
+        Command accounting records every command, so a busy change window generates volume. Size the receiving collector for it rather than narrowing the method list. EOS does not save the running configuration on its own, so a method list added without `write memory` disappears at the next reload and the audit trail stops without any warning.
       audit: |
         Verify command accounting from the Arista EOS CLI:
 
@@ -216,18 +215,17 @@ queries:
       arista.eos.runningConfig.content.lines.one(_ == /aaa accounting exec default start-stop/)
     docs:
       desc: |
-        This check verifies that AAA accounting logs exec session start and stop events. Exec session accounting records login and logout activity, providing visibility into who accessed the device and for how long.
+        This check verifies that interactive login and logout events on the switch are recorded to an accounting trail.
+
+        Exec accounting emits a start record when a user opens a CLI session and a stop record when it closes, capturing who connected, from where, and for how long. It is configured with `aaa accounting exec default start-stop logging`, and this check requires that method list in the running configuration.
 
         **Why this matters**
 
-        Without exec session accounting, the device cannot track user login activity. If session accounting is not enabled:
+        Command accounting, which a companion check in this policy covers, tells you what was typed. Exec accounting tells you that a session existed at all. Those are different pieces of evidence: a session opening at 03:00 from an address no operator uses is a signal on its own, before a single command is examined, and it is the only record that reveals an intruder who logged in, looked around, and logged out without changing anything.
 
-        - There is no record of when users logged in or out.
-        - Unusual access patterns, such as logins at odd hours, go undetected.
-        - Compliance and audit reporting requirements cannot be fulfilled.
-        - Investigating unauthorized access becomes significantly harder without session data.
+        Session records also bound an incident. When a credential turns out to be compromised, the start and stop times say precisely which windows that credential held a session on the switch, and that is what decides whether a configuration change made in between is suspect or routine.
 
-        Enabling exec session accounting ensures that all access activity is captured for monitoring, compliance, and forensic purposes.
+        Pair this with a syslog destination so the records leave the device, and write the configuration to startup with `write memory`. An accounting method list that exists only in the running configuration stops producing records at the next reload, silently.
       audit: |
         Verify exec session accounting from the Arista EOS CLI:
 
@@ -279,18 +277,17 @@ queries:
       arista.eos.runningConfig.content.lines.one(_ == /aaa accounting system default start-stop/)
     docs:
       desc: |
-        This check verifies that AAA accounting logs system-level events. System event accounting captures critical device activities such as reboots, reloads, and configuration modifications.
+        This check verifies that device-level events such as reloads and changes to the accounting service itself are recorded to an accounting trail.
+
+        System accounting covers events that belong to no user session: the switch reloading, accounting starting or stopping, and similar chassis-level activity. It is enabled with `aaa accounting system default start-stop logging`, and this check requires that method list in the running configuration.
 
         **Why this matters**
 
-        Without system event accounting, important device-level activities go unrecorded. If system accounting is not configured:
+        A reload is the most consequential single event on a switch, because it is the moment the running configuration is discarded and the startup configuration takes over. Any change an operator applied but never wrote to startup vanishes there, and a control verified last week can be silently absent afterward. Without system accounting there is no record of when that boundary was crossed, so an unexplained configuration difference has no timestamp to anchor it to.
 
-        - System-level configuration modifications are not logged.
-        - Reboots, reloads, and other significant events cannot be tracked.
-        - Comprehensive audit trails required for compliance are incomplete.
-        - Unauthorized system changes may go undetected.
+        System accounting also records accounting stopping. An attacker who wants to work unobserved turns off the accounting method lists first, and that action is exactly what system accounting reports just before the other trails go quiet. It is the tripwire on the audit trail itself.
 
-        Enabling system event accounting provides the visibility needed to detect unauthorized changes and maintain a complete audit record.
+        The event volume here is low, so there is little operational reason to leave it off. Send the records to a remote collector rather than relying on the local buffer, and save the configuration with `write memory` so the method list survives the very reloads it exists to record.
       audit: |
         Verify system event accounting from the Arista EOS CLI:
 
@@ -342,19 +339,17 @@ queries:
       arista.eos.runningConfig.content.lines.any(_ == /^aaa authentication/)
     docs:
       desc: |
-        This check verifies that Authentication, Authorization, and Accounting (AAA) is configured on the switch. AAA integrates with enterprise identity management systems to provide centralized authentication, access control, and audit logging.
+        This check verifies that logins to the switch are validated through a configured authentication method rather than left to platform defaults.
+
+        AAA authentication defines the method lists that validate credentials for console and remote logins, normally an external RADIUS or TACACS+ server group with a local fallback. It is configured with statements such as `aaa authentication login default group tacacs+ local`, and this check requires at least one `aaa authentication` statement in the running configuration.
 
         **Why this matters**
 
-        Without AAA configured, the switch relies solely on local authentication, which is difficult to manage at scale. If AAA is not enabled:
+        Switches live for a decade and are reconfigured rarely, so a purely local account set drifts far from reality. Engineers leave and their credentials stay valid on every switch nobody remembered to visit. There is no central place to disable an account, no password policy that reaches every device, and no way to answer which switches a departed employee can still log into. Central authentication turns that into a single revocation instead of a visit to hundreds of devices.
 
-        - The device cannot integrate with centralized identity management systems.
-        - There is no enforcement of authentication before granting access to the device.
-        - User activity cannot be tracked or audited effectively.
-        - Compliance with most security frameworks and regulations cannot be achieved.
-        - Managing user accounts individually across multiple devices becomes error-prone and impractical.
+        Central authentication is also what makes the accounting records meaningful. It produces named identities drawn from a directory rather than a shared local login whose password the whole team knows, and no accounting trail can attribute activity to a person when everyone uses the same account.
 
-        Configuring AAA ensures centralized, scalable authentication with comprehensive audit trails across the network infrastructure.
+        Apply this carefully, because pointing the default login method at a server group is the classic way to lock yourself out of a device. Keep your current session open, make sure a local user with a valid secret exists so the `local` fallback works when the servers are unreachable, and log in from a second session before disconnecting the first. A companion check in this policy covers the emergency local account that the fallback depends on.
       audit: |
         Verify AAA authentication from the Arista EOS CLI:
 
@@ -411,19 +406,17 @@ queries:
       arista.eos.passwordPolicy.logOnFailure == true
     docs:
       desc: |
-        This check verifies that authentication failure events are logged for security monitoring. Logging failed authentication attempts is one of the most important indicators for detecting attacks against the device.
+        This check verifies that rejected login attempts against the switch generate log records.
+
+        The authentication failure policy makes EOS emit a message each time a credential is refused, which is what turns password guessing into something monitoring can see. It is enabled with `aaa authentication policy on-failure log` in global configuration mode, and this check requires that failure-logging policy to be active.
 
         **Why this matters**
 
-        Without authentication failure logging, the device cannot alert on or record suspicious login activity. If failure logging is not enabled:
+        Credential attacks against network gear are quiet by nature. A script working through passwords against the SSH service produces no visible effect on the switch until it succeeds, and once it succeeds the traffic looks like an ordinary administrative session. Failure logging is the only thing separating the two: a burst of rejections from one source is unmistakable, and it arrives before the compromise rather than after it.
 
-        - Brute-force and password-guessing attacks go undetected.
-        - Attempts to use stolen or compromised credentials are not recorded.
-        - Real-time alerting on suspicious authentication activity is not possible.
-        - Forensic evidence of attempted unauthorized access is lost.
-        - Compliance requirements for intrusion detection cannot be met.
+        The same records catch the slower case that rate limits miss. Credentials harvested elsewhere get tried against infrastructure one attempt at a time, spread over days. A single failure is unremarkable, but the pattern of one username failing on switch after switch is visible only if every switch reports its failures to a common collector.
 
-        Enabling authentication failure logging ensures that all failed login attempts are captured, supporting both proactive security monitoring and incident investigation.
+        Failure logging is useful only where the records are read, so pair it with a syslog destination pointed at the collector or SIEM that alerts on them. Save the configuration with `write memory`, since a policy left only in the running configuration stops logging at the next reload.
       audit: |
         Verify authentication failure logging from the Arista EOS CLI:
 
@@ -481,18 +474,17 @@ queries:
       arista.eos.aaa.serialConsoleAuthorization == true
     docs:
       desc: |
-        This check verifies that AAA authorization is enabled for console access. Console authorization controls which commands users can execute after they authenticate, enforcing the principle of least privilege.
+        This check verifies that commands entered on the serial console are subject to authorization rather than accepted unconditionally.
+
+        Console authorization applies the configured command and exec authorization method lists to sessions arriving on the serial port, so a console user is held to the same role restrictions as a remote one. It is enabled with `aaa authorization console` in global configuration mode, and this check requires it to be active.
 
         **Why this matters**
 
-        Without AAA authorization for the console, any authenticated user may have unrestricted command access. If console authorization is not enabled:
+        The console is the exception that gets left open. Authorization is applied to SSH, roles are assigned, method lists are tested, and then the serial port keeps accepting whatever is typed because nobody counted it as a login path. Anyone who reaches the rack gets an unrestricted CLI without passing a single authorization decision, whether that is a contractor doing unrelated work, a facilities technician, or an intruder with a laptop and a console cable.
 
-        - Users can execute commands beyond what their role requires.
-        - Separation of duties cannot be enforced.
-        - Authorization policies cannot be managed centrally from AAA servers.
-        - Authorization decisions are not tracked for compliance reporting.
+        Terminal servers make this far less physical than it sounds. Out-of-band access concentrators expose console ports over the network, so the console is frequently reachable from anywhere the management network reaches while remaining the one path where authorization was never enforced.
 
-        Enabling console authorization ensures that users can only perform operations appropriate to their role, reducing the risk of accidental or intentional misuse.
+        Console authorization has no method list of its own. It reuses the lists configured for command and exec authorization, so configure those first or console logins are authorized against nothing. Keep a working session open while applying it, because a method list that cannot reach its server can leave the console unable to authorize any command, and recovering from that means password recovery at the rack.
       audit: |
         Verify console authorization from the Arista EOS CLI:
 
@@ -554,18 +546,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that an admin account with strong password encryption exists as an account of last resort. This account provides emergency access when external authentication systems are unavailable.
+        This check verifies that a local emergency account with a strongly hashed password exists on the switch.
+
+        Where central authentication is in place, the local `admin` account is the fallback that keeps the device reachable when the RADIUS or TACACS+ servers are not. This check requires an account named `admin` that has a password set and whose secret is stored as a SHA-512 hash, created with `username admin secret 0 <password>` once `secret hash sha512` is configured under `management defaults`.
 
         **Why this matters**
 
-        Without a properly configured admin account of last resort, the device may become completely inaccessible during authentication system failures. If this account does not exist:
+        Central authentication and the switches that depend on it usually share fate. The authentication servers are reached across the network the switches carry, so the outage that takes the servers down is frequently the same outage that makes the switches urgently need reconfiguring. Without a working local account the device is unreachable at exactly the moment it must be fixed, and recovery means someone at the rack with a console cable running a password recovery procedure that requires a reboot.
 
-        - There is no way to access the device when AAA servers are unavailable.
-        - Critical maintenance cannot be performed during authentication system outages.
-        - Complete lockout from the device could result in extended downtime.
-        - Using weak encryption for this account exposes the emergency credential to compromise.
+        The account is also a standing risk, which is why the hash matters. It bypasses the central identity system, belongs to no individual, and is rotated rarely. If the configuration leaks through a backup, a support bundle, or a configuration repository, a weakly hashed emergency secret becomes a working login on every device built from the same template.
 
-        Maintaining an admin account with SHA-512 encryption ensures reliable emergency access while protecting the credential with the strongest available hashing algorithm.
+        Treat this account as break-glass: hold the password in a vault with checkout records, rotate it after each use, and confirm that exec and command accounting are active so its use is recorded. A companion check in this policy covers the local fallback method list that this account serves.
       audit: |
         Verify the admin account of last resort from the Arista EOS CLI:
 
@@ -624,17 +615,17 @@ queries:
       arista.eos.runningConfig.section(name: "management console").content.lines.any(_ == /^\s+idle-timeout [1-9]\d*/)
     docs:
       desc: |
-        This check verifies that console sessions have a timeout configured. An idle timeout ensures that inactive console sessions are automatically disconnected, reducing the risk of unauthorized physical access.
+        This check verifies that idle sessions on the serial console are disconnected automatically.
+
+        The `management console` sub-mode carries an `idle-timeout` value expressed in minutes, and this check requires it to be nonzero. A value of 0 disables the timeout entirely, so the session persists until somebody closes it deliberately.
 
         **Why this matters**
 
-        Without a console timeout, an idle session remains open indefinitely. If console timeouts are not configured:
+        A console session left open is an authenticated shell attached to a physical port with no further authentication in front of it. An engineer who finishes a change and walks away leaves privilege 15 sitting on the cable, and the next person at the rack inherits it: a contractor doing unrelated work, a data center technician, anyone with badge access to a shared cage.
 
-        - Idle console sessions can be accessed by anyone with physical access to the device.
-        - An unattended console connection could be used to make unauthorized changes.
-        - Physical access security requirements for compliance cannot be met.
+        Terminal servers extend the same exposure across the network. Where console ports are aggregated onto an out-of-band access concentrator, an abandoned session is reachable by anyone who can reach that concentrator, and the switch has no way of telling that the person now typing is not the person who logged in.
 
-        Configuring console timeouts ensures that idle sessions are terminated, limiting the window of opportunity for unauthorized physical access.
+        Choose a timeout that matches how the console is genuinely used. Ten minutes is a common value, and long-running operations such as an image copy can be run from a session you stay attached to. Save the setting with `write memory`, since a timeout applied only to the running configuration is gone after the next reload.
       audit: |
         Verify the console session timeout from the Arista EOS CLI:
 
@@ -690,18 +681,17 @@ queries:
       arista.eos.fqdn.contains(".") == true
     docs:
       desc: |
-        This check verifies that a domain name is configured for the device. A domain name is required for generating a fully qualified domain name (FQDN), which is used by several security-critical features.
+        This check verifies that the switch has a DNS domain configured, giving it a fully qualified name.
+
+        The domain is set with `dns domain <example.com>` in global configuration mode. This check requires the device's fully qualified name to differ from its bare hostname and to contain a dot, which is what confirms the suffix has been applied.
 
         **Why this matters**
 
-        Without a domain name configured, the device cannot generate an FQDN and several important features are affected. If the domain name is not set:
+        EOS derives the fully qualified name from the hostname and the domain, and it will not generate SSH host keys or a self-signed certificate without one. On a switch missing the domain, the SSH service may fail to start and the management API cannot present TLS, so the two encrypted management paths that every other control in this policy assumes are simply unavailable.
 
-        - SSH RSA/DSA key generation may fail or produce incomplete keys.
-        - SSL/TLS certificate creation requires an FQDN and will not work correctly.
-        - The device cannot be properly registered in DNS.
-        - Identification of the device in logs and management systems is less reliable.
+        The fully qualified name is also what appears in certificates and what a client checks when it connects. Without it, certificate verification cannot be made to succeed, which pushes operators and automation into disabling verification, at which point encrypted management stops defending against an in-path attacker at all.
 
-        Configuring a domain name ensures that the device can fully participate in secured communications and is properly identifiable across the network.
+        Set the domain before enabling SSH or the management API, and verify with `show hostname` that the fully qualified name now includes the suffix. A companion check in this policy covers the hostname that this name is built from.
       audit: |
         Verify the domain name from the Arista EOS CLI:
 
@@ -755,18 +745,17 @@ queries:
       arista.eos.sshSettings.idleTimeout > 0
     docs:
       desc: |
-        This check verifies that an SSH idle timeout is configured to automatically disconnect inactive remote management sessions. An SSH idle timeout ensures that forgotten or unattended sessions are terminated before they can be exploited.
+        This check verifies that idle remote management sessions over SSH are disconnected automatically.
+
+        The `management ssh` sub-mode carries an `idle-timeout` value in minutes that closes an SSH session after that period without input. This check requires it to be nonzero; a value of 0 leaves sessions open indefinitely.
 
         **Why this matters**
 
-        Without an SSH idle timeout, inactive remote management sessions remain open indefinitely. If the SSH idle timeout is not configured:
+        An idle SSH session is a live, already-authenticated path into the switch that outlives the reason it was opened. It rides along on an operator's laptop through a commute, a coffee shop, and an evening at home, and anyone who reaches that unlocked screen or attaches to the terminal multiplexer it runs under holds privileged access to network infrastructure without ever presenting a credential.
 
-        - Forgotten sessions can be accessed by unauthorized users who gain access to the terminal.
-        - Unattended sessions on shared workstations pose a significant security risk.
-        - Security framework requirements for session management cannot be met.
-        - Connection resources remain consumed by idle sessions, potentially blocking legitimate access.
+        Jump hosts concentrate the problem. Where a shared bastion is the only route into the management network, forgotten sessions from many operators pile up on one machine, and a single compromise of that host hands over every one of them at once.
 
-        Configuring an SSH idle timeout ensures that inactive sessions are automatically closed, reducing the attack surface and freeing resources for active users.
+        Set the timeout to the shortest interval that does not disrupt normal work. Pair it with the console timeout that a companion check in this policy covers, since an aggressive SSH timeout achieves little if the serial path stays open forever.
       audit: |
         Verify the remote session idle timeout from the Arista EOS CLI:
 
@@ -824,18 +813,17 @@ queries:
       arista.eos.hostname.downcase != "localhost"
     docs:
       desc: |
-        This check verifies that a unique, descriptive hostname is configured. A meaningful hostname is essential for identifying the device in logs, alerts, and management systems.
+        This check verifies that the switch carries a unique, meaningful name rather than a factory default.
+
+        The name is set with `hostname <name>` in global configuration mode. This check requires it to be non-empty and to be something other than the generic values `switch`, `arista`, or `localhost`.
 
         **Why this matters**
 
-        Without a unique hostname, the device uses a generic default name that makes it difficult to manage effectively. If the hostname is not properly configured:
+        The hostname is the field every log record and accounting record is attributed to. When several devices in a fabric all report as `switch`, the collector cannot tell them apart, so an authentication failure or a configuration change is traceable to a class of device rather than to one, and responders lose the first question they need answered: which box.
 
-        - The device cannot be clearly identified in logs or management platforms.
-        - Log correlation and analysis across multiple devices becomes unreliable.
-        - Network topology documentation is incomplete or ambiguous.
-        - Security standards requiring unique device identification cannot be met.
+        The name is also the identity an operator sees at the prompt before typing a command. Generic names are directly responsible for the classic outage in which a change meant for a lab device lands on a production one, because nothing on the screen distinguished them.
 
-        Setting a descriptive hostname that includes location, function, or other identifying information ensures the device is easily recognizable across all operational and security workflows.
+        Encode enough to locate the device, such as site, row, and role, and keep the convention consistent across the fleet so tooling can parse it. The hostname is a prerequisite for SSH host key generation as well, so a device left at the default may be unable to bring up the SSH service at all.
       audit: |
         Verify the hostname from the Arista EOS CLI:
 
@@ -889,19 +877,17 @@ queries:
       arista.eos.eapi.httpServerConfigured == false
     docs:
       desc: |
-        This check verifies that the insecure HTTP protocol is disabled for the management API. HTTP transmits all data in clear text, making it unsuitable for device management.
+        This check verifies that the management API does not accept unencrypted HTTP connections.
+
+        The `management api http-commands` sub-mode selects which transports the API listens on. This check requires the plaintext listener to be absent, which is done with `no protocol http` once `protocol https` is running.
 
         **Why this matters**
 
-        The management API provides powerful control over the device, and using HTTP exposes that access to interception. If HTTP is not disabled:
+        This API is not a status page, it is full CLI execution over a request. Anything an operator can type at the prompt can be sent through it, so an intercepted HTTP call is not an information leak, it is an instruction channel. Over plaintext the credential travels in the clear on every request, and anyone positioned on the path, including on the switch's own management VLAN, reads it once and can then reconfigure the device at will.
 
-        - All API calls and credentials are transmitted in clear text and can be captured by anyone on the network.
-        - Authentication tokens and passwords are vulnerable to interception.
-        - Active sessions can be hijacked by attackers who observe the unencrypted traffic.
-        - Intercepted credentials can be used to execute arbitrary API commands against the device.
-        - Security standards requiring encrypted management interfaces cannot be met.
+        That position is easy to obtain here. Management traffic to network equipment usually crosses the very switches being managed, so an attacker who owns one device sees the plaintext sessions of its neighbors and pivots across the fabric on captured credentials alone.
 
-        Disabling HTTP and using only HTTPS ensures that all management API communications are encrypted and protected from eavesdropping and tampering.
+        Bring HTTPS up before removing the HTTP listener, because the change takes effect immediately and would otherwise cut off any session or automation still using plaintext. Automation that hardcodes an `http://` endpoint has to be updated in the same change. A companion check in this policy verifies that the HTTPS listener is enabled.
       audit: |
         Verify the management API protocol from the Arista EOS CLI:
 
@@ -958,18 +944,17 @@ queries:
       arista.eos.eapi.httpsServerConfigured == true
     docs:
       desc: |
-        This check verifies that HTTPS is enabled for secure API access. HTTPS encrypts all management API traffic using TLS, protecting credentials and data from interception.
+        This check verifies that the management API, where it is in use, serves requests over TLS.
+
+        This check applies only to switches whose configuration contains a `management api http-commands` block, and it requires the HTTPS listener within that block to be enabled with `protocol https`. Switches that do not run the API at all are out of scope.
 
         **Why this matters**
 
-        Without HTTPS enabled, the management API either operates over insecure HTTP or is not available at all. If HTTPS is not configured:
+        Automation is the heaviest user of this API, which means the credential in play is usually a service account with broad rights, replayed against every switch in the fabric many times an hour. Without TLS each of those calls exposes that credential and its payload to anyone on the path, and one capture yields programmatic control of the whole estate rather than of a single device.
 
-        - Credentials and data exchanged with the API are not protected by encryption.
-        - The identity of the device cannot be validated through server certificates.
-        - API communications are vulnerable to tampering by a man-in-the-middle attacker.
-        - Security standards requiring encrypted management interfaces cannot be satisfied.
+        TLS also authenticates the switch to the client, which matters more for a network device than for a server. An attacker who can redirect management traffic, which is straightforward for someone already holding one switch, can impersonate the API endpoint of another, harvest the automation credential, and return plausible responses so the tooling reports success while the real device goes untouched.
 
-        Enabling HTTPS ensures that all API access is encrypted, authenticated, and integrity-protected, meeting both security best practices and compliance requirements.
+        Where the API is enabled, removing the plaintext listener belongs in the same change, since serving both transports leaves the insecure one available to anything that has not been updated. Save with `write memory` so the listener survives a reload.
       audit: |
         Verify the management API HTTPS listener from the Arista EOS CLI:
 
@@ -1025,18 +1010,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that active interfaces have descriptions configured. Interface descriptions document the purpose and connected endpoint of each port, which is essential for both security and operational clarity.
+        This check verifies that every enabled data port on the switch is documented with a description.
+
+        Descriptions are set with `description <text>` inside an interface sub-mode. This check requires each interface outside the management range to carry one unless it is administratively disabled, so ports that are already shut are not flagged.
 
         **Why this matters**
 
-        Without interface descriptions, the purpose and expected connections for each port are undocumented. If descriptions are not configured:
+        A description is what makes an unexpected connection detectable. On a switch where every port states what it should be attached to, a link coming up on a port documented as serving a decommissioned rack is an obvious question. On an undocumented switch the same event is indistinguishable from normal activity, and an unauthorized device can sit on the fabric indefinitely because nobody can say what was supposed to be there.
 
-        - It is difficult to determine whether a connection on a given port is authorized.
-        - Configuration errors are more likely when the purpose of an interface is unclear.
-        - Security audits and compliance reviews take longer and are less effective.
-        - Troubleshooting network issues is slower without knowing what each interface connects to.
+        The same gap makes changes dangerous. Most self-inflicted outages on a switch come from an operator shutting or reassigning a port whose purpose was never written down, and the cost is whatever that port carried. On a device with a ten-year service life, the person who cabled it has usually left the company long before the person who has to change it arrives.
 
-        Adding descriptions to all active interfaces ensures that the network configuration is self-documenting, supporting faster troubleshooting, better change management, and more effective security reviews.
+        Descriptions capture intent, so update them when a port is repurposed rather than only when it is first provisioned. A stale description is worse than none, because it is believed. Ports meant to stay unused should be shut down instead, which a companion check in this policy covers.
       audit: |
         Verify interface descriptions from the Arista EOS CLI:
 
@@ -1091,17 +1075,17 @@ queries:
       arista.eos.runningConfig.content.lines.one(_ == /^logging buffered/)
     docs:
       desc: |
-        This check verifies that local buffered logging is configured. Buffered logging stores log messages in the device's memory, providing immediate local access to recent events.
+        This check verifies that the switch retains recent log messages in local memory.
+
+        Buffered logging is configured with `logging buffered <size> <severity>` in global configuration mode, for example `logging buffered 100000 informational`. This check requires such an entry in the running configuration.
 
         **Why this matters**
 
-        Without buffered logging, log messages may only be available on the console or at a remote syslog server. If buffered logging is not configured:
+        The local buffer is what remains when the network itself is the thing that is broken. Remote logging depends on reachability, so during precisely the events an operator most needs to investigate, a routing failure, an uplink flap, a management VLAN outage, records stop arriving at the collector. The buffer holds the messages from that window, and `show logging` on the console reads them back when nothing else works.
 
-        - Logs are not available locally for quick troubleshooting during an incident.
-        - If remote logging fails, there is no local backup of recent events.
-        - Log handling may be less efficient without a dedicated buffer.
+        It is also the record of what happened in the moments before a device stopped forwarding, which the collector never received. That short window frequently contains the actual cause, and without a buffer it is simply gone.
 
-        Configuring buffered logging ensures that recent log messages are always available on the device for rapid diagnosis, while also providing a safety net if remote logging is temporarily unavailable.
+        Size the buffer for the device's message rate rather than accepting a small default, since a busy switch can cycle a small buffer within minutes and leave nothing useful behind. The buffer lives in memory and does not survive a reload, so it complements remote logging rather than replacing it; a companion check in this policy covers the remote destination.
       audit: |
         Verify buffered logging from the Arista EOS CLI:
 
@@ -1153,19 +1137,17 @@ queries:
       arista.eos.runningConfig.content.lines.none(_ == /^no logging on$/)
     docs:
       desc: |
-        This check verifies that system logging is enabled on the switch. Logging captures authentication failures, configuration changes, security events, and other system activities that are critical for monitoring and auditing.
+        This check verifies that the switch's logging subsystem is running rather than switched off.
+
+        Logging is on by default in EOS and is disabled with `no logging on`. This check requires that statement to be absent from the running configuration; the fix is to restore logging with `logging on`.
 
         **Why this matters**
 
-        Without logging enabled, the device silently discards all event data. If system logging is not turned on:
+        Disabling logging is not a small configuration slip, it is the switch losing its senses. Authentication failures, interface transitions, spanning tree changes, and configuration events all stop being recorded anywhere, locally or remotely. The buffer stays empty, the syslog collector receives nothing, and every other logging control in this policy becomes decorative.
 
-        - Security events such as authentication failures and configuration changes go unrecorded.
-        - Investigating security incidents is impossible without log data.
-        - Compliance with virtually all security frameworks requires active logging.
-        - Diagnosing operational issues becomes significantly harder without event records.
-        - There is no audit trail documenting system activities.
+        Because the collector simply stops receiving records rather than receiving an error, a switch silenced this way looks identical to one that is merely quiet. That makes `no logging on` a useful move for an attacker with configuration access and an easy oversight for an operator who turned it off during a noisy troubleshooting session and never reverted.
 
-        Enabling system logging is a foundational security control that supports incident detection, investigation, compliance reporting, and day-to-day operations.
+        If logging was disabled deliberately to control volume, the right instrument is per-subsystem severity levels rather than a global off switch, which a companion check in this policy covers. Save the configuration after restoring logging, because the running configuration is what took effect and the startup configuration may still carry the disable.
       audit: |
         Verify that logging is enabled from the Arista EOS CLI:
 
@@ -1217,19 +1199,17 @@ queries:
       arista.eos.logging.hosts.length > 0
     docs:
       desc: |
-        This check verifies that logs are sent to a remote syslog server for centralized management. Sending logs off-device protects them from loss due to device failure or compromise and enables correlation across the network.
+        This check verifies that the switch ships its log messages to at least one remote collector.
+
+        Remote destinations are configured with `logging host <syslog-server-ip>` in global configuration mode, usually alongside `logging trap informational` to set the severity that is forwarded. This check requires at least one host to be configured.
 
         **Why this matters**
 
-        Without a remote syslog server configured, all logs exist only on the local device. If remote logging is not set up:
+        Local logs are under the control of whoever controls the device, and an attacker who reaches configuration mode can clear the buffer or turn logging off entirely. Records already sent to a collector are outside that reach, which is what separates an incident you can reconstruct from one you can only infer. It is also the only defense against the simplest evidence destruction available on a switch, which is a reload.
 
-        - Logs are lost if the device fails, reboots, or is compromised.
-        - Correlating events across multiple devices is not possible without centralized collection.
-        - SIEM systems cannot ingest logs for real-time security monitoring.
-        - Most compliance frameworks require centralized log management.
-        - An attacker who compromises the device can delete local logs to cover their tracks.
+        Correlation is the other half. A single switch's logs rarely reveal an attack; the pattern that does is one source failing authentication across a dozen devices, or a MAC address turning up on ports it has no business appearing on. That pattern exists only somewhere all the devices report.
 
-        Configuring remote syslog ensures that log data is preserved, centrally accessible, and tamper-resistant, enabling effective security monitoring and compliance.
+        Send to more than one destination where collector availability is a concern, and remember that severity filtering happens on the switch: a `logging trap` level set too high silently drops the very authentication events this is meant to preserve. Save with `write memory` so the destination survives a reload.
       audit: |
         Verify the remote syslog configuration from the Arista EOS CLI:
 
@@ -1282,18 +1262,17 @@ queries:
       arista.eos.runningConfig.content.lines.any(_ == /logging level/)
     docs:
       desc: |
-        This check verifies that logging levels are configured for capturing important events. Setting appropriate logging levels ensures that security-relevant events are recorded without overwhelming the system with unnecessary detail.
+        This check verifies that per-subsystem logging severities are set explicitly rather than left at defaults.
+
+        EOS assigns each logging facility a severity threshold, adjusted with statements such as `logging level all informational` and `logging level security debugging`. This check requires at least one explicit `logging level` statement in the running configuration.
 
         **Why this matters**
 
-        Without explicit logging levels, the device may use defaults that miss important events or generate excessive noise. If logging levels are not configured:
+        Defaults are tuned for operational noise, not for investigation. Left alone, several facilities log only at warning and above, so security-relevant events that sit at informational, session establishment, authorization decisions, access list matches, never reach the buffer or the collector at all. Nothing looks broken. The records simply do not exist when an investigation asks for them.
 
-        - Authentication and authorization events may not be captured at the default level.
-        - Troubleshooting is harder without sufficient log verbosity for the relevant subsystems.
-        - System performance can degrade if logging is too verbose across all subsystems.
-        - Compliance requirements that specify minimum logging levels cannot be verified.
+        Setting the levels explicitly also documents the intent. A switch whose configuration states what it captures can be audited against that statement, whereas one relying on defaults captures whatever the EOS release it happens to be running considers reasonable, and that can change across upgrades on a device that stays in service for a decade.
 
-        Configuring logging levels ensures the right balance between capturing security-relevant events and maintaining system performance.
+        Levels are a genuine tradeoff, since debugging across every facility can flood a collector and load the switch's own control plane. Raise verbosity for the security facility, hold the general level at informational, and confirm the receiving collector is sized for the resulting rate.
       audit: |
         Verify configured logging levels from the Arista EOS CLI:
 
@@ -1346,18 +1325,17 @@ queries:
       arista.eos.loginBanner.length > 0
     docs:
       desc: |
-        This check verifies that a login banner is configured to display legal notice. A login banner communicates that the device is for authorized use only and that activity may be monitored, which is important for legal protection.
+        This check verifies that the switch presents a legal access notice before a user authenticates.
+
+        The login banner is entered with `banner login` in global configuration mode, which opens a text-entry mode terminated by `EOF` on its own line. This check requires the banner to be non-empty.
 
         **Why this matters**
 
-        Without a login banner, there is no legal notice presented to users before they access the device. If a login banner is not configured:
+        The banner exists for what happens after an intrusion rather than to prevent one. Prosecutions and internal disciplinary actions for unauthorized access turn on whether the person was on notice that access was restricted and that activity was monitored. Without a banner, a defense that the system appeared open to use is available, and the monitoring records that would otherwise be the evidence can themselves be contested.
 
-        - There is no established expectation of monitoring, weakening legal standing.
-        - Unauthorized users are not warned of the legal consequences of their actions.
-        - Compliance with security frameworks and regulations that require banners cannot be met.
-        - Prosecution of unauthorized access may be more difficult without a clear warning.
+        It also sets the consent basis for the accounting trails elsewhere in this policy. Recording every command a user types is a form of monitoring, and in several jurisdictions and under many collective agreements the notice shown at login is what establishes that users were aware of it.
 
-        Configuring a login banner with appropriate legal language establishes the terms of access and strengthens the organization's legal position in the event of unauthorized use.
+        Use the wording your legal team supplies rather than a generic sample, and keep it free of anything that helps an attacker, such as the device model, its role in the network, or internal naming conventions. A companion check in this policy covers the message-of-the-day banner, which carries operational notices instead.
       audit: |
         Verify the login banner from the Arista EOS CLI:
 
@@ -1417,19 +1395,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that non-admin users don't have unrestricted privilege level 15 without role-based access control. Privilege level 15 grants full administrative access, which should be restricted through role assignments.
+        This check verifies that ordinary user accounts are constrained by a role rather than holding unrestricted administrative rights.
+
+        EOS grants command access through privilege levels and named roles. This check requires every local account other than `admin` either to sit below privilege 15 or to have a role assigned, which is done with `username <name> privilege 1 role <role>` alongside role definitions created in the `role` sub-mode.
 
         **Why this matters**
 
-        Without proper privilege separation, non-admin users may have full administrative access to the device. If role-based access control is not enforced:
+        Privilege 15 with no role is total control of the device. It can reconfigure any interface, add a mirroring session that copies production traffic to a port the attacker chose, change routing so flows detour through equipment they own, or shut the management interface and end all remote access. When a monitoring account or a junior operator's login carries that level, phishing one low-value credential is worth the same as phishing the network architect's.
 
-        - Users operate with more privileges than their role requires, violating the principle of least privilege.
-        - There is no granular control over which commands each user can execute.
-        - Audit trails are less meaningful when all users share the same privilege level.
-        - A compromised non-admin account could cause the same damage as a compromised admin account.
-        - Compliance frameworks that require privilege separation and least-privilege access cannot be satisfied.
+        Roles also give the audit trail meaning. If every account can do everything, an accounting record showing a destructive command tells you only that it happened, not that it was anomalous. When a read-only account is scoped to `show` commands, the same record from that account is an alarm rather than a line in a log.
 
-        Assigning specific roles to non-admin users ensures that each person can only perform operations appropriate to their responsibilities, limiting the blast radius of any compromised or misused account.
+        Scope automation accounts first, because they are the most numerous, the least watched, and their credentials sit in configuration management systems. Give each one a role holding exactly the commands its tooling runs. The `admin` account is intentionally out of scope here, since the emergency account has to keep full access.
       audit: |
         Verify user privilege assignments from the Arista EOS CLI:
 
@@ -1488,17 +1464,17 @@ queries:
       arista.eos.motdBanner.length > 0
     docs:
       desc: |
-        This check verifies that a message-of-the-day (MOTD) banner is configured. An MOTD banner communicates important information to users upon login, including security policies, support contacts, and maintenance schedules.
+        This check verifies that the switch displays a message-of-the-day notice to users who connect.
+
+        The banner is entered with `banner motd` in global configuration mode, using a text-entry mode terminated by `EOF` on its own line. This check requires it to be non-empty.
 
         **Why this matters**
 
-        Without an MOTD banner, users receive no information upon login about the device's policies or status. If an MOTD banner is not configured:
+        The message-of-the-day is the one place an operator reliably reads before touching a device, which makes it the right channel for state that the configuration does not show. A note that the switch is in a change freeze, that it is half-migrated, that its redundant pair is down, or that it is scheduled for decommissioning is what stops a well-intentioned change from causing an outage on a device that cannot absorb one.
 
-        - Security policies and requirements are not communicated to users at login.
-        - Contact information for support is not readily available.
-        - Users are not informed of scheduled maintenance or other operational notices.
+        It is also the fastest route to the person who knows. During an incident the operator at the prompt is often not the owner of the device, and a banner naming the responsible team and how to reach them saves the minutes normally spent hunting through inventory systems while a fabric is degraded.
 
-        Configuring an MOTD banner ensures that all users are presented with relevant security notices and operational information each time they access the device.
+        Keep this notice operational and put the legal warning in the login banner instead, which a companion check in this policy covers and which is shown before authentication rather than after. Leave out details that would assist an attacker who has already reached the prompt, such as adjacent device names or the switch's place in the topology.
       audit: |
         Verify the message-of-the-day banner from the Arista EOS CLI:
 
@@ -1552,18 +1528,17 @@ queries:
       arista.eos.runningConfig.content.lines.where(_ == /aaa authentication/).one(_ == /aaa authentication login console group/)
     docs:
       desc: |
-        This check verifies that multifactor authentication (MFA) is configured for console access. MFA requires users to present multiple authentication factors, such as a password combined with a token or certificate, before gaining access.
+        This check verifies that console logins are directed to an authentication server group capable of enforcing a second factor.
+
+        Sending console authentication to RADIUS or TACACS+ with `aaa authentication login console group radius local` is the prerequisite for multifactor authentication on the switch, because EOS has no second-factor mechanism of its own. This check requires the console login method list to name a server group rather than resolving locally.
 
         **Why this matters**
 
-        Without multifactor authentication, a single compromised password is enough to gain full access to the device. If MFA is not configured:
+        Administrative credentials for network devices are shared, long lived, and written down in more places than anyone admits: runbooks, ticket attachments, a password manager entry half the team can read. Any one of those leaks makes a password-only login enough to reach a device that can mirror traffic to an attacker-controlled port or blackhole a prefix. A second factor breaks that chain, because holding the password no longer produces a session.
 
-        - Compromised passwords provide immediate, unrestricted access.
-        - Phishing attacks that capture passwords succeed without a second factor to block them.
-        - Compliance with frameworks like NIST 800-171, PCI DSS v4.0, and Zero Trust architectures cannot be achieved.
-        - Administrative accounts, which are the most valuable targets, remain protected only by a password.
+        Switches are also where password-only access survives longest. A server fleet gets an identity provider rollout; the switches in the same data center keep the local accounts they were built with years earlier, because touching them risks an outage and nobody volunteers to be the cause of one.
 
-        Configuring MFA for console access ensures that stolen or guessed passwords alone are not sufficient to compromise the device, significantly raising the bar for attackers.
+        Pointing the method list at a server group is necessary but not sufficient. If the RADIUS or TACACS+ server validates only a password, logins remain single factor, and the second factor has to be enforced on that server through a push approval, a one-time passcode, or certificate-based authentication. Keep the `local` fallback so the console still works when the servers are unreachable, and test it, because an unreachable server group on the console is recovered only at the rack.
       audit: |
         Verify console authentication from the Arista EOS CLI:
 
@@ -1618,19 +1593,17 @@ queries:
     mql: arista.eos.users.where(nopassword == true) == []
     docs:
       desc: |
-        This check verifies that all user accounts on the Arista switch have password protection enabled. Accounts without passwords allow anyone with network or console access to log in without authentication.
+        This check verifies that no local account on the switch can log in without presenting a password.
+
+        EOS allows an account to be created with the `nopassword` attribute, which accepts any login attempt for that username with no credential at all. This check requires that no account carries it. Setting a secret with `username <name> secret 0 <password>` replaces the attribute.
 
         **Why this matters**
 
-        User accounts without password protection represent one of the most critical security vulnerabilities on a network device. If any account lacks a password:
+        A `nopassword` account is not a weak password, it is the absence of authentication. Anyone who can open a session to the management address, and anyone holding a console cable, becomes that user by typing the name. If the account also carries privilege 15, the first command can add a mirroring session copying a production VLAN to a port the attacker controls, and the network keeps forwarding as though nothing happened.
 
-        - Anyone with access to the device can log in to that account without any credentials.
-        - Password-less accounts can be exploited to escalate privileges and gain administrative control.
-        - Security standards that require password protection for all accounts are violated.
-        - Accountability and audit capabilities are compromised because actions cannot be attributed to authenticated users.
-        - Automated attack tools actively scan for and exploit accounts without passwords.
+        These accounts are almost always accidental leftovers: a placeholder created during a bring-up, a template applied to a lab switch that was later promoted to production, an account whose secret was removed during troubleshooting and never restored. Because they never fail a login, nothing ever draws attention to them, and a switch installed a decade ago can still be carrying one.
 
-        Ensuring all accounts require strong password authentication prevents unauthorized access and maintains accountability for all device activity.
+        There is no production configuration in which a password-free account is defensible. Remove accounts that are no longer needed with `no username <name>`, confirm with `show running-config section username` that no entry still contains the keyword, and save with `write memory` so a reload does not restore the old startup configuration.
       audit: |
         Verify that no accounts lack a password from the Arista EOS CLI:
 
@@ -1689,19 +1662,17 @@ queries:
     mql: arista.eos.ntp.status != "disabled"
     docs:
       desc: |
-        This check verifies that NTP time synchronization is enabled and operational. Accurate time is essential for correlating events across devices, validating certificates, and maintaining reliable audit logs.
+        This check verifies that the switch is synchronizing its clock with a time source.
+
+        This check requires the NTP subsystem to report a state other than disabled, which follows from configuring at least one `ntp server <address>` in global configuration mode.
 
         **Why this matters**
 
-        Without NTP synchronization, the device's clock may drift, causing timestamps to become inaccurate. If NTP is not enabled:
+        Every log record and accounting record the switch produces carries a timestamp, and a timestamp is only useful if it is comparable with those from every other device. Free-running switch clocks drift by minutes over months, so an investigation trying to establish whether the firewall denial came before or after the switch's authentication failure orders the events wrongly and reaches the wrong conclusion.
 
-        - Log events from different devices cannot be correlated because their timestamps are inconsistent.
-        - Forensic analysis of security incidents is unreliable when event timing is uncertain.
-        - TLS/SSL certificate validation may fail if the clock is too far off.
-        - Time-based authentication protocols such as Kerberos stop working with unsynchronized clocks.
-        - Audit log reliability is undermined by inaccurate timestamps.
+        Certificate validation depends on the same clock. Drift far enough and TLS sessions to the syslog collector or to an authentication server begin failing with an error that names the certificate rather than the time, which sends operators down the wrong diagnostic path for hours.
 
-        Enabling NTP ensures that the device maintains accurate time, which is foundational to security monitoring, incident response, and compliance.
+        Configure several sources rather than one, so a single unreachable server does not leave the clock adrift, and prefer sources inside your own network over public pools where the management network is meant to be isolated. A companion check in this policy verifies that servers are actually named in the configuration.
       audit: |
         Verify NTP synchronization from the Arista EOS CLI:
 
@@ -1756,18 +1727,17 @@ queries:
       arista.eos.ntp.servers.length > 0
     docs:
       desc: |
-        This check verifies that NTP servers are configured for time synchronization. Having explicitly configured NTP servers ensures the device synchronizes with trusted, reliable time sources.
+        This check verifies that specific time sources are named in the switch's configuration.
+
+        Servers are declared with `ntp server <address>` in global configuration mode, and this check requires at least one. Two or more drawn from independent sources is the practical target.
 
         **Why this matters**
 
-        Without configured NTP servers, the device cannot synchronize its clock even if NTP is enabled. If NTP servers are not specified:
+        Without a declared source the clock has nowhere to synchronize from, and a switch that has never been power cycled can hold a plausible-looking but wrong time for years with nothing to draw attention to it. The failure surfaces only during an investigation, when the device's records turn out not to line up with anything else.
 
-        - There is no time source for the device to synchronize against.
-        - A single server provides no failover if that source becomes unavailable.
-        - Using unauthenticated or untrusted NTP sources could allow time manipulation attacks.
-        - Accurate audit logging required for compliance depends on reliable time synchronization.
+        The choice of source is itself a security decision. NTP in its basic form is unauthenticated UDP, so a source an attacker can influence can move the switch's clock, and moving a clock backwards is a way to place activity in a log window nobody examines or to bring an expired certificate back into validity. Redundant sources on independent networks make that manipulation much harder, because a single lying server is outvoted rather than obeyed.
 
-        Configuring at least two NTP servers from trusted sources ensures redundant, reliable time synchronization for the device.
+        Prefer internal stratum 1 or 2 servers reachable over the management network to public pools, particularly where that network is meant to be isolated, and confirm that synchronization actually succeeded rather than inferring it from the presence of the configuration line.
       audit: |
         Verify configured NTP servers from the Arista EOS CLI:
 
@@ -1822,19 +1792,17 @@ queries:
       arista.eos.passwordPolicy.minimumLength > 0
     docs:
       desc: |
-        This check verifies that a minimum password length policy is configured on the switch. Password length is the single most important factor in password strength, as longer passwords exponentially increase the time required for brute-force attacks.
+        This check verifies that the switch enforces a minimum length on local account passwords.
+
+        The `management security` sub-mode carries a `password minimum length <n>` setting that refuses any local secret shorter than the configured value at the moment it is set. This check requires a nonzero minimum to be in effect.
 
         **Why this matters**
 
-        Without a minimum password length policy, users can set short passwords that are easily cracked. If a minimum length is not enforced:
+        Length is the only property of a password that reliably costs an attacker time. Offline cracking of a captured configuration is bounded by candidate count, and each additional character multiplies that count, while character-class rules mostly push users toward predictable substitutions that cracking tools expand for free. With no minimum in force, nothing stops an operator from setting a four-character secret on the account that reconfigures a data center fabric.
 
-        - Short passwords can be brute-forced in seconds or minutes.
-        - The security benefit of character variety is minimal compared to what length provides.
-        - Compliance with security frameworks that mandate minimum password lengths cannot be achieved.
-        - Current NIST guidelines, which emphasize length over complexity, are not followed.
-        - The device is more vulnerable to dictionary and brute-force attacks.
+        The stakes are unusual here because switch configurations circulate. They are collected by backup jobs, attached to vendor support cases, checked into repositories, and pasted into tickets. Every one of those copies contains the password hashes, so a short secret is not merely guessable over the network, it is crackable at leisure by anyone who ever received a copy of the configuration.
 
-        Configuring a minimum password length of at least 15 characters for administrative accounts provides substantial protection against credential-based attacks.
+        The setting applies when a password is set and is not retroactive, so short secrets configured earlier survive it. After configuring the minimum, reset the existing account passwords so they are actually held to it. Frameworks such as DISA STIG mandate 15 characters for network device administrative accounts; treat that as the floor unless an internal standard is stricter.
       audit: |
         Verify the minimum password length policy from the Arista EOS CLI:
 
@@ -1889,18 +1857,17 @@ queries:
       arista.eos.users.all(format == "sha512" || nopassword == true)
     docs:
       desc: |
-        This check verifies that local user passwords are stored as SHA-512 hashes rather than in cleartext or with weak, reversible encodings. Hashing stored credentials protects them whenever the configuration is viewed, shared, or backed up.
+        This check verifies that every local account on the switch either has no password by design or stores its secret under a strong hash.
+
+        EOS records each account's secret in the running configuration in the format it was hashed with. This check requires every account to be SHA-512 or explicitly password-free, which is arranged by setting `secret hash sha512` under `management defaults` before secrets are entered.
 
         **Why this matters**
 
-        Without strong hashing of stored credentials, passwords in the device configuration are exposed. If user secrets are stored in cleartext or with weak encodings:
+        The configuration of a switch is not a confidential document in practice. It is pulled nightly by a backup system, exported into a configuration repository, bundled into support cases sent to the vendor, and pasted into tickets during outages. Every one of those destinations is a place where an old MD5 or reversible entry becomes a working credential, and reversible encodings need no cracking at all, only the published algorithm.
 
-        - Passwords in the configuration can be read by anyone who views the configuration file.
-        - Configuration backups contain recoverable passwords that could be exposed.
-        - Security standards requiring credential protection in configuration files are not met.
-        - An additional layer of defense-in-depth protection is missing.
+        Because switches are replaced on a ten-year cycle, weak entries persist long past the point where anyone remembers creating them. A device commissioned before SHA-512 became the default keeps its original hashes through every subsequent EOS upgrade, because upgrading the operating system does not rehash stored secrets.
 
-        Setting SHA-512 as the default secret hashing algorithm ensures that every local user secret is stored as a strong one-way hash.
+        Setting the default hash governs secrets entered afterward, not those already present, so re-enter each existing user secret once the default is in place and confirm with `show running-config section username` that every entry reads `secret sha512`. Accounts this check accepts as password-free should not exist at all on a production device, which a companion check in this policy enforces separately.
       audit: |
         Verify stored password hashing from the Arista EOS CLI:
 
@@ -1956,19 +1923,17 @@ queries:
       arista.eos.runningConfig.content.contains("snmp-server community private") == false
     docs:
       desc: |
-        This check verifies that default SNMP community strings (public/private) are not configured. Default community strings are publicly known and are among the first things attackers try when probing network devices.
+        This check verifies that the switch does not use the well-known default SNMP community strings.
+
+        This check requires that neither `snmp-server community public` nor `snmp-server community private` appears in the running configuration. Remove them with `no snmp-server community public` and replace them using `snmp-server community <unique-string> ro`.
 
         **Why this matters**
 
-        Using default SNMP community strings is equivalent to leaving the device unprotected. If default strings are not removed:
+        A community string is a password sent in cleartext, and `public` and `private` are the two values every scanner tries first. Reaching a switch with a valid read string returns the interface inventory, the ARP and routing tables, VLAN membership, and neighbor information, which is a map of the internal network handed over without a single exploit. A valid write string is worse, because it allows configuration changes over UDP from anywhere that can reach the management address.
 
-        - Attackers can use the well-known "public" and "private" strings to access the device.
-        - Device information, including configuration details, can be queried by anyone.
-        - Network reconnaissance is trivial when default SNMP access is available.
-        - Write access with default strings allows attackers to modify the device configuration.
-        - Compliance with security standards that prohibit default credentials is violated.
+        SNMP is also the service most likely to have been enabled once for a monitoring rollout and then forgotten. The monitoring platform gets replaced, the polling stops, and the community string stays in the configuration of every switch for years, because nothing breaks when it is left behind.
 
-        Removing default community strings and replacing them with strong, unique values treats SNMP access with the same rigor as any other authentication credential.
+        The better destination is SNMPv3 with `snmp-server user <name> <group> v3 auth sha <password> priv aes <privpassword>`, which authenticates the request and encrypts the payload instead of relying on a shared cleartext token. Where v2c has to remain for a monitoring system that cannot yet do v3, keep it read-only, scope it with an access list, and rotate the string on the same schedule as any other credential.
       audit: |
         Verify SNMP community strings from the Arista EOS CLI:
 
@@ -2029,17 +1994,17 @@ queries:
       arista.eos.runningConfig.content.lines.none(_ == /^snmp-server host \S+.* (public|private)( |$)/)
     docs:
       desc: |
-        This check verifies that SNMP trap notifications don't use default community strings. SNMP traps send device status and event information to monitoring servers, and using default strings exposes this data to interception.
+        This check verifies that SNMP trap destinations are not configured with default community strings.
+
+        This check applies where SNMP is enabled and requires that no `snmp-server host` entry names `public` or `private`. Trap hosts are declared in global configuration mode, and the secure form points the destination at an SNMPv3 user with `snmp-server host <server-ip> version 3 priv <username>`.
 
         **Why this matters**
 
-        Without securing SNMP trap community strings, sensitive device and network information may be exposed. If default strings are used for traps:
+        Traps flow outward, so the exposure differs from polling. The switch initiates the message, which means an observer on the path receives a live feed of interface transitions, authentication failures, topology changes, and configuration events without ever reaching the device. That feed tells an attacker which links matter, when a maintenance window starts, and whether their activity has been noticed.
 
-        - Device status and network topology information is sent using well-known community strings.
-        - Security-relevant event notifications can be intercepted by unauthorized parties.
-        - The overall SNMP security posture is undermined even if polling uses strong strings.
+        Because v2c traps are unauthenticated, they can also be forged in the other direction. Anyone who knows the community string can send fabricated traps to the monitoring system, which is a practical way to bury a real alert under noise or to trigger an automated response that does the attacker's work for them.
 
-        Configuring SNMP traps with secure, unique community strings ensures that event notifications are only readable by authorized monitoring systems.
+        A non-default community string only removes the guessing step. SNMP v2c still sends traps in cleartext, readable by anyone on the path, so SNMPv3 with authentication and privacy is the actual fix. Where a monitoring system cannot yet receive v3, use a unique string as an interim measure and confine the trap path to the management network.
       audit: |
         Verify SNMP trap configuration from the Arista EOS CLI:
 
@@ -2101,18 +2066,17 @@ queries:
       arista.eos.sshSettings.enabled == true
     docs:
       desc: |
-        This check verifies that SSH is enabled for secure remote management access. SSH encrypts all management traffic, including credentials, and is the universally accepted standard for secure remote device administration.
+        This check verifies that the switch offers SSH for remote administration.
+
+        The SSH service is controlled from the `management ssh` sub-mode and started with `no shutdown`. This check requires it to be running.
 
         **Why this matters**
 
-        Without SSH enabled, secure remote management of the device is not possible. If SSH is disabled or shut down:
+        Without SSH the only remote path left is Telnet, which puts the administrative password on the wire in cleartext, or the serial console, which means every change requires someone in the building. Neither is workable. The first hands credentials to anyone on the path, and the second turns an urgent fix during an outage into a drive to the data center.
 
-        - Remote management must rely on insecure protocols like Telnet, which transmit credentials in clear text.
-        - Strong authentication methods such as public key authentication are not available.
-        - Management sessions are vulnerable to tampering and eavesdropping.
-        - Compliance with all major security frameworks that mandate encrypted management access cannot be achieved.
+        SSH is also the prerequisite for the authentication methods worth having. Public key authentication removes the shared password from the process entirely, which is what lets automation reach the device without a reusable secret sitting in a configuration file.
 
-        Enabling SSH ensures that all remote management sessions are encrypted, authenticated, and protected from interception.
+        The service needs host keys, and EOS cannot generate them until the device has both a hostname and a DNS domain name, so a switch missing either may leave SSH unable to start. Companion checks in this policy cover both. Harden the service from the same sub-mode by restricting the ciphers and key exchange algorithms it will negotiate, and disable Telnet once SSH access is confirmed working.
       audit: |
         Verify the SSH management service from the Arista EOS CLI:
 
@@ -2173,18 +2137,17 @@ queries:
       arista.eos.telnetService.enabled == false
     docs:
       desc: |
-        This check verifies that the insecure Telnet protocol is disabled on the switch. Telnet transmits all data, including passwords, in clear text and should never be used for network device management.
+        This check verifies that the switch does not accept Telnet connections.
+
+        Telnet is controlled from the `management telnet` sub-mode and turned off with `shutdown`. This check requires the service to be disabled.
 
         **Why this matters**
 
-        Telnet is inherently insecure and any credential transmitted over it should be considered compromised. If Telnet is not disabled:
+        Telnet carries the login prompt, the password, and every subsequent command as plaintext. An attacker with any read position on the management path, whether a mirrored port, a compromised neighboring switch, or a tap in a shared facility, does not need to attack the protocol at all. They read the administrator's password as it is typed and then log in as a legitimate user. No configuration makes that acceptable, which is why essentially every security framework prohibits Telnet outright on network equipment.
 
-        - All data including passwords is sent in plain text and can be captured by anyone on the network.
-        - Network sniffers can passively harvest credentials from Telnet sessions.
-        - An attacker can intercept and modify management traffic in transit.
-        - Compliance with virtually all security frameworks that prohibit Telnet is violated.
+        The session is modifiable as well as readable. Someone in path can inject commands into an established administrative session, so the change an operator believes they made may not be the change that reached the device.
 
-        Disabling Telnet and using SSH as the sole remote management protocol ensures that all management communications are encrypted and protected from interception.
+        Confirm SSH works from a separate session before disabling Telnet, especially if your current session runs over Telnet, because `shutdown` in that sub-mode disconnects it immediately. If a management system or an old terminal server script still depends on Telnet, migrate it within the same change rather than deferring the shutdown; deferral is how these listeners survive for a decade.
       audit: |
         Verify the Telnet management service from the Arista EOS CLI:
 
@@ -2245,18 +2208,17 @@ queries:
       arista.eos.runningConfig.content.lines.one(_ == /clock timezone (UTC|GMT)/)
     docs:
       desc: |
-        This check verifies that the system timezone is set to UTC or GMT for consistent logging. Using a standardized timezone across all infrastructure ensures that log timestamps can be directly compared without conversion.
+        This check verifies that the switch stamps its records in UTC or GMT rather than a local time zone.
+
+        The zone is set with `clock timezone UTC` in global configuration mode, and this check requires that statement in the running configuration.
 
         **Why this matters**
 
-        Without a standardized timezone, log entries from different devices use different time references, complicating analysis. If the timezone is not set to UTC or GMT:
+        Local time zones make log correlation lossy in ways that are easy to miss. A fabric spanning several sites produces records at several offsets, and an analyst comparing them either converts every timestamp by hand or, more often, gets one of them wrong and builds an incident timeline that is off by hours. UTC removes the conversion step entirely.
 
-        - Correlating events across devices in different locations requires manual time conversion.
-        - Forensic analysis of multi-device incidents is slower and more error-prone.
-        - Compliance frameworks that require UTC/GMT for audit logs are not satisfied.
-        - The industry standard practice of using UTC for infrastructure logging is not followed.
+        Daylight saving is the sharper edge. Twice a year a local zone produces an hour that occurs twice and an hour that never occurs, so records in the repeated hour cannot be ordered at all, and an event in the missing hour looks like a fabricated timestamp. Attacks during those windows are genuinely harder to reconstruct, and the ambiguity cannot be recovered after the fact.
 
-        Setting the timezone to UTC or GMT ensures consistent timestamps across all devices, enabling accurate event correlation and streamlined incident analysis.
+        Operators who prefer local time can convert in the analysis tool, which is the layer that actually knows where the reader is. Keep the devices themselves on UTC and keep it consistent across the fleet, since one switch in a local zone reintroduces the conversion problem for everything it is correlated against.
       audit: |
         Verify the system timezone from the Arista EOS CLI:
 
@@ -2313,18 +2275,17 @@ queries:
       ).all(interfaceStatus == "disabled")
     docs:
       desc: |
-        This check identifies interfaces that are not connected, have no description, and should be disabled. Shutting down unused interfaces prevents unauthorized devices from being connected to the network through open ports.
+        This check verifies that ports with nothing connected and no documented purpose are administratively shut down.
+
+        It examines interfaces outside the management range that are not connected and carry no description, and requires them to be in a disabled state, which is set with `shutdown` inside the interface sub-mode.
 
         **Why this matters**
 
-        Unused interfaces that remain enabled provide potential entry points for attackers. If unused interfaces are not administratively disabled:
+        An enabled port with no cable is an open network jack. Anyone who reaches the physical space, a visitor in a conference room, a contractor in a shared cage, a cleaner in an office with a floor box, plugs in and lands on the VLAN that port is assigned to, most often the default one, without touching any authentication. That is the cheapest possible entry into an internal network, and it leaves no record beyond a link-up message nobody reads.
 
-        - Unauthorized devices can be plugged into open ports and gain network access.
-        - The attack surface of the device is larger than necessary.
-        - Plug-and-play attacks that exploit enabled but unmonitored ports are possible.
-        - Compliance frameworks that require disabling unused ports cannot be satisfied.
+        Shutting the port also removes it from the paths an attacker already inside can use. A compromised device on the fabric can be moved onto an unused port to land in a different VLAN, and unused ports left in the default VLAN are what make that lateral move trivial.
 
-        Disabling unused interfaces and documenting the intended purpose of reserved ports reduces the physical attack surface and prevents unauthorized network access.
+        This check deliberately ignores ports that carry a description, so a port held in reserve for a planned deployment should be documented rather than left blank; that is the supported way to exclude it. Where port-based authentication is deployed on every access port, shutting unused ports is still worth doing, because it removes the dependency on that authentication holding.
       audit: |
         Verify the state of unused interfaces from the Arista EOS CLI:
 
@@ -2380,17 +2341,17 @@ queries:
       arista.eos.switchports.where(mode == "access").all(accessVlan != "1")
     docs:
       desc: |
-        This check verifies that no access ports are assigned to VLAN 1. VLAN 1 is the default VLAN on most switches and should not carry user traffic because it is a common target for attacks.
+        This check verifies that no access port on the switch places user traffic in VLAN 1.
+
+        Access ports are assigned with `switchport access vlan <id>` inside the interface sub-mode, and this check requires every port in access mode to name a VLAN other than 1.
 
         **Why this matters**
 
-        Using VLAN 1 for user traffic mixes it with management and control plane traffic, increasing security risk. If access ports remain on VLAN 1:
+        VLAN 1 is the default on every port that has never been configured, and it is where the switch's own control plane protocols live. Putting user devices in it merges the traffic that manages the network with the traffic the network carries, so a host on an access port shares a broadcast domain with spanning tree, discovery protocols, and frequently the management interface itself. From there an attacker can inject spanning tree frames to become the root bridge and pull traffic through a machine they control.
 
-        - User traffic is not isolated from management traffic, weakening network segmentation.
-        - The device is more exposed to VLAN hopping attacks that exploit VLAN 1's default status.
-        - Industry best practices for VLAN security are not followed.
+        Because VLAN 1 is a universal default, it is also the assumption every attack tool makes. Someone plugging into an unconfigured port expects VLAN 1 and expects it to reach something worthwhile, and on a switch that never moved off it, that expectation is correct.
 
-        Moving all access ports to dedicated user VLANs ensures proper traffic separation and reduces the risk of VLAN-based attacks.
+        Move access ports onto purpose-specific VLANs and leave VLAN 1 unused rather than merely renaming it, since the protection comes from nothing being in it. A companion check in this policy covers the related case of VLAN 1 serving as the native VLAN on trunks.
       audit: |
         Verify access-port VLAN assignments from the Arista EOS CLI:
 
@@ -2443,18 +2404,17 @@ queries:
       arista.eos.users.where(secret != "").all(format == "sha512")
     docs:
       desc: |
-        This check verifies that all user accounts use the strong SHA-512 password hashing algorithm. This cryptographically secure hash algorithm protects stored credentials from being recovered if the configuration is exposed.
+        This check verifies that accounts which do have a password set store it as a SHA-512 hash.
+
+        It examines only the accounts carrying a secret and requires the stored format to be SHA-512, so an account still holding an older MD5 hash or an unhashed value fails. Secrets are entered with `username <name> secret 0 <password>` once `secret hash sha512` is configured under `management defaults`, which lets EOS compute the hash rather than accepting one.
 
         **Why this matters**
 
-        Without strong password encryption, stored credentials are vulnerable to compromise. If weak algorithms like MD5 or plain text are used:
+        MD5 is not a slow hash and never was. Commodity graphics hardware works through candidates for it at rates measured in billions per second, so an MD5 entry lifted from a configuration backup yields the cleartext password for anything short of a long random string, usually within hours. SHA-512 as EOS applies it is far more expensive per candidate, which turns the same attack from a coffee break into a project.
 
-        - Passwords can be cracked using rainbow tables or brute-force attacks in a short time.
-        - Configuration backups containing weakly hashed passwords put all accounts at risk.
-        - Compliance with security standards that require strong cryptographic algorithms is violated.
-        - A single exposed configuration file could compromise every account on the device.
+        That difference matters most because network administrators reuse credentials across a fleet. Cracking one hash from one switch's configuration rarely yields access to one switch. It yields the password that the same build template pushed to every device in the estate, including the ones at the internet edge.
 
-        Using SHA-512 for all user passwords ensures that credentials remain protected even if the device configuration is inadvertently exposed or backed up insecurely.
+        Take care not to place a cleartext password after the `sha512` keyword, which expects an already computed hash and leaves the account unusable if given a plain string. Use the cleartext marker `0` and let the device hash it. A companion check in this policy applies the same requirement across all accounts, including those configured with no password at all.
       audit: |
         Verify user password hashing from the Arista EOS CLI:
 
@@ -2514,18 +2474,17 @@ queries:
       arista.eos.vlans.where(id != "1").all(name.downcase != /^vlan\d+$/)
     docs:
       desc: |
-        This check verifies that VLANs have descriptive names rather than default names. Descriptive VLAN names make the network configuration self-documenting, which is important for both operations and security.
+        This check verifies that VLANs on the switch carry descriptive names rather than the automatic default.
+
+        A VLAN created without a name is labeled `VLAN` followed by its number. This check requires every VLAN other than VLAN 1 to have been given a name with `name <descriptive-name>` in the `vlan` sub-mode.
 
         **Why this matters**
 
-        Without descriptive names, VLANs are identified only by their numeric IDs, making the configuration harder to understand and manage. If VLAN names are left as defaults:
+        VLAN names are the only place the segmentation policy is written down on the device itself. When a VLAN is called `VLAN0347`, nobody reviewing the configuration can say whether the port assigned to it belongs there, so the boundary between a guest network and a production one becomes a number that has to be looked up in a system which may no longer be current. Misassignments survive audits for exactly that reason.
 
-        - The purpose and usage of each VLAN is not apparent from the configuration.
-        - Unauthorized or misconfigured VLANs are harder to identify during security reviews.
-        - Diagnosing network issues takes longer when VLAN purposes are unclear.
-        - Configuration errors are more likely when administrators cannot easily distinguish between VLANs.
+        The cost lands during changes and incidents. An operator moving a port, or a responder deciding whether to isolate a segment, has to reconstruct which numbers mean what while a fabric is degraded. Names such as `GUEST_WIFI` or `PROD_SERVERS` make the wrong answer visibly wrong.
 
-        Naming VLANs descriptively ensures that the network configuration is clear and understandable, supporting efficient operations, better change management, and more effective security audits.
+        Keep the names consistent across the fabric, because the same VLAN number carrying different names on different switches misleads more than no name at all. VLAN 1 is intentionally out of scope here, since the goal for it is to be unused rather than well described.
       audit: |
         Verify VLAN names from the Arista EOS CLI:
 
@@ -2583,18 +2542,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that trunk ports use a native VLAN other than VLAN 1. The native VLAN on trunk ports carries untagged traffic, and using the default VLAN 1 exposes the network to well-known attacks.
+        This check verifies that trunk ports do not use VLAN 1 to carry their untagged traffic.
+
+        The native VLAN of a trunk is set with `switchport trunk native vlan <id>` inside the interface sub-mode. This check requires every trunk port to name a native VLAN that is both set and different from 1.
 
         **Why this matters**
 
-        Using VLAN 1 as the native VLAN on trunk ports creates specific, exploitable security weaknesses. If VLAN 1 remains the native VLAN:
+        The native VLAN is the one whose frames cross the trunk without a tag, and that untagged path is the mechanism behind VLAN hopping. An attacker on an access port in the native VLAN sends a frame carrying a VLAN tag of its own. The switch strips nothing, because the frame arrived untagged in the native VLAN, forwards it across the trunk, and the far-side switch honors the attacker's inner tag and delivers the frame into a VLAN the attacker was never permitted to reach. Segmentation between a guest network and a production one fails in a single hop.
 
-        - Attackers can perform VLAN hopping attacks by exploiting the default native VLAN configuration.
-        - Control plane traffic carried on VLAN 1 by spanning tree is mixed with user traffic.
-        - Security standards that recommend avoiding VLAN 1 for any traffic are not followed.
-        - The device's default configuration becomes a known attack vector.
+        VLAN 1 makes this trivial because it is the default at both ends. The attacker does not need to discover the native VLAN or get a port assigned to it, since the unconfigured port they plugged into is already there.
 
-        Configuring a dedicated, unused VLAN as the native VLAN on trunk ports eliminates VLAN hopping risks and separates control plane traffic from user data.
+        Use a dedicated VLAN as the native on trunks and assign no access ports to it, so no host is in a position to originate the crafted frame in the first place. A companion check in this policy covers access ports left in VLAN 1, and the two are worth fixing together because either alone leaves part of the path intact.
       audit: |
         Verify trunk native VLAN assignments from the Arista EOS CLI:
 
@@ -2652,19 +2610,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that all BGP peers have an inbound route map configured. Inbound route filtering controls which prefixes are accepted from each peer, preventing route hijacking and accidental route leaks from affecting the network.
+        This check verifies that every BGP neighbor has an inbound policy applied to the routes it sends.
+
+        An inbound policy is attached with `neighbor <peer-ip> route-map <name> in` inside the `router bgp` sub-mode, normally matching a prefix list of the routes that peer is authorized to originate. This check applies where a BGP router is configured and requires an inbound policy on every peer in every VRF.
 
         **Why this matters**
 
-        Without inbound route filtering, a BGP peer can advertise arbitrary prefixes and the router will accept them. If inbound route maps are not configured:
+        Without an inbound filter the router accepts whatever its neighbor advertises. A peer that has been compromised, or merely misconfigured, can announce a more specific version of your own prefixes and pull the traffic for them onto its own links, where it can be read, altered, or dropped. This is the mechanism behind essentially every publicized route hijack, and the victim's router participates willingly because nothing ever told it which prefixes were legitimate.
 
-        - A compromised or misconfigured peer can inject false routes, redirecting traffic through attacker-controlled infrastructure.
-        - Accidental route leaks from peers can cause traffic blackholes or suboptimal routing.
-        - The router has no mechanism to enforce prefix ownership or limit the scope of accepted routes.
-        - BGP hijacking attacks become trivial when there is no prefix validation.
-        - Compliance requirements for network boundary protection and information flow control cannot be met.
+        Scale is what makes this severe rather than merely wrong. A single accepted prefix redirects every flow toward it, so one bad advertisement can move an entire service's traffic through infrastructure the attacker controls while no host or firewall registers a change.
 
-        Configuring inbound route maps on all BGP peers ensures that only expected, authorized prefixes are accepted, protecting the network from route hijacking and misrouting.
+        Build the prefix list from what each peer is authorized to originate, not from what it happens to send today, and revisit it when peering agreements change. Peers inside a tightly controlled internal fabric are sometimes run without filters by design, but that should be a documented decision rather than the residue of a neighbor added in a hurry.
       audit: |
         Verify inbound BGP route filtering from the Arista EOS CLI:
 
@@ -2726,19 +2682,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that all BGP peers have an outbound route map configured. Outbound route filtering controls which prefixes are advertised to each peer, preventing internal routes from being leaked to external networks.
+        This check verifies that every BGP neighbor has an outbound policy applied to the routes the switch advertises to it.
+
+        An outbound policy is attached with `neighbor <peer-ip> route-map <name> out` inside the `router bgp` sub-mode, normally matching a prefix list of the routes intended for that peer. This check applies where a BGP router is configured and requires an outbound policy on every peer in every VRF.
 
         **Why this matters**
 
-        Without outbound route filtering, the router may advertise internal or sensitive prefixes to external peers. If outbound route maps are not configured:
+        Without an outbound filter the router re-advertises whatever it has learned, which is how a route leak happens. Routes received from one provider get passed to another, and the switch suddenly attracts transit traffic for networks it has no capacity to carry. The result is congestion and dropped traffic both for your own users and for third parties, and it is a failure mode that has taken large portions of the internet offline more than once.
 
-        - Internal network topology is exposed to external peers, aiding reconnaissance.
-        - Private or infrastructure prefixes may be advertised to the internet, causing routing conflicts.
-        - Accidental route leaks can disrupt traffic for other networks that accept the leaked prefixes.
-        - The organization may become an unwitting participant in route hijacking incidents.
-        - Network boundary protection requirements cannot be satisfied without controlling outbound route advertisements.
+        Outbound filtering is also a disclosure control. The set of prefixes advertised to an external peer describes the internal structure of the network, and announcing infrastructure or management ranges outward tells an attacker exactly where to aim while making those ranges reachable from outside.
 
-        Configuring outbound route maps on all BGP peers ensures that only intended prefixes are advertised, protecting internal network information and preventing route leaks.
+        Define what each peer should receive and let the policy deny everything else, rather than enumerating known-bad prefixes to filter out. As with inbound policy, internal peers in a controlled fabric may deliberately run without filters; the risk being managed here is the peer that faces a network you do not administer.
       audit: |
         Verify outbound BGP route filtering from the Arista EOS CLI:
 
@@ -2800,18 +2754,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that all BGP peers have descriptions configured. Peer descriptions document the purpose, owner, and circuit details of each BGP session, which is essential for security auditing and incident response.
+        This check verifies that every BGP neighbor is documented with a description.
+
+        Descriptions are set with `neighbor <peer-ip> description <text>` inside the `router bgp` sub-mode. This check applies where a BGP router is configured and requires a description on every peer in every VRF.
 
         **Why this matters**
 
-        Without descriptions on BGP peers, the identity and purpose of each peering session is undocumented. If peer descriptions are not configured:
+        A BGP session is a standing agreement to accept routing information from another party, and an undocumented one cannot be evaluated. During a configuration review a peer address alone does not say who it belongs to, whether the session is still supposed to exist, or what it is permitted to send, so an unauthorized or long-obsolete neighbor sits in the configuration indefinitely because nobody can be sure it is safe to remove.
 
-        - It is difficult to determine whether a BGP session is authorized during a security review.
-        - Rogue or unauthorized peering sessions are harder to identify without documented baselines.
-        - Incident response is slowed when operators must research the purpose of each peer.
-        - Configuration audits and change management are less effective without documented intent.
+        The gap costs the most during a routing incident, when the question is which peer sent the offending prefix and who to call about it. Time spent tracing an address through inventory systems and old tickets is time the traffic keeps flowing the wrong way.
 
-        Adding descriptions to all BGP peers ensures that peering sessions are self-documenting, supporting faster incident response, more effective audits, and easier identification of unauthorized sessions.
+        Record the peer organization, the circuit identifier, and the purpose of the session so the description answers those questions on its own. Update it when a circuit is re-provisioned, because a description naming a provider replaced two years ago misdirects the very investigation it exists to help.
       audit: |
         Verify BGP peer descriptions from the Arista EOS CLI:
 
@@ -2869,21 +2822,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that all configured BGP peers are in the Established state. A peer that is not Established indicates a connectivity failure, authentication mismatch, or potential security issue that requires investigation.
+        This check verifies that every configured BGP neighbor has actually reached the Established state.
+
+        It applies where a BGP router is configured and requires each peer in each VRF to report Established, meaning the session negotiated successfully and is exchanging routes. A peer sitting in Idle or Active is down.
 
         **Why this matters**
 
-        BGP peers that are not in the Established state may indicate active security or operational issues. If peers are stuck in Idle, Active, or other non-established states:
+        Unlike the other checks in this policy, this one reports a live condition rather than a configuration setting. A peer that is not Established is a routing path that exists on paper and not in the network, so the redundancy the design assumed is absent and traffic is already taking a route other than the intended one. If it is the last session toward a destination, that destination is unreachable.
 
-        - Routing redundancy is reduced, which may cause traffic to take unexpected paths.
-        - Authentication failures could indicate credential compromise or unauthorized peering attempts.
-        - A peer stuck in Active state may signal a man-in-the-middle attack or TCP hijacking attempt.
-        - Network partitioning from failed BGP sessions can create routing blackholes.
-        - Monitoring systems may not have full visibility into network health without established BGP sessions.
+        The reason a session is down can be a security event rather than a cable. An authentication key mismatch means somebody changed a credential on one side, and a peer that repeatedly reaches Active without establishing can indicate that the TCP session is being interfered with in path. Both look like an ordinary outage on a monitoring dashboard.
 
-        Ensuring all BGP peers are in the Established state confirms that peering sessions are healthy, authenticated, and exchanging routes as expected.
-
-        **Note:** Peers that are intentionally shut down (admin down via `neighbor shutdown`) will also be flagged by this check. During maintenance windows or decommissioning, this is expected and the finding can be acknowledged until the peer is removed from the configuration.
+        Start with `show ip bgp summary` and `show ip bgp neighbors <peer-ip>` to find the cause. The usual candidates are a wrong peer address or AS number, an authentication key mismatch, a path failure between the peers, or a firewall blocking TCP port 179. Peers intentionally shut down for maintenance or decommissioning are flagged as well, which is expected; remove them from the configuration once that decision is final rather than leaving them down indefinitely.
       audit: |
         Verify BGP peer session state from the Arista EOS CLI:
 
@@ -2939,21 +2888,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that all access control lists contain at least one explicit deny entry. While Arista EOS has an implicit deny at the end of each ACL, relying solely on implicit behavior makes the security intent unclear and prevents logging of denied traffic.
+        This check verifies that each access control list ends with a deny rule that is written down rather than merely implied.
+
+        Every EOS access list already denies anything it does not permit, but that implicit behavior cannot be logged or reviewed. This check requires each list to contain at least one explicit `deny` entry, added in the `ip access-list standard` sub-mode with a sequence number higher than every existing entry so it stays last.
 
         **Why this matters**
 
-        Without explicit deny entries, ACLs rely entirely on the implicit deny, which has significant operational and security drawbacks. If explicit deny rules are not present:
+        The implicit deny drops traffic silently. Nothing is counted and nothing is logged, so a scan probing a filtered management network, or a compromised host repeatedly reaching for a segment it should not touch, produces no evidence at all. An explicit entry is a rule that can carry the `log` keyword, and that is the difference between a filter that blocks an attack and one that also tells you the attack happened.
 
-        - Denied traffic is not logged because implicit deny entries cannot trigger logging.
-        - The security intent of the ACL is ambiguous to anyone reviewing the configuration.
-        - It is impossible to distinguish between intentionally denied traffic and traffic denied by default.
-        - Troubleshooting access issues is harder when there is no visible deny rule to confirm blocking behavior.
-        - Compliance frameworks that require deny-by-default with explicit access control documentation cannot be satisfied.
+        An explicit entry makes the policy reviewable too. When the last line states what is denied, an auditor can confirm the list is deny-by-default without knowing the platform's implicit behavior, and an operator troubleshooting a blocked connection can see the rule that matched instead of inferring it from an absence.
 
-        Adding explicit deny entries to all ACLs makes the security policy visible, auditable, and capable of generating logs for denied traffic.
-
-        **Note:** Some ACLs are legitimately permit-only, such as those used for route-map match clauses or BGP prefix filters. If this check flags such ACLs, verify that they are not used for traffic filtering before adding deny entries.
+        The entry matches the same traffic the implicit deny already dropped, so adding it does not change forwarding for a list that already ended that way. Some lists are legitimately permit-only, such as those used for route-map match clauses or BGP prefix filtering, where a deny changes what the match means; confirm a flagged list is used for traffic filtering before adding one.
       audit: |
         Verify explicit deny entries from the Arista EOS CLI:
 
@@ -3011,19 +2956,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that all deny entries in access control lists have logging enabled. Logging denied traffic is essential for detecting attacks, identifying misconfigured clients, and maintaining a complete security audit trail.
+        This check verifies that the deny rules in each access control list record what they block.
+
+        The `log` keyword on an access list entry makes the switch emit a message whenever traffic matches it. This check requires every entry with a deny action to carry it, which is applied by re-entering the entry at its existing sequence number with `log` appended.
 
         **Why this matters**
 
-        Without logging on deny entries, blocked traffic is silently dropped with no record. If ACL deny logging is not enabled:
+        A deny rule without logging enforces the policy and reports nothing, so the only traffic anyone ever sees is the traffic that was allowed. The connections that were blocked, which is where reconnaissance, lateral movement attempts, and compromised hosts calling outward show up first, leave no trace. The filter works and the attack behind it stays invisible.
 
-        - Blocked attack attempts are not recorded, making threat detection impossible.
-        - There is no visibility into what traffic is being denied and why.
-        - Security incident investigations lack evidence of blocked access attempts.
-        - Trends in denied traffic that could indicate scanning or probing activity go undetected.
-        - Compliance requirements for logging security-relevant events at network boundaries cannot be met.
+        These records are also what distinguish a probe from a mistake. A handful of denials from one internal host is usually a misconfigured client; a steady sweep of denials across ports and destinations from that same host is a machine somebody else is driving. Neither is visible without the log entries, and only their pattern over time tells them apart.
 
-        Enabling logging on all ACL deny entries ensures that blocked traffic is recorded, supporting real-time threat detection, forensic investigation, and compliance reporting.
+        Denied traffic can be high volume on an internet-facing list, so confirm the collector can absorb it and consider logging the entries whose matches are meaningful rather than switching it on everywhere at once. A companion check in this policy covers the presence of the explicit deny entries this logging attaches to.
       audit: |
         Verify ACL deny logging from the Arista EOS CLI:
 
