@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-stackit-security
     name: Mondoo STACKIT Security
-    version: 1.2.0
+    version: 1.2.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -133,12 +133,19 @@ queries:
       stackit.server.securityGroups.length > 0
     docs:
       desc: |
-        This check ensures that every STACKIT compute server is associated with at least one security group. Security groups are the primary mechanism for controlling inbound and outbound network traffic to a server; a server with no security group attached has no stateful network filtering applied at the instance level.
+        This check verifies that every STACKIT server has at least one security group attached.
+
+        A security group is the stateful packet filter STACKIT applies at the server's network interface. The check reads the security groups attached to each server and requires at least one.
 
         **Why this matters**
 
-        - **No instance-level filtering:** Without a security group, the server relies entirely on network-level controls, increasing the chance of unintended exposure.
-        - **Inconsistent posture:** Servers missing a security group are easy to overlook in audits and drift from the project's intended baseline.
+        A server with no security group has nothing filtering traffic at its interface. Whether anything reaches it then depends entirely on network placement, which is a property nobody reviews when they add a service to a machine.
+
+        That produces exposure by accident rather than by decision. An application bound to all interfaces for local testing, a database started with its default listener, or a management agent installed alongside something else all become reachable, and none of those choices was made with the network in mind.
+
+        Attaching a group also changes what happens next. Security groups are the object an operator reviews, an auditor reads, and a change is recorded against. A server without one is invisible to every one of those processes, so a later question about what may reach it has no answer beyond reading routing tables.
+
+        Attach a group even when the intended answer is that nothing should reach the server. An explicit group denying inbound traffic states the intent and can be reviewed; the absence of a group states nothing.
       audit: |
         ### Audit via Console
 
@@ -216,12 +223,19 @@ queries:
       stackit.volumes.all(encrypted == true)
     docs:
       desc: |
-        This check ensures that all STACKIT block storage volumes are encrypted at rest. Encryption at rest protects the confidentiality of data stored on a volume if the underlying physical media is accessed outside of the normal service boundary.
+        This check verifies that STACKIT block storage volumes are encrypted at rest.
+
+        Encryption is selected when a volume is created and cannot be turned on afterward for an existing volume. The check reads each volume's encryption state and requires it to be enabled.
 
         **Why this matters**
 
-        - **Data confidentiality:** Encryption protects sensitive data on the volume from disclosure if storage media is decommissioned or accessed improperly.
-        - **Compliance:** Many frameworks require encryption of data at rest for regulated workloads.
+        Volume encryption protects data from everyone who can reach the storage but not the running instance. That includes anyone recovering decommissioned media, anyone who obtains a copy of the backing storage, and anyone with access to the platform layer beneath the virtual machine.
+
+        It also travels with the data. Snapshots and images taken from an encrypted volume stay encrypted, and those artifacts are the ones most likely to be copied between projects, shared with a support engagement, or left behind long after the instance is gone.
+
+        For a European sovereign cloud, this control also carries regulatory weight. Encryption at rest is the technical measure most often cited under GDPR for reducing the consequences of a storage breach, and the distinction between an encrypted and an unencrypted volume can decide whether an incident is reportable.
+
+        The constraint to plan around is that encryption is a create-time decision. An unencrypted volume must be replaced by creating an encrypted one and migrating the data, so this is a check to satisfy at provisioning rather than remediate later.
       audit: |
         ### Audit via Console
 
@@ -295,12 +309,19 @@ queries:
       stackit.securityGroups.all(rules.where(direction == "ingress" && portRangeMin <= 22 && portRangeMax >= 22).none(ipRange == "0.0.0.0/0" || ipRange == "::/0"))
     docs:
       desc: |
-        This check ensures that no security group rule permits inbound SSH (TCP port 22) from the entire internet (`0.0.0.0/0` or `::/0`). SSH grants interactive shell access; exposing it to the world dramatically increases the risk of brute-force and credential-stuffing attacks.
+        This check verifies that no STACKIT security group allows SSH from the entire internet.
+
+        The check reads every ingress rule whose port range covers 22 and requires that none of them uses the source `0.0.0.0/0` or `::/0`.
 
         **Why this matters**
 
-        - **Direct administrative exposure:** A world-open SSH port is continuously scanned and attacked across the internet.
-        - **Credential risk:** Exposed SSH endpoints are a primary target for password-guessing and key-compromise attacks.
+        An SSH port open to the internet is found within minutes of being opened. Internet-wide scanning is continuous and automated, and the credential-guessing traffic that follows never stops.
+
+        That turns every account on the machine into a target, and it means the host's security rests entirely on its own SSH configuration. Any weakness there, a password-authenticated account, a service account with a shell, a key left behind by a departed engineer, becomes remotely reachable rather than locally contained.
+
+        The volume is a problem in itself. Continuous authentication failures fill logs, obscure genuine access attempts, and make it substantially harder to notice the one attempt that succeeded.
+
+        Restrict the source to the specific ranges administrators connect from. Where access must be broad, put SSH behind a bastion host or a VPN so that exactly one hardened entry point is exposed rather than every server, and consider that the IPv6 rule matters as much as the IPv4 one since `::/0` is equally open and easier to overlook.
       audit: |
         ### Audit via Console
 
@@ -375,12 +396,19 @@ queries:
       stackit.securityGroups.all(rules.where(direction == "ingress" && portRangeMin <= 3389 && portRangeMax >= 3389).none(ipRange == "0.0.0.0/0" || ipRange == "::/0"))
     docs:
       desc: |
-        This check ensures that no security group rule permits inbound RDP (TCP port 3389) from the entire internet (`0.0.0.0/0` or `::/0`). RDP provides remote desktop access to Windows servers and is a frequent target of automated attacks and ransomware campaigns when exposed publicly.
+        This check verifies that no STACKIT security group allows RDP from the entire internet.
+
+        The check reads every ingress rule whose port range covers 3389 and requires that none of them uses the source `0.0.0.0/0` or `::/0`.
 
         **Why this matters**
 
-        - **Remote desktop exposure:** Publicly reachable RDP is aggressively scanned and exploited.
-        - **Ransomware vector:** Internet-facing RDP is one of the most common initial-access vectors for ransomware.
+        An exposed RDP port is the most reliable initial access vector in ransomware operations. Access brokers scan for it continuously, guess or buy credentials, and sell working access to groups who deploy the payload, which is why RDP appears at the start of so many incident timelines.
+
+        The protocol makes this worse than the equivalent SSH exposure in two ways. RDP hands the attacker a full interactive desktop session rather than a shell, and Windows accounts are more often password-authenticated than key-authenticated, so guessing is a viable strategy rather than a futile one.
+
+        RDP has also carried pre-authentication remote code execution vulnerabilities, notably the wormable class that prompted out-of-band patches for end-of-life Windows versions. A port exposed to the internet is exposed to those before any credential is involved.
+
+        Restrict the source to specific administrative ranges, and prefer reaching Windows servers through a VPN or a bastion. Where RDP must be exposed, require network level authentication so that credentials are checked before a session is created.
       audit: |
         ### Audit via Console
 
@@ -455,12 +483,19 @@ queries:
       stackit.securityGroups.all(rules.where(direction == "ingress").where(ipRange == "0.0.0.0/0" || ipRange == "::/0").where(portRangeMin == null || portRangeMin <= 1).none(portRangeMax == null || portRangeMax >= 65535))
     docs:
       desc: |
-        This check ensures that no security group rule permits inbound traffic on all ports from the entire internet (`0.0.0.0/0` or `::/0`). A rule that opens the full port range to the world exposes every service running on attached servers, including those never intended to be reachable externally.
+        This check verifies that no STACKIT security group opens the entire port range to the entire internet.
+
+        The check reads ingress rules sourced from `0.0.0.0/0` or `::/0` and fails any rule whose port range spans the whole space, from 1 or lower through 65535 or higher, including rules that leave the range unset.
 
         **Why this matters**
 
-        - **Broad attack surface:** An all-ports world-open rule exposes every listening service, including management and database ports.
-        - **Defeats segmentation:** Such a rule negates the benefit of fine-grained network controls.
+        An allow-all rule is not a firewall configuration, it is the absence of one. Every service on every attached instance becomes reachable from anywhere, including the ones nobody knows are listening.
+
+        That last part is what makes this severe rather than merely broad. Instances run more listeners than their owners realize: management agents, metrics endpoints, orchestration daemons, database default ports, and services bound to all interfaces during development. An allow-all rule exposes all of them at once, and the inventory of what it exposed changes every time software is installed.
+
+        Rules like this are usually temporary by intention. They are added to unblock a connectivity problem under time pressure, with the plan to narrow them later, and they survive because nothing breaks when they stay.
+
+        Replace with rules that name the ports the workload actually serves and the sources it serves them to. If the rule exists because the required scope is unknown, find out by observing traffic rather than by permitting everything, since an allow-all rule guarantees the answer will never be needed.
       audit: |
         ### Audit via Console
 
@@ -535,12 +570,19 @@ queries:
       stackit.albLoadBalancers.all(disableTargetSecurityGroupAssignment == false)
     docs:
       desc: |
-        This check ensures that STACKIT application load balancers (ALBs) do not disable automatic target security group assignment. When this assignment is disabled, the load balancer's targets are not automatically protected by the managed security group, which can leave backend servers reachable from unintended sources.
+        This check verifies that STACKIT application load balancers assign security groups to their targets.
+
+        Target security group assignment is what lets the load balancer's own group be referenced in the rules protecting the instances behind it. The check reads each load balancer and requires that the assignment is not disabled.
 
         **Why this matters**
 
-        - **Backend exposure:** Without the target security group, backend servers may be reachable outside the intended load-balancer path.
-        - **Posture drift:** Disabling managed assignment shifts responsibility to manual rules that are easy to misconfigure.
+        The point of putting instances behind a load balancer is that the load balancer becomes the only thing that reaches them. That requires the backend instances to accept traffic from the load balancer specifically, which requires the load balancer to have an identity the backend rules can name.
+
+        With the assignment disabled, that identity is missing, and the rules have to fall back on something else. In practice the something else is a broad CIDR range, or the whole internet, because whoever is writing the rule needs the health checks and forwarded requests to arrive and has no precise source to permit.
+
+        The result is backend instances reachable directly, bypassing the load balancer entirely. Everything the load balancer was placed there to do, terminating TLS, distributing load, applying request handling, is optional for an attacker who can address the instances themselves.
+
+        Leave the assignment enabled, then write backend ingress rules that reference the load balancer's security group rather than an address range. That way the path stays enforced as instances are added and removed.
       audit: |
         ### Audit via Console
 
@@ -646,14 +688,19 @@ queries:
       stackit.objectStorage.bucket.objectLockEnabled == true
     docs:
       desc: |
-        This check ensures that STACKIT Object Storage buckets have Object Lock (write-once-read-many, WORM) enabled. Object Lock protects objects from being overwritten or deleted for a defined retention period, which is important for compliance, ransomware resilience, and audit-log integrity.
+        This check verifies that STACKIT Object Storage buckets have Object Lock enabled.
+
+        Object Lock applies write-once-read-many semantics: an object under a retention period cannot be overwritten or deleted until that period expires, and the platform enforces this regardless of the caller's permissions. It can only be enabled when the bucket is created. The check reads each bucket's Object Lock state.
 
         **Why this matters**
 
-        - **Ransomware resilience:** WORM-protected objects cannot be encrypted or deleted by an attacker who gains write access.
-        - **Tamper-evidence:** Retained objects support reliable forensic and compliance evidence.
+        Backups protect against losing data. Object Lock protects against someone deleting the backups, which is a different problem and the one that decides whether a ransomware incident is recoverable.
 
-        Note: Object Lock must be enabled at bucket creation. Apply this check to buckets that store audit logs, backups, or regulated data.
+        Modern ransomware operations target backups first and deliberately. The playbook is to obtain credentials with storage permissions, enumerate the buckets, destroy or encrypt the backup copies, and only then encrypt production, because an organization that can restore does not pay. Ordinary access controls do not stop this, since the attacker is using legitimate permissions.
+
+        Object Lock breaks that sequence by moving enforcement below the permission layer. An object under retention cannot be deleted by an administrator, by the account that created it, or by anyone holding any credential, because the storage platform itself refuses.
+
+        The constraint is that Object Lock is a create-time property. Turning it on for an existing bucket is not possible; the bucket must be recreated and its contents migrated. Plan retention periods carefully as well, since data under retention cannot be removed early even when you want it gone.
       audit: |
         ### Audit via Console
 
@@ -719,12 +766,19 @@ queries:
       stackit.objectStorage.bucket.objectLockEnabled == false || stackit.objectStorage.bucket.defaultRetentionDays > 0
     docs:
       desc: |
-        This check ensures that STACKIT Object Storage buckets which have Object Lock enabled also define a default retention period greater than zero. Object Lock without a default retention leaves new objects unprotected unless retention is set per-object, which is easy to miss.
+        This check verifies that STACKIT Object Storage buckets with Object Lock enabled also define a default retention period.
+
+        The check passes a bucket that does not have Object Lock enabled, and for buckets that do, requires a default retention of at least one day.
 
         **Why this matters**
 
-        - **Consistent protection:** A default retention guarantees every new object is WORM-protected without relying on per-object configuration.
-        - **Operational safety:** Reduces the chance of objects being deletable due to a forgotten retention setting.
+        Object Lock without a default retention period is a feature that is switched on and does nothing. Retention is applied per object, so unless the application setting each object explicitly requests a retention period, objects land in the bucket unprotected and deletable.
+
+        That gap is invisible from the outside. The bucket reports Object Lock as enabled, a configuration review records it as enabled, and a compliance questionnaire is answered honestly in the affirmative, while every object in it can be deleted by anyone with permission to do so. The protection is discovered to be absent at the moment it is needed.
+
+        A default retention closes it by applying automatically to every object written, so protection does not depend on each writer remembering to ask for it. Backup tools, log shippers, and archive jobs written without knowledge of Object Lock then get the protection anyway.
+
+        Choose the period against the actual recovery requirement. Objects cannot be deleted before it expires, including by you, so a period set far longer than needed converts a storage bill into an obligation.
       audit: |
         ### Audit via Console
 
@@ -797,12 +851,19 @@ queries:
       stackit.sfs.resourcePools.all(ipAcl.none(_ == "0.0.0.0/0" || _ == "::/0"))
     docs:
       desc: |
-        This check ensures that STACKIT File Storage (SFS) resource pools do not allow mounting from the entire internet (`0.0.0.0/0` or `::/0`) via their IP allow-list (`ipAcl`). NFS shares hosted in a pool that is mountable from anywhere expose file data to any host that can reach the endpoint.
+        This check verifies that STACKIT SFS resource pools do not allow mounts from the entire internet.
+
+        The IP allow-list on a resource pool controls which addresses may mount the file systems it holds. The check reads that list and requires that it contains neither `0.0.0.0/0` nor `::/0`.
 
         **Why this matters**
 
-        - **Unauthenticated file access:** NFS typically relies on network reachability for access control; a world-open allow-list exposes the file data broadly.
-        - **Data exfiltration risk:** Any reachable host could mount and read or write share contents.
+        Shared file storage is reached over NFS, and NFS decides who you are by trusting the user and group IDs the client sends. There is no authentication in the protocol beyond a check that the connection came from a permitted address, which makes the allow-list the entire access control mechanism rather than one layer of it.
+
+        An allow-list containing `0.0.0.0/0` therefore removes access control altogether. Anyone who can reach the service can mount the file system and present whatever identity they choose, so file permissions inside the share are set by the attacker rather than enforced against them.
+
+        What sits on shared file storage makes this worse. Resource pools typically hold the data several systems need at once: application state, uploads, shared configuration, and frequently the backups of other systems.
+
+        Restrict the list to the specific subnets where the clients that mount these file systems run. This is one of the few controls where the allow-list is not defense in depth but the only defense, so it deserves review whenever the client footprint changes.
       audit: |
         ### Audit via Console
 
@@ -868,12 +929,19 @@ queries:
       stackit.sfs.exportPolicies.all(rules.all(ipAcl.none(_ == "0.0.0.0/0" || _ == "::/0")))
     docs:
       desc: |
-        This check ensures that no STACKIT File Storage (SFS) export policy rule grants NFS access to the entire internet (`0.0.0.0/0` or `::/0`). Export policies define which clients may mount shares and with what access; a rule open to the world removes the network boundary protecting the data.
+        This check verifies that STACKIT SFS export policies do not grant NFS access to the entire internet.
+
+        An export policy holds the rules that decide which clients may access an exported file system and how. The check reads every rule in every export policy and requires that no rule's IP allow-list contains `0.0.0.0/0` or `::/0`.
 
         **Why this matters**
 
-        - **Broad share exposure:** A world-open export rule lets any reachable host mount the share.
-        - **Lateral movement:** Overly broad NFS access can aid an attacker pivoting within the environment.
+        Export policies are the per-export half of SFS access control, and they are where a broad rule is easiest to introduce and hardest to notice. A resource pool's allow-list can be correct while an export policy attached to it grants far more, and the effective access is the wider of the two.
+
+        The exposure is the same one NFS always presents: client-asserted identity. A permitted client presents any user and group ID it likes, so read access means read access to everything in the export and write access means the ability to place files, including files that another system will later execute.
+
+        Rules accumulate. Export policies are edited when a new client needs access, and the quickest edit that works is a broad range. Each such edit is individually defensible and the aggregate is not, which is why the policy needs reviewing as a whole rather than per change.
+
+        Scope each rule to the smallest client range that needs it, and prefer read-only rules wherever the client does not write.
       audit: |
         ### Audit via Console
 
@@ -938,12 +1006,19 @@ queries:
       stackit.sfs.resourcePools.all(snapshotPolicyId != "")
     docs:
       desc: |
-        This check ensures that STACKIT File Storage (SFS) resource pools have a snapshot policy attached. Snapshot policies provide point-in-time copies of file data, supporting recovery from accidental deletion, corruption, or ransomware.
+        This check verifies that STACKIT SFS resource pools have a snapshot policy attached.
+
+        A snapshot policy takes point-in-time copies of the file systems in the pool on a schedule. The check reads each resource pool and requires that a snapshot policy is assigned.
 
         **Why this matters**
 
-        - **Recoverability:** Snapshots enable restoration of file data after destructive events.
-        - **Ransomware resilience:** Regular snapshots provide a recovery path that does not depend on the live data.
+        Shared file storage is where a ransomware incident does the most damage, because it is reachable from several systems at once. Compromising any one client with write access is enough to encrypt data that all of the others depend on.
+
+        Snapshots are what make that recoverable. They are taken by the storage platform rather than by a client, so an attacker operating through a mounted file system cannot reach them the way they can reach the files themselves, and restoring to a point before the encryption is a storage operation rather than a rebuild.
+
+        The same mechanism covers the more common cases. Accidental deletion of a shared directory, an application that corrupts state on upgrade, and a script that runs against the wrong path are all routine, and shared storage multiplies their consequences because several systems lose the data together.
+
+        A snapshot policy is not a backup strategy on its own, since snapshots live alongside the data they protect. Pair it with copies held elsewhere, and set the schedule and retention against how much work the organization can afford to lose.
       audit: |
         ### Audit via Console
 
@@ -1016,12 +1091,19 @@ queries:
       stackit.postgresFlex.instance.acl.none(_ == "0.0.0.0/0" || _ == "::/0")
     docs:
       desc: |
-        This check ensures that STACKIT PostgreSQL Flex instances do not include `0.0.0.0/0` in their access control list (ACL). A database reachable from the entire internet is exposed to brute-force, exploitation, and data-exfiltration attempts.
+        This check verifies that STACKIT PostgreSQL Flex instances do not accept connections from the entire internet.
+
+        The instance ACL controls which source addresses may reach the database. The check reads that list and requires that it contains neither `0.0.0.0/0` nor `::/0`.
 
         **Why this matters**
 
-        - **Direct data exposure:** A world-open database ACL puts the data one credential away from the entire internet.
-        - **Attack surface:** Internet-reachable database ports are continuously scanned and attacked.
+        A database reachable from the internet is one credential away from full data disclosure, and the credential is the only thing in the way. There is no application logic, no authorization layer, and no request validation between an attacker and the data once they can open a connection.
+
+        PostgreSQL exposed this way is found by scanning within hours and attacked continuously. The attacks are cheap: default and reused credentials, passwords recovered from a leaked application configuration, and credentials from an unrelated breach that happen to work here too.
+
+        Success is not limited to reading rows. PostgreSQL roles with sufficient privilege can write files, and depending on installed extensions, run commands on the host, which turns a database exposure into a foothold on the network the database sits in.
+
+        Restrict the ACL to the application subnets that need it. Databases should be reachable from the workloads that use them and from nowhere else, and administrative access should arrive over a VPN or a bastion rather than by widening this list.
       audit: |
         ### Audit via Console
 
@@ -1088,12 +1170,19 @@ queries:
       stackit.postgresFlex.instance.backupSchedule != ""
     docs:
       desc: |
-        This check ensures that STACKIT PostgreSQL Flex instances have a backup schedule configured. Regular automated backups are essential for recovery from data loss, corruption, or ransomware.
+        This check verifies that STACKIT PostgreSQL Flex instances have a backup schedule configured.
+
+        The backup schedule determines when the platform takes automated backups of the instance. The check reads that schedule and requires it to be set.
 
         **Why this matters**
 
-        - **Recoverability:** A backup schedule provides restore points for the database.
-        - **Business continuity:** Backups limit data loss after a destructive incident.
+        A managed database with no backup schedule has no recovery point. Whatever state exists is the only state, and every failure mode that damages it is unrecoverable rather than inconvenient.
+
+        The failures that matter most are not hardware. A migration that drops the wrong column, an application bug that writes corrupt rows for a week before anyone notices, a bulk update run without a `WHERE` clause, and ransomware reaching the database through a compromised application all destroy data that replication faithfully copies to every replica. High availability protects against a node failing; it does nothing about data that was destroyed correctly on every node.
+
+        Backups are also the only answer to slow corruption. Recovering from a fault introduced days ago requires a restore point from before it, which means retention has to exceed the time it typically takes to notice a problem.
+
+        Configure the schedule alongside a restore test. An untested backup is a belief rather than a control, and the moment a restore is first attempted should not be during an outage.
       audit: |
         ### Audit via Console
 
@@ -1160,12 +1249,19 @@ queries:
       stackit.mongoDbFlex.instance.acl.none(_ == "0.0.0.0/0" || _ == "::/0")
     docs:
       desc: |
-        This check ensures that STACKIT MongoDB Flex instances do not include `0.0.0.0/0` in their access control list (ACL). Internet-reachable databases are a primary target for data theft and extortion.
+        This check verifies that STACKIT MongoDB Flex instances do not accept connections from the entire internet.
+
+        The instance ACL controls which source addresses may reach the database. The check reads that list and requires that it contains neither `0.0.0.0/0` nor `::/0`.
 
         **Why this matters**
 
-        - **Direct data exposure:** A world-open ACL exposes the database to the entire internet.
-        - **Attack surface:** Open database ports are continuously scanned and attacked.
+        Internet-exposed MongoDB has a specific and well-documented history: tens of thousands of instances were found, copied, deleted, and held for ransom in automated campaigns, and the pattern has recurred with each generation of scanning tools. The databases involved held exactly what MongoDB is typically used for, which is application data about people.
+
+        The document model raises the stakes on a single successful connection. A collection commonly holds whole user records in one place, so a query that succeeds returns identity, contact details, and application state together rather than requiring an attacker to join across tables.
+
+        Ransom is the usual outcome rather than quiet theft. The operators copy the data, drop the collections, and leave a note, which means the exposure produces both a breach and an outage.
+
+        Restrict the ACL to the application subnets that need the database. Do this alongside authentication rather than instead of it, since the campaigns that found these instances succeeded against databases that had both no network restriction and weak or absent credentials.
       audit: |
         ### Audit via Console
 
@@ -1240,12 +1336,19 @@ queries:
       stackit.mongoDbFlex.instance.backupSchedule != ""
     docs:
       desc: |
-        This check ensures that STACKIT MongoDB Flex instances have a backup schedule configured. Automated backups provide recovery points after data loss, corruption, or ransomware.
+        This check verifies that STACKIT MongoDB Flex instances have a backup schedule configured.
+
+        The backup schedule determines when the platform takes automated backups of the instance. The check reads that schedule and requires it to be set.
 
         **Why this matters**
 
-        - **Recoverability:** A backup schedule provides restore points for the database.
-        - **Business continuity:** Backups limit data loss after a destructive incident.
+        Backups are what decide whether a destructive incident is a recovery or a loss, and for MongoDB the destructive incident has a well-established shape: an attacker who reaches the database copies the collections, drops them, and leaves a ransom note. Without a restore point, paying is the only remaining option, and paying frequently does not return the data.
+
+        The everyday failures matter as much. MongoDB's flexible schema means an application deploying a changed document shape can write inconsistent records across a collection for days before anything surfaces, and correcting that requires data from before the change rather than a code fix.
+
+        Replication does not substitute. A replica set protects against a node failing and faithfully replicates a `deleteMany` to every member, so the operations most likely to destroy data are the ones replication propagates fastest.
+
+        Set the schedule with retention long enough to cover the interval between a fault being introduced and being noticed, and test a restore. A backup that has never been restored is an assumption.
       audit: |
         ### Audit via Console
 
@@ -1320,12 +1423,19 @@ queries:
       stackit.sqlServerFlex.instance.acl.none(_ == "0.0.0.0/0" || _ == "::/0")
     docs:
       desc: |
-        This check ensures that STACKIT SQLServer Flex instances do not include `0.0.0.0/0` in their access control list (ACL). A database reachable from the entire internet is exposed to brute-force, exploitation, and data-exfiltration attempts.
+        This check verifies that STACKIT SQLServer Flex instances do not accept connections from the entire internet.
+
+        The instance ACL controls which source addresses may reach the database. The check reads that list and requires that it contains neither `0.0.0.0/0` nor `::/0`.
 
         **Why this matters**
 
-        - **Direct data exposure:** A world-open ACL exposes the database to the entire internet.
-        - **Attack surface:** Open database ports are continuously scanned and attacked.
+        An internet-reachable SQL Server is scanned for continuously, and the attacks that follow are automated and well practiced. Credential guessing against the `sa` account is the standard opening move, and it works often enough to remain the default.
+
+        SQL Server's consequences reach past the data. A sufficiently privileged login can enable command execution features and run commands on the host, which converts a database credential into execution on a server inside the network. That is why SQL Server exposure appears so often at the start of ransomware incidents rather than only in data-theft ones.
+
+        The data itself is usually the reason the database exists: transactions, customer records, and the application state a business runs on, held in one place and returned in bulk to whoever can authenticate.
+
+        Restrict the ACL to the application subnets that require it, and reach administrative interfaces through a VPN or a bastion. Pair the network restriction with disabling or renaming `sa` and using individually attributable logins, since the network control and the credential control fail in different ways.
       audit: |
         ### Audit via Console
 
@@ -1394,12 +1504,19 @@ queries:
       stackit.sqlServerFlex.instance.backupSchedule != ""
     docs:
       desc: |
-        This check ensures that STACKIT SQLServer Flex instances have a backup schedule configured. Automated backups provide recovery points after data loss, corruption, or ransomware.
+        This check verifies that STACKIT SQLServer Flex instances have a backup schedule configured.
+
+        The backup schedule determines when the platform takes automated backups of the instance. The check reads that schedule and requires it to be set.
 
         **Why this matters**
 
-        - **Recoverability:** A backup schedule provides restore points for the database.
-        - **Business continuity:** Backups limit data loss after a destructive incident.
+        SQL Server instances typically hold the transactional record a business operates on: orders, payments, inventory, and customer data. Losing it is not a technical inconvenience but a business interruption, and in regulated contexts a compliance failure, since financial and personal records usually carry a statutory retention obligation that no amount of replication satisfies.
+
+        The failures that require a backup are the ones replication cannot help with. A deployment that runs the wrong migration, an application defect writing bad rows, a deletion executed against production instead of staging, and ransomware reaching the instance through a compromised application server all produce valid writes that every replica receives.
+
+        Recovery also depends on how far back the restore point goes. A corruption introduced during a release and discovered after the weekend needs a restore point from before the release, so retention has to be measured against how long problems take to surface rather than against how long backups feel worth keeping.
+
+        Configure the schedule, then verify a restore actually completes and the data is usable. The first restore attempt should not happen during an incident.
       audit: |
         ### Audit via Console
 
@@ -1469,14 +1586,19 @@ queries:
       stackit.postgresFlex.instance.replicas >= 2
     docs:
       desc: |
-        This check ensures that STACKIT PostgreSQL Flex instances run with at least two replicas, providing high availability. A single-replica instance has no automatic failover, so a node failure causes downtime and potential data loss. This mirrors the Multi-AZ / high-availability checks applied to managed databases on other clouds.
+        This check verifies that STACKIT PostgreSQL Flex instances run with more than one replica.
+
+        Replica count determines whether the instance is a single node or a group that can survive losing one. The check reads the configured replica count and requires at least two.
 
         **Why this matters**
 
-        - **Failover:** Multiple replicas allow the service to survive the loss of a node without an outage.
-        - **Durability:** Replication reduces the risk of data loss from a single-node failure.
+        A single-node database is a single point of failure for every application behind it. When that node is lost or restarted, everything depending on it stops, and the outage lasts as long as recovery takes rather than as long as a failover takes.
 
-        Note: Single-replica instances may be acceptable for development workloads; tune the expectation to your environment.
+        The routine cases matter more than the dramatic ones. Host maintenance, patching, and version upgrades all require the node to go away for a period, and on a single-node instance each of those is a planned outage that has to be scheduled, communicated, and absorbed. That is also why they get deferred, which is how database instances end up running old versions.
+
+        Availability is a security property here, not only an operational one. A database that cannot be patched without an outage is a database that stays unpatched, and a service that cannot fail over is one an attacker can take down by disrupting a single node.
+
+        Understand what this does not cover. Replicas protect against a node being lost; they replicate deletion and corruption faithfully to every member. Run multiple replicas and a backup schedule, since each answers a failure the other does not.
       audit: |
         ### Audit via Console
 
@@ -1547,14 +1669,19 @@ queries:
       stackit.mongoDbFlex.instance.replicas >= 2
     docs:
       desc: |
-        This check ensures that STACKIT MongoDB Flex instances run with at least two replicas, providing high availability. A single-replica instance has no automatic failover, so a node failure causes downtime and potential data loss.
+        This check verifies that STACKIT MongoDB Flex instances run with more than one replica.
+
+        Replica count determines whether the instance is a standalone node or a replica set. The check reads the configured replica count and requires at least two.
 
         **Why this matters**
 
-        - **Failover:** Multiple replicas allow the service to survive the loss of a node without an outage.
-        - **Durability:** Replication reduces the risk of data loss from a single-node failure.
+        MongoDB is designed around replica sets, and running standalone gives up guarantees the application layer may already assume it has. Elections, automatic failover, and read preferences all depend on there being more than one member, so a standalone instance is both a single point of failure and a different consistency story than the driver defaults expect.
 
-        Note: Single-replica instances may be acceptable for development workloads.
+        Operationally, the consequence is that every maintenance event is an outage. Version upgrades, host patching, and instance resizing all take the only node away, so each becomes a scheduled interruption rather than a rolling change, and each therefore gets postponed.
+
+        That postponement is where the security cost appears. An instance that cannot be upgraded without downtime tends to stay on an old version, accumulating fixed vulnerabilities it never receives.
+
+        Replicas do not remove the need for backups. A replica set copies a dropped collection to every member as reliably as it copies a legitimate write, so it protects against losing a node and not against losing data. Configure both.
       audit: |
         ### Audit via Console
 
@@ -1629,14 +1756,19 @@ queries:
       stackit.sqlServerFlex.instance.replicas >= 2
     docs:
       desc: |
-        This check ensures that STACKIT SQLServer Flex instances run with at least two replicas, providing high availability. A single-replica instance has no automatic failover, so a node failure causes downtime and potential data loss.
+        This check verifies that STACKIT SQLServer Flex instances run with more than one replica.
+
+        Replica count determines whether the instance can survive losing a node. The check reads the configured replica count and requires at least two.
 
         **Why this matters**
 
-        - **Failover:** Multiple replicas allow the service to survive the loss of a node without an outage.
-        - **Durability:** Replication reduces the risk of data loss from a single-node failure.
+        SQL Server instances usually sit under applications the business cannot run without, so the instance's availability is the application's availability. A single node makes every fault and every maintenance window a full stop.
 
-        Note: Single-replica instances may be acceptable for development workloads.
+        Patching is the case that matters most. SQL Server security updates require a restart, and on a single-node instance that restart is an outage someone has to schedule and justify. The predictable result is that updates are deferred, and a database holding transactional and personal data runs with known vulnerabilities because the maintenance window was inconvenient. Multiple replicas turn that into a rolling operation.
+
+        Recovery time is the other half. Rebuilding a lost single node means restoring from backup and replaying to the failure point, measured in hours; failing over to an existing replica is measured in seconds.
+
+        Replicas and backups solve different problems and neither substitutes. Replication copies a bad migration or a mistaken deletion to every replica immediately, so run both, and treat the replica count as protection against infrastructure failure only.
       audit: |
         ### Audit via Console
 
@@ -1687,12 +1819,19 @@ queries:
       stackit.secretsManager.instance.acls.none(_ == "0.0.0.0/0" || _ == "::/0")
     docs:
       desc: |
-        This check ensures that STACKIT Secrets Manager instances do not include `0.0.0.0/0` in their access control list. Secrets Manager stores sensitive credentials; exposing its API to the entire internet broadens the attack surface around your most sensitive data.
+        This check verifies that STACKIT Secrets Manager instances do not accept connections from the entire internet.
+
+        The instance ACL controls which source addresses may reach the secrets store. The check reads that list and requires that it contains neither `0.0.0.0/0` nor `::/0`.
 
         **Why this matters**
 
-        - **Sensitive data exposure:** Secrets Manager holds credentials whose compromise can cascade across systems.
-        - **Reduced attack surface:** Restricting the ACL limits who can even attempt to reach the secrets API.
+        A secrets manager is the highest-value target in an environment by construction. It holds the credentials for everything else, so reaching it is not one compromise but the key to all of them: database passwords, API keys, service account credentials, and the material that protects the rest of the estate.
+
+        Exposing it to the internet removes the network boundary from a system whose entire purpose is to be the one thing that is hard to reach. Whatever authentication it enforces then stands alone against continuous automated attack, with no requirement for an attacker to first gain a position inside the network.
+
+        The consequences of success are also unusually broad. Credentials taken from a secrets store are valid, current, and often long-lived, so an attacker who obtains them proceeds as a legitimate client of every system those credentials unlock, generating little that looks anomalous.
+
+        Restrict the ACL to the specific subnets where the workloads that consume secrets run. Nothing else needs to reach it, and administrative access should arrive over a VPN or bastion rather than by broadening this list.
       audit: |
         ### Audit via Console
 
@@ -1753,12 +1892,19 @@ queries:
       stackit.serviceAccounts.all(keys.where(_['active'] == true).all(_['validUntil'] != null))
     docs:
       desc: |
-        This check ensures that every active service account key has an expiry (`validUntil`) set. Long-lived, non-expiring service account keys are a high-value target: if leaked, they grant programmatic access indefinitely until manually revoked.
+        This check verifies that active STACKIT service account keys have an expiry date.
+
+        Service account keys authenticate automation to the STACKIT API. The check reads every key marked active and requires that each one has a validity end date set rather than being open-ended.
 
         **Why this matters**
 
-        - **Bounded exposure:** An expiry limits how long a leaked key remains usable.
-        - **Forced rotation:** Expiring keys drive regular credential rotation, reducing the blast radius of a compromise.
+        A key with no expiry works forever, which means a leaked key works forever. Keys leak in ways nobody notices at the time: committed to a repository, pasted into a ticket or a chat, captured in a CI log, left on a laptop that was later lost, or copied into a script that outlived its author.
+
+        Without an expiry, none of those events has an end. The credential stays valid through every subsequent password rotation, offboarding, and incident review, because none of those processes touches a key stored in a system nobody remembers.
+
+        An expiry converts an unbounded exposure into a bounded one. A leaked key stops working, whether or not anyone ever discovers it leaked, and the discovery rate for quietly leaked credentials is not high.
+
+        The operational requirement is that expiry forces rotation, so it has to be planned rather than discovered. Automate the renewal, alert before expiry, and confirm the consuming systems can pick up a new key without manual intervention. An expiry that surprises production is a control that gets removed.
       audit: |
         ### Audit via Console
 
@@ -1824,12 +1970,19 @@ queries:
       stackit.serviceAccounts.all(accessTokens.where(_['active'] == true).all(_['validUntil'] != null))
     docs:
       desc: |
-        This check ensures that every active service account access token has an expiry (`validUntil`) set. Non-expiring access tokens that are leaked grant programmatic access until they are manually revoked.
+        This check verifies that active STACKIT service account access tokens have an expiry date.
+
+        Access tokens are bearer credentials for the STACKIT API. The check reads every token marked active and requires that each one has a validity end date set.
 
         **Why this matters**
 
-        - **Bounded exposure:** An expiry limits how long a leaked token remains usable.
-        - **Credential hygiene:** Enforcing expiry drives regular rotation of access tokens.
+        A bearer token is usable by whoever holds it, with no further proof required. There is no second factor, no source restriction, and no signature tying it to a particular caller, so possession is the whole of authentication.
+
+        That makes the token's lifetime the only limit on the damage a copy can do. Tokens are exposed far more casually than keys, since they pass through environment variables, CI job configuration, container images, log output, and error reports, and any one of those can persist somewhere nobody thinks of as sensitive.
+
+        Without an expiry, a token recovered from a two-year-old build log still works. With one, the same token is inert by the time anyone finds it, and the window in which a leak matters is bounded by a decision made in advance rather than by whether the leak is ever noticed.
+
+        Set the shortest validity the workload can accommodate and automate renewal. Where a workload can use a short-lived token issued on demand instead of a stored long-lived one, prefer that, since the best expiry is one measured in minutes.
       audit: |
         ### Audit via Console
 
@@ -1886,12 +2039,19 @@ queries:
       stackit.kms.keys.all(deletionDate == null)
     docs:
       desc: |
-        This check flags STACKIT KMS keys that have a scheduled deletion date. A key pending deletion will become permanently unusable once the date passes, which can render all data encrypted under that key unrecoverable if the deletion was unintended.
+        This check verifies that no STACKIT KMS key is scheduled for deletion.
+
+        Scheduling a key for deletion starts a waiting period, after which the key material is destroyed permanently. The check reads each key's deletion date and requires that none is set.
 
         **Why this matters**
 
-        - **Irreversible data loss:** Data encrypted with a deleted KMS key cannot be decrypted.
-        - **Early detection:** Surfacing pending deletions allows the deletion to be cancelled before it is too late.
+        Destroying a KMS key destroys the ability to decrypt everything encrypted under it. That is not a recoverable operation: the data still exists, and it is permanently unreadable, including the backups of it, since those are encrypted under the same key.
+
+        The waiting period exists because this is the most consequential irreversible action in a cloud environment, and it is the only chance to catch a mistake. A key scheduled for deletion is either a decommissioning that someone verified, or an error nobody has noticed yet, and the difference has to be established before the window closes.
+
+        The error case is easy to reach. Keys are scheduled during cleanup of what appears to be unused infrastructure, and a key's usage is not obvious from the key itself. A snapshot from last year, an archived bucket, or a backup nobody restores routinely can all depend on a key that looks idle.
+
+        Treat a scheduled deletion as something to confirm rather than something to observe. Establish what the key protects, including backups and snapshots, and cancel the deletion if anything still depends on it. After the window there is no remedy.
       audit: |
         ### Audit via Console
 
@@ -1947,12 +2107,19 @@ queries:
       stackit.kms.keys.none(state == "errors_exist" || state == "not_available")
     docs:
       desc: |
-        This check flags STACKIT KMS keys that are in an error or unavailable state (`errors_exist`, `not_available`) rather than the healthy `active` state. A key that is not available cannot perform cryptographic operations, which can break encryption and decryption for any data or service relying on it.
+        This check verifies that STACKIT KMS keys are in a healthy state.
+
+        The check reads each key's state and fails any key reporting errors or unavailability.
 
         **Why this matters**
 
-        - **Operational integrity:** A key in an error state may prevent decryption of protected data.
-        - **Early detection:** Surfacing unhealthy keys prompts investigation before dependent workloads fail.
+        A key that is not healthy is a key that may not decrypt. Everything encrypted under it, live data, snapshots, and backups, depends on the platform being able to use it, and an unavailable key makes that data unreadable for as long as the condition lasts.
+
+        The failure mode is unusually quiet. Systems holding open sessions or cached data keep working, so the problem surfaces at the next operation that actually needs the key, which is frequently a restart, a scaling event, or a restore. That means the discovery moment tends to coincide with an incident already in progress.
+
+        An unhealthy key can also be a signal rather than a fault. A key in an error state may reflect a permissions change, a configuration error made during a cleanup, or an interrupted operation, and each of those is worth understanding rather than waiting out.
+
+        Investigate rather than retry. Establish what the key protects and whether that data is currently readable, then resolve the underlying condition. If a key cannot be restored to health, the data encrypted under it needs re-encrypting under a working key while it is still readable.
       audit: |
         ### Audit via Console
 
@@ -2009,12 +2176,19 @@ queries:
       stackit.ske.cluster.status != "STATE_UNHEALTHY"
     docs:
       desc: |
-        This check ensures that no STACKIT Kubernetes Engine (SKE) cluster reports an unhealthy state. An unhealthy cluster may not be applying security updates, may have degraded control-plane components, and may not be enforcing intended policy. (Hibernated clusters are a valid operational state and are not flagged.)
+        This check verifies that STACKIT Kubernetes Engine clusters are not in an unhealthy state.
+
+        The check reads each cluster's status and fails any cluster reporting as unhealthy.
 
         **Why this matters**
 
-        - **Patch and policy enforcement:** An unhealthy cluster may not reliably apply updates or admission controls.
-        - **Operational visibility:** Surfacing unhealthy clusters prompts timely investigation.
+        An unhealthy SKE cluster is one the platform cannot fully manage, and that has security consequences beyond the availability ones.
+
+        Managed cluster operations stop being reliable in this state. Version upgrades, node pool replacement, and certificate rotation are the mechanisms by which a cluster receives security fixes, and a cluster that cannot complete them stops receiving them while continuing to run workloads. The longer the condition persists, the further behind it falls.
+
+        The state also obscures what is happening inside. Unhealthy is a broad status covering control plane problems, node failures, and configuration errors, and while it persists it is difficult to distinguish a genuine infrastructure fault from workload behavior worth investigating. An attacker operating in a cluster that is already reporting problems has cover.
+
+        Treat this as something to resolve rather than monitor. Establish the underlying cause, since the remedy differs completely between a failing node pool, an exhausted quota, and a control plane issue requiring platform support, and confirm afterward that pending upgrades have applied.
       audit: |
         ### Audit via Console
 
@@ -2064,12 +2238,19 @@ queries:
       stackit.ske.cluster.maintenance['autoUpdate']['kubernetesVersion'] == true
     docs:
       desc: |
-        This check ensures that STACKIT Kubernetes Engine (SKE) clusters have automatic Kubernetes version updates enabled in their maintenance configuration. Clusters that do not auto-update can fall behind on security patches and run unsupported Kubernetes versions.
+        This check verifies that STACKIT Kubernetes Engine clusters have Kubernetes version auto-update enabled.
+
+        Auto-update lets the platform move the cluster to a newer supported Kubernetes version during its maintenance window. The check reads the cluster's maintenance configuration and requires the Kubernetes version auto-update flag to be enabled.
 
         **Why this matters**
 
-        - **Timely patching:** Auto-update ensures the cluster receives Kubernetes security fixes during its maintenance window.
-        - **Supported versions:** Staying current avoids running end-of-life Kubernetes releases that no longer receive fixes.
+        Kubernetes releases roughly three times a year and supports each version for about a year, which means a cluster that is not updating is on a fixed path toward running unsupported software. Once past support, it stops receiving security fixes entirely.
+
+        Manual upgrades are the theoretical alternative and rarely the practical one. Each upgrade needs planning, a window, and someone confident enough to run it in production, and the longer it is deferred the more versions have to be crossed at once, which makes the next attempt more daunting than the last. Clusters commonly fall years behind by exactly this mechanism.
+
+        The vulnerabilities left behind are not minor. Kubernetes has shipped fixes for container escapes, privilege escalation through the API server, and flaws in the components handling untrusted workload input, and each fix reaches a cluster only through a version upgrade.
+
+        Enable auto-update and set a maintenance window when a disruption is tolerable. Pair it with workloads that survive node replacement, using pod disruption budgets and multiple replicas, so that a routine upgrade does not become an outage.
       audit: |
         ### Audit via Console
 
@@ -2144,13 +2325,19 @@ queries:
       stackit.ske.cluster.apiServerAclAllowedCidrs.none(_ == "0.0.0.0/0" || _ == "::/0")
     docs:
       desc: |
-        This check ensures that a STACKIT Kubernetes Engine (SKE) cluster does not leave its Kubernetes API server open to the internet. The strongest posture is a private control plane: when `controlPlaneAccessScope` is `SNA`, the API server answers only from inside the attached STACKIT network and is never reachable from the internet. When the control plane is `PUBLIC`, the API server is published on the internet and is only as restricted as its access-control list (ACL) makes it, so the check then requires the ACL to be enabled and its allowed source ranges to exclude `0.0.0.0/0` and `::/0`. A PUBLIC control plane with the ACL disabled, or an ACL that admits any address, exposes the control plane to the entire internet.
+        This check verifies that STACKIT Kubernetes Engine clusters restrict access to their Kubernetes API server.
+
+        The check passes a cluster whose control plane access scope is set to the STACKIT network access mode, and otherwise requires that the API server ACL is enabled and that its allowed CIDR list contains neither `0.0.0.0/0` nor `::/0`.
 
         **Why this matters**
 
-        - **Private is stronger than filtered:** An `SNA` control plane is not published on the internet at all, which removes the API server from internet-wide scanning entirely rather than relying on an allow-list to filter it.
-        - **Control-plane exposure:** A PUBLIC, unrestricted API server is continuously scanned and is a primary target for credential and exploit attacks.
-        - **Defense in depth:** Where the control plane must remain public, an IP allow-list that excludes the open-internet ranges ensures only known networks can even attempt to authenticate to the cluster.
+        The Kubernetes API server is the control plane for everything in the cluster. Anyone who can reach it and authenticate can schedule workloads, read every secret the cluster holds, and modify the objects that define how the cluster behaves.
+
+        A publicly reachable API server puts that interface in front of continuous automated scanning. Authentication becomes the only barrier, and the credentials protecting it are more varied than they look: service account tokens mounted into pods, kubeconfig files on developer laptops, and tokens issued to CI systems all authenticate here, and any one of them leaking becomes remotely usable.
+
+        Restricting network access changes the shape of the attack. An attacker who obtains a credential must also reach the API server from a permitted network, which means compromising something inside the environment first rather than proceeding directly from a leaked token.
+
+        Restrict access to the networks administrators and CI systems connect from, or use the platform's private access mode where the cluster's own network reaches the control plane. Combine this with RBAC rather than relying on either alone.
       audit: |
         ### Audit via Console
 
@@ -2224,12 +2411,19 @@ queries:
       stackit.ske.cluster.apiServerAclAllowedCidrs.none(_ == "0.0.0.0/0" || _ == "::/0")
     docs:
       desc: |
-        This check ensures that a STACKIT Kubernetes Engine (SKE) cluster's API-server access-control list does not allow `0.0.0.0/0` or `::/0`. An allow-list that includes the entire internet provides no protection — it is equivalent to disabling the ACL while appearing to be configured.
+        This check verifies that the STACKIT Kubernetes Engine API server allow-list does not include the entire internet.
+
+        The check reads the cluster's allowed CIDR list and requires that it contains neither `0.0.0.0/0` nor `::/0`.
 
         **Why this matters**
 
-        - **False sense of security:** A world-open entry in the allow-list defeats the purpose of the ACL.
-        - **Control-plane exposure:** Any host on the internet can reach the Kubernetes API server and attempt to authenticate.
+        An allow-list containing `0.0.0.0/0` is an allow-list that permits everything, and it is worth treating separately from having no ACL at all because it looks like a control while functioning as its absence. A configuration review sees an ACL configured, an audit records access restrictions in place, and the API server is reachable from anywhere.
+
+        That gap between appearance and effect is how these entries survive. They are added to resolve a connectivity problem, most often a CI system or an administrator whose source address was not known at the time, and once traffic flows nobody revisits the entry that made it flow.
+
+        The exposure is the full weight of the Kubernetes control plane: workload scheduling, secret access, and cluster configuration, protected by credentials alone.
+
+        Replace the entry with the specific ranges that need access. Where a source address is dynamic, route it through a fixed egress point such as a NAT gateway or a bastion rather than widening the list, and review the entries when the systems that needed them change.
       audit: |
         ### Audit via Console
 
@@ -2304,12 +2498,19 @@ queries:
       stackit.telemetry.routers.all(accessTokens.all(expiresAt != null))
     docs:
       desc: |
-        This check ensures that every access token issued for a STACKIT telemetry router has an expiry time set. Long-lived or non-expiring credentials increase the window of exposure if a token is leaked.
+        This check verifies that STACKIT telemetry router access tokens have an expiry set.
+
+        The check reads every access token on every telemetry router and requires each to carry an expiry time rather than being open-ended.
 
         **Why this matters**
 
-        - **Bounded exposure:** Expiring tokens limit how long a leaked credential remains valid.
-        - **Credential hygiene:** Enforcing expiry encourages regular rotation.
+        Telemetry tokens authenticate the flow of observability data, and they are among the most widely distributed credentials in an environment. Every host, container, and application that ships metrics or logs holds one, which means the token is present in configuration management, container images, deployment manifests, and the environment of every running workload.
+
+        That distribution is what makes an unbounded lifetime costly. A credential in that many places will eventually appear somewhere it should not, and without an expiry every one of those copies stays valid indefinitely.
+
+        What a leaked token permits is worth being specific about. Write access to a telemetry pipeline allows an attacker to inject false data, which can hide activity by burying it or trigger a response by fabricating an incident. Where the token also reads, it exposes the operational picture of the environment: what runs, where, and how it behaves.
+
+        Set an expiry and automate renewal through the same configuration management that distributes the token. A credential deployed automatically to many places can be rotated automatically to the same places, which is what makes a short lifetime practical.
       audit: |
         1. Sign in to the STACKIT Portal.
         2. Open **Telemetry Router** and select the router.
@@ -2361,12 +2562,19 @@ queries:
       stackit.telemetry.routers.all(accessTokens.all(expiresAt == null || expiresAt > time.now))
     docs:
       desc: |
-        This check flags expired access tokens still present on STACKIT telemetry routers. Expired tokens that are not removed represent stale credentials that should be cleaned up as part of good credential hygiene.
+        This check verifies that no STACKIT telemetry router access token has already passed its expiry date.
+
+        The check reads every access token on every telemetry router and requires that any expiry present is in the future. Tokens with no expiry pass this check and are assessed by a companion check in this policy.
 
         **Why this matters**
 
-        - **Stale credential cleanup:** Removing expired tokens reduces clutter and the chance of confusion during audits.
-        - **Hygiene:** Lingering expired credentials can mask active ones during review.
+        An expired token is a broken telemetry pipeline, and the specific danger is that nothing announces it. The systems shipping data continue to run, the agents keep attempting to send, and the dashboards keep displaying, showing older data or an absence that looks like quiet rather than failure.
+
+        Absence of data is the hardest failure to notice, because it looks exactly like nothing happening. Alerts that depend on a threshold being crossed cannot fire when no data arrives to cross it, so the monitoring reports healthy precisely because it is blind.
+
+        The consequences land during an incident. Investigating an event that occurred while the pipeline was down means working without the observability the environment was built to provide, and the gap is discovered at the moment it cannot be fixed retroactively.
+
+        Remove or replace expired tokens rather than leaving them in place, and alert on approaching expiry rather than on expiry itself. A token that lapses at the wrong moment costs visibility exactly when it is most needed.
       audit: |
         1. Sign in to the STACKIT Portal.
         2. Open **Telemetry Router** and select the router.
@@ -2408,12 +2616,21 @@ queries:
       stackit.modelServing.tokens.all(validUntil != null)
     docs:
       desc: |
-        This check ensures that every STACKIT Model Serving authentication token has a validity end date set. Non-expiring tokens increase the window of exposure if a credential is leaked.
+        This check verifies that STACKIT Model Serving tokens have a validity end date set.
+
+        The check reads every Model Serving token and requires each to carry a validity end date rather than being open-ended.
 
         **Why this matters**
 
-        - **Bounded exposure:** A validity end date limits how long a leaked token remains usable.
-        - **Credential hygiene:** Enforcing expiry encourages regular rotation of inference credentials.
+        Model Serving tokens authenticate inference requests, and the exposure they carry is different from most API credentials in two ways.
+
+        The first is cost. Inference is billed by use, and a leaked token is a directly monetizable one: it can be used, resold, or run continuously by whoever holds it, and the bill arrives before anyone notices the traffic. Unlike a leaked read credential, this one has an immediate market.
+
+        The second is what passes through the endpoint. Inference requests carry the prompts an application sends, which routinely include customer data, internal documents, and business context. A token permitting requests may also permit an attacker to observe or influence what the model is asked and what it returns, which reaches into the application's behavior rather than only its data.
+
+        These tokens also proliferate. They end up in application configuration, notebooks, test scripts, and developer environments, and each of those is a place a credential outlives the reason it was created.
+
+        Set the shortest validity the consuming applications can accommodate, and automate renewal so that a short lifetime does not become an outage.
       audit: |
         1. Sign in to the STACKIT Portal.
         2. Open **Model Serving** and review the project's authentication tokens.
@@ -2464,12 +2681,19 @@ queries:
       stackit.modelServing.tokens.all(validUntil == null || validUntil > time.now)
     docs:
       desc: |
-        This check flags expired STACKIT Model Serving tokens that are still present. Expired tokens that are not removed represent stale credentials that should be cleaned up.
+        This check verifies that no STACKIT Model Serving token has already passed its validity end date.
+
+        The check reads every Model Serving token and requires that any validity end date present is in the future. Tokens with no end date pass this check and are assessed by a companion check in this policy.
 
         **Why this matters**
 
-        - **Stale credential cleanup:** Removing expired tokens reduces clutter and audit confusion.
-        - **Hygiene:** Lingering expired credentials can obscure active ones during review.
+        An expired token that is still present is a credential nobody is managing. It has already stopped working, so whatever created it either replaced it and left the old one behind, or stopped using it entirely and never said so.
+
+        The cost is to review rather than to access. Anyone auditing which credentials exist and which applications hold them has to work through entries that no longer do anything, and the presence of unmanaged entries makes it likelier that a live token is misjudged as stale, or that a stale one is assumed live and left in place.
+
+        Expired tokens also record something worth acting on. Each one marks an integration that lapsed, and the question of whether that integration was decommissioned deliberately or silently broke is usually worth an answer.
+
+        Delete expired tokens as part of routine credential review, and alert before expiry rather than after. The goal is that the token list describes the integrations that actually exist, so that a credential appearing in it that nobody recognizes is a signal rather than noise.
       audit: |
         1. Sign in to the STACKIT Portal.
         2. Open **Model Serving** and review the project's authentication tokens.
@@ -2513,18 +2737,19 @@ queries:
       stackit.ske.cluster.nodePools.all(osExpirationDate == null || osExpirationDate > time.now)
     docs:
       desc: |
-        This check ensures that a STACKIT Kubernetes Engine (SKE) cluster, and every node pool it runs, is still within the support window STACKIT publishes for its Kubernetes and node operating-system versions. STACKIT announces an end-of-support date for each Kubernetes minor version and each node image; past that date the version keeps running but stops receiving patches, so any vulnerability disclosed afterward is never fixed on it.
+        This check verifies that STACKIT Kubernetes Engine clusters and their node pools are running Kubernetes versions that are still within their support window.
+
+        The check reads the Kubernetes expiration date on the cluster and on each node pool, and requires that any date present is in the future. A version with no expiration date recorded passes.
 
         **Why this matters**
 
-        - **Unpatched vulnerabilities:** A version past end-of-support receives no security fixes, so every flaw disclosed after that date remains exploitable on the cluster.
-        - **Control-plane and node parity:** A node pool can sit on an older, already-unsupported version even when the control plane is current, so both must be checked.
-        - **Forced, unplanned upgrades:** Running up to the end-of-support date removes the option of a scheduled upgrade and risks an emergency migration under pressure.
+        Past the support window a Kubernetes version receives no further security fixes. Vulnerabilities discovered afterward are published with the fix for supported versions, which tells an attacker precisely what works against anything still running the old one.
 
-        **Risk mitigation**
+        Node pools deserve their own attention and are the half more often missed. A control plane upgrade does not move the nodes, so a cluster can report a current Kubernetes version while its node pools run something older. The kubelet and container runtime on those nodes are where container escape vulnerabilities land, which makes an out-of-support node pool a more direct risk than an out-of-support control plane.
 
-        - **Timely upgrades:** Upgrading ahead of the end-of-support date keeps the cluster on a version that still receives security patches.
-        - **Reduced attack surface:** A supported Kubernetes version and node image close the window in which known, unpatched flaws can be exploited.
+        Expiry also removes options at the worst moment. A version past support cannot always be upgraded directly to a current one, so recovery may require stepping through intermediate versions under time pressure, during an incident, on a cluster running production workloads.
+
+        Track the expiration dates as scheduled work rather than as alerts, and enable version auto-update so the cluster advances without a decision each time.
       audit: |
         ### Audit via Console
 
@@ -2576,18 +2801,19 @@ queries:
       stackit.serviceAccounts.all(federatedIdentityProviders.all(assertions.length > 0))
     docs:
       desc: |
-        This check ensures that every federated identity provider trusted by a STACKIT service account constrains which external tokens it will exchange, by requiring at least one assertion. A federated identity provider lets an external OIDC issuer exchange its own tokens for credentials belonging to the service account, and the assertions are the claim conditions a presented token must satisfy. A provider with no assertions accepts any token the issuer signs, so any workload that can obtain a token from that issuer can assume the service account and everything it can do.
+        This check verifies that STACKIT service account federated identity providers restrict which external tokens they will accept.
+
+        Federated identity lets a workload authenticate with a token from an external issuer instead of holding a STACKIT credential. Assertions are the conditions an incoming token must satisfy before it is accepted. The check reads each federated identity provider and requires at least one assertion.
 
         **Why this matters**
 
-        - **Unscoped credential minting:** With no assertions, holding any token from the trusted issuer is enough to take on the service account, without holding any of its own keys or tokens.
-        - **Blast radius of a shared issuer:** Public or multi-tenant issuers such as a CI system or another cloud sign tokens for many unrelated workloads; without assertions every one of them is trusted.
-        - **Silent standing access:** Unlike a key or access token, a federated trust leaves no credential to rotate or expire, so an over-broad provider grants access indefinitely until it is corrected.
+        A federated identity provider configured without assertions trusts the issuer rather than a specific workload. Every token that issuer produces is accepted, which is far broader than intended in every realistic case.
 
-        **Risk mitigation**
+        The CI example makes the scope concrete. Configuring a pipeline provider without assertions means any pipeline that issuer can produce a token for is authorized, which typically includes every repository in the organization, every branch, and every pull request. A contributor who opens a pull request against any of those repositories can then reach a service account intended for one deployment pipeline.
 
-        - **Claim pinning:** Requiring assertions on claims such as subject, repository, or environment narrows the trust to the specific external workload that should hold it.
-        - **Least privilege:** Scoped assertions keep a single service account from becoming an entry point for every workload the issuer can vouch for.
+        That is exactly the position federation is supposed to improve on. It removes the long-lived stored credential, which is a real gain, and replaces it with a trust relationship that is only as narrow as its conditions.
+
+        Constrain assertions to the specific subject the workload presents: the repository, the branch or environment, and where available the workflow. Verify the claims the issuer actually sends rather than assuming, since an assertion matching a claim that is never populated restricts nothing.
       audit: |
         ### Audit via Console
 
@@ -2639,18 +2865,19 @@ queries:
       stackit.kms.keys.all(versions.where(state == "active" && disabled == false).length == 0 || versions.where(state == "active" && disabled == false).any(createdAt > time.now - 365 * time.day))
     docs:
       desc: |
-        This check ensures that every STACKIT KMS key has been rotated recently, by requiring at least one enabled, active key version created within the last year. Rotation creates a new key version and leaves earlier versions in place to decrypt existing ciphertext, so the age of the newest usable version is what tells you whether the key is still being rotated. A key whose most recent active version is more than a year old has not been rotated within that window.
+        This check verifies that every STACKIT KMS key has been rotated within the last year.
+
+        Rotation creates a new key version and leaves earlier versions in place so existing ciphertext can still be decrypted, which means the age of the newest usable version is what shows whether rotation is still happening. The check requires at least one enabled, active version created within the past 365 days. A key with no enabled active versions passes, since there is no current version to age.
 
         **Why this matters**
 
-        - **Bounded exposure per version:** Regular rotation caps how much data is protected under any single key version, so a compromised version exposes less.
-        - **Cryptographic hygiene:** A key left unrotated for years drifts from the organization's rotation policy and from common compliance expectations for key lifetime.
-        - **Faster recovery from exposure:** Frequent rotation means a key suspected of compromise can be retired with less accumulated ciphertext bound to the exposed material.
+        Rotation limits how much data is protected by any single piece of key material. A key version used for years accumulates ciphertext, so a compromise of that version exposes everything encrypted since it was created. Rotating on a schedule caps that quantity.
 
-        **Risk mitigation**
+        It also bounds recovery time. When key material is suspected of exposure, retiring it means re-encrypting everything bound to it, and the volume of that work is a direct function of how long the version was in use. A key rotated annually presents a year of data; one never rotated presents all of it.
 
-        - **Bounded key lifetime:** Rotating within a fixed interval limits the lifetime of any single key version and the volume of data encrypted under it.
-        - **Policy conformance:** A recent active version demonstrates the key is under an active rotation schedule rather than created once and forgotten.
+        Rotation is additionally a test that the process works. Organizations discover that an application hardcoded a key version, or that an integration cannot handle a new one, during a rotation rather than during an incident, and finding out on a planned schedule is considerably better.
+
+        Enable automatic rotation where the platform supports it. Manual rotation is the kind of task that slips, and this check exists because it does.
       audit: |
         ### Audit via Console
 
