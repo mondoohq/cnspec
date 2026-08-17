@@ -118,20 +118,19 @@ queries:
           mondoo.com/filter-icon: bicep
     docs:
       desc: |
-        This check ensures that Microsoft Entra ID Protection is configured to detect and respond to risky sign-in events in real time and offline. By default, no sign-in risk Conditional Access policy is created, leaving the tenant dependent on after-the-fact log review to spot suspicious authentication activity.
+        This check verifies that the tenant acts automatically on sign-ins Microsoft Entra ID Protection scores as risky.
+
+        Entra ID Protection scores each authentication attempt using signals such as an anonymized IP address, impossible travel between two locations, a device previously linked to malware, and sign-in properties unfamiliar for that account. The score does nothing on its own. Turning it into enforcement takes a Conditional Access policy, created in the Microsoft Entra admin center under **Protection > Conditional Access > Policies**, with **Conditions > Sign-in risk** set to the high and medium levels and **Grant** requiring multifactor authentication. This check requires such a policy to exist and to be on rather than in report-only or off state. Where the tenant is provisioned as code, the same policy appears as a conditional access policy resource in the Terraform or Bicep definition.
 
         **Why this matters**
 
-        - **Real-time threat response:** Sign-in risk policies trigger MFA or block access the moment a suspicious pattern is detected, stopping attackers before they establish a session.
-        - **Coverage of novel attack vectors:** Risk signals include anonymous IP addresses, atypical travel, malware-linked IPs, and unfamiliar sign-in properties, providing protection beyond simple password checks.
-        - **Reduced dwell time:** Automated policy enforcement closes the window between credential compromise and unauthorized access far faster than manual investigation.
-        - **Defense in depth:** Layering risk-based access controls on top of MFA means that even a successfully phished second factor is not enough to complete a high-risk sign-in.
+        Without the policy the risk signal becomes a report somebody reads the next morning. The attacker who triggered it has been inside for hours.
 
-        **Risk mitigation**
+        The sequence is routine. A password recovered from an unrelated breach is replayed from a hosting provider through an anonymizing proxy, minutes after the real employee signed in from their office. Entra rates the attempt high risk and issues the session anyway, because nothing was configured to stop it. The attacker opens Outlook on the web, searches the mailbox for the word invoice, sets a mailbox rule that files their own messages away from the owner's view, and starts a conversation with the finance team.
 
-        - **Account takeover:** Requiring MFA or blocking access on medium and high sign-in risk stops stolen credentials from granting immediate entry.
-        - **Lateral movement:** Blocking suspicious sign-ins prevents attackers from pivoting across services and escalating privileges once inside the tenant.
-        - **Data exfiltration:** Cutting off a session at the sign-in stage limits the attacker's ability to reach sensitive data, even when credentials are already compromised.
+        With the policy in place, that same attempt has to satisfy a multifactor prompt on a device the attacker does not hold, so it fails at the point of sign-in rather than at the point of discovery.
+
+        Exclude at least one emergency access account from the policy before you enable it, and consider running it in report-only mode first to see who would have been challenged, but understand that report-only mode enforces nothing.
       audit: |
         ### Audit via Console
 
@@ -331,20 +330,19 @@ queries:
           mondoo.com/filter-icon: bicep
     docs:
       desc: |
-        This check ensures that Microsoft Entra ID Protection is configured with a Conditional Access policy that acts automatically when user risk reaches a high level. By default, no user-risk policy is created, so accounts flagged as likely compromised continue to operate without interruption unless an administrator manually investigates the alert.
+        This check verifies that the tenant acts automatically when Microsoft Entra ID Protection concludes an identity itself is compromised.
+
+        User risk is a judgment about the account rather than about one sign-in. It rises when Microsoft finds the account's credentials in a leaked credential dump, when Microsoft threat intelligence links the identity to known attacker activity, or when a pattern of behavior over time indicates compromise. Acting on it requires a Conditional Access policy, created in the Microsoft Entra admin center under **Protection > Conditional Access > Policies**, with **Conditions > User risk** set to high and **Grant** requiring both multifactor authentication and a password change. This check requires such a policy to exist and be enabled. Provisioned as code, it is the same conditional access policy resource with a user risk condition.
 
         **Why this matters**
 
-        - **Automated remediation:** A user-risk policy forces a password change or blocks access the moment Entra ID Protection classifies an account as high risk, reducing attacker dwell time.
-        - **Coverage of credential leak signals:** User risk aggregates intelligence from leaked credential databases, anomalous behavior patterns, and dark-web feeds, detecting compromise that password-based controls alone would miss.
-        - **Privileged account protection:** Compromised accounts with elevated permissions can cause outsized damage; automatic risk-based blocking limits the blast radius before manual review completes.
-        - **Reduced incident response burden:** Automated policy enforcement reduces the volume of manual remediation tasks that security teams must handle after a credential compromise event.
+        A high user risk score means Microsoft has concrete evidence the password is in somebody else's hands. Without a policy, that evidence produces a dashboard entry and nothing else, and the compromised credential keeps working until an analyst notices and acts manually. In practice that window is measured in days, and often nobody looks at all.
 
-        **Risk mitigation**
+        The attacker does not wait. The leaked password that raised the score is the one they are already using, and the account continues serving mail, Teams history, and SharePoint content to them throughout.
 
-        - **Credential compromise:** Requiring a password change on high user risk invalidates stolen credentials and forces re-authentication with a fresh secret before the attacker can act.
-        - **Lateral movement:** Blocking high-risk accounts prevents attackers from pivoting to other services and escalating privileges within the tenant.
-        - **Data exfiltration:** Cutting access at the identity layer stops an attacker from reaching sensitive data even when they already hold valid credentials.
+        A user risk policy closes that gap without a human in the loop. The account is forced through a password change backed by a second factor at its next authentication, which invalidates the credential the attacker holds and requires them to defeat a factor they do not have to regain anything.
+
+        Exclude an emergency access account so a false positive on the wrong identity cannot lock every administrator out of the tenant, and pair this with a sign-in risk policy, since the two cover different signals and a companion check in this policy tracks the other one.
       audit: |
         ### Audit via Console
 
@@ -544,19 +542,19 @@ queries:
           mondoo.com/filter-icon: bicep
     docs:
       desc: |
-        This check ensures that a Conditional Access policy is in place to block legacy authentication client types, including Exchange ActiveSync clients and other legacy protocols such as POP and IMAP. By default, Microsoft 365 tenants permit these older protocols, which cannot enforce multifactor authentication and are routinely targeted in credential-stuffing and password-spray campaigns.
+        This check verifies that authentication protocols incapable of multifactor authentication are blocked outright.
+
+        Legacy authentication covers Exchange ActiveSync and the older mail clients grouped as other clients, which includes POP, IMAP, and SMTP AUTH. Microsoft 365 accepts these protocols by default, and they predate modern authentication and cannot present an interactive second factor, so a sign-in over them completes on a password alone regardless of what the tenant requires elsewhere. You block them with a Conditional Access policy in the Microsoft Entra admin center under **Protection > Conditional Access > Policies**, setting **Conditions > Client apps** to those legacy client types and **Grant** to block access. This check requires such a policy to be enabled rather than report-only or off. In infrastructure code it is the same conditional access policy resource with a blocking grant control.
 
         **Why this matters**
 
-        - **MFA bypass prevention:** Legacy authentication protocols bypass Conditional Access MFA requirements entirely, meaning an attacker with a valid password can authenticate without a second factor.
-        - **Reduced credential-stuffing exposure:** Blocking these protocols eliminates the most common automated attack surface used to test large volumes of stolen credentials against Exchange and other Microsoft services.
-        - **Smaller attack surface:** Disabling client app types that the organization does not need removes an entire class of authentication pathways that cannot be made more secure without replacing the protocol.
-        - **Enforcement consistency:** A Conditional Access block policy applies uniformly across all users, preventing individual exemptions that could leave gaps in coverage.
+        Legacy endpoints are where password spraying goes, precisely because they answer with a yes or a no and nothing else. An attacker takes a list of your employees' addresses, which is largely derivable from your website and public profiles, tries one common seasonal password against all of them, and waits before the next attempt so no single account locks out. Every hit is a working session, and the multifactor policy the tenant is proud of never enters the conversation.
 
-        **Risk mitigation**
+        The mailbox is the objective and it is reached directly. The attacker synchronizes mail over IMAP, which is quiet, produces no browser session, and copies the entire mailbox at once rather than page by page.
 
-        - **Account compromise:** Attackers lose the ability to authenticate to Exchange ActiveSync and IMAP endpoints using stolen passwords alone, since those endpoints can no longer complete a sign-in.
-        - **Compliance posture:** Blocking legacy authentication satisfies explicit requirements in frameworks that mandate strong authentication, closing the gap created by MFA-incapable protocols.
+        Blocking the client types removes the whole class of attack rather than raising its cost, because there is no supported way to add a second factor to these protocols.
+
+        Exclude an emergency access account, and inventory what still uses these protocols before you enable the policy, since multifunction printers, scan-to-email devices, and older line-of-business applications commonly authenticate this way and will stop working.
       audit: |
         ### Audit via Console
 
@@ -739,19 +737,19 @@ queries:
           mondoo.com/filter-icon: bicep
     docs:
       desc: |
-        This check ensures that a Conditional Access policy is in place requiring multifactor authentication for all users assigned to privileged directory roles in the Microsoft 365 tenant. By default, no such policy is created, leaving administrative accounts protected only by a password and making them prime targets for credential-based attacks.
+        This check verifies that holding a privileged directory role requires a second factor at sign-in.
+
+        Microsoft 365 creates no such requirement on its own. It is a Conditional Access policy, built in the Microsoft Entra admin center under **Protection > Conditional Access > Policies**, with the **Users** assignment targeting directory roles rather than individuals and **Grant** set to require multifactor authentication. Scoping by role rather than by name is the important part, because the policy then covers whoever holds the role next. This check requires an enabled policy of that shape. Provisioned as code, it is a conditional access policy resource whose user condition names the administrative role template identifiers.
 
         **Why this matters**
 
-        - **Privileged account protection:** Administrative roles carry permissions that can modify tenant configuration, access all user data, and grant additional privileges, so a single compromised admin account can lead to full tenant takeover.
-        - **Phishing resistance:** MFA forces an attacker who has stolen an admin password to also defeat a second factor, significantly raising the cost of a successful attack.
-        - **Blast radius reduction:** Even when credentials are phished, MFA prevents the attacker from completing the sign-in and stops the compromise from escalating beyond the initial credential theft.
-        - **Regulatory alignment:** MFA for privileged users is an explicit requirement in multiple security frameworks, and a Conditional Access policy provides auditable proof of enforcement.
+        An administrative account is not a bigger version of a user account, it is a different object. A Global Administrator can read any mailbox by granting itself access, reset any password, add a federated identity provider that mints tokens for any user, and register an application with permissions over the whole tenant. Compromise of one is compromise of everything, and there is no containment step afterwards.
 
-        **Risk mitigation**
+        Attackers know which accounts these are, because directory role membership is readable by anyone signed in to the tenant. The path is a targeted phishing message to an administrator, a password, and nothing else in the way. Once inside they create a second privileged identity of their own so that resetting the original password changes nothing.
 
-        - **Credential compromise:** Requiring a second factor for every administrative sign-in means that stolen passwords alone cannot be used to access the tenant's highest-privilege accounts.
-        - **Insider threat containment:** MFA creates an additional verification step that limits the window during which a disgruntled or inattentive administrator can perform unauthorized actions with a shared or reused credential.
+        Requiring a second factor means the stolen password stops being sufficient. The attacker has to defeat a device or a key in the administrator's possession, which is a materially harder problem than sending a convincing email.
+
+        Cover the roles that can grant privilege or read data rather than only Global Administrator, exclude at least one emergency access account so a failed rollout cannot lock every administrator out, and start in report-only mode long enough to confirm in the sign-in logs that nobody legitimate would be blocked.
       audit: |
         ### Audit via Console
 
@@ -996,19 +994,19 @@ queries:
           mondoo.com/filter-icon: bicep
     docs:
       desc: |
-        This check ensures that a Conditional Access policy is in place requiring multifactor authentication for every user in the Microsoft 365 tenant, not just administrators. By default, no tenant-wide MFA policy exists, so non-privileged user accounts are protected only by a password and are frequently targeted in credential-stuffing and phishing campaigns.
+        This check verifies that every account in the tenant, not only the administrators, must present a second factor.
+
+        The control is a Conditional Access policy created in the Microsoft Entra admin center under **Protection > Conditional Access > Policies**, with the **Users** assignment set to all users and **Grant** set to require multifactor authentication. A Microsoft 365 tenant with no such policy leaves ordinary accounts protected by a password alone. This check requires the policy to exist and be enabled. Declared as code, it is a conditional access policy resource including all users with a multifactor grant control.
 
         **Why this matters**
 
-        - **Broad attack surface reduction:** Non-administrative accounts far outnumber privileged accounts, and compromising any of them provides an attacker with initial access and data exposure even without elevated privileges.
-        - **Phishing resistance at scale:** Requiring a second factor for all users means that a successful phishing campaign that harvests passwords still cannot result in account access.
-        - **Data protection:** Even accounts with limited permissions can access sensitive files, emails, and collaboration content; MFA closes the gap between credential theft and data exfiltration.
-        - **Uniform policy enforcement:** A single Conditional Access policy covering all users eliminates ad-hoc exceptions and ensures consistent authentication requirements across the tenant.
+        Administrators are a handful of accounts that people watch. Everyone else is thousands of accounts that nobody watches, and an attacker only has to succeed against one of them.
 
-        **Risk mitigation**
+        The value in an ordinary mailbox is routinely underestimated. It holds the password reset messages for every other system the person uses, the customer contracts they negotiated, the spreadsheets finance sends around, and the internal threads that make a follow-up message from that person entirely believable. Taking one non-privileged account gives an attacker a trusted identity inside the organization, which is the ideal position from which to phish the accounts that do have privilege. Business email compromise almost always starts here rather than at the top.
 
-        - **Credential-stuffing attacks:** Blocking sign-ins that lack a second factor prevents automated tools from using lists of breached passwords to access any account in the tenant.
-        - **Lateral movement:** An attacker who compromises a low-privilege account cannot easily pivot to additional accounts or services because each authentication attempt requires a fresh MFA approval.
+        A password reaches the attacker through reuse or a convincing sign-in page, and with no second factor that is the end of the story. With one, the harvested password is worth nothing on its own.
+
+        Enforcing tenant-wide blocks sign-in for anyone who has not registered a method, so confirm registration coverage and communicate the change before turning the policy on, exclude at least one emergency access account, and use report-only mode first to find the service accounts and shared mailboxes that will need a different approach.
       audit: |
         ### Audit via Console
 
@@ -1174,19 +1172,17 @@ queries:
       microsoft.policies.identitySecurityDefaultsEnforcementPolicy.isEnabled == false
     docs:
       desc: |
-        This check ensures that Microsoft Entra ID Security Defaults are disabled, allowing the organization to enforce access controls through custom Conditional Access policies instead. Security Defaults are enabled by default in new tenants and provide a baseline level of protection, but they prevent organizations from configuring the more granular, risk-based, and role-scoped policies required by mature security programs.
+        This check verifies that the tenant has moved off the Microsoft-managed baseline and onto its own explicit access policies.
+
+        Security defaults is a single on or off switch in the Microsoft Entra admin center under **Identity > Overview > Properties > Manage security defaults**. It applies a fixed set of protections to everybody and cannot be scoped, tuned, or excepted. Critically, it is mutually exclusive with Conditional Access: while security defaults is on, the tenant cannot use Conditional Access policies at all. This check requires it to be disabled, which is what makes the policies the rest of this bundle looks for possible.
 
         **Why this matters**
 
-        - **Policy granularity:** Security Defaults apply a single fixed set of controls across the entire tenant and cannot be scoped by user, group, application, or risk level, making them unsuitable for organizations with differentiated access requirements.
-        - **Legacy authentication blocking:** Security Defaults block some legacy protocols, but a custom Conditional Access policy provides explicit, auditable enforcement with per-client-app-type granularity that satisfies compliance evidence requirements.
-        - **Risk-based access control:** Custom Conditional Access policies can integrate Entra ID Protection sign-in risk and user risk signals, which Security Defaults do not support.
-        - **Break-glass account support:** Custom policies allow explicit exclusions for emergency access accounts, whereas Security Defaults offer no such override mechanism.
+        The gap security defaults leaves is not weak protection, it is inflexibility that forces bad choices. It has no exclusion mechanism, so there is no way to keep an emergency access account outside the multifactor requirement, and a tenant that loses access to its authentication methods has no way back in. It cannot condition access on sign-in risk or user risk, so the Entra ID Protection signals that identify a compromised credential cannot be acted on automatically. It cannot distinguish an administrator from a contractor, or a managed device from an unmanaged one.
 
-        **Risk mitigation**
+        The result in practice is that organizations needing any of that turn security defaults off and then do not replace it, leaving a window with neither the baseline nor its successor. That window is where an attacker with a phished password walks in unchallenged.
 
-        - **Configuration drift:** Replacing Security Defaults with explicit Conditional Access policies makes the organization's authentication requirements visible, versioned, and auditable rather than relying on an opaque Microsoft-managed baseline.
-        - **Compliance gap:** Several frameworks require evidence of specific, documented authentication controls; a named Conditional Access policy provides that evidence in a way that a vendor-managed default cannot.
+        Disabling this is only correct as part of a migration, not on its own. Do not turn it off until the Conditional Access policies that replace it are built and enabled, including a tenant-wide multifactor requirement and a policy blocking legacy authentication, which companion checks in this policy verify. A small tenant without the licensing for Conditional Access is better served by leaving security defaults on and accepting this finding than by disabling it and enforcing nothing.
       audit: |
         ### Audit via Console
 
@@ -1268,20 +1264,19 @@ queries:
       microsoft.roles.where(displayName == "Global Administrator").all(assignments.length.inRange(2,4))
     docs:
       desc: |
-        This check ensures that the Global Administrator role is assigned to between two and four accounts. By default Microsoft 365 imposes no upper or lower bound on Global Administrator assignments, so tenants frequently end up either with a single point of failure or with an excessively large group of unrestricted privileged accounts.
+        This check verifies that the Global Administrator role is held by a small named group, between two and four accounts.
+
+        Global Administrator is the unrestricted role in Microsoft 365. Microsoft imposes no upper or lower bound on how many accounts hold it, so the count drifts in both directions. You review the assignments in the Microsoft Entra admin center under **Identity > Roles & admins > Roles**, and change them there or from the Microsoft 365 admin center under **Users > Active Users** using **Manage roles**. This check requires the number of assignments to fall between two and four.
 
         **Why this matters**
 
-        - **Redundancy:** At least two Global Administrators ensure that critical administrative tasks can continue if one account is unavailable, locked, or compromised.
-        - **Blast-radius control:** Capping assignments at four limits how many accounts can perform tenant-wide destructive actions, reducing the damage a compromised credential can cause.
-        - **Auditability:** A small, bounded set of privileged accounts is easier to monitor, review, and audit than an unbounded list.
-        - **Separation from operational accounts:** Keeping the count low encourages administrators to use role-specific, least-privilege roles for everyday tasks instead of relying on Global Administrator for convenience.
+        Every Global Administrator is a complete path to the tenant, and an attacker needs only the weakest one. Where the role has been handed out for convenience, the weakest is usually someone who does not think of themselves as an administrator: the person granted it years ago to install one application, who signs in from a personal device and has never been the subject of a security conversation.
 
-        **Risk mitigation**
+        What that access yields is total. Read any mailbox through granted access, reset any password, add an identity provider that issues tokens for any user, consent an application to tenant-wide permissions. The attacker's first move is usually to establish a second privileged identity of their own, so that discovering and resetting the original account does not evict them.
 
-        - **Credential compromise:** Fewer Global Administrator accounts reduce the number of high-value targets an attacker can pursue through phishing or credential stuffing.
-        - **Insider threat:** Limiting the role to a small named set of individuals makes unauthorized privilege escalation more visible during periodic access reviews.
-        - **Availability:** Requiring at least two assignments prevents a single account lockout or departure from blocking emergency administrative access to the tenant.
+        The lower bound guards a different failure. A single Global Administrator means one lockout, one departure, or one compromise leaves nobody able to suspend accounts, revoke tokens, or run an investigation during the incident that just started.
+
+        Move day-to-day work to least-privilege roles such as Exchange Administrator or User Administrator rather than leaving people at the top, and pair the small standing group with just-in-time activation, which a companion check in this policy verifies.
       audit: |
         ### Audit via Console
 
@@ -1414,18 +1409,19 @@ queries:
       microsoft.devicemanagement.deviceConfigurations.where(platformType == "android").all(settings.storageRequireDeviceEncryption == true)
     docs:
       desc: |
-        This check ensures that Android device configuration profiles in Microsoft Intune are configured to require storage encryption. By default Intune does not enforce device encryption in newly created Android profiles, so organizations must explicitly set `storageRequireDeviceEncryption` to require it.
+        This check verifies that managed Android devices are required to encrypt their storage.
+
+        The requirement is expressed in a device configuration profile in the Microsoft Intune admin center under **Devices > Configuration**, where a device restrictions profile for the Android platform carries the `storageRequireDeviceEncryption` setting. Intune does not turn it on in a newly created profile, so it has to be set deliberately and the profile assigned to the device groups that need it. This check requires every Android device configuration profile to require storage encryption.
 
         **Why this matters**
 
-        - **Data protection at rest:** Encryption renders the data stored on a device unreadable without the correct decryption key, protecting it if the device is lost or stolen.
-        - **Breach containment:** An encrypted device limits an attacker's ability to extract sensitive corporate data even after gaining physical access.
-        - **Compliance readiness:** Many regulatory frameworks require encryption of data on mobile endpoints, and an explicit Intune policy provides auditable evidence of enforcement.
+        A managed phone holds a working copy of corporate data rather than a link to it. Cached mail going back weeks, attachments opened in Outlook, files synced from OneDrive and SharePoint, Teams message history, and the tokens that authenticate all of it without asking for a password again.
 
-        **Risk mitigation**
+        Unencrypted, that copy survives the lock screen. A phone left in a taxi or lifted at a conference is not attacked through its interface; the storage is read directly, either by attaching the device to a computer in a diagnostic mode or by removing the flash storage entirely. The lock screen never participates. The attacker gets the mailbox contents and, more usefully, the refresh tokens, which let them continue authenticating as that user from their own machine until the tokens are revoked, long after the phone is written off as lost.
 
-        - **Lost or stolen devices:** Without encryption a lost Android device exposes all locally cached email, files, and credentials to anyone who finds it.
-        - **Unauthorized physical access:** Encryption prevents data extraction through direct device access methods such as connecting to a computer or removing storage media.
+        Encryption ties the data to a key the lock credential releases, so the same physical access yields nothing readable.
+
+        Android Enterprise work profile and fully managed enrollments enforce storage encryption on their own, so provisioning through Android Enterprise satisfies the requirement without a separate setting. The legacy Android device administrator path is deprecated and winding down in Intune, so treat any remaining profiles there as a migration task rather than a place to add new configuration.
       audit: |
         ### Audit via Console
 
@@ -1536,18 +1532,19 @@ queries:
       microsoft.devicemanagement.deviceConfigurations.where(platformType == "androidWorkProfile").all(settings.passwordMinimumLength >= 8)
     docs:
       desc: |
-        This check ensures that Microsoft Intune device configuration profiles are configured to require a minimum password or passcode length of at least eight characters across all managed device platforms. By default Intune does not enforce a minimum length in newly created profiles, leaving it up to the device default or the user's choice.
+        This check verifies that managed devices require a device password or passcode of at least 8 characters.
+
+        The requirement is set per platform in a device restrictions profile in the Microsoft Intune admin center under **Devices > Configuration**, in the password section. This check reads the configured minimum for Windows 10 and later, macOS, iOS, Android, and Android Enterprise work profile devices, and requires every profile to enforce at least 8. On iOS and iPadOS the field is named minimum passcode length rather than password length. Intune leaves the value unset in a new profile, which means the device default or whatever the user chooses.
 
         **Why this matters**
 
-        - **Brute-force resistance:** Longer passwords expand the search space an attacker must exhaust, making automated guessing attacks substantially more expensive.
-        - **Alignment with security standards:** NIST SP 800-63B recommends a minimum of eight characters for memorized secrets, and enforcing this through MDM policy provides consistent coverage across Windows, macOS, iOS, and Android devices.
-        - **Consistent enforcement:** Centrally managed password-length requirements through Intune remove reliance on users to choose adequately long passwords on their own.
+        The device credential is the only thing between someone holding the hardware and the data on it, because it is also what releases the storage encryption key. A four-digit PIN gives ten thousand possibilities, which is not a search space, it is a short wait. Somebody who takes the phone from a hotel room can exhaust it, and shoulder-surfing or a smudge pattern narrows it further before they start.
 
-        **Risk mitigation**
+        What is behind the credential is the whole point. Cached mail and attachments, files synced from OneDrive and SharePoint, Teams history, saved credentials in the browser, and the refresh tokens that let the attacker keep authenticating as that user from their own equipment after the device itself is wiped and forgotten.
 
-        - **Unauthorized device access:** A minimum eight-character password significantly reduces the likelihood of a successful brute-force or opportunistic login on a lost or unattended device.
-        - **Credential reuse:** Requiring a meaningful minimum length discourages the use of trivially guessable PINs or short passwords that users might reuse across personal and corporate accounts.
+        Eight characters is a floor rather than a target. It is the length below which offline and opportunistic guessing stops being meaningfully constrained, and it is the length recommended by current federal password guidance for memorized secrets.
+
+        Set the value on every platform your organization manages rather than only the dominant one, since an unset profile leaves the choice to the user, and pair the length requirement with storage encryption, which a companion check in this policy verifies for Android.
       audit: |
         ### Audit via Console
 
@@ -1683,19 +1680,19 @@ queries:
       microsoft.domains.all(passwordValidityPeriodInDays == 2147483647)
     docs:
       desc: |
-        This check ensures that all Microsoft 365 domains are configured so that user passwords never expire, reflected by a `passwordValidityPeriodInDays` value of `2147483647`. By default Microsoft 365 sets passwords to expire after 90 days, a practice that modern security research has shown to weaken rather than strengthen credential hygiene.
+        This check verifies that user passwords are not forced to rotate on a schedule.
+
+        The setting lives in the Microsoft 365 admin center under **Settings > Org settings > Security & privacy > Password expiration policy**, where selecting the never expire option is what this check requires. Microsoft records it per domain as a `passwordValidityPeriodInDays` value of `2147483647`, the sentinel meaning no expiry. Tenants that have not changed it may still carry the older default of 90 days.
 
         **Why this matters**
 
-        - **Eliminates predictable rotation patterns:** Users forced to change passwords on a fixed schedule frequently make minor, predictable modifications to their existing passwords, which attackers exploit using password-spraying techniques that account for common incremental changes.
-        - **Encourages strong initial choices:** When users know a password is permanent, they are more motivated to choose a long, unique, randomly generated credential and store it in a password manager rather than selecting something easily memorable and therefore guessable.
-        - **Aligns with current NIST guidance:** NIST SP 800-63B explicitly recommends against periodic password rotation except after a confirmed compromise, and Microsoft's own security baselines reflect this shift.
-        - **Complements MFA:** Organizations that enforce multi-factor authentication gain a second layer of protection that makes the age of a password largely irrelevant to its security, making forced rotation an unnecessary burden.
+        Forced rotation degrades the passwords it is meant to refresh. People do not generate a new secret every quarter; they increment the one they have. Autumn2024! becomes Winter2025!, and the pattern is so consistent that password-spray tooling derives the next season's guesses directly from a leaked earlier password. An attacker holding one historical credential for your organization can often produce the current one without guessing blindly.
 
-        **Risk mitigation**
+        Rotation also pushes users away from the practices that actually help. A password that must be memorized and retyped every ninety days will not be a long random string from a password manager; it will be short, meaningful, and reused. And because staff are trained to expect periodic reset prompts, a phishing message that presents one is unremarkable.
 
-        - **Phishing and credential stuffing:** Removing rotation pressure leads users to adopt longer, unique passwords that are far harder to guess or reuse across breached credential databases.
-        - **Help-desk and user friction:** Eliminating expiration-driven password resets reduces support load and the social-engineering opportunities that arise when users are trained to expect reset prompts.
+        Removing expiry only helps if the password is not the sole defense. Current guidance from the national standards bodies and from Microsoft's own baselines is to drop scheduled rotation and rely on strong unique credentials, a second factor, and a reset triggered by evidence of compromise instead of by the calendar.
+
+        Confirm multifactor authentication is enforced for all users, which a companion check in this policy verifies, and turn on Microsoft Entra Password Protection to block weak and previously breached passwords before you remove expiry. Without those, a compromised password stays valid indefinitely.
       audit: |
         ### Audit via Console
 
@@ -1787,18 +1784,19 @@ queries:
       microsoft.domains.where(isVerified == true && id != /\.onmicrosoft\.com$/).all(dns(id).spf != empty)
     docs:
       desc: |
-        This check ensures that every Exchange Online domain has a published SPF (Sender Policy Framework) TXT record that explicitly authorizes Microsoft's mail servers. By default no SPF record is created automatically when a domain is added to Microsoft 365; it must be published manually at the DNS provider.
+        This check verifies that every custom domain in the tenant publishes an SPF record naming the servers allowed to send as it.
+
+        Sender Policy Framework is a TXT record in the domain's own DNS zone listing authorized sending sources. For a domain that sends only through Exchange Online the record is `v=spf1 include:spf.protection.outlook.com -all`, and other sending systems are added as further include terms. Adding a domain to Microsoft 365 does not create it; it has to be published at your DNS provider. This check requires an SPF record on every verified domain other than the tenant's own onmicrosoft.com domain.
 
         **Why this matters**
 
-        - **Anti-spoofing protection:** SPF lets receiving mail servers confirm that inbound messages claiming to be from your domain actually originate from a server you have authorized, blocking the most common form of sender impersonation.
-        - **Phishing defense:** Without an SPF record, attackers can send email that appears to come from your domain's address with no technical barrier, making your brand a convenient cover for phishing campaigns targeting your customers, partners, or employees.
-        - **Deliverability and reputation:** Receiving servers and spam filters use SPF pass or fail results as a strong signal when deciding whether to deliver, quarantine, or reject email, so a missing record can cause legitimate outbound mail to be flagged as suspicious.
+        Without a published record, receiving mail servers have no way to distinguish a message your organization sent from one an attacker composed on a rented server. There is no vulnerability to exploit here. Sending mail claiming to be from your domain is a matter of setting a header field, and the only thing that ever objected was a policy you never published.
 
-        **Risk mitigation**
+        That is the delivery mechanism for the two most costly email attacks. A message that appears to come from your finance team reaches your customer with new bank details for an outstanding invoice. A message that appears to come from your IT team reaches your own staff with a link to a credential-harvesting page. Both arrive with your domain in the sender field, which is the entire reason they work.
 
-        - **Domain impersonation:** A valid SPF record with a hard-fail policy (`-all`) causes receiving servers to reject messages sent from unauthorized sources, directly preventing spoofed email from reaching recipients.
-        - **Cascading email-authentication failures:** SPF is a prerequisite for effective DMARC enforcement; without a passing SPF result, DMARC cannot reliably align and reject spoofed messages, undermining the entire email authentication chain.
+        The record also carries a policy on failure. The `-all` terminator tells receivers to reject mail from sources you did not authorize, where a softer terminator asks them to accept it and make a note.
+
+        Enumerate every system that sends on your behalf before publishing, including marketing platforms, ticketing systems, and application servers, since a record that omits one will cause legitimate mail to be rejected. SPF is also a prerequisite for DMARC enforcement, which a companion check in this policy verifies.
       audit: |
         Verify that every Exchange domain publishes an SPF record by querying its DNS TXT records:
 
@@ -1935,18 +1933,19 @@ queries:
     mql: microsoft.policies.authorizationPolicy.defaultUserRolePermissions.allowedToCreateApps == false
     docs:
       desc: |
-        This check ensures that non-administrator users are blocked from registering third-party applications in Microsoft Entra ID by verifying that the tenant authorization policy sets `allowedToCreateApps` to `false`. By default Microsoft Entra allows any user to register applications, meaning any account in the tenant can grant an external application access to Microsoft 365 data without administrator review or approval.
+        This check verifies that ordinary users cannot register applications in the tenant directory.
+
+        Application registration is governed by the tenant authorization policy, exposed in the Microsoft Entra admin center under **Identity > Users > User settings** as the users can register applications option. Microsoft ships it enabled, so any account in the tenant can create an application identity that reaches Microsoft 365 data. This check requires the setting to be off, recorded on the default user role as `allowedToCreateApps` set to `false`.
 
         **Why this matters**
 
-        - **Supply-chain risk reduction:** Restricting app registration to administrators ensures that every OAuth application connected to the tenant has been reviewed and approved, eliminating the risk of users silently connecting malicious or unvetted third-party tools.
-        - **Data exfiltration prevention:** Third-party applications registered by end users can request broad Microsoft Graph permissions, including access to email, files, and calendar data, without visibility to the security team.
-        - **Attack-surface control:** Each registered application is a potential attack vector; limiting who can create them reduces the number of OAuth tokens in circulation and the scope of any single compromised application.
+        An application registration is a first-class identity in your directory. It can hold its own credentials, be granted Microsoft Graph permissions, and authenticate without a user present, which is exactly the profile of a persistent backdoor. When any of thousands of accounts can create one, the security team has no list of what exists and no review step before something appears.
 
-        **Risk mitigation**
+        For an attacker who has compromised a single ordinary mailbox, this is the step that converts a temporary session into permanent access. They register an application, add a client secret they control, grant it what they can, and from then on authenticate as that application rather than as the user. Resetting the compromised user's password, revoking their sessions, and enforcing a second factor on their account changes nothing, because the attacker no longer needs the account.
 
-        - **OAuth phishing:** Attackers commonly use consent-phishing campaigns that trick users into granting a malicious application persistent access to their mailbox or OneDrive; removing the ability to register apps blocks this technique at its source.
-        - **Unmanaged shadow integrations:** Without enforcement, users can connect personal productivity tools or automation scripts that process corporate data outside the organization's data-governance and DLP policies.
+        The everyday version is quieter and just as damaging. Staff connect productivity tools, automation platforms, and scripts that read mail and files, and corporate data starts flowing to services that were never assessed and are not covered by your data governance or retention obligations.
+
+        Restricting registration to administrators means every application identity in the tenant has been through a review. Pair it with an approval path so people who legitimately need an integration have somewhere to ask, rather than routing around the control.
       audit: |
         ### Audit via Console
 
@@ -2030,20 +2029,19 @@ queries:
       ms365.exchangeonline.dkimSigningConfigs.all(enabled == true)
     docs:
       desc: |
-        This check ensures that Exchange Online is configured to enable DKIM signing for every domain. By default, Microsoft 365 provides a base-level DKIM signature, but custom per-domain signing is not enabled automatically; enabling it adds a cryptographic signature that receiving servers use to verify that a message originated from an authorized source and was not altered in transit.
+        This check verifies that Exchange Online cryptographically signs outbound mail for every domain in the tenant.
+
+        DomainKeys Identified Mail attaches a signature to each outgoing message, computed over the headers and body with a private key whose public half is published in the domain's DNS as two selector records. Receiving servers verify it and learn both that the message came from an authorized sender for that domain and that it was not modified in transit. Microsoft 365 signs with a shared default key, but per-domain signing must be turned on for each custom domain, in the Microsoft Defender portal under **Email & collaboration > Policies & rules > Threat policies > Email authentication settings** on the DKIM tab. This check requires signing to be enabled for every domain.
 
         **Why this matters**
 
-        - **Email authentication:** DKIM allows receiving mail servers to verify that outbound messages genuinely originated from your domain and were not tampered with.
-        - **Spoofing deterrence:** Domains with DKIM signatures are significantly harder for attackers to impersonate because forged messages fail cryptographic verification.
-        - **Deliverability protection:** Major mail providers factor DKIM pass/fail into spam scoring, so unsigned domains are more likely to have legitimate mail rejected or quarantined.
-        - **DMARC readiness:** DKIM alignment is a prerequisite for a complete DMARC policy, which provides the strongest email authentication posture available.
-        - **Brand reputation:** Consistent DKIM signing signals to the broader email ecosystem that your domain is well-administered, reducing the likelihood of being blocklisted.
+        A forged message can copy your sender address, your formatting, and your signature block, but it cannot produce a valid signature without your private key. That is the difference between a spoof that arrives looking like you and one that arrives failing verification.
 
-        **Risk mitigation**
+        The attacks this blocks are the expensive ones. An invoice with altered bank details sent to your customers under your name. A message to your own staff, apparently from a director, asking for gift cards or a password. Both depend entirely on the recipient's mail server having no cryptographic reason to doubt the sender.
 
-        - **Prevents domain impersonation:** A valid DKIM signature makes it computationally infeasible for an attacker to craft a message that passes authentication as your domain.
-        - **Reduces business email compromise exposure:** Attackers who rely on spoofed sender addresses lose their primary delivery mechanism when DKIM is enforced across all domains.
+        Signing also protects the message in flight, since any modification to the signed content invalidates the signature rather than passing silently.
+
+        Enabling DKIM fails until the two selector records returned by the tenant are published in the domain's DNS zone, so publish them, allow propagation, then enable. On its own DKIM tells receivers a message verified; the instruction to reject one that did not comes from DMARC, which a companion check in this policy verifies.
       audit: |
         ### Audit via Console
 
@@ -2125,20 +2123,21 @@ queries:
       ms365.exchangeonline.safeLinksPolicies.length > 0
     docs:
       desc: |
-        This check ensures that Microsoft Defender for Office 365 is configured with at least one Safe Links policy. By default, no custom Safe Links policies exist in a new tenant; without them, URLs in email and Office documents are delivered to users without real-time scanning or rewriting.
+        This check verifies that URLs in mail and documents are checked at the moment a user clicks them.
+
+        Safe Links is the Microsoft Defender for Office 365 feature that rewrites links so they resolve through Microsoft's checking service, evaluating the destination when the click happens rather than when the message arrived. Policies are created in the Microsoft Defender portal under **Email & collaboration > Policies & rules > Threat policies > Safe Links**. A new tenant has none, so links reach users unexamined. This check requires at least one Safe Links policy to be configured.
 
         **Why this matters**
 
-        - **Time-of-click scanning:** Safe Links checks URLs at the moment a user clicks, catching links that were benign at delivery but became malicious after the email arrived.
-        - **Zero-day URL protection:** Behavioral analysis at click time identifies newly discovered malicious URLs that have not yet been added to static blocklists.
-        - **Internal email coverage:** Safe Links can be applied to messages sent within the organization, not only to inbound external mail.
-        - **Threat visibility:** Click tracking and reporting surface targeted users and recurring attack patterns that would otherwise go undetected.
-        - **Office application protection:** When configured to cover Office apps, Safe Links extends coverage beyond email to links embedded in Word, Excel, and PowerPoint files.
+        Filtering at delivery is a snapshot, and attackers have built their delivery around that fact. The link in the message points at a page that is empty, or at a legitimate file-sharing service, or at a redirect that has not yet been pointed anywhere. The message passes inspection cleanly and lands in the inbox. Hours later, once the mail has been scanned and forgotten, the destination is switched to the credential-harvesting page, and every user who clicks from that point on reaches it.
 
-        **Risk mitigation**
+        Checking at click time is what defeats that, because the evaluation happens against what the URL resolves to now rather than what it resolved to at delivery.
 
-        - **Blocks post-delivery link activation:** Attackers who send benign-looking URLs that redirect to malicious content after delivery are stopped at click time rather than after compromise.
-        - **Reduces successful phishing outcomes:** Removing direct access to malicious URLs interrupts the initial access phase of phishing campaigns that rely on user clicks.
+        Coverage matters beyond inbound mail. Internal messages carry links too, and a compromised colleague's account is the most effective phishing sender in the organization. Safe Links can be applied to internal mail, to Teams, and to links embedded in Word, Excel, and PowerPoint files.
+
+        Click telemetry is the other benefit. The reports show which users are being targeted repeatedly and which campaigns are landing, which is the information that makes awareness work specific instead of generic.
+
+        Configure the policy to cover all users, apply it to internal mail as well as inbound, and disable click-through on a blocked page so a determined user cannot override the verdict.
       audit: |
         ### Audit via Console
 
@@ -2227,20 +2226,19 @@ queries:
       ms365.exchangeonline.safeAttachmentPolicies.length > 0
     docs:
       desc: |
-        This check ensures that Microsoft Defender for Office 365 is configured with at least one Safe Attachments policy. By default, a new tenant has no custom Safe Attachments policies; without them, email attachments are delivered based on traditional antivirus signatures alone, with no sandboxed behavioral analysis.
+        This check verifies that email attachments are detonated in a sandbox before they reach a mailbox.
+
+        Safe Attachments is the Microsoft Defender for Office 365 feature that opens each attachment in an isolated virtual environment and watches what it does, rather than comparing it against known signatures. Policies are created in the Microsoft Defender portal under **Email & collaboration > Policies & rules > Threat policies > Safe Attachments**, where the unknown malware response decides whether a suspicious file is blocked or the message body is delivered while scanning continues. A new tenant has none. This check requires at least one Safe Attachments policy to be configured.
 
         **Why this matters**
 
-        - **Sandbox detonation:** Safe Attachments opens attachments in an isolated virtual environment and observes their behavior, detecting threats that have no known signature.
-        - **Ransomware prevention:** Blocking malicious attachments before they reach the endpoint interrupts ransomware delivery before any files are encrypted.
-        - **Novel malware coverage:** Behavioral detonation catches newly crafted malware variants that evade signature-based detection engines.
-        - **SharePoint and OneDrive scanning:** When enabled for collaboration workloads, Safe Attachments also scans files uploaded to SharePoint and OneDrive, not only email.
-        - **Dynamic delivery:** Safe Attachments can release the message body immediately while the attachment is scanned, minimizing user impact without sacrificing protection.
+        Signature matching only recognizes malware somebody has already seen and catalogued. The payload aimed at your organization is usually not that. It is a document generated for this campaign, or an off-the-shelf loader repacked so its bytes match nothing on file, delivered inside an archive or a document that looks like an invoice, a resume, or a shipping notice.
 
-        **Risk mitigation**
+        Behavioral detonation asks a different question. The file is opened in a disposable environment and observed: whether it spawns a scripting host, reaches out to a server on the internet, writes itself into a startup location, or begins encrypting the sample files around it. Those behaviors identify a payload that has never been catalogued, which is the whole population that matters.
 
-        - **Stops weaponized documents:** Malicious Office files, PDFs, and archives that carry exploit payloads are quarantined or blocked before reaching user mailboxes.
-        - **Limits dwell time:** Catching malware at the email gateway prevents the initial foothold that attackers need to establish persistence and move laterally.
+        Stopping it at the mail layer is stopping it before the foothold exists. Once the file runs on a workstation the attacker has code execution inside the network, and everything after that is response rather than prevention.
+
+        Extending the policy to SharePoint, OneDrive, and Teams covers files that arrive by upload rather than by mail, which is where the same payload goes when mail is filtered. Choose dynamic delivery if the scanning delay is disruptive, since it releases the message body immediately and attaches the file once it clears.
       audit: |
         ### Audit via Console
 
@@ -2330,20 +2328,19 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that Microsoft Defender for Office 365 has an enabled anti-phishing policy with spoof intelligence, mailbox intelligence, and mailbox intelligence protection turned on. Without these protections, inbound mail receives only basic anti-spoofing checks and lacks impersonation protection for high-value users and trusted domains.
+        This check verifies that impersonation protection is enabled and actually configured to act.
+
+        An anti-phishing policy in Microsoft Defender for Office 365 carries several distinct protections, and this check requires an enabled policy with three of them on: spoof intelligence, which analyzes sending infrastructure to identify mail falsely claiming a legitimate domain; mailbox intelligence, which learns each user's normal correspondents; and mailbox intelligence protection, which is what allows action to be taken on the result. You configure them in the Microsoft Defender portal under **Email & collaboration > Policies & rules > Threat policies > Anti-phishing**.
 
         **Why this matters**
 
-        - **Impersonation detection:** Anti-phishing policies identify messages that impersonate specific protected users or domains, such as executives and trusted partner organizations.
-        - **Spoof intelligence:** Built-in spoof intelligence analyzes sending infrastructure to flag messages that falsely claim to originate from legitimate domains.
-        - **Mailbox intelligence:** Machine learning models communication patterns for each user and flags messages from senders that deviate from established behavior.
-        - **Business email compromise protection:** Impersonation protection targets the executive and financial-staff accounts most frequently used in BEC fraud campaigns.
-        - **First-contact safety tips:** Users are warned when they receive email from an address they have never interacted with, reducing the chance of acting on a spoofed message.
+        The messages that cause the largest losses carry no attachment and no link. They are short, plausible, and impersonate somebody the recipient knows. A note from the chief executive's display name asking for an urgent transfer. A message from a supplier's finance contact, on a domain one character different from theirs, attaching updated bank details. Nothing in the message is technically malicious, so content filtering has nothing to catch.
 
-        **Risk mitigation**
+        What identifies these is relationship context. Mailbox intelligence knows this user has never corresponded with this sender, and that the display name matches an internal executive while the address does not. Spoof intelligence knows the sending infrastructure has no relationship with the domain being claimed. Together they flag a message that reads perfectly.
 
-        - **Disrupts BEC attack chains:** Quarantining impersonation attempts before they reach inboxes removes the social-engineering messages that initiate wire-transfer fraud and credential theft.
-        - **Reduces spear-phishing success rates:** Targeted phishing campaigns that rely on domain or user impersonation are surfaced and blocked before users can act on them.
+        Turning the detection on without setting the action is the common failure. The mailbox intelligence protection action defaults to taking no action, which produces the same outcome as leaving the protection off, so set it explicitly to quarantine or an equivalent disposition.
+
+        Name the executives, finance staff, and frequently impersonated partner domains explicitly in the impersonation protection lists, since those are the identities attackers actually borrow, and enable first-contact safety tips so users see a warning when a sender is new to them.
       audit: |
         ### Audit via Console
 
@@ -2436,20 +2433,19 @@ queries:
       ms365.sharepointonline.tenantConfiguration.sharingCapability != "ExternalUserAndGuestSharing"
     docs:
       desc: |
-        This check ensures that SharePoint Online is configured to restrict external sharing to a level more restrictive than the most permissive default. The most permissive setting, ExternalUserAndGuestSharing, allows any user to generate anonymous "Anyone" links that grant access to files and folders without requiring the recipient to authenticate, which means there is no record of who accessed the content.
+        This check verifies that SharePoint and OneDrive do not permit anonymous sharing links.
+
+        External sharing is set organization-wide in the SharePoint admin center under **Policies > Sharing**. The most permissive level, recorded as ExternalUserAndGuestSharing and shown in the console as anyone, allows users to generate links that grant access to a file or folder without the recipient signing in. This check requires the tenant to sit at a more restrictive level, such as new and existing guests, existing guests only, or organization members only.
 
         **Why this matters**
 
-        - **Uncontrolled data distribution:** Anonymous sharing links allow recipients to forward access to any third party, removing all organizational control over who views or downloads the content.
-        - **Data exfiltration pathway:** Any internal user who can create an Anyone link can silently exfiltrate documents to external parties without leaving an identity trail.
-        - **Guest account sprawl:** Permissive sharing settings generate large numbers of unmanaged guest accounts that may retain access to content long after a collaboration ends.
-        - **Compliance risk:** Most regulatory frameworks require demonstrable controls over access to sensitive data, and unauthenticated sharing links make access-control attestation impossible.
-        - **Audit gap:** Without authentication requirements, access logs show a link was clicked but cannot attribute the access to a specific identity.
+        An anyone link is a bearer credential in the form of a URL. Whoever holds it has the file, and possession is the entire authorization test. The recipient forwards it to a colleague, who forwards it to a personal address, and it comes to rest in a mailbox at another company or in a message thread that later gets exposed. Every copy still works, and nobody in your organization is aware any of it happened.
 
-        **Risk mitigation**
+        For an attacker who has taken one ordinary account, this is the exfiltration route that requires no tooling. They generate anyone links for the document libraries the account can reach and retrieve the content later from an entirely unauthenticated session, which never touches your tenant as that user again.
 
-        - **Enforces identity-based access:** Restricting sharing to authenticated guests ensures every access event is tied to a verifiable identity that can be reviewed and revoked.
-        - **Limits insider-driven exfiltration:** Requiring guest authentication and scoping sharing to existing or approved guests closes the anonymous link pathway most commonly exploited by malicious insiders.
+        The access logs cannot help afterwards. They record that a link was used, not who used it, so an investigation can establish that a document left and not where it went or how widely.
+
+        Restricting to authenticated guests keeps external collaboration working while tying every access to an identity you can enumerate, review, and revoke. New and existing guests is the usual balance point for organizations that genuinely need to share outside, and per-site overrides can tighten specific libraries further.
       audit: |
         ### Audit via Console
 
@@ -2532,20 +2528,19 @@ queries:
       ms365.exchangeonline.transportRules.any(state == "Enabled" && routeMessageOutboundRequireTls == true)
     docs:
       desc: |
-        This check ensures that Exchange Online is configured with at least one enabled transport rule that requires TLS encryption for outbound email. Exchange Online attempts TLS opportunistically by default but does not enforce it; without an explicit transport rule, messages can fall back to unencrypted SMTP delivery when the receiving server does not advertise TLS support.
+        This check verifies that outbound mail leaving the organization is required to travel over an encrypted connection.
+
+        Exchange Online negotiates TLS opportunistically by default, which means it uses encryption when the receiving server offers it and delivers in plain text when it does not. Making it mandatory takes a mail flow rule, created in the Exchange admin center under **Mail flow > Rules**, applying to recipients outside the organization with the action set to require TLS encryption. This check requires at least one enabled transport rule that enforces outbound TLS.
 
         **Why this matters**
 
-        - **Encryption in transit:** A transport rule that mandates TLS prevents Exchange from delivering messages over an unencrypted SMTP connection, regardless of the receiving server's configuration.
-        - **Data confidentiality:** Email content and attachments transmitted without encryption can be captured and read by anyone with access to network traffic along the delivery path.
-        - **Protection against downgrade attacks:** Without enforcement, an attacker who can manipulate DNS or SMTP negotiation can strip TLS and force plaintext delivery; a transport rule blocks the fallback.
-        - **Sensitive-message coverage:** Notifications containing credentials, financial data, or personal information are protected from interception when TLS is required at the mail-flow layer.
-        - **Auditability:** Transport rules provide a documented, enforceable control that can be cited in security assessments and compliance reviews as evidence of encryption-in-transit requirements.
+        Opportunistic encryption is decided by the other end, and the other end can be influenced. An attacker positioned on the path, or one able to manipulate DNS or the SMTP negotiation, strips the offer of encryption from the exchange. Exchange Online, doing exactly what it was configured to do, falls back to plain text and delivers the message unencrypted. Nothing about that looks like an incident, because from the sender's side it is a normal delivery.
 
-        **Risk mitigation**
+        The content is then readable to anyone who can observe the traffic between the two mail systems. That is contract drafts, personal data sent to a processor, invoices, and the password reset and account notification messages that flow out to staff and customers.
 
-        - **Prevents opportunistic downgrade:** Enforcing TLS at the transport-rule level removes the possibility of a receiving server negotiating an unencrypted session, closing the most common path to plaintext email interception.
-        - **Reduces man-in-the-middle exposure:** Requiring a verified TLS session before message delivery makes passive eavesdropping and active session hijacking computationally impractical for on-path attackers.
+        Requiring TLS removes the fallback. When a receiving server cannot negotiate an encrypted session the message is not delivered at all, which converts a silent confidentiality failure into a visible delivery failure somebody can act on.
+
+        That trade is real and needs planning. Once the rule is active, mail to any partner whose server cannot negotiate TLS bounces and the sender receives a non-delivery report. Scope the rule to specific sensitive senders or named recipient domains first, watch the non-delivery reports for a period, and widen it only once you know which correspondents would break.
       audit: |
         ### Audit via Console
 
@@ -2627,21 +2622,19 @@ queries:
       ms365.exchangeonline.unifiedAuditLogIngestionEnabled == true
     docs:
       desc: |
-        This check ensures that unified audit logging is enabled for the Microsoft 365 tenant. The unified audit log records user and administrator activity across Exchange Online, SharePoint Online, OneDrive, Microsoft Entra ID, Teams, and other workloads in a single searchable log.
+        This check verifies that the tenant records user and administrator activity in the unified audit log.
+
+        The unified audit log collects activity from across Microsoft 365, covering Exchange Online, SharePoint Online, OneDrive, Microsoft Entra ID, Teams, and the other workloads into one searchable record. It is controlled from the Microsoft Purview portal under **Audit**, where a banner offers to start recording if it is off. This check requires audit log ingestion to be enabled for the tenant.
 
         **Why this matters**
 
-        Without the unified audit log, the tenant produces no centralized record of who did what:
+        With the log off, the tenant is not merely under-monitored, it is unrecorded. The actions that define a compromise leave nothing behind: the mailbox rule that forwards mail to an attacker, the sudden download of an entire document library, the role assignment that made a new account a Global Administrator, the consent granted to an application nobody recognizes. None of it can be queried, because none of it was written down.
 
-          - **No incident detection:** Suspicious activity such as mass downloads, mailbox rule creation, or privilege changes goes unrecorded and unnoticed.
-          - **No forensic trail:** After a breach, responders cannot reconstruct attacker actions, identify compromised accounts, or scope data access.
-          - **No insider-threat visibility:** Data exfiltration and policy violations by internal users leave no evidence.
-          - **Compliance exposure:** Most regulatory frameworks require audit trails for access to sensitive data, so a disabled log is a direct finding.
+        The consequence lands during the incident. An attacker's access is discovered by some other means, and the response has to answer which accounts were used, what was read, whether data left the organization, and when it started. Those questions have no answers without the log, so the organization cannot scope the breach, cannot tell affected customers what was accessed, and cannot know whether the eviction was complete.
 
-        **Risk mitigation**
+        Deliberate insider activity disappears the same way, since a person copying files or reading colleagues' mailboxes leaves no trace to review.
 
-        - **Detection:** Enabling the log lets security tooling and analysts surface anomalous behavior in near real time.
-        - **Accountability:** A complete activity record deters misuse and supports investigations.
+        Enabling it is a single change, and the log starts from that moment rather than backfilling, so turning it on today does nothing for what happened yesterday. Allow up to 60 minutes for the change to take effect across all workloads, and pair the log with retention and alerting appropriate to your licensing, since a record nobody queries is only useful after the fact.
       audit: |
         ### Audit via Console
 
@@ -2716,21 +2709,21 @@ queries:
       ms365.exchangeonline.remoteDomains.all(autoForwardEnabled == false)
     docs:
       desc: |
-        This check ensures that automatic forwarding of email to external recipients is blocked, both through the outbound spam filter policy and the default remote domain configuration. By default Microsoft 365 permits automatic forwarding, which lets mailbox rules silently relay mail outside the organization.
+        This check verifies that mailbox rules cannot silently relay mail out of the organization.
+
+        Microsoft 365 permits automatic forwarding out of the box, and two settings govern it that both have to be closed. The outbound spam filter policies in the Microsoft Defender portal under **Email & collaboration > Policies & rules > Threat policies > Anti-spam** carry an automatic forwarding control that must be set to off, and each entry under **Mail flow > Remote domains** in the Exchange admin center carries an allow automatic forwarding option that must be cleared. This check requires forwarding to be off across the outbound spam policies and disabled on the remote domains.
 
         **Why this matters**
 
-        Attacker-created forwarding rules are one of the most common business email compromise techniques:
+        Creating a forwarding rule is the first thing an attacker does with a mailbox they have taken, and it is close to the last thing anybody notices. The rule copies every incoming message to an address they control, so they no longer need to sign in. Whatever detection you have on anomalous authentication stops firing, because there are no more authentications.
 
-          - **Silent data exfiltration:** A compromised mailbox can forward every incoming message to an attacker-controlled address with no further interaction.
-          - **Persistence after remediation:** A forwarding rule survives password resets and keeps leaking mail until the rule itself is found and removed.
-          - **Invoice and payroll fraud:** Forwarded threads give attackers the context to insert fraudulent payment instructions.
-          - **Exposure of secrets:** Password resets, MFA codes, and account notifications are forwarded along with everything else.
+        What flows out is everything the person receives from that day forward: the contract negotiation, the payroll file, the password reset links and one-time codes for every other system they use, and the internal threads that supply the tone and detail for a convincing fraudulent payment request later.
 
-        **Risk mitigation**
+        The rule also outlives the response. A password reset evicts the attacker's session and leaves the forwarding rule in place, quietly exfiltrating mail until somebody inspects the mailbox rules specifically, which is not part of most incident checklists.
 
-        - **Containment:** Blocking forwarding at the tenant level neutralizes attacker forwarding rules even before the compromised account is identified.
-        - **Controlled exceptions:** Legitimate forwarding can still be allowed through scoped policies for specific users or domains.
+        Blocking at the tenant level neutralizes rules that already exist as well as ones created later, without needing to find the compromised mailbox first.
+
+        Some remote domain entries exist specifically to permit forwarding to a trusted partner, so review each with its owners before saving. Where a narrow exception is genuinely needed, scope a dedicated outbound spam policy to those users instead of leaving a forwarding-enabled remote domain open to everyone.
       audit: |
         ### Audit via Console
 
@@ -2816,21 +2809,19 @@ queries:
       microsoft.policies.authorizationPolicy.defaultUserRolePermissions.permissionGrantPoliciesAssigned == empty
     docs:
       desc: |
-        This check ensures that non-administrative users cannot grant consent for applications to access organizational data on their behalf. When user consent is restricted, the default user role has no permission grant policy assigned, and application access must be approved by an administrator.
+        This check verifies that users cannot grant an application access to organizational data on their own authority.
+
+        Consent settings live in the Microsoft Entra admin center under **Identity > Applications > Enterprise applications > Consent and permissions > User consent settings**. Choosing not to allow user consent removes the permission grant policies from the default user role, which is the state this check requires, and routes every request for application access to an administrator instead.
 
         **Why this matters**
 
-        Illicit consent grants, also called consent phishing, let an attacker bypass passwords and MFA entirely:
+        Consent phishing bypasses passwords and multifactor authentication entirely, because it never attacks either one. The user receives a link to a genuine Microsoft consent page for an application the attacker registered, often named to look like an internal tool or a familiar service. The page is real, the sign-in is real, and the second factor prompt is satisfied by the user themselves. All they are asked to do is approve access, and one click hands the attacker an OAuth token for their mailbox, their OneDrive files, and their Teams conversations.
 
-          - **Token-based account takeover:** A user who consents to a malicious app hands the attacker a long-lived OAuth token for their mailbox, files, and Teams data.
-          - **MFA bypass:** OAuth tokens are honored without re-prompting for MFA, so the attacker keeps access even after a password reset.
-          - **Tenant-wide reach:** A single consenting user can expose data far beyond their own account if the app requests broad Graph scopes.
-          - **Low visibility:** Consent grants do not trigger the alerts a new sign-in would, so malicious apps can persist undetected.
+        The token is the point. It is honored without re-prompting for a second factor, and it survives a password reset, so the standard response to a compromised account leaves the attacker's access untouched. They read mail through the Graph API at their own pace, with no sign-in events to notice.
 
-        **Risk mitigation**
+        The blast radius is not limited to the person who clicked. An application requesting broad permissions reaches data far beyond that user's own mailbox, and a single approval can expose the wider tenant.
 
-        - **Administrative gate:** Requiring admin approval ensures every third-party app is reviewed before it can read organizational data.
-        - **Reduced attack surface:** Removing self-service consent eliminates the most common path for OAuth-based phishing.
+        Requiring administrator approval puts a review in front of every application that wants organizational data. Configure the admin consent workflow at the same time so users have a documented way to request the applications they genuinely need, which keeps the control from being routed around.
       audit: |
         ### Audit via Console
 
@@ -2906,21 +2897,19 @@ queries:
       microsoft.identityAndAccess.roleEligibilityScheduleInstances != empty
     docs:
       desc: |
-        This check ensures that Microsoft Entra Privileged Identity Management (PIM) is used to govern privileged roles, indicated by the presence of eligible role assignments. PIM grants administrative access just-in-time: a user is eligible for a role and must activate it for a limited window rather than holding it permanently.
+        This check verifies that privileged roles are held as activatable eligibility rather than as permanent standing access.
+
+        Microsoft Entra Privileged Identity Management changes the shape of an administrative assignment. Instead of holding a role continuously, a user is made eligible for it and must activate it for a bounded window, optionally passing a multifactor prompt, supplying a justification, and waiting for approval. You configure this in the Microsoft Entra admin center under **Identity governance > Privileged Identity Management > Microsoft Entra roles**, adding assignments with the type set to eligible and setting the activation requirements per role. This check requires at least one eligible role assignment to exist in the tenant. The feature needs Microsoft Entra ID P2 or Microsoft Entra ID Governance licensing.
 
         **Why this matters**
 
-        Permanent, always-active admin assignments leave high-value access standing around the clock:
+        A permanent Global Administrator assignment is privilege that is live at three in the morning on a Sunday, whether or not the person is working. An attacker who takes that account inherits the role at the moment of sign-in, with no further step, and the tenant sees an ordinary authentication rather than a privilege event.
 
-          - **Always-on attack surface:** A compromised account with a permanent Global Administrator assignment gives an attacker full tenant control at any moment, with no activation step to detect.
-          - **No activation trail:** Standing assignments produce no just-in-time activation events, removing a key signal for spotting misuse.
-          - **Privilege sprawl:** Without periodic activation and review, stale admin rights accumulate on accounts that no longer need them.
-          - **Broader blast radius:** Every permanently privileged account is an independent path to tenant takeover.
+        Eligibility removes that. The stolen session lands on an account with no administrative rights until it activates the role, and activation is where the defenses sit: a multifactor prompt on a device the attacker does not have, a written justification, an approval request that reaches a human, and a log entry that stands out precisely because activations are rare.
 
-        **Risk mitigation**
+        Standing assignments also accumulate silently. Nothing forces a review, so rights granted for one project remain years later on people who no longer need them, each one an independent path to the tenant.
 
-        - **Just-in-time access:** Eligible assignments mean privileges exist only during an approved, time-bound activation window.
-        - **Approval and review:** PIM can require justification, approval, and MFA on activation, and supports recurring access reviews.
+        Keep at least one emergency access account with a standing assignment so a failure in the activation path cannot lock everyone out, make the eligibility itself time-bound and reviewed rather than permanent, and set an activation maximum duration so each activation expires on its own.
       audit: |
         ### Audit via Console
 
@@ -3013,21 +3002,19 @@ queries:
       microsoft.domains.where(isVerified == true && id != /\.onmicrosoft\.com$/).all(dns(id).dmarc.policy == /quarantine|reject/)
     docs:
       desc: |
-        This check ensures that every verified custom domain publishes a DMARC record with an enforcing policy of `quarantine` or `reject`. DMARC (Domain-based Message Authentication, Reporting, and Conformance) tells receiving mail servers what to do with messages that fail SPF and DKIM alignment.
+        This check verifies that every custom domain publishes a DMARC record that tells receivers to act on authentication failures.
+
+        DMARC is a TXT record at the `_dmarc` host of the domain. It ties the SPF and DKIM results to the address the recipient actually sees, and states what to do when neither aligns. The policy value is what matters: `p=none` observes and reports, while `quarantine` and `reject` are enforcement. This check requires every verified custom domain to publish a record and to set the policy to `quarantine` or `reject`.
 
         **Why this matters**
 
-        SPF and DKIM alone do not stop spoofed mail. DMARC is the enforcement layer:
+        SPF and DKIM answer whether a message authenticated. Neither instructs the receiving server to do anything about a message that did not, and neither one is checked against the visible From address on its own. DMARC supplies both the alignment requirement and the instruction, which is why a domain with SPF and DKIM but no enforcing DMARC policy is still spoofable in practice.
 
-          - **Domain spoofing:** Without an enforcing DMARC policy, attackers can send mail that appears to come from your domain, since receivers have no instruction to reject failures.
-          - **Business email compromise:** Spoofed executive or finance messages drive fraudulent wire transfers and credential theft.
-          - **Brand and deliverability damage:** Spoofing campaigns harm domain reputation and can cause legitimate mail to be filtered.
-          - **No visibility:** A `p=none` policy or a missing record leaves the organization blind to who is sending mail as its domain.
+        The attack that exploits the gap is targeted at people who trust your name. A message with your domain in the sender field asks your customer's accounts payable team to update the bank details on file, or asks your own staff to review a document behind a sign-in page. Receiving servers see a failure, find no policy telling them to reject, and deliver it to the inbox.
 
-        **Risk mitigation**
+        A missing or observing-only record also leaves you blind. Aggregate reports show who is sending as your domain, and without them you learn about a spoofing campaign when a customer calls about a payment they already made.
 
-        - **Enforced rejection:** A `quarantine` or `reject` policy instructs receivers to drop or isolate unauthenticated mail claiming to be from your domain.
-        - **Reporting:** DMARC aggregate reports reveal spoofing attempts and misconfigured legitimate senders.
+        Move in stages. Publish with `quarantine` and a reporting address, read the aggregate reports until every legitimate sender aligns, and only then move to `reject`, since going straight to enforcement will silently drop mail from a system nobody remembered.
       audit: |
         Verify that every verified custom domain publishes an enforcing DMARC record by querying the `_dmarc` TXT record:
 

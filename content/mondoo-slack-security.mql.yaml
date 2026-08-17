@@ -71,19 +71,19 @@ queries:
       slack.users.admins.length < 5 && slack.users.admins.length > 1
     docs:
       desc: |
-        This check ensures that the Slack workspace is configured to keep the number of administrator accounts between 2 and 4. Slack does not cap how many members can hold the admin or owner role, so workspaces tend to accumulate privileged accounts over time.
+        This check verifies that the privileged group in the Slack workspace stays small without shrinking to a single person, between 2 and 4 accounts.
+
+        Slack account types are set from **Tools & settings > Manage members**, where filtering the member list by account type shows the Workspace Admins and Workspace Owners. Slack applies no upper or lower bound of its own, so the count drifts as people are promoted for a project and never moved back. This check counts the accounts holding those roles and requires the total to land between 2 and 4.
 
         **Why this matters**
 
-        - **Operational resilience:** Keeping at least two administrators avoids a single point of failure if one person is unavailable or leaves the organization.
-        - **Reduced attack surface:** Each admin account is a high-value target, so a small privileged group means fewer accounts an attacker can compromise.
-        - **Accountability:** A limited set of administrators keeps it clear who can make security-sensitive changes and simplifies audit reviews.
-        - **Shared responsibility:** Multiple administrators allow workload to be shared while keeping the privileged group small and reviewable.
+        A workspace admin adds and removes members, installs and approves apps, invites guests, changes the workspace security settings, and on the plans that support it requests an export of workspace data. Every one of those accounts is therefore a full path to the workspace, and an attacker only needs the weakest of them. With a dozen admins there are a dozen people to phish, and the one who reused a password on a breached site decides the outcome for everyone.
 
-        **Risk mitigation**
+        What the attacker does next is the reason the count matters. Holding an admin account they turn off the workspace two-factor requirement, invite a single-channel guest they control, and install an app with broad scopes whose token keeps working after the compromised password is reset. Cutting the group to a handful of named people does not stop that, but it shrinks the target set to accounts you can watch closely.
 
-        - **Privilege creep prevention:** Regularly reviewing whether each admin account is still needed stops former or inactive admins from retaining access.
-        - **Containment:** A small admin group limits the blast radius if a privileged credential is phished or stolen.
+        One admin is a different failure. When that account is locked out or the person leaves, nobody can remove a compromised member, revoke a rogue app, or pull an export during an incident, and Slack's recovery path for a sole owner is measured in days.
+
+        On Enterprise Grid, org owners and org admins are managed separately from workspace roles, so review the org-level assignments alongside this count.
       audit: |
         ### Audit via Admin Settings
 
@@ -145,20 +145,19 @@ queries:
       slack.users.admins.all(has2FA == true && twoFactorType == "app")
     docs:
       desc: |
-        This check ensures that every Slack administrator account is configured to use app-based two-factor authentication rather than SMS verification. Slack supports both SMS and authenticator-app second factors, and SMS remains an option unless administrators deliberately choose the stronger method.
+        This check verifies that every Slack administrator's second factor is an authentication app rather than a text message.
+
+        Slack accepts both SMS codes and authenticator apps as a second factor for email sign-in, and SMS stays available to members unless an owner removes it. A workspace owner restricts the method under **Admin > Workspace settings > Security**, where **Two-factor authentication for email sign-in** offers an authenticator apps only option. This check requires every admin and owner to have two-factor authentication enabled with the method recorded as an authentication app.
 
         **Why this matters**
 
-        - **SIM swap resistance:** Authenticator apps cannot be intercepted by attackers who convince a carrier to transfer a phone number to a device they control.
-        - **Protection from network attacks:** App-based codes are not exposed to known weaknesses in the cellular signaling network that allow SMS interception.
-        - **Social engineering resistance:** Codes generated on a device cannot be redirected by tricking carrier support staff.
-        - **Privileged account protection:** Administrators can disable security controls, export data, and add users, so their accounts warrant the strongest available factor.
-        - **Compliance alignment:** Many frameworks recommend or require phishing-resistant authentication for privileged accounts.
+        SMS is a second factor delivered by a third party you do not control. An attacker who already has an administrator's password calls the carrier, passes a knowledge check built from information that is largely public, and has the number ported to a device they hold. The next code Slack sends arrives on their phone. There is no malware, no phishing page after the first one, and nothing on the workspace side that looks different from a normal sign-in.
 
-        **Risk mitigation**
+        The same number is also reachable without touching the carrier's front desk, because the signaling network that routes messages between operators has long-standing weaknesses that allow interception outright.
 
-        - **Account takeover prevention:** Removing SMS as an option closes the most common path used to bypass two-factor authentication on high-value accounts.
-        - **Consistent enforcement:** Standardizing administrators on authenticator apps ensures no privileged account silently falls back to a weaker factor.
+        An administrator is worth that effort. Once signed in, the attacker turns off the workspace two-factor requirement, invites a guest account they control into private channels, installs an app whose OAuth token survives the eventual password reset, and reads the conversation history in which teams paste credentials, customer records, and incident detail.
+
+        Restricting the method at the workspace level does not convert accounts that are already enrolled with SMS, so pair the setting with a pass over the current administrators. The 2FA column in **Manage members** is not shown on every plan and may be absent on Enterprise Grid, in which case identify affected administrators through the Slack API instead.
       audit: |
         ### Audit via Admin Settings
 
@@ -224,20 +223,19 @@ queries:
       slack.users.members.where(deleted == false).all( has2FA == true || enterpriseUser != empty || id == "USLACKBOT" )
     docs:
       desc: |
-        This check ensures that every active Slack user is configured with two-factor authentication enabled on their account. Slack leaves two-factor authentication optional for individual members unless an owner enforces it at the workspace or organization level.
+        This check verifies that every active member of the Slack workspace has a second factor on their account.
+
+        Slack leaves two-factor authentication to individual members unless an owner requires it. The requirement lives under **Admin > Workspace settings > Security**, where **Two-factor authentication for email sign-in** carries a **Require members to have 2FA set up** option. This check reads the enrollment state of each member who has not been deactivated, and treats members who reach Slack through Enterprise Grid single sign-on as covered by the identity provider instead.
 
         **Why this matters**
 
-        - **Credential stuffing resistance:** Passwords leaked from other services cannot be reused to access Slack when a second factor is required.
-        - **Phishing protection:** Even if a user enters credentials on a fake login page, an attacker cannot complete sign-in without the second factor.
-        - **Lateral movement containment:** A compromised account cannot easily be used to reach sensitive channels or impersonate employees when two-factor authentication blocks the login.
-        - **Data exfiltration prevention:** Blocking unauthorized sign-ins prevents attackers from searching and exporting confidential conversations and files.
-        - **Compliance alignment:** SOC 2, ISO 27001, and other frameworks require or recommend multi-factor authentication.
+        Slack is where an organization's least guarded material accumulates. Deployment credentials pasted for a colleague, customer names discussed in support threads, unannounced product plans, the salary conversation somebody had in a direct message. All of it is searchable, and a single password is the only thing standing in front of it.
 
-        **Risk mitigation**
+        That password is rarely secret for long. It appears in a credential dump from an unrelated service the employee used with the same password, or it is typed into a page that looks like the Slack sign-in and is not. Without a second factor, the attacker's next step is to sign in as that person and search. They read history that predates the account they took, download the files attached to it, and message colleagues from a name those colleagues trust, which is how the second and third accounts fall.
 
-        - **Workspace-wide enforcement:** Requiring two-factor authentication at the workspace or organization level protects every member instead of only those who opt in.
-        - **Reduced account takeover risk:** A mandatory second factor closes the most common path attackers use to convert a stolen password into account access.
+        Requiring the factor for everyone rather than for the security-minded few is the whole point, because an attacker picks the account that opted out.
+
+        Members who do not enroll within 24 hours of the setting being saved are signed out until they complete enrollment, so announce the change first. If your workspace signs in through single sign-on, the setting still matters for the owners and admins who can sign in with an email address and password and bypass it.
       audit: |
         ### Audit via Admin Settings
 
@@ -310,20 +308,19 @@ queries:
       slack.conversations.where(isExtShared && isChannel ).all(name == props.mondooSlackSecurityExternalChannelName )
     docs:
       desc: |
-        This check ensures that every externally shared Slack channel is named with a consistent pattern that identifies it as external, such as a prefix of "ext-" or "external-". Slack does not enforce naming conventions for shared channels, so externally shared channels can otherwise look identical to internal ones.
+        This check verifies that Slack channels shared outside the organization are named so that everyone in them can tell.
+
+        A Slack Connect channel looks exactly like an internal one. The sidebar entry, the message composer, and the channel header are the same, and the only difference is a small badge and a member list that people do not read before typing. Slack does not enforce a naming convention, so this check compares the name of every externally shared channel against a pattern you set as a policy property. The supplied default accepts an `ext-`, `extern-`, or `ex-` prefix, with a hyphen or an underscore, and you can replace it with whatever convention your workspace already uses.
 
         **Why this matters**
 
-        - **Context awareness:** A clear naming pattern lets users immediately recognize when they are communicating with parties outside the organization.
-        - **Leakage prevention:** Without distinct naming, employees may share confidential information in a channel they assume is internal.
-        - **Audit efficiency:** Consistent naming makes it straightforward to locate and review every external communication channel.
-        - **Access control reviews:** Security teams can quickly identify external channels during periodic access reviews.
-        - **Automated monitoring:** A predictable naming convention supports automated alerting on external channel activity.
+        The failure here is a person, not a system. An engineer is asked for the staging credentials, finds the channel where the conversation was happening, and pastes them. A support lead drops the full customer export into a thread to move a discussion along. Neither of them checked the member list, because in every other channel that day they did not need to. The vendor, contractor, or customer on the other side of the Slack Connect link now has the material, and nothing was breached to get it.
 
-        **Risk mitigation**
+        A visible marker in the channel name is what interrupts that. It arrives before the message is typed, in the one place the person is already looking.
 
-        - **Accidental disclosure prevention:** Visible external markers reduce the chance that sensitive information is posted to an outside audience by mistake.
-        - **Governance enforcement:** A documented naming standard gives administrators a reliable basis for monitoring and enforcing external sharing policy.
+        Consistent naming also makes external exposure reviewable. Security can enumerate every channel that reaches outside the organization from the channel list, rather than opening each one to inspect its membership, and monitoring can alert on activity in those channels as a class.
+
+        Naming is a prompt rather than a control, so pair it with the sharing approvals your plan offers, and communicate the convention to channel creators so new external channels follow it from the start.
       audit: |
         ### Audit via Admin Settings
 
@@ -392,20 +389,19 @@ queries:
         )
     docs:
       desc: |
-        This check ensures that the Slack workspace is configured with at least one channel that is exclusively internal and not shared with external users, other organizations, or other workspaces. A workspace whose channels are all shared in some way leaves no guaranteed space for confidential internal communication.
+        This check verifies that the workspace still has at least one channel that is not shared with anybody outside it.
+
+        Slack channels can be shared with another workspace in the same organization, shared across an Enterprise Grid org, or shared with an external organization through Slack Connect, and a channel can also sit pending an external share that has been offered and not yet accepted. This check looks at the channel list in **Tools & settings > Manage channels** and requires at least one channel where none of those four conditions applies.
 
         **Why this matters**
 
-        - **Confidential discussion space:** Sensitive topics such as personnel matters, strategy, and security incidents need a channel with no external access.
-        - **Configuration signal:** A workspace with no internal channels can indicate improper setup or misuse.
-        - **Compliance boundaries:** Some communications must remain within organizational boundaries to satisfy regulatory requirements.
-        - **Incident response:** Security incidents should be coordinated where external parties cannot observe them.
-        - **Employee-only topics:** Onboarding and HR discussions require a channel guaranteed to exclude contractors and external partners.
+        Some conversations have to happen where no outside party is present. A security incident is the clearest case: the response has to be coordinated somewhere the attacker's likely entry point, which is often a connected vendor, cannot observe. Personnel discussions, unannounced organizational changes, and legal matters have the same requirement for different reasons.
 
-        **Risk mitigation**
+        A workspace in which every channel is shared in some form leaves no such room. The practical result is that those conversations still happen, but in a channel that carries an audience nobody enumerated, or in a scatter of direct messages that no one can review afterwards. When the incident is the vendor you share a channel with, coordinating in front of them is worse than the inconvenience of finding somewhere else.
 
-        - **Information leakage prevention:** A dedicated internal channel gives employees a safe place to discuss sensitive matters without external exposure.
-        - **Clear scoping:** Maintaining and communicating the purpose of an internal-only channel reduces the chance that confidential conversations happen in shared channels.
+        Failing this check is also a signal about how the workspace is being used. A workspace with no internal channel at all is usually one that was created for a single external collaboration and then quietly adopted for internal work, which means the sharing model nobody chose is now the default for everything.
+
+        A workspace that genuinely exists only to host an external collaboration is a legitimate exception, provided the internal side of that work lives in a different workspace.
       audit: |
         ### Audit via Admin Settings
 
@@ -479,20 +475,19 @@ queries:
         )
     docs:
       desc: |
-        This check ensures that internal-only Slack channels are kept free of external members such as guest users, single-channel guests, and strangers from connected organizations. Channels that are not externally shared can still pick up restricted or guest accounts as members, which undermines their internal status.
+        This check verifies that at least one unshared Slack channel also has no guest or external accounts in its membership.
+
+        A channel that has never been shared through Slack Connect can still carry outside people, because guests are invited individually. Slack distinguishes multi-channel guests, single-channel guests, and users who belong to a connected organization, and all three can appear in the member list of a channel the team thinks of as internal. This check takes the channels that are not shared, org-shared, externally shared, or pending an external share, and requires at least one of them whose members are all full members of your workspace.
 
         **Why this matters**
 
-        - **Guest access control:** Guest accounts can be added to channels meant for employees only if membership is not reviewed.
-        - **Stranger detection:** Users from connected organizations can appear in channels through Slack Connect features.
-        - **Single-channel guest scope:** Limited-access guests may end up in channels beyond their intended scope.
-        - **Leakage prevention:** External members in a channel believed to be internal can read confidential discussions and files.
-        - **Accurate trust assumptions:** Verified membership prevents employees from sharing sensitive information under a false belief that the channel is internal-only.
+        The channel-level sharing flag is the thing people check, and it is not the whole answer. A contractor is added to one channel for a project in March, the project ends in May, and nobody removes them. The channel keeps its internal appearance and its internal habits, so the incident retrospective, the customer escalation, and the credentials pasted during a late deploy all land in front of an account that belongs to a company you no longer work with.
 
-        **Risk mitigation**
+        That account is also outside your control in the way that matters after a breach. You do not manage its password, its second factor, or its offboarding, so when the contractor's own employer is compromised, the attacker inherits a seat in your internal channel and reads the history from the day the guest was added.
 
-        - **Membership audits:** Regularly reviewing internal channel membership ensures only authorized employees remain and external users are removed promptly.
-        - **Confidentiality assurance:** Keeping guest and restricted accounts out of internal channels preserves a reliable space for sensitive communication.
+        Reading history is the whole prize. Slack keeps the scrollback, so a guest added yesterday can search everything the channel said last year.
+
+        Review the member list of each channel meant to be internal and remove the guest, single-channel guest, and external accounts you find. If none of your unshared channels is clean, create one and invite only full members.
       audit: |
         ### Audit via Admin Settings
 
@@ -558,20 +553,19 @@ queries:
     mql: slack.conversations.where(isChannel == true && isExtShared == false).all( members.where(isBot == false && id != "USLACKBOT").all(profile['email'] == props.mondooSlackSecurityAllowListedDomains) )
     docs:
       desc: |
-        This check ensures that every member of an internal, non-externally-shared Slack channel has an email address from one of your organization's approved domains. Slack channel membership can include accounts with unexpected email domains unless membership is verified against an allowlist.
+        This check verifies that everyone in an internal Slack channel signs in with an email address at a domain you recognize.
+
+        Every Slack account carries the email address it was registered with, visible on the member profile and in the channel member list. This check reads that address for each human member of every channel that is not externally shared, and matches it against a pattern you set as a policy property. The supplied default accepts addresses ending in one of two example corporate domains, and you replace it with the domains your organization actually uses.
 
         **Why this matters**
 
-        - **Unauthorized access detection:** An email address from a domain that is not approved can indicate an account added incorrectly or maliciously.
-        - **Former employee identification:** Personal email accounts or previous employer domains point to users who should no longer have access.
-        - **Third-party scope control:** Vendor or partner accounts in internal channels can reach information beyond their engagement scope.
-        - **Data governance:** Regulations often require that certain data be accessible only to employees with corporate identities.
-        - **Offboarding verification:** Domain allowlisting surfaces users who should have been removed when they left the organization.
+        An unexpected domain is the artifact a mistake leaves behind. It is the invitation typed to a personal address instead of a work one, the account a departing employee kept by changing their email before their last day, the vendor added during an integration that finished a year ago, and occasionally the address an attacker registered at a domain that reads like yours at a glance.
 
-        **Risk mitigation**
+        Each of those accounts sits in the channel with full read access to its history, and Slack history is long. The former employee follows the roadmap discussion at their new employer. The vendor account, still authenticating with a password their own security team no longer tracks, becomes an attacker's foothold in your internal conversation the moment that vendor is breached. Neither shows up as an external share, because neither one is.
 
-        - **Membership reviews:** Configuring the allowed domain list to match your corporate domains and reviewing internal channel membership catches accounts that do not belong.
-        - **Identity enforcement:** Limiting internal channels to approved domains keeps confidential communication scoped to verified organizational identities.
+        Matching membership against your domains turns that into something you can find. It surfaces the accounts that do not belong to your identity lifecycle at all, which are exactly the ones no offboarding process will ever remove.
+
+        Investigate how each unrecognized account was added before removing it, since the answer often points at an invitation path that will admit the next one, and deactivate accounts that do not belong to your organization rather than only removing them from the channel.
       audit: |
         ### Audit via Admin Settings
 
@@ -639,20 +633,19 @@ queries:
         .all(isEmailConfirmed == true)
     docs:
       desc: |
-        This check ensures that every active Slack member, excluding bots, deactivated accounts, and pending invites, has a confirmed email address. An unconfirmed email address means Slack has not verified that the account holder actually controls the email it was registered with, which breaks an assumption that downstream security controls depend on.
+        This check verifies that every active human member of the workspace has confirmed the email address their Slack account was registered with.
+
+        Slack sends a confirmation link when an address is added or changed, and until the recipient follows it the account exists with an address nobody has proven control of. This check reads the confirmation state of each member, skipping deactivated accounts, pending invitations, and the various bot identities, and requires the remainder to be confirmed. Members can request a new confirmation link from their Slack account settings, and the workspace sign-in options decide whether new accounts can be created this way at all.
 
         **Why this matters**
 
-        - **Account takeover resistance:** Attackers can register accounts with look-alike domains and never prove ownership before participating in channels and direct messages.
-        - **Identity spoofing prevention:** Unconfirmed accounts can impersonate employees, partners, or executives in phishing and social engineering without being caught by email domain controls.
-        - **Recovery flow integrity:** When an email was never verified, a password reset link may be delivered to an address the real user cannot access, enabling a silent hijack.
-        - **Trustworthy allowlists:** Domain-based allowlisting assumes the email is real, so an unconfirmed address means the allowlist is protecting a string rather than a verified identity.
-        - **Audit trail reliability:** Messages, file uploads, and channel joins attributed to an unconfirmed user cannot be reliably traced back to a person.
+        An unconfirmed address breaks the assumption every other control in the workspace rests on. Domain allowlisting checks a string that was never verified, so an attacker who registers with an address at a domain that reads like yours passes the allowlist while controlling no mailbox at it. From inside the workspace they post as a plausible colleague, ask for a credential in a direct message, and get it, because the name in the sidebar is the whole authentication most people apply to an internal message.
 
-        **Risk mitigation**
+        Account recovery is the second problem. A password reset for an unconfirmed account sends its link to an address that may belong to someone else entirely, which turns the recovery flow into a takeover path that leaves no failed sign-in behind.
 
-        - **Verified membership:** Requiring every flagged user to confirm their email address, or deactivating accounts that cannot be verified, ensures each account maps to a real person.
-        - **Stronger onboarding:** Requiring SSO or a verified corporate domain at sign-up prevents new accounts from being created with unverified addresses.
+        The audit trail degrades in the same way. Messages, uploads, and channel joins are attributed to an account that maps to no verified person, so an investigation cannot say who was actually there.
+
+        Have legitimate users complete the confirmation flow, deactivate accounts you cannot attribute to a known person, and require single sign-on or a verified corporate domain at sign-up so new accounts cannot be created with unverified addresses.
       audit: |
         ### Audit via Admin Settings
 
