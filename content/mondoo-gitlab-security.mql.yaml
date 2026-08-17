@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gitlab-security
     name: Mondoo GitLab Security
-    version: 1.9.0
+    version: 1.9.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -112,19 +112,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that the GitLab group visibility is set to private or internal, not public.
+        This check verifies that the GitLab group is not publicly visible.
+
+        Group visibility governs who can see the group and, by extension, the projects inside it. GitLab offers Private, Internal, and Public under Group settings, General, Visibility. The check requires anything other than Public. The Terraform version reads `visibility_level` on a `gitlab_group` resource.
 
         **Why this matters**
 
-        Public GitLab groups expose all contained projects and their contents to anyone on the internet:
+        A public group publishes every project it contains to anyone on the internet, and the exposure is not limited to the code. Commit history, branch names, issue titles, merge request discussions, and the CI configuration are all readable, and each of those describes the organization in ways a repository listing does not.
 
-          - **Source code exposure**: Public groups allow anyone to clone repositories and view proprietary source code.
-          - **Secret leakage**: Hardcoded credentials, API keys, or configuration files may be exposed in public repositories.
-          - **Supply chain attacks**: Public visibility enables attackers to analyze code for vulnerabilities before they're patched.
-          - **Intellectual property theft**: Competitors or malicious actors can access and copy proprietary algorithms and business logic.
-          - **Reconnaissance**: Public groups provide attackers with information about your technology stack and infrastructure.
+        The history is the part that catches people out. Removing a credential from the current files does not remove it from the commit that introduced it, and public repositories are continuously cloned and scanned by automated tooling looking for exactly that. A key committed and reverted in the same afternoon has already been harvested.
 
-        Set group visibility to private unless there is an explicit business requirement for public access, and regularly audit group visibility settings.
+        The CI configuration is the second half. It names the deployment targets, the registries, the environments, and the variable names the pipeline expects, which is a description of the delivery path an attacker would otherwise have to discover.
+
+        Where a group genuinely publishes open source, that is a deliberate decision worth recording. Make it per project rather than at group level, so a new project does not inherit public visibility by default.
       audit: |
         ### Audit via Console
 
@@ -239,19 +239,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that two-factor authentication is required for all members of the GitLab group.
+        This check verifies that the GitLab group requires two-factor authentication for its members.
+
+        The setting is under Group settings, General, Permissions and group features, and it forces every member to enroll a second factor before they can access the group. The check requires it to be enabled. The Terraform version reads `require_two_factor_authentication` on a `gitlab_group` resource.
 
         **Why this matters**
 
-        GitLab accounts are high-value targets for attackers seeking to compromise software supply chains:
+        A GitLab account is push access to source code, control over CI pipelines, and access to whatever credentials those pipelines hold. A password alone protects all of it.
 
-          - **Source code tampering**: Compromised accounts can push malicious code that gets deployed to production.
-          - **Credential theft protection**: Even if passwords are phished or leaked, attackers cannot access accounts without the second factor.
-          - **CI/CD pipeline access**: Attackers with GitLab access can modify pipelines to inject malicious build steps.
-          - **Secrets and variables**: GitLab projects often contain CI/CD variables with deployment credentials and API keys.
-          - **Supply chain attacks**: Software supply chain compromises often begin with compromised developer accounts.
+        Developer credentials are among the most reliably obtainable. They are reused from breached third-party sites, phished with convincing login pages, and lifted from browser profiles by infostealer malware, which is now the dominant supply route for valid credentials sold to intrusion operators. None of those requires attacking GitLab itself.
 
-        Require 2FA at the group level to ensure all members are protected, and set a reasonable grace period for compliance.
+        What follows a successful login is quiet. The attacker pushes a commit that edits a build script, a dependency manifest, or a CI configuration in a repository nobody is actively watching, then waits for the pipeline to run it with the deploy credentials it already holds. The commit looks like the account owner's work because it is the account owner's account.
+
+        Enforcing at group level rather than per user is what makes this reliable, since it applies to members added later without anyone remembering. Prefer phishing-resistant factors such as WebAuthn over TOTP where the membership can support it.
       audit: |
         ### Audit via Console
 
@@ -365,19 +365,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that no projects within the GitLab group have public visibility.
+        This check verifies that no project inside the GitLab group is publicly visible.
+
+        Where a companion check assesses the group's own visibility, this one walks the projects it contains and requires that none is set to Public. A project's visibility is set under Project settings, General, Visibility, and the Terraform version reads `visibility_level` on a `gitlab_project` resource.
 
         **Why this matters**
 
-        Even when a group is private, individual projects can be set to public, exposing their contents:
+        Group visibility and project visibility are separate settings, and the group being private does not force its projects to be. A private group can hold a public project, which is the case this check exists to find, because it is invisible from the group's own settings page.
 
-          - **Inconsistent security**: Public projects in an otherwise private group create gaps in access control.
-          - **Accidental exposure**: Developers may inadvertently set projects to public without understanding the implications.
-          - **Data leakage**: Public projects expose code, issues, merge requests, and wiki content to the internet.
-          - **Configuration drift**: Over time, project visibility settings may deviate from intended security posture.
-          - **Compliance violations**: Regulatory requirements may prohibit public exposure of certain types of code or data.
+        That combination is how accidental exposure survives review. Someone auditing the group sees Private and stops, while a project inside it publishes its source, its full commit history, and its CI configuration to the internet.
 
-        Enforce private visibility as the default for new projects and regularly audit all projects for visibility settings.
+        The usual origin is a project created public by default and never changed, or one imported from elsewhere carrying its previous visibility. Neither is a decision anyone made about that project's contents.
+
+        Check each project rather than trusting the group, and where a project is public deliberately, confirm that its history has never carried a credential. Making a repository private later does not undo what was cloned while it was public, so treat any secret in the history as compromised rather than as fixed by the visibility change.
       audit: |
         ### Audit via Console
 
@@ -522,19 +522,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that the individual GitLab project visibility is set to private or internal, not public.
+        This check verifies that the GitLab project is not publicly visible.
+
+        Visibility is set under Project settings, General, Visibility, project features and permissions, and GitLab offers Private, Internal, and Public. The check requires anything other than Public. The Terraform version reads `visibility_level` on a `gitlab_project` resource.
 
         **Why this matters**
 
-        Public project visibility exposes the entire repository contents and metadata to anyone on the internet:
+        A public project exposes more than its current source. The full commit history is readable, and so are issues, merge request discussions, the wiki, the container registry, and the CI configuration.
 
-          - **Complete code exposure**: All source code, including historical commits, is accessible to anyone.
-          - **Issue and MR visibility**: Bug reports, security issues, and code review discussions are publicly readable.
-          - **CI/CD job logs**: Build and deployment logs may contain sensitive information or credentials.
-          - **Dependency information**: Lock files and manifests reveal your technology stack and potential vulnerabilities.
-          - **Contributor information**: Git history exposes developer names, emails, and work patterns.
+        Commit history is the most consequential and the least intuitive. Deleting a secret from the working tree leaves it in the commit that added it, and public repositories are cloned and scanned continuously by automated tooling built for that purpose. Credentials are typically found within minutes of being pushed.
 
-        Set project visibility to private unless there is a documented business requirement for public access.
+        Merge request discussions are the second source. They routinely contain internal hostnames, architecture decisions, and reasoning about known weaknesses, written by people who assumed a private audience.
+
+        Making a project private later limits future access and undoes nothing. Anything published while it was public should be treated as retained by someone, so rotate any credential that appeared in the history rather than relying on the visibility change to contain it.
       audit: |
         ### Audit via Console
 
@@ -640,22 +640,19 @@ queries:
       gitlab.project.approvalSettings.approvalsBeforeMerge >= 1
     docs:
       desc: |
-        This check ensures that at least one approval is required before a merge request can be merged. Without required approvals, any developer with merge access can push code changes directly without peer review.
+        This check verifies that a merge request requires at least one approval before it can be merged.
+
+        The requirement is set under Project settings, Merge requests, Merge request approvals, as the number of approvals required. The check requires at least one.
 
         **Why this matters**
 
-        Merge request approvals are a fundamental code review control:
+        Without a required approval, anyone with merge access can put code into the default branch alone. There is no second person in the path, which means a single account is sufficient to change what ships.
 
-          - Without required approvals, a single compromised account can push malicious code directly to production branches.
-          - Code review catches bugs, security vulnerabilities, and logic errors before they reach production.
-          - Required approvals create an audit trail of who reviewed and approved each change.
-          - Many compliance frameworks require separation of duties for code changes.
+        That is the property an attacker with a stolen developer credential depends on. The compromise stops being a foothold and becomes production access, because nothing between the push and the deployment involves anyone else.
 
-        **Risk mitigation**
+        It also removes the control that catches the mistakes nobody intended. A migration with an unbounded update, a debug flag left enabled, and a dependency added without anyone checking what it pulls in are all things a reviewer notices and an author does not, precisely because the author already believes the change is correct.
 
-          - Require at least one approval on all projects.
-          - For critical projects, consider requiring two or more approvals.
-          - Combine with protected branches to enforce approval requirements.
+        One approval is a floor rather than a target. Combine it with protected branches so the requirement cannot be bypassed by pushing directly, with the companion checks in this policy that stop authors and committers approving their own work, and consider more approvals on the repositories that deploy to production.
       audit: |
         ### Audit via Console
 
@@ -757,22 +754,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that merge request authors cannot approve their own merge requests. Allowing self-approval defeats the purpose of code review and eliminates the separation of duties control.
+        This check verifies that the author of a merge request cannot approve it.
+
+        The setting is under Project settings, Merge requests, Merge request approvals, as the option preventing authors from approving their own merge requests. The check requires it to be enabled. The Terraform version reads `merge_requests_author_approval` on a `gitlab_project_approval_rule` configuration and requires it to be false.
 
         **Why this matters**
 
-        Self-approval of merge requests undermines code review integrity:
+        An approval requirement that the author can satisfy themselves is not a review requirement. It is a checkbox the author ticks, and it produces an audit trail showing the change was approved.
 
-          - A compromised developer account can both create and approve malicious changes.
-          - Self-approval eliminates the independent verification of code changes.
-          - Regulatory and compliance frameworks require separation of duties between code authors and reviewers.
-          - Supply chain attacks often exploit the ability to self-approve changes.
+        That is worse than having no requirement at all, because the record says a review happened. Anyone auditing the repository, or answering a compliance question about separation of duties, sees an approved merge request and has no way to tell that approver and author were the same person without inspecting each one.
 
-        **Risk mitigation**
+        For an attacker holding a developer credential, self-approval collapses the entire control. They open the merge request, approve it, and merge, satisfying the process end to end from one account.
 
-          - Disable author approval for all projects.
-          - Combine with required approvals to ensure independent review.
-          - Monitor merge request activity for unusual approval patterns.
+        Enabling this is what makes the approval requirement mean a second person. Pair it with the companion check preventing committers from approving, since an attacker who cannot approve as the author can otherwise contribute a commit and approve as someone else's merge request.
       audit: |
         ### Audit via Console
 
@@ -888,22 +882,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that merge request approvals are reset when new commits are pushed to the source branch. Without this setting, a developer could get a merge request approved and then add unapproved changes before merging.
+        This check verifies that existing approvals are removed when new commits are pushed to a merge request.
+
+        The setting is under Project settings, Merge requests, Merge request approvals, and clears approvals whenever the branch changes. The check requires it to be enabled.
 
         **Why this matters**
 
-        Stale approvals on modified merge requests create a security gap:
+        Without this, an approval applies to a merge request rather than to the code in it. The reviewer approves what they read, and any commit pushed afterward inherits that approval without anyone looking at it.
 
-          - An attacker can get a benign change approved, then add malicious code before merging.
-          - Reviewers may not notice additional commits pushed after their approval.
-          - This bypasses the intent of code review by allowing unapproved code to be merged.
-          - Compliance requirements for code review are not met if approved code is modified post-approval.
+        That is a direct route to shipping unreviewed code, and it does not require malice to happen. A developer addresses review comments after approval, pushes the fix, and merges, so the change that actually shipped is not the change that was read.
 
-        **Risk mitigation**
+        It is also the cleanest way to abuse a review process deliberately. Open a merge request with an innocuous change, obtain approval, then push the real payload and merge. The audit trail shows an approved merge request, the approver remembers approving something reasonable, and nothing in the record distinguishes the two states.
 
-          - Enable reset approvals on push for all projects.
-          - Combine with required approvals and branch protection rules.
-          - Educate developers to re-review merge requests after new commits are pushed.
+        The cost is that reviewers re-approve after every change, including trivial ones, which is the friction that gets this setting turned off. Keep it on and reduce the friction by encouraging smaller merge requests rather than by allowing approvals to outlive the code they covered.
       audit: |
         ### Audit via Console
 
@@ -1019,22 +1010,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that users who have committed to a merge request cannot also approve it. This enforces separation between contributors and reviewers for each change.
+        This check verifies that someone who contributed a commit to a merge request cannot approve it.
+
+        The setting is under Project settings, Merge requests, Merge request approvals, as the option preventing users who added commits from approving. The check requires it to be enabled.
 
         **Why this matters**
 
-        Allowing committers to approve their own contributions weakens code review:
+        Blocking the author from approving closes the obvious path and leaves a subtler one. A merge request has one author, but anyone can push commits to its branch, so a person who wrote part of the change is not necessarily its author.
 
-          - A developer who contributed code to a merge request has a conflict of interest when reviewing it.
-          - Committer approval allows a single person to both write and approve code in collaboration scenarios.
-          - This setting closes a gap where multiple contributors to a branch could approve each other's changes without independent review.
-          - Strengthens the audit trail by ensuring approvals come from independent reviewers.
+        That gap is exploitable and easy to reach without meaning to. Two developers working on a branch can approve each other's merge requests while each has contributed to the code being reviewed, which satisfies the approval count without producing an independent reviewer.
 
-        **Risk mitigation**
+        For an attacker with a credential, it is the natural next move once self-approval is blocked: push the malicious commit to a colleague's open merge request, then approve that merge request as a different account. The approval is genuine, the author is someone else, and the control records a pass.
 
-          - Disable committer approval for all projects.
-          - Combine with author approval restrictions for comprehensive separation of duties.
-          - Use code owner approvals for additional review requirements on critical paths.
+        Enabling this makes the approver someone who did not write any of the code. Combine it with the author restriction and a required approval count, since each closes a different route to the same outcome and any one left open is sufficient.
       audit: |
         ### Audit via Console
 
@@ -1149,22 +1137,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that force push is disabled on the default (protected) branch. Force pushing allows rewriting Git history, which can be used to remove audit trails, overwrite security fixes, or inject malicious code.
+        This check verifies that force pushing is not allowed on the default branch.
+
+        Force push permission is a property of a protected branch, set under Project settings, Repository, Protected branches. The check reads the protection covering the default branch and requires that force push is not allowed.
 
         **Why this matters**
 
-        Force push to the default branch is a high-severity risk:
+        A force push rewrites history rather than adding to it. Commits that existed are replaced, and unless someone recorded the previous hashes there is no reference left pointing at what was there.
 
-          - An attacker can rewrite Git history to inject malicious code that appears to have always been present.
-          - Force pushing can remove commits that contain security fixes or audit trails.
-          - History rewriting makes incident investigation and forensic analysis extremely difficult.
-          - Accidental force pushes can cause data loss and disrupt development workflows.
+        That is the mechanism for erasing evidence. An attacker who has pushed a malicious commit, or who wants to remove the trace of a credential they harvested, rewrites the branch so the commit was never there. Anyone auditing the repository afterward sees a clean, plausible history, because the record of the removal is the thing that was removed.
 
-        **Risk mitigation**
+        The everyday case is destructive rather than malicious. A rebase run against the wrong branch, or a `push --force` intended for a feature branch, discards other people's work with no confirmation, and recovery depends on someone having a local clone with the missing commits.
 
-          - Disable force push on all protected branches, especially the default branch.
-          - Use branch protection rules to enforce this at the project level.
-          - Monitor for any changes to branch protection settings.
+        Protecting the default branch against force push means history is append-only there. Use `--force-with-lease` on feature branches where rewriting is legitimate, and confirm the protection actually covers the default branch rather than a pattern that no longer matches it.
       audit: |
         ### Audit via Console
 
@@ -1288,23 +1273,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that merge requests can only be merged when the CI/CD pipeline succeeds. Without this requirement, code that fails tests, security scans, or other automated checks can be merged into protected branches.
+        This check verifies that a merge request cannot be merged unless its pipeline succeeds.
+
+        The setting is under Project settings, Merge requests, Merge checks, as the requirement that pipelines must succeed. The check requires it to be enabled.
 
         **Why this matters**
 
-        Bypassing CI/CD pipeline requirements undermines automated security controls:
+        The pipeline is usually where the automated security controls actually run: dependency scanning, secret detection, static analysis, and the test suite. If a failing pipeline does not block the merge, every one of those becomes advisory.
 
-          - Security scanning tools such as SAST, DAST, and dependency scanning in the pipeline are bypassed.
-          - Failed tests may indicate bugs or regressions that reach production.
-          - Compliance checks and policy validations in the pipeline are skipped.
-          - Attackers can merge malicious code that would otherwise be caught by automated checks.
+        That is the practical failure. The scanner finds a vulnerable dependency, the job fails, and the merge proceeds anyway because nothing enforces the result. The control ran, produced the correct answer, and had no effect, which is harder to notice than a control that was never configured.
 
-        **Risk mitigation**
+        The pressure to merge past a failure is real and routine. A release is waiting, the failure looks unrelated, and merging is one click. Making the check blocking removes the judgment call at the moment when the person making it is least inclined to investigate.
 
-          - Require pipeline success on all projects with CI/CD pipelines.
-          - Include security scanning jobs in your pipeline configuration.
-          - Combine with the setting that prevents merging on a skipped pipeline.
-          - Monitor for projects that have this setting disabled.
+        Note what this does not cover. A skipped pipeline is not a failed one, so pair this with the companion check that blocks merges on skipped pipelines, otherwise an attacker who can cause the pipeline not to run at all bypasses the requirement without ever failing it.
       audit: |
         ### Audit via Console
 
@@ -1414,19 +1395,21 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the GitLab group prevents members from forking projects to namespaces outside the group. Without this restriction, users can fork private repositories to personal namespaces where group-level security controls do not apply.
+        This check verifies that projects in the group cannot be forked outside it.
+
+        The setting is under Group settings, General, Permissions and group features, and it restricts forking to namespaces within the group. The check requires it to be enabled.
 
         **Why this matters**
 
-        Unrestricted forking allows code to escape group-level security controls:
+        A fork is a full copy of the repository, including its history, placed in a namespace the group does not control. Once it exists outside the group, the group's own settings stop applying to it.
 
-          - **Data exfiltration**: Members can fork private repositories to personal namespaces, effectively exporting proprietary source code outside organizational control.
-          - **Security control bypass**: Forked repositories outside the group do not inherit group-level branch protection, approval rules, or push rules.
-          - **Visibility changes**: Forks outside the group could be made public, exposing private code to the internet.
-          - **Compliance violations**: Regulatory requirements for data handling and access control may be violated when code leaves the controlled group namespace.
-          - **Intellectual property risk**: Former members retain access to their personal forks even after leaving the organization.
+        That is the exposure. The original project can be private, require approvals, enforce push rules, and reject unsigned commits; the fork in a personal namespace inherits none of it and can be made public by its owner at any time. Every credential in the history moves with the copy.
 
-        Restrict forking to within the group to maintain consistent security controls and prevent unauthorized code distribution.
+        The offboarding case is the one that bites. A developer forks a project to a personal namespace, leaves the organization, and the fork remains in an account nobody administers, holding source code and history indefinitely.
+
+        The forks are also invisible from the group. There is no listing of copies that left, so the organization cannot enumerate where its code now exists.
+
+        Restricting forking to within the group keeps copies inside the boundary where policy applies and membership is managed. Where an external fork is genuinely needed, such as a contribution to an upstream open source project, handle it as a deliberate exception rather than leaving the general permission open.
       audit: |
         ### Audit via Console
 
@@ -1539,19 +1522,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that all active project access tokens have expiration dates configured. Tokens without expiration dates provide indefinite access to the project, increasing the risk of unauthorized access if the token is compromised.
+        This check verifies that every active project access token has an expiry date.
+
+        Project access tokens are created under Project settings, Access tokens, and authenticate to the GitLab API and to Git operations with the scopes selected at creation. The check reads tokens that are active and not revoked, and requires each to carry an expiry.
 
         **Why this matters**
 
-        Non-expiring access tokens create persistent security risks:
+        A project access token is a bearer credential: whoever holds the string is authenticated, with no second factor and no source restriction. Possession is the entire authentication.
 
-        - **Indefinite access**: Tokens without expiration dates provide permanent access, even if the original need has passed.
-        - **Credential sprawl**: Over time, non-expiring tokens accumulate and become difficult to track and manage.
-        - **Compromised token risk**: If a non-expiring token is leaked, it remains valid until manually revoked.
-        - **Compliance violations**: Security frameworks require periodic credential rotation and expiration enforcement.
-        - **Least privilege**: Non-expiring tokens violate the principle of least privilege by granting access beyond what is needed.
+        Without an expiry, a leaked token works indefinitely. These tokens leak through ordinary channels rather than dramatic ones, ending up in CI configuration, container images, a script committed to another repository, a support ticket, or a laptop that later leaves the organization. None of those events produces an alert.
 
-        Set expiration dates on all project access tokens and implement a process to rotate them before expiration.
+        The scopes are what make it costly. A token with `api` scope can read the source, modify the project's settings, and register or alter CI configuration; one with write scope on the registry can publish images the deployment pipeline will pull.
+
+        An expiry converts an unbounded exposure into a bounded one, whether or not the leak is ever discovered, and the discovery rate for quietly leaked credentials is low. Set the shortest lifetime the consumer can accept, automate renewal so expiry does not become an outage, and prefer a CI job token where one will do, since it exists only for the duration of the job.
       audit: |
         ### Audit via Console
 
@@ -1670,19 +1653,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that all active group access tokens have expiration dates configured. Group tokens provide access to all projects within the group, making non-expiring tokens an even greater risk.
+        This check verifies that every active group access token has an expiry date.
+
+        Group access tokens are created under Group settings, Access tokens, and authenticate against every project in the group. The check reads tokens that are active and not revoked, and requires each to carry an expiry.
 
         **Why this matters**
 
-        Non-expiring group access tokens pose an elevated risk compared to project tokens:
+        A group access token is the same kind of bearer credential as a project token with a much larger reach. Its scopes apply across every project the group contains, including projects created after the token was issued.
 
-        - **Broad access scope**: Group tokens grant access to all projects within the group, amplifying the impact of a compromise.
-        - **Indefinite validity**: Without expiration, compromised tokens remain valid until manually discovered and revoked.
-        - **Operational risk**: Teams that created tokens may leave the organization without transferring token management responsibility.
-        - **Audit challenges**: Non-expiring tokens are harder to include in periodic access reviews.
-        - **Compliance requirements**: Security frameworks require time-bound credentials with regular rotation.
+        That last point is what makes an unbounded lifetime unusually costly here. A token created for one integration years ago silently gains access to each new repository added to the group, so its reach grows without anyone granting anything, and nobody re-evaluates a credential that has not changed.
 
-        Set expiration dates on all group access tokens and implement a rotation schedule.
+        The leak paths are the same as for any bearer token: CI configuration, images, scripts, tickets, and laptops. The difference is what a single leaked string opens, which is the group's entire source estate rather than one project.
+
+        Set an expiry and keep it short, and audit which group tokens exist rather than only whether they are bounded. A token whose original purpose nobody remembers should be revoked rather than renewed, and where the integration only needs one project, a project access token is the correct scope.
       audit: |
         ### Audit via Console
 
@@ -1801,19 +1784,21 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that deploy keys configured for the project do not have push (write) access. Deploy keys with push access can be used to modify repository contents, which violates the principle of least privilege.
+        This check verifies that no deploy key on the project has write access.
+
+        A deploy key is an SSH public key granting repository access without belonging to a user account, added under Project settings, Repository, Deploy keys, where it is granted read access or read and write. The check requires that no key has push access.
 
         **Why this matters**
 
-        Deploy keys with push access create unnecessary write access to repositories:
+        Deploy keys exist so that a deployment system or a build agent can clone the repository. That is a read operation, and read is the access the purpose requires.
 
-        - **Least privilege violation**: Deploy keys are typically used for read-only CI/CD operations; push access exceeds the required permission.
-        - **Unauthorized code changes**: A compromised deploy key with push access allows an attacker to modify repository contents directly.
-        - **Bypass controls**: Push access via deploy keys bypasses branch protection rules, merge request requirements, and code review processes.
-        - **Audit trail gaps**: Changes pushed via deploy keys may not have the same audit trail as changes made through merge requests.
-        - **Lateral movement**: Deploy keys are often stored in CI/CD systems, which may have weaker security controls.
+        Granting write turns a credential that lives on a server into the ability to change what ships. Anyone who compromises that server, or reads the private key from its filesystem or its backups, can push to the repository, and what they push flows into the pipeline like any other commit.
 
-        Configure deploy keys with read-only access and use personal access tokens or project access tokens for write operations that require authentication.
+        The attribution problem compounds it. A deploy key is not a user, so a push made with one carries no person's identity, and the commit history shows a change with no accountable author. In an investigation, that is the hardest kind of entry to trace.
+
+        Deploy keys are also long-lived by nature. They are installed once during setup and rarely rotated, so the exposure persists across the entire life of the machine holding them.
+
+        Grant read only, and where a system genuinely needs to write, use a project access token with a narrow scope and an expiry, which is revocable and attributable in a way a deploy key is not.
       audit: |
         ### Audit via Console
 
@@ -1920,19 +1905,21 @@ queries:
       gitlab.project.securitySettings.continuousVulnerabilityScansEnabled == true
     docs:
       desc: |
-        This check ensures that continuous vulnerability scanning is enabled for the project. Continuous scanning monitors for newly disclosed vulnerabilities in your project's dependencies between pipeline runs. This feature requires a GitLab Ultimate subscription.
+        This check verifies that continuous vulnerability scanning is enabled for the project.
+
+        Continuous vulnerability scanning re-evaluates the project's existing dependencies against newly published advisories, rather than only checking at pipeline time. It is enabled under Project settings, Security and compliance. The check requires it to be on.
 
         **Why this matters**
 
-        Without continuous vulnerability scanning, new vulnerabilities go undetected between pipeline runs:
+        Pipeline-time scanning answers whether the dependencies were known-vulnerable when the pipeline ran. It cannot answer anything about advisories published afterward.
 
-        - **Detection gap**: Traditional pipeline-only scanning only checks for vulnerabilities when code is committed, not when new CVEs are published.
-        - **Zero-day response**: Continuous scanning detects newly disclosed vulnerabilities in existing dependencies without requiring a new commit.
-        - **Risk window**: The time between vulnerability disclosure and next pipeline run represents a window of undetected risk.
-        - **Dependency monitoring**: Projects with infrequent commits may go weeks without a vulnerability scan.
-        - **Compliance coverage**: Continuous monitoring aligns with compliance requirements for ongoing vulnerability management.
+        That gap is where most dependency risk actually lives. A library is safe when it is added, and an advisory lands months later, at which point the project is vulnerable and nothing in the pipeline has changed to say so. A repository that is not being actively developed never runs another pipeline at all, so it never learns.
 
-        Enable continuous vulnerability scanning to detect newly disclosed vulnerabilities in your project's dependencies as they are published.
+        Continuous scanning closes it by re-checking the recorded dependency set as the advisory database updates, which means the notification arrives when the vulnerability becomes known rather than when someone next happens to push.
+
+        The timing is the whole value. Exploitation of a widely used library typically begins within days of disclosure, and the projects that get hit are the ones still unaware they are affected.
+
+        Enable it alongside the pipeline scanners rather than instead of them, since the two answer different questions, and route the findings somewhere they are triaged. A notification that nobody reads is the same as not scanning.
       audit: |
         ### Audit via Console
 
@@ -2027,21 +2014,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the project's push rules block commits that add files matching well-known secret patterns, such as private keys and credential files. Secret prevention on push stops sensitive material from ever entering Git history. Push rules require a GitLab Premium or Ultimate subscription.
+        This check verifies that the project rejects pushes containing files that look like secrets.
+
+        The rule is set under Project settings, Repository, Push rules, as the option preventing committing secrets to Git. GitLab matches filenames against a built-in list covering private keys, credential files, and similar artifacts. The check requires it to be enabled.
 
         **Why this matters**
 
-        Secrets committed to a repository are difficult to fully remove and are frequently harvested by attackers:
+        The value of blocking at push time is that a secret which reaches the repository is already compromised. Removing it afterward does not remove it from the commit that added it, and rewriting history requires a force push, coordination with everyone who has cloned, and the assumption that nobody fetched it in between.
 
-        - **Permanent exposure**: Once a secret is committed, it remains in Git history even after deletion, and anyone with repository access can recover it.
-        - **Automated harvesting**: Attackers continuously scan repositories and forks for leaked credentials, often within minutes of a push.
-        - **Supply chain compromise**: Leaked CI/CD or cloud credentials give attackers a foothold to tamper with builds and deployments.
-        - **Broad blast radius**: A single leaked deploy key or API token can expose infrastructure far beyond the repository it was committed to.
+        Automated tooling clones public repositories and scans them continuously, so credentials pushed to a public project are typically found in minutes. On a private project the window is longer and the outcome is the same once anyone with access is compromised.
 
-        **Risk mitigation**
+        Rejecting the push is therefore the only intervention that actually prevents the exposure rather than responding to it. The developer sees the rejection, removes the file, and the secret never enters the history.
 
-        - **Block at the source**: Rejecting secrets on push prevents the credential from ever reaching the remote, avoiding costly history rewrites and rotation.
-        - **Defense in depth**: Combine push-rule secret prevention with secret push protection and post-commit secret detection scanning.
+        Be clear about the limit. This rule matches filenames, not content, so a key pasted into a source file or a configuration value passes it. Pair it with the companion check enabling secret push protection, which inspects content, and treat any secret that does get committed as compromised and requiring rotation rather than deletion.
       audit: |
         ### Audit via Console
 
@@ -2157,21 +2142,21 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the project's push rules reject commits that are not signed with a verified GPG or SSH key. Requiring signed commits establishes cryptographic proof of each commit's author. Push rules require a GitLab Premium or Ultimate subscription.
+        This check verifies that the project rejects commits that are not cryptographically signed.
+
+        The rule is set under Project settings, Repository, Push rules, as the option rejecting unsigned commits. The check requires it to be enabled.
 
         **Why this matters**
 
-        Unsigned commits can be attributed to any name and email, making commit authorship trivial to forge:
+        Git commit author fields are free text. Anyone can set `user.name` and `user.email` to a colleague's details and produce commits that appear to be theirs, and nothing in Git validates the claim.
 
-        - **Author spoofing**: Without signatures, an attacker can craft commits that appear to come from a trusted maintainer.
-        - **Non-repudiation**: Signed commits provide verifiable evidence of who authored a change, which is essential for incident investigation.
-        - **Supply chain integrity**: Enforcing signatures raises the bar for injecting malicious commits under a stolen or spoofed identity.
-        - **Tamper evidence**: A signature is invalidated if commit contents are altered after signing, exposing history rewrites.
+        That makes commit history untrustworthy as an attribution record by default. An attacker with push access can author changes in someone else's name, which both disguises the origin of a malicious commit and directs an investigation at the wrong person.
 
-        **Risk mitigation**
+        Signing binds each commit to a key its author controls, so the identity in the history is asserted by cryptography rather than by configuration. Requiring signatures on push is what makes that binding a property of the repository rather than a habit of individual developers.
 
-        - **Require verified signatures**: Reject unsigned commits so only cryptographically attributable changes enter the repository.
-        - **Distribute keys**: Ensure contributors register GPG or SSH signing keys with GitLab so their commits verify.
+        It also raises the bar on a stolen credential. An attacker holding a token or a password can push; they cannot produce a valid signature without also holding the signing key, which is typically stored separately and often on hardware.
+
+        Plan the rollout, since this rejects pushes from anyone not yet configured. Distribute signing keys, verify they are registered in GitLab, and confirm that automation which commits, such as release tooling and dependency bots, can sign before turning the rule on.
       audit: |
         ### Audit via Console
 
@@ -2287,21 +2272,21 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the project's push rules require each commit's committer email to belong to a verified email address of the pushing GitLab user. This ties committed changes to an authenticated identity. Push rules require a GitLab Premium or Ultimate subscription.
+        This check verifies that the project requires the committer of each push to be a GitLab user with a verified email matching the commit.
+
+        The rule is set under Project settings, Repository, Push rules, as the committer restriction. The check requires it to be enabled.
 
         **Why this matters**
 
-        Git lets anyone set an arbitrary committer name and email locally, so committer metadata alone proves nothing:
+        Git records a committer separately from an author, and both are self-declared. Without this rule, a user can push commits whose committer field names an email address they do not own.
 
-        - **Identity binding**: The committer check rejects commits whose email is not a verified email of the authenticated user, binding changes to a real account.
-        - **Accountability**: Enforcing verified committer identities produces a trustworthy audit trail for every change.
-        - **Impersonation resistance**: Attackers cannot attribute their commits to another team member's address.
-        - **Insider misuse detection**: Verified identities make it harder to disguise the origin of malicious changes.
+        The practical consequence is that the history stops answering who did what. A commit can be pushed by one account while recording another person as the committer, which is both a way to disguise an action and a way to implicate someone who was not involved.
 
-        **Risk mitigation**
+        This matters most where the history is used as evidence. Change management, compliance attestation, and incident investigation all read commit metadata as a record of who made a change, and that reading is only sound if the metadata is constrained.
 
-        - **Enforce verified committers**: Require the committer email to match a verified address on the pushing user's account.
-        - **Verify contributor emails**: Ensure contributors confirm their commit email addresses in GitLab.
+        The rule closes it by requiring the committer email to belong to the pushing user and to be verified on their GitLab account. An attacker with a stolen credential can still push, but only under the identity of the account they compromised, which keeps the trail pointing at the actual entry point.
+
+        Check automation before enabling. Bots and release tooling commit under their own addresses, and those need to be verified on the corresponding accounts or the pushes will be rejected.
       audit: |
         ### Audit via Console
 
@@ -2415,21 +2400,21 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the project's push rules require each commit author's email to belong to an existing GitLab user, rejecting commits authored by addresses with no corresponding account. This keeps contributions tied to known identities. Push rules require a GitLab Premium or Ultimate subscription.
+        This check verifies that the project requires the author of each commit to be a GitLab user.
+
+        The rule is set under Project settings, Repository, Push rules, as the member check. The check requires it to be enabled.
 
         **Why this matters**
 
-        Commits authored by email addresses with no GitLab account undermine accountability and can mask unauthorized contributions:
+        Where the committer check constrains who pushed a commit, this one constrains whose name appears as its author. Both fields are self-declared in Git, and this rule requires the author email to belong to an existing GitLab user.
 
-        - **Known contributors only**: Requiring authors to be GitLab users ensures every change traces back to a provisioned, manageable identity.
-        - **Deprovisioning enforcement**: Commits from former members whose accounts were removed are rejected, closing a stale-access gap.
-        - **Reduced anonymity**: Attackers cannot author commits under arbitrary unregistered addresses.
-        - **Cleaner audit trail**: Every author maps to an account whose access and activity can be reviewed.
+        Without it, commits can be authored by addresses that correspond to nobody in the organization. That produces history attributed to people who never had access, or to addresses that cannot be traced to anyone at all, and neither can be followed up during an investigation.
 
-        **Risk mitigation**
+        It also catches a quieter operational problem: commits authored from a personal address by someone whose organizational identity is different, which fragments contribution history and makes offboarding review incomplete, since a search by organizational address does not find their work.
 
-        - **Enforce member authorship**: Reject commits whose author email is not associated with a GitLab user.
-        - **Pair with committer verification**: Combine with the committer check for end-to-end identity assurance on each commit.
+        The rule keeps every author in the history resolvable to an account that can be looked up, checked for current membership, and correlated with other activity.
+
+        Verify that automation authors commits under addresses registered to GitLab accounts before enabling, since dependency bots and release tooling are the usual sources of rejected pushes afterward.
       audit: |
         ### Audit via Console
 
@@ -2534,21 +2519,21 @@ queries:
       gitlab.project.preReceiveSecretDetectionEnabled == true
     docs:
       desc: |
-        This check ensures that secret push protection is enabled for the project. Secret push protection scans the contents of each push in real time and blocks the push when a secret is detected, before it reaches the repository. This feature requires a GitLab Ultimate subscription.
+        This check verifies that secret push protection is enabled for the project.
+
+        Secret push protection scans the content of pushed commits and rejects the push when it detects a credential, rather than matching on filenames. It is enabled under Project settings, Security and compliance. The check requires it to be on.
 
         **Why this matters**
 
-        Post-commit secret detection finds secrets only after they are already in Git history; secret push protection stops them at the door:
+        This is the content-aware counterpart to the push rule that blocks secret-looking filenames, and it catches the case that rule cannot: a token pasted into a source file, a configuration value, a test fixture, or a comment.
 
-        - **Prevention over remediation**: Blocking the push means the secret never lands in the repository, avoiding history rewrites and forced rotation.
-        - **Real-time coverage**: Every push is scanned, including pushes to branches that a scheduled pipeline scan might not cover promptly.
-        - **Reduced exposure window**: There is no interval during which a leaked secret sits exploitable in the remote before detection.
-        - **Developer feedback**: Contributors are told exactly which secret was detected, enabling immediate correction.
+        That is the common way secrets actually enter a repository. Very few are committed as a `.pem` file; most are assigned to a variable during local debugging and pushed without the author noticing the line survived.
 
-        **Risk mitigation**
+        Blocking at push is the only point where prevention is still possible. Once the commit lands, the credential is in the history, and every subsequent remedy is a response rather than a prevention: rotate the credential, rewrite the history, and hope nothing cloned it first.
 
-        - **Block secrets pre-receive**: Reject pushes that introduce detectable secrets so they never reach the default branch or history.
-        - **Layer with push rules**: Combine with the prevent-secrets push rule and pipeline secret detection for defense in depth.
+        Detection also stops being timely after the fact. Scanners that run on the repository find the secret after it is already there, on their own schedule, which is measured against an attacker's automation that finds it faster.
+
+        Enable both this and the filename push rule, since they cover different mistakes. Treat any credential that reaches the history as compromised and rotate it, because deletion does not undo distribution.
       audit: |
         ### Audit via Console
 
@@ -2649,21 +2634,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every CI/CD variable defined on the project is masked so its value is hidden in job logs. Masking prevents credentials and tokens stored as CI/CD variables from being printed to build output where they could be read or archived.
+        This check verifies that every CI/CD variable defined on the project is masked in job output.
+
+        Masking is set per variable under Project settings, CI/CD, Variables, and replaces the value with `[MASKED]` wherever it would otherwise appear in a job log. The check requires every variable to have it enabled.
 
         **Why this matters**
 
-        CI/CD variables frequently hold deployment credentials, API tokens, and other secrets that jobs echo or leak into logs:
+        CI/CD variables hold the credentials pipelines use: registry logins, deploy tokens, cloud keys, and API secrets. Job logs are where those values escape, and rarely because anyone printed them deliberately.
 
-        - **Log leakage**: An unmasked variable printed by a script, or by a command that echoes its environment, exposes the secret to anyone who can read the job log.
-        - **Log retention**: Job logs are often retained and shipped to external systems, extending the exposure well beyond the pipeline run.
-        - **Credential harvesting**: Attackers who gain read access to pipelines specifically scan job logs for leaked secrets.
-        - **Accidental disclosure**: Debug output and verbose tooling can surface variable values without the author intending it.
+        The routine causes are a script running with `set -x`, a tool that echoes its environment on error, a command whose failure output includes the arguments it was called with, and debugging output added to diagnose an unrelated problem. In each case the value lands in the log as ordinary text.
 
-        **Risk mitigation**
+        Job logs are then more accessible and more persistent than the variables themselves. They are readable by anyone with the right project role, they are retained, and they are frequently shipped to external log aggregation, which extends the exposure well past GitLab and past the life of the pipeline.
 
-        - **Mask every variable**: Enable masking so values are replaced with `[MASKED]` in job logs.
-        - **Prefer file or external secrets**: For values that cannot be masked, use file-type variables or an external secrets manager instead of plain variables.
+        Masking has requirements the value must meet: a minimum length, no newlines, and a restricted character set, so some secrets cannot be masked as written. Where a value cannot be masked, use a file-type variable or an external secrets manager rather than leaving it unmasked, and note that masking hides the value in logs without restricting which jobs can read it, which is what the companion protected-variable check covers.
       audit: |
         ### Audit via Console
 
@@ -2779,21 +2762,21 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every CI/CD variable defined on the project is protected, meaning it is exposed only to pipelines running on protected branches and protected tags. Protected variables keep deployment secrets out of pipelines triggered from unprotected feature branches and merge requests.
+        This check verifies that every CI/CD variable defined on the project is marked protected.
+
+        A protected variable is exposed only to jobs running on protected branches and protected tags, set per variable under Project settings, CI/CD, Variables. The check requires every variable to have it enabled.
 
         **Why this matters**
 
-        An unprotected variable is passed to pipelines on every branch, including branches an attacker or untrusted contributor controls:
+        Without protection, a variable is available to any pipeline in the project, including one running on a branch anyone can create.
 
-        - **Exfiltration via feature branches**: Anyone who can push a branch can add a job that reads an unprotected secret and sends it to an external endpoint.
-        - **Merge request pipelines**: Pipelines for merge requests from forks or untrusted contributors can capture unprotected variables.
-        - **Blast radius reduction**: Restricting secrets to protected refs limits exposure to code that has already passed branch-protection controls.
-        - **Least privilege**: Production credentials should only be available to the trusted, protected branches that deploy to production.
+        That is the path from write access to credential theft, and it needs no vulnerability. Someone with permission to push a branch adds a job to the CI configuration on that branch, pushes, and the pipeline runs their job with the project's variables in its environment. Exfiltrating the value takes one line, and the branch can be deleted afterward.
 
-        **Risk mitigation**
+        The same route is what makes a compromised developer account so productive. The attacker does not need to get code into the default branch, or past review, or through an approval; they need a branch and a pipeline run, both of which are ordinary developer actions.
 
-        - **Protect every variable**: Mark variables as protected so they are only injected into protected-branch and protected-tag pipelines.
-        - **Combine with branch protection**: Ensure the branches that receive protected variables are themselves protected and reviewed.
+        Protecting variables restricts them to branches that are themselves protected, which are the branches where merges are reviewed and force pushes are blocked, so reaching the credential requires passing the controls that guard the default branch.
+
+        Where a pipeline on an unprotected branch legitimately needs a credential, give it a separate one with narrower scope rather than exposing the production value everywhere.
       audit: |
         ### Audit via Console
 
@@ -2909,21 +2892,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the project restricts inbound CI/CD job token access to an explicit allowlist. When the inbound token scope is enabled, only projects and groups on the allowlist can use their CI/CD job tokens to access this project's API and resources. When it is disabled, any project's job token can reach this project.
+        This check verifies that inbound job token access to the project is restricted to an allowlist.
+
+        The CI/CD job token authenticates a running job to the GitLab API. Inbound scope, set under Project settings, CI/CD, Token Access, controls which other projects' jobs may use their token against this project. The check requires the restriction to be enabled.
 
         **Why this matters**
 
-        CI/CD job tokens are automatically issued to every pipeline and are a common lateral-movement path between projects:
+        With inbound access unrestricted, a job token issued to any project in the instance can act against this one. That turns the token from a scoped credential into a general-purpose one whose reach is decided by whoever is running a pipeline elsewhere.
 
-        - **Lateral movement**: With the inbound scope disabled, a compromised pipeline in any project can use its job token to access this project's private code and resources.
-        - **Blast radius containment**: An allowlist limits which projects can reach this one, so a single compromised pipeline cannot pivot freely across the instance.
-        - **Least privilege**: Cross-project automation should be explicitly declared, not implicitly available to every pipeline.
-        - **Auditability**: An explicit allowlist documents the legitimate cross-project access relationships for review.
+        The consequence is lateral movement between projects with no compromise required beyond the first. An attacker who can run a pipeline in any low-value project, a sandbox, an experiment, a repository with looser membership, gets a token their job can point at a project that matters, and the access it grants is whatever the job token scope permits, typically reading the repository and its registry.
 
-        **Risk mitigation**
+        That failure crosses the boundary teams assume exists between projects. Membership is managed per project precisely so that access to one does not imply access to another, and an unrestricted inbound scope makes that assumption false for every pipeline in the instance.
 
-        - **Enable the inbound allowlist**: Restrict job token access to the specific projects and groups that genuinely need it.
-        - **Keep the allowlist minimal**: Add only the projects required for cross-project pipelines and review the list periodically.
+        Enable the restriction and add only the projects that genuinely need cross-project access, such as a monorepo component pulling a shared library. Review the allowlist when those relationships change, since entries persist after the pipeline that needed them is gone.
       audit: |
         ### Audit via Console
 
@@ -3034,21 +3015,21 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every webhook configured on the project enforces SSL certificate verification. With SSL verification enabled, GitLab validates the receiving endpoint's TLS certificate before delivering the webhook payload.
+        This check verifies that every project webhook validates the TLS certificate of the endpoint it posts to.
+
+        SSL verification is set per webhook under Project settings, Webhooks. The check requires it to be enabled on all of them.
 
         **Why this matters**
 
-        Webhook payloads often carry sensitive event data and are sometimes accompanied by secret tokens; delivering them without certificate verification exposes them to interception:
+        A webhook posts to an external URL on every event it subscribes to, and the payload carries repository content: commit messages, branch names, merge request titles and descriptions, and the identities of the people involved. Some integrations receive tokens in the payload as well.
 
-        - **Man-in-the-middle interception**: Without SSL verification, an attacker who can intercept the connection can present a forged certificate and read or modify the payload.
-        - **Payload confidentiality**: Webhook payloads can include commit details, branch names, and other data that should not be exposed in transit.
-        - **Secret token exposure**: If the webhook uses a secret token to authenticate to the receiver, disabling verification undermines that protection.
-        - **Integrity**: An intercepted webhook could be altered to trigger unintended actions on the receiving system.
+        Disabling certificate verification means the sender does not check that the endpoint is the one it intended to reach. Anyone able to intercept the connection can present any certificate and receive the payloads, which is a continuous feed of activity from the repository rather than a single disclosure.
 
-        **Risk mitigation**
+        The same position allows the response to be controlled, so an attacker can influence whatever the integration does with the reply.
 
-        - **Verify certificates on every hook**: Enable SSL verification so payloads are only delivered to endpoints presenting a valid certificate.
-        - **Use valid certificates**: Ensure webhook receivers present certificates from a trusted CA so verification can remain enabled.
+        Verification is usually disabled to make a self-signed certificate work during setup, and then never restored because the integration is functioning. The setting persists long after the reason for it is gone.
+
+        Fix the certificate rather than the verification: use a certificate from a trusted authority, or add the internal authority to the trust store. If an endpoint genuinely cannot present a valid certificate, treat that as a reason not to send repository data to it.
       audit: |
         ### Audit via Console
 
@@ -3158,21 +3139,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the project does not allow merge requests to be merged when their pipeline is skipped. This setting works together with requiring a successful pipeline: without it, a skipped pipeline is treated as acceptable and the required-pipeline control can be bypassed.
+        This check verifies that a merge request cannot be merged when its pipeline was skipped.
+
+        GitLab treats a skipped pipeline as neither passed nor failed, and a separate setting decides whether that counts as satisfying the pipeline requirement. The check requires that merging on a skipped pipeline is not allowed.
 
         **Why this matters**
 
-        A skipped pipeline runs none of the project's tests, scans, or quality gates, yet without this setting a merge request with a skipped pipeline can still be merged:
+        This closes the gap left by requiring pipelines to succeed. That requirement blocks a failing pipeline; it says nothing about a pipeline that never ran.
 
-        - **Control bypass**: An author can skip the pipeline (for example with `[ci skip]`) and merge changes that never ran security scans or tests.
-        - **Undermines required pipelines**: Requiring a successful pipeline is only effective if a skipped pipeline does not count as success.
-        - **Unverified code reaches production**: Changes merged on a skipped pipeline have no automated verification behind them.
-        - **Inconsistent enforcement**: Allowing skipped-pipeline merges creates a gap that is easy to exploit and hard to notice in review.
+        A pipeline can be skipped for reasons the merge request author controls. `[ci skip]` in a commit message skips it, and so do `rules` and `only` conditions in the CI configuration that do not match the change. An attacker who can influence either one gets their merge request past the pipeline requirement without any job producing a result.
 
-        **Risk mitigation**
+        The `rules` case matters most, because the CI configuration is itself a file in the repository. A merge request that modifies the conditions so its own pipeline does not run, and then merges, has removed the control and used its removal in the same change.
 
-        - **Block skipped-pipeline merges**: Require that merges only proceed when a pipeline actually ran and succeeded.
-        - **Pair with required pipelines**: Combine with the setting that only allows merging when the pipeline succeeds.
+        With this enabled, a skipped pipeline blocks the merge in the same way a failed one does, so the only path forward is a pipeline that actually ran and passed. Where a class of change genuinely does not need CI, express that as a fast job that passes rather than as a skipped pipeline.
       audit: |
         ### Audit via Console
 
@@ -3287,21 +3266,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the project requires all merge request discussions to be resolved before a merge request can be merged. This guarantees that review comments, including those raising security concerns, are addressed rather than merged past.
+        This check verifies that all discussion threads must be resolved before a merge request can be merged.
+
+        The setting is under Project settings, Merge requests, Merge checks, as the requirement that all threads be resolved. The check requires it to be enabled.
 
         **Why this matters**
 
-        Unresolved discussions often capture unaddressed review feedback, and merging past them silently discards that feedback:
+        An unresolved thread is a reviewer's objection that nobody answered. Without this setting, the merge proceeds with the objection still open, and the review process records an approval over the top of it.
 
-        - **Feedback is not lost**: Requiring resolution ensures a reviewer's security or correctness concern is explicitly addressed before merge.
-        - **Accountability**: Every raised thread must be closed by a deliberate action, creating a record that concerns were handled.
-        - **Prevents premature merges**: Authors cannot merge while a reviewer is still questioning a change.
-        - **Strengthens review**: The control reinforces code review as a gate rather than a formality.
+        The security case is specific. Review comments are where a second reader says the input is not validated, the credential looks hardcoded, or the permission is broader than the feature needs. Those comments are the output of the review, and merging past them discards it while keeping the appearance of having reviewed.
 
-        **Risk mitigation**
+        It also loses the record. Once merged, an unresolved thread is unlikely to be revisited, because the work is done and attention has moved on, so the concern is neither addressed nor tracked anywhere it will resurface.
 
-        - **Require resolution**: Block merges until every discussion thread is resolved.
-        - **Combine with approvals**: Pair with required approvals so both sign-off and open questions are handled before merge.
+        The setting is a forcing function rather than a judgment. Resolving a thread does not require agreeing with it; it requires someone deciding and saying so, which is what turns a comment into either a change or an explicit accepted risk. Treat this as the lowest impact control in the merge request set, and the one that most directly protects the value of the others.
       audit: |
         ### Audit via Console
 
@@ -3411,21 +3388,21 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the project does not expose CI/CD job logs and artifacts to non-members. When public jobs are enabled, anyone who can view the project can also read its pipeline job output and download artifacts, even without being a member.
+        This check verifies that CI/CD job logs and artifacts are not visible to people who are not project members.
+
+        The setting is under Project settings, CI/CD, General pipelines, as public pipelines. The check requires it to be disabled.
 
         **Why this matters**
 
-        Job logs and artifacts frequently contain sensitive detail that should not be exposed to non-members:
+        Job logs describe the build in detail, and that detail is more useful to an attacker than the source often is. They name internal hostnames, registry URLs, deployment targets, and environment names; they show the exact versions of every dependency installed; and they reveal the shape of the pipeline, including which security jobs run and which are allowed to fail.
 
-        - **Log disclosure**: Build and deployment logs can reveal internal hostnames, file paths, dependency versions, and occasionally leaked secrets.
-        - **Artifact exposure**: Publicly downloadable artifacts may include compiled binaries, reports, or configuration not meant for wider distribution.
-        - **Reconnaissance**: Detailed pipeline output helps an attacker map the project's toolchain and infrastructure.
-        - **Reduced attack surface**: Limiting job visibility to members keeps operational detail inside the team.
+        Credentials appear there too. Masking covers variables that meet its requirements, so anything not masked, and anything a tool prints in a form masking does not match, lands in the log as text.
 
-        **Risk mitigation**
+        Artifacts are the second half and are frequently overlooked. Build outputs can include configuration files assembled at build time, test fixtures containing sample data, and coverage or dependency reports that describe the codebase in full.
 
-        - **Restrict job visibility**: Disable public jobs so only project members can view logs and artifacts.
-        - **Sanitize output**: Avoid printing sensitive values in job logs and scope artifacts to what downstream jobs actually need.
+        With public pipelines enabled on a public project, all of this is readable by anyone on the internet with no account at all, which makes it a considerably faster reconnaissance source than reading the repository.
+
+        Restrict visibility to project members. Where build status genuinely needs to be public, publish a badge, which exposes the outcome without exposing the log.
       audit: |
         ### Audit via Console
 
