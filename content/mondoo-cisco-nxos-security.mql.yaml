@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-cisco-nxos-security
     name: Mondoo Cisco NX-OS Security
-    version: 1.0.3
+    version: 1.0.4
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -127,17 +127,17 @@ queries:
       cisco.nxos.ssh.algorithm.in(["rsa", "ecdsa"])
     docs:
       desc: |
-        This check verifies that the SSH key uses a strong algorithm such as RSA or ECDSA. DSA keys are considered cryptographically weak and should not be used.
+        This check verifies that the host key protecting remote administrative sessions is built on a cryptographically sound algorithm.
+
+        NX-OS ships with SSH enabled by default, so the host key is in service from the moment the switch has a management address, whether or not anyone reviewed it. The key comes from `ssh key rsa 2048` or `ssh key ecdsa 256`, and since it cannot be replaced while the daemon runs, regeneration means `no feature ssh`, the new `ssh key` command, then `feature ssh`. This check requires RSA or ECDSA and fails a DSA key.
 
         **Why this matters**
 
-        The SSH key algorithm determines the cryptographic strength of SSH sessions. If a weak algorithm like DSA is used:
+        DSA on NX-OS is capped at 1024 bits, which is within reach of well funded attackers. Worse, a DSA signature leaks the private key outright if the per-signature random value is ever reused or partially predictable, a failure mode that has recovered real keys from real devices.
 
-        - The SSH host key is more vulnerable to compromise.
-        - Compliance with modern cryptographic standards cannot be met.
-        - Clients configured to reject weak algorithms cannot connect.
+        Recovering the host key lets an attacker impersonate the switch. They answer the operator's SSH connection with the stolen key, trigger no warning, capture the TACACS+ or local password typed into the prompt, and relay the session onward so the operator sees a normal login.
 
-        Using RSA or ECDSA ensures SSH sessions are protected with strong cryptographic algorithms.
+        Modern OpenSSH clients also refuse `ssh-dss` unless it is re-enabled by hand, so a DSA key usually breaks automation before anyone notices it is weak. Regeneration drops every session, so keep console access available.
       audit: |-
         To verify that the SSH key uses a strong algorithm:
 
@@ -208,16 +208,17 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that RSA SSH keys have a modulus of at least 2048 bits. Keys smaller than 2048 bits are considered cryptographically weak.
+        This check verifies that the RSA host key used for SSH is long enough to resist factoring.
+
+        Key length is fixed at generation time by `ssh key rsa 2048` or a larger modulus and cannot be extended in place. NX-OS accepts moduli well below 2048 bits, and switches commissioned years ago often still carry a 1024-bit key produced by the initial setup script. This check applies only when the algorithm is RSA and requires at least 2048 bits.
 
         **Why this matters**
 
-        RSA keys with fewer than 2048 bits can be factored with current computing resources. If the key size is insufficient:
+        Public factoring efforts have broken 768-bit RSA, and 1024 bits is widely treated as within reach of state-level resources. A switch installed in 2016 and still forwarding production traffic today has given an adversary a decade of improving hardware against a key that never changed.
 
-        - The SSH host key can potentially be compromised.
-        - Compliance with NIST and other standards requiring minimum 2048-bit keys cannot be met.
+        An attacker who factors the host key never has to touch the switch again. They sit on the management path, answer as the switch, present the correct fingerprint so no client warning appears, harvest the administrator password, and pass the session through to the real device.
 
-        Using RSA keys of at least 2048 bits ensures adequate cryptographic strength for SSH sessions.
+        Replacing the key requires `no feature ssh`, then `ssh key rsa 2048 force`, then `feature ssh`, which disconnects every SSH session including your own. Run it from the console and expect every client to report a changed host key.
       audit: |-
         To verify the SSH RSA key modulus size:
 
@@ -278,17 +279,17 @@ queries:
       cisco.nxos.sshLoginAttemptsLimit <= 3
     docs:
       desc: |
-        This check verifies that the SSH login attempts limit is configured to restrict the number of failed authentication attempts. The limit should be 3 or fewer to mitigate brute-force attacks.
+        This check verifies that the SSH server allows only a small number of password guesses per connection.
+
+        `ssh login-attempts` sets how many authentication failures NX-OS tolerates inside a single SSH connection before it drops the session. The NX-OS default is 3, which passes. This check requires a value of at least 1 and no more than 3, so a value of 0, which removes the limit, and any value above 3 both fail.
 
         **Why this matters**
 
-        Without a login attempts limit, attackers can make unlimited authentication attempts. If the limit is not configured:
+        Password guessing against a switch is cheap and nearly free of consequence. What costs the attacker time is the TCP handshake and key exchange for each connection, and a generous per-connection allowance amortizes that cost across many guesses. A low limit removes exactly that economy.
 
-        - Brute-force password attacks can proceed indefinitely.
-        - Dictionary attacks against user accounts are not throttled.
-        - The device is more susceptible to credential-guessing attacks.
+        The wordlists used against network gear are short and effective. They lead with vendor defaults and with the account names that accumulate on switches over the years, so a run that gets ten guesses per connection often succeeds where a run limited to three does not.
 
-        Configuring an SSH login attempts limit slows down brute-force attacks.
+        A per-connection cap does nothing against an attacker who simply reconnects, so treat it as one half of the control. Pair it with the login blocking covered by a companion check in this policy, which enforces a lockout across connections, and with an inbound access class on the VTY lines.
       audit: |-
         To verify that an SSH login attempts limit is configured:
 
@@ -342,18 +343,17 @@ queries:
       cisco.nxos.runAaaAuthenticationLogin.length > 0
     docs:
       desc: |
-        This check verifies that AAA authentication login method lists are configured. AAA authentication enables centralized identity management through TACACS+ or RADIUS servers.
+        This check verifies that logins are authenticated against a centrally managed identity source rather than only the switch's own user database.
+
+        `aaa authentication login default group <server-group> local` points the default method list at a TACACS+ or RADIUS server group and keeps the local database as a fallback. This check requires at least one `aaa authentication login` method list to be present.
 
         **Why this matters**
 
-        Without AAA authentication configured, the device relies solely on local credentials. If AAA is not configured:
+        Local accounts on a data center switch are the accounts nobody deprovisions. An engineer leaves, the identity provider disables their corporate account within the hour, and the `username` entry survives untouched in the running configuration of forty Nexus switches. Stale network device credentials have been a repeated entry point in state-sponsored campaigns against Cisco infrastructure precisely because nothing expires them.
 
-        - Centralized identity management cannot be leveraged.
-        - User authentication is not enforced consistently across the network.
-        - Audit trails for authentication events are incomplete.
-        - Compliance with security frameworks requiring centralized authentication cannot be met.
+        Central authentication also produces the record local login cannot. TACACS+ logs the identity behind each session and, with command accounting, each command typed, so a change is attributable to a person rather than a shared account.
 
-        Configuring AAA authentication login ensures centralized, scalable authentication.
+        Configure this defensively, because it can lock operators out. If the method list names only servers that become unreachable, nobody logs in and recovery means a password recovery procedure at the console. Keep `local` as the final method and set `aaa authentication login console local`.
       audit: |-
         To verify that AAA authentication login method lists are configured:
 
@@ -415,16 +415,17 @@ queries:
       cisco.nxos.runAaaGroupsServerRadius.length > 0
     docs:
       desc: |
-        This check verifies that at least one AAA group server (TACACS+ or RADIUS) is configured. AAA group servers define the external authentication servers used for centralized identity management.
+        This check verifies that the switch actually has an external authentication server group to send login requests to.
+
+        A method list is only a pointer. The group behind it is built by enabling `feature tacacs+`, defining the servers, and grouping them with `aaa group server tacacs+ <group-name>`, or by using the predefined `radius` group that holds all globally configured RADIUS servers. This check passes when at least one TACACS+ or RADIUS server group exists.
 
         **Why this matters**
 
-        Without AAA group servers, the device cannot delegate authentication to centralized servers. If no group servers are configured:
+        NX-OS rejects every TACACS+ command while the feature is disabled, so half-finished rollouts are common here. The result is a switch whose method list references a group that was never created. Authentication silently falls through to the local database while a configuration review sees the method list and concludes the device is centrally managed.
 
-        - Authentication fallback to centralized servers is not possible.
-        - Centralized user management, access control, and auditing cannot be implemented.
+        That gap matters most during an incident. The account you believe was revoked in the identity provider still works on the switch, and the accounting trail you expect to reconstruct the change from was never produced, because no server ever received the requests.
 
-        Configuring AAA group servers enables centralized authentication and authorization.
+        Define more than one server in the group, since a single authentication server turns a routine reboot into a fleet-wide login outage, and place the servers in the management VRF so authentication does not depend on the routed data path.
       audit: |-
         To verify that AAA group servers are configured:
 
@@ -485,17 +486,17 @@ queries:
       cisco.nxos.passwordStrengthCheck == true
     docs:
       desc: |
-        This check verifies that password strength checking is enabled. When enabled, NX-OS validates that passwords meet minimum complexity requirements before accepting them.
+        This check verifies that the switch refuses a weak password at the moment an operator tries to set one.
+
+        `password strength-check` turns on the built-in NX-OS validator, which rejects a new password that is shorter than eight characters, that lacks an uppercase letter, a lowercase letter, a digit, or a special character, that repeats characters consecutively, or that is a recognizable dictionary word. This check requires the feature to be enabled.
 
         **Why this matters**
 
-        Without password strength checking, users can set weak or trivially guessable passwords. If strength checking is disabled:
+        With the validator off, NX-OS accepts anything, and the passwords that end up on switches are the ones typed during a late build window: the hostname, the site code, the vendor name with a digit appended. Those lead every wordlist aimed at network gear.
 
-        - Short or simple passwords can be configured.
-        - Common dictionary words can be used as passwords.
-        - The overall security posture of the device is weakened.
+        Enforcement at the point of entry carries more weight on a switch than on a server, because there is no password expiry driving a later correction and no endpoint agent to flag the weak value afterward. Whatever is set during the build is very likely still set five years later.
 
-        Enabling password strength checking ensures all passwords meet minimum complexity requirements.
+        Note the limit. The validator runs only when a password is set, so existing accounts keep whatever they have until each is reset. Do that sweep after enabling it, and pair it with the minimum passphrase length enforced by a companion check in this policy.
       audit: |-
         To verify that password strength checking is enabled:
 
@@ -550,17 +551,17 @@ queries:
       cisco.nxos.encryptionService.masterKeyConfigured == true
     docs:
       desc: |
-        This check verifies that the encryption service is enabled with a master key configured. The encryption service provides Type 6 AES encryption for passwords stored in the configuration, replacing weak Type 7 encryption.
+        This check verifies that secrets stored in the configuration are protected by a device master key rather than a reversible encoding.
+
+        NX-OS Type 6 encryption applies AES to stored secrets using a master key deliberately kept outside the configuration file. `key config-key ascii` prompts for that key interactively, and `feature password encryption aes` moves the supported secrets, notably RADIUS and TACACS+ shared keys, to Type 6. This check requires both the service enabled and a master key present.
 
         **Why this matters**
 
-        Without the encryption service, passwords in the configuration are protected only by easily reversed Type 7 encryption. If the encryption service is not enabled:
+        The TACACS+ shared key is the highest value secret on the switch. Anyone holding it decrypts captured TACACS+ traffic, which carries the credentials of every administrator who logged in through it and every command they ran. It also lets them stand up a server the switch trusts for authentication decisions.
 
-        - RADIUS and TACACS+ shared secrets are inadequately protected.
-        - An attacker with configuration access can decode all Type 7 passwords.
-        - Compliance with encryption requirements cannot be met.
+        Without Type 6, those keys sit in the running configuration as Type 7 strings. Type 7 is a published XOR against a fixed key with decoders freely available for over twenty years. Configurations travel constantly: nightly TFTP backups, ticket attachments, vendor support cases, configuration management repositories. Every copy is a credential store.
 
-        Enabling the encryption service with a master key ensures strong AES encryption for stored passwords.
+        Treat the master key as a separate secret with its own custody. It is not written to the configuration and not carried by `copy running-config startup-config`, so restoring onto a replacement supervisor means setting it first or re-entering every secret by hand.
       audit: |-
         To verify that the encryption service is enabled with a master key:
 
@@ -623,17 +624,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that all local user accounts have encrypted credentials. Credentials stored with encryption type 0 (clear text) are visible in the device configuration.
+        This check verifies that no local account stores its password in readable form.
+
+        When an operator runs `username <user> password <password> role <role>`, the password is typed in the clear and NX-OS hashes it before writing the line. A credential with encryption type 0 is stored as literal text instead, which happens when a line already carrying a type 0 marker is pasted in or written by provisioning tooling. This check requires every local credential to use a type other than 0.
 
         **Why this matters**
 
-        Clear-text credentials in the configuration are exposed to anyone who can view it. If credentials are not encrypted:
+        A type 0 password is a live credential in every place the configuration ends up. That is the nightly backup share, the diff attached to a change ticket, the git repository the network team uses for configuration drift, and the text file an engineer saved while troubleshooting. Read access to any one of them is enough.
 
-        - Passwords are visible in plain text in show commands and configuration backups.
-        - An attacker with read access to the configuration obtains all credentials.
-        - Configuration files in version control or backups expose passwords.
+        Network credentials are also reused across the fleet more often than any team admits, so one type 0 line frequently yields the `network-admin` password that works on every switch in the data center.
 
-        Ensuring all users have encrypted credentials protects them from exposure.
+        Editing the stored string does not fix it. The encryption type only changes when the password is set again, so reset the affected accounts with a fresh strong password, verify with `show running-config | include ^username`, and persist with `copy running-config startup-config`.
       audit: |-
         To verify that all local users have encrypted credentials:
 
@@ -693,17 +694,17 @@ queries:
       cisco.nxos.passphraseLength.minLength >= 8
     docs:
       desc: |
-        This check verifies that the minimum passphrase length is set to at least 8 characters. Short passwords are significantly easier to crack through brute-force or dictionary attacks.
+        This check verifies that a floor is enforced on how short a local account password may be.
+
+        `userpassphrase min-length` sets that floor, and it is normally paired with an upper bound, as in `userpassphrase min-length 15 max-length 127`. NX-OS applies it when a password is set, refusing anything shorter. This check requires a configured minimum of at least 8 characters.
 
         **Why this matters**
 
-        Without an adequate minimum length, users can create trivially short passwords. If the minimum length is too low:
+        Length is the one password property that reliably costs an attacker time. Character classes and substitutions barely slow a modern cracking rig, but each additional character multiplies the search space. An eight character password recovered from a captured hash falls in hours on commodity GPUs; a fifteen character one does not fall at all by that route.
 
-        - Short passwords are vulnerable to brute-force attacks.
-        - Password security policies cannot be enforced.
-        - Compliance with password length requirements cannot be met.
+        Online guessing against the switch matters more day to day, and short passwords lose there too, because a password short enough to be typed quickly at a console is usually one memorable enough to appear in a wordlist.
 
-        Setting a minimum passphrase length of at least 8 characters (15+ recommended) ensures passwords have adequate complexity.
+        Eight is the floor this check enforces, not the number to configure. Fifteen or more is the sensible setting for a device whose accounts are rarely rotated and whose lifetime is measured in years. Pair it with `password strength-check`, which covers composition rather than length, and remember that the limit binds only on passwords set after it is configured, so existing short passwords need an explicit reset.
       audit: |-
         To verify that the minimum passphrase length is configured:
 
@@ -758,17 +759,17 @@ queries:
       cisco.nxos.systemLogin.attempts > 0
     docs:
       desc: |
-        This check verifies that the system login block feature is configured to temporarily block login attempts after a series of failures. This mitigates brute-force attacks by introducing a lockout period.
+        This check verifies that repeated failed logins temporarily shut an attacker out of the device.
+
+        `system login block-for 60 attempts 3 within 60` puts NX-OS into quiet mode, refusing further login attempts for sixty seconds once three failures occur inside a sixty second window. `system login quiet-mode access-class` names an ACL of hosts that remain permitted while quiet mode is active. This check requires both a non-zero block period and a non-zero attempt count.
 
         **Why this matters**
 
-        Without login blocking, attackers can make unlimited rapid authentication attempts. If login blocking is not configured:
+        A per-connection attempt cap barely slows a password guesser, because reconnecting resets the count. Quiet mode attacks the reconnect itself, and that changes the arithmetic completely: a rate of thousands of guesses per hour drops to a handful per minute, which is the difference between a wordlist finishing overnight and never finishing at all.
 
-        - Brute-force attacks proceed without any throttling.
-        - Automated credential-guessing tools can operate at full speed.
-        - The device is more susceptible to password-cracking attacks.
+        It also converts a quiet attack into a loud one. The transition into quiet mode is a distinct syslog event, so a brute-force attempt that would otherwise blend into ordinary failed-login noise becomes a single alertable message on the collector.
 
-        Configuring system login blocking introduces a delay after failed attempts, significantly slowing brute-force attacks.
+        Quiet mode blocks everyone it applies to, including you, which an attacker can trigger deliberately to keep operators off the switch during a larger action. Configure `system login quiet-mode access-class` to exempt your management subnet, keep console access available, and save the configuration with `copy running-config startup-config`.
       audit: |-
         To verify that the system login block feature is configured:
 
@@ -831,17 +832,19 @@ queries:
       cisco.nxos.ntp.servers.length > 0
     docs:
       desc: |
-        This check verifies that at least one NTP server is configured. Accurate time synchronization is essential for log correlation, certificate validation, and security event analysis.
+        This check verifies that the switch keeps its clock synchronized to an authoritative time source.
+
+        `ntp server <address> use-vrf management` points the switch at a time server reachable over the management VRF, which keeps synchronization independent of the routed data path. This check requires at least one NTP server to be configured.
 
         **Why this matters**
 
-        Without NTP servers, the device clock drifts over time. If NTP is not configured:
+        A Nexus switch that was never given a time source free-runs from whatever the clock held at boot. The drift is slow enough to go unnoticed and large enough to matter, and it degrades every syslog line the switch emits and every accounting record it sends to TACACS+.
 
-        - Log timestamps are inaccurate, making incident investigation unreliable.
-        - Certificate expiration checks may malfunction.
-        - Event correlation across devices is impossible.
+        Correlation is most of the work during an incident, and correlation is what a wrong clock destroys. When the switch reports an interface event at 03:14 and the firewall reports the connection at 03:31, there is no way to establish which caused which, and the timeline that would have identified the entry point never assembles.
 
-        Configuring NTP servers ensures accurate, synchronized time.
+        Time also gates certificate validation, so a switch running a year behind will happily accept a certificate that expired months ago.
+
+        Configure more than one server, and consider `ntp authenticate` with `ntp authentication-key` and `ntp trusted-key` so an attacker on the management segment cannot move the clock and reshape the evidence.
       audit: |-
         To verify that NTP servers are configured:
 
@@ -896,16 +899,17 @@ queries:
       cisco.nxos.clock.timezone != ""
     docs:
       desc: |
-        This check verifies that a timezone is configured on the device. A properly configured timezone ensures log timestamps are meaningful and correlate correctly with events in other systems.
+        This check verifies that the switch stamps its output with a declared, unambiguous local time reference.
+
+        `clock timezone EST -5 0` names the zone and its offset from UTC, and `clock summer-time` handles seasonal adjustment where it applies. This check requires a timezone to be configured.
 
         **Why this matters**
 
-        Without a timezone configured, log timestamps default to UTC which may not align with local operations. If the timezone is not set:
+        With no timezone set, the switch reports time with no zone the reader can rely on, and the assumption each person makes about that value differs. The operator reading `show logging` at the console assumes local time. The analyst reading the same event on the collector assumes UTC. One of them is wrong by several hours and neither knows it.
 
-        - Log analysis is complicated by unclear time references.
-        - Correlation with physical events or local schedules is difficult.
+        That cost lands exactly when time is most expensive. Reconstructing an intrusion means aligning switch events against firewall logs, badge records, and change tickets, and an unlabeled hour of skew is enough to place the switch event on the wrong side of the change that caused it.
 
-        Configuring the timezone ensures timestamps are clear and operationally relevant.
+        Fleet consistency matters more than the specific zone. Standardizing on UTC across every device is a perfectly good answer, and so is local time, but it needs to be the configured answer rather than the absence of one. Apply the same choice everywhere, and save it with `copy running-config startup-config` so a reload does not quietly revert one switch out of forty.
       audit: |-
         To verify that a timezone is configured:
 
@@ -960,17 +964,19 @@ queries:
       cisco.nxos.logging.remoteServers.length > 0
     docs:
       desc: |
-        This check verifies that remote logging is enabled and at least one remote syslog server is configured. Sending logs to a remote server preserves data even if the device is compromised.
+        This check verifies that the switch's log stream is copied off the box as it is produced.
+
+        `logging server <syslog-server-ip> 6 use-vrf management` sends messages at the chosen severity to a collector over the management VRF. This check requires remote logging to be enabled and at least one server to be configured.
 
         **Why this matters**
 
-        Logs stored only on the device are vulnerable to loss or tampering. If remote logging is not configured:
+        The on-box log is memory. It is bounded, it wraps under any real volume, and it is gone at reload, so a switch that logs only locally has an evidence window of hours and nothing at all after the reboot that so often follows an incident.
 
-        - Logs are lost when the device reboots.
-        - An attacker who compromises the device can erase local logs.
-        - Centralized log correlation and SIEM integration is not possible.
+        It is also fully under the control of whoever holds the switch. An attacker with `network-admin` runs `clear logging logfile` and the record of how they arrived disappears. Implant campaigns against Cisco network devices have gone further and modified the device so that it stops reporting the attacker's own activity, which is only detectable when an off-box copy exists to compare against.
 
-        Configuring remote logging ensures logs are preserved centrally.
+        Off-box logs are the one record the intruder on the switch cannot edit after the fact, which is what makes them the record worth having.
+
+        Send to a collector reachable in the management VRF so logging survives the data plane problems you most want logged, and alert on a switch that stops reporting.
       audit: |-
         To verify that remote logging servers are configured:
 
@@ -1026,16 +1032,17 @@ queries:
       cisco.nxos.logging.timestampFormat == "MicroSeconds"
     docs:
       desc: |
-        This check verifies that logging timestamps use millisecond or microsecond precision. Higher precision timestamps improve the accuracy of log correlation and forensic analysis.
+        This check verifies that log entries carry enough timestamp precision to order events that occur close together.
+
+        `logging timestamp milliseconds` raises the resolution of syslog timestamps from the NX-OS default of whole seconds. Microsecond resolution is also available. This check passes on millisecond or microsecond precision and fails on second-level timestamps.
 
         **Why this matters**
 
-        Second-level timestamps may not provide sufficient granularity for correlating events. If timestamps lack precision:
+        A switch produces its most important output in bursts. A single link failure emits interface down, protocol adjacency loss, MAC table churn, and route withdrawal within the same second. At second resolution all of those lines carry an identical timestamp and land in whatever order the collector happened to write them.
 
-        - Events occurring within the same second cannot be properly ordered.
-        - Forensic analysis of rapid event sequences is impaired.
+        In an investigation the ordering is the finding. Whether the ACL change preceded the traffic or followed it, whether the adjacency dropped before or after the interface, whether the spanning tree topology change caused the MAC moves or resulted from them: each of those questions is answered by sequence, and second-level stamps discard the sequence exactly where the events cluster.
 
-        Configuring millisecond or microsecond timestamps ensures precise event ordering.
+        Precision is not accuracy. Millisecond timestamps on a switch with no time source are precisely wrong, so treat this as one half of a pair with the NTP requirement enforced by a companion check in this policy. Set it in configuration mode and persist it with `copy running-config startup-config`.
       audit: |-
         To verify that logging timestamps use high precision:
 
@@ -1089,17 +1096,17 @@ queries:
       cisco.nxos.logging.srcInterfaceName != ""
     docs:
       desc: |
-        This check verifies that a source interface is configured for logging. Setting a consistent source interface ensures that syslog messages always originate from the same IP address, simplifying log management and ACL configuration on syslog servers.
+        This check verifies that syslog messages always leave the switch from one predictable address.
+
+        `logging source-interface mgmt0` pins the source address of outbound syslog to a chosen interface. Without it, NX-OS sources each message from whichever interface the route to the collector happens to select, and a Nexus switch typically owns many addresses across SVIs, loopbacks, and the management port. This check requires a source interface to be set.
 
         **Why this matters**
 
-        Without a source interface, syslog messages may originate from different IP addresses depending on the routing path. If the source interface is not set:
+        A collector identifies a device by the address the messages arrive from. When a routing change or a management path failover shifts that address, the same switch begins reporting as a new host. Its parsers do not match, its alert rules do not fire, and the historical timeline for that switch simply stops, which is the moment an operator is most likely to conclude the device is quiet and therefore healthy.
 
-        - Syslog server ACLs must permit multiple source addresses.
-        - Log correlation by source IP is unreliable.
-        - Syslog messages may be dropped if the egress interface changes.
+        The sharper failure is silent loss. Syslog collectors are normally restricted to a list of known senders, so messages arriving from an unexpected address are dropped at the collector's filter. The switch reports nothing wrong, because syslog over UDP is never acknowledged.
 
-        Configuring a source interface ensures consistent, reliable log delivery.
+        Choose an interface that stays up independently of the data path, typically `mgmt0` or a loopback, make sure the collector permits that address, and confirm the switch is still landing in the collector after the change rather than assuming it.
       audit: |-
         To verify that a logging source interface is configured:
 
@@ -1154,17 +1161,19 @@ queries:
       cisco.nxos.snmp.communities.none(name == "private")
     docs:
       desc: |
-        This check verifies that the default SNMP community strings "public" and "private" are not in use. These well-known defaults are the first values attackers try.
+        This check verifies that the switch does not answer to the SNMP community strings every scanner tries first.
+
+        Community strings are removed with `no snmp-server community public` and `no snmp-server community private` and replaced with an unpredictable value scoped to a role, as in `snmp-server community <unique-string> group network-operator`. This check fails when a community named `public` or `private` exists.
 
         **Why this matters**
 
-        Default SNMP community strings are universally known and actively scanned for. If defaults are used:
+        SNMP v1 and v2c carry the community string in the clear over UDP, and `public` and `private` are the values every vendor documents. Scanners test them continuously, so a switch left with defaults is found automatically rather than targeted.
 
-        - Anyone can read device data using "public".
-        - "private" may allow unauthorized configuration changes.
-        - Automated scanning tools will immediately exploit default strings.
+        Read access alone maps the environment. A walk with `public` returns the interface inventory, ARP and MAC tables, routing neighbors, and the running software version with its known vulnerabilities, which is often enough to fingerprint the whole fabric from one device.
 
-        Removing default community strings ensures SNMP access is properly restricted.
+        Write access through `private` is direct control. An attacker changes configuration through SNMP, and on Cisco platforms can drive a configuration copy to a TFTP server they operate, which hands them the full running configuration including the credentials in it.
+
+        Renaming the community is not the fix, only the first step. The replacement string still crosses the wire in plaintext, so restrict it with an ACL and move monitoring to SNMPv3 with enforced privacy, both covered by companion checks in this policy.
       audit: |-
         To verify that default SNMP community strings are not in use:
 
@@ -1220,17 +1229,19 @@ queries:
       cisco.nxos.snmp.settings.encryptionEnforced == true
     docs:
       desc: |
-        This check verifies that SNMPv3 encryption is enforced globally for all SNMP users. Enforcing encryption ensures that all SNMP communications use authentication and privacy (encryption).
+        This check verifies that every SNMPv3 user is required to authenticate and encrypt, with no per-user exception.
+
+        SNMPv3 users are created individually, as in `snmp-server user <username> network-operator auth sha <auth-password> priv aes-128 <priv-password>`, and each one can be created without privacy. `snmp-server globalEnforcePriv` makes encryption mandatory across all of them. This check requires that global enforcement to be in place.
 
         **Why this matters**
 
-        Without global encryption enforcement, individual SNMP users may be configured without encryption. If encryption is not enforced:
+        SNMPv3 offers three levels of protection and only the strongest encrypts the payload. Leaving the choice to each user definition means the security of the whole management interface is set by whichever user was created most carelessly, usually the one added quickly to onboard a new monitoring tool.
 
-        - SNMP credentials and data can be transmitted in clear text.
-        - Individual users may accidentally be configured without encryption.
-        - Compliance with standards requiring encrypted management protocols cannot be met.
+        An unencrypted SNMPv3 session is readable by anyone on the management path. The walk itself is the reconnaissance prize: interface inventory, address assignments, neighbor relationships, and platform versions, delivered in clean structured form.
 
-        Enforcing SNMPv3 encryption globally ensures all SNMP communications are authenticated and encrypted.
+        The authentication digest travels with those packets too, so a captured session also gives the attacker material for an offline attack against the user's authentication password, and a recovered password is reusable against every switch that shares it.
+
+        Inventory your pollers before enabling this. Any SNMPv3 user defined without a privacy password stops working immediately, and monitoring that still relies on v2c community strings should be migrated to SNMPv3 first rather than discovered as an outage.
       audit: |-
         To verify that SNMPv3 encryption is enforced globally:
 
@@ -1293,16 +1304,17 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that all SNMP community strings have IPv4 or IPv6 ACLs applied to restrict which hosts can query the device.
+        This check verifies that SNMP polling is accepted only from named management stations.
+
+        An ACL listing the authorized pollers is bound to each community with `snmp-server community <community> use-ipv4acl <acl>`, and the ACL must exist before it is referenced. This check requires every configured community to carry an IPv4 or IPv6 ACL, and passes on a switch that defines no communities at all.
 
         **Why this matters**
 
-        SNMP without ACL restrictions allows any network host to query the device. If ACLs are not applied:
+        A community string is a bearer token sent in cleartext UDP. Anyone who captures one packet on the management path holds it, and so does anyone who guesses a predictable value. Without an ACL, holding the string means querying the switch from anywhere that can route to it; with one, a stolen string is usable only from an address already inside your management network.
 
-        - Any device on the network can query SNMP data.
-        - Unauthorized SNMP polling exposes configuration and operational information.
+        What that query returns is worth protecting. A full walk yields the interface inventory, ARP and MAC tables, routing adjacencies, and the software version, which is the reconnaissance an attacker performs before choosing where to move next.
 
-        Applying ACLs restricts SNMP access to authorized management stations.
+        Be honest about the limit. UDP source addresses are spoofable and the string still crosses the wire in the clear, so treat this as a stopgap while SNMPv3 is rolled out. Enumerate every poller first, because any station left out loses visibility of the switch immediately.
       audit: |-
         To verify that SNMP communities have ACLs applied:
 
@@ -1361,17 +1373,19 @@ queries:
       cisco.nxos.boot.poapEnabled == false
     docs:
       desc: |
-        This check verifies that Power-On Auto Provisioning (POAP) is disabled. POAP automatically downloads and executes a configuration script when the switch boots without a startup configuration, which can be exploited to load a malicious configuration.
+        This check verifies that the switch will not fetch and execute a configuration script from the network when it boots without one.
+
+        Power-On Auto Provisioning is the NX-OS zero-touch build path. A Nexus switch that boots with no startup configuration broadcasts DHCP, takes a script and image location from the options it receives, downloads them, and runs the script with full administrative rights. `no boot poap enable` turns that off, and this check requires it disabled.
 
         **Why this matters**
 
-        POAP can be exploited if an attacker sets up a rogue DHCP/TFTP server on the network. If POAP is enabled:
+        The entire trust model is the DHCP server, and the switch trusts whichever server answers first. On a data center fabric that can be any host an attacker has already compromised, and winning a DHCP race against a distant server is not a difficult problem.
 
-        - An attacker can serve a malicious configuration or script to the device during boot.
-        - The device can be reconfigured without authentication during the provisioning process.
-        - A compromised device can be reprovisioned with an attacker-controlled configuration.
+        The window opens more often than teams expect. A supervisor replacement, an RMA unit racked from the shelf, or a `write erase` and reload during troubleshooting all leave the switch with no startup configuration and POAP ready to run.
 
-        Disabling POAP prevents unauthorized auto-provisioning during device boot.
+        The outcome is total, because the script runs as the switch's own provisioning process. It can install attacker accounts, point AAA at a server they operate, mirror a production VLAN to a port they can reach, or load an image of their choosing.
+
+        If you genuinely build with POAP, keep it enabled only through the build, then run `no boot poap enable` and `copy running-config startup-config` before the switch carries production traffic.
       audit: |-
         To verify that POAP is disabled:
 
@@ -1426,17 +1440,19 @@ queries:
       cisco.nxos.copp.profile != ""
     docs:
       desc: |
-        This check verifies that Control Plane Policing (CoPP) is configured with a profile other than "lenient." CoPP protects the control plane from denial-of-service attacks by rate-limiting traffic destined to the CPU.
+        This check verifies that traffic punted to the switch's supervisor CPU is rate limited by something tighter than the most permissive policy available.
+
+        Control Plane Policing classifies traffic destined for the CPU and polices each class. NX-OS offers strict, moderate, lenient, and dense profiles, normally chosen by the initial setup script and changeable later with `copp profile strict`. This check fails an empty profile and the lenient profile, so strict, moderate, and dense all pass.
 
         **Why this matters**
 
-        The "lenient" CoPP profile provides minimal protection. If the CoPP profile is too permissive:
+        The data plane of a Nexus switch forwards in hardware at line rate. The control plane is an ordinary CPU orders of magnitude slower, and everything punted to it competes for the same cycles: BGP keepalives, OSPF hellos, ARP resolution, and the SSH session an operator would use to intervene.
 
-        - The control plane is vulnerable to denial-of-service attacks.
-        - Excessive traffic can overwhelm the CPU, causing routing protocol failures.
-        - Management access may become unavailable during an attack.
+        An attacker does not need volume to reach that CPU, only the right packets. A stream with an expiring TTL, traffic toward unresolved addresses that forces ARP glean, or a flood of management protocol requests all bypass the hardware fast path by design.
 
-        Using a strict or moderate CoPP profile ensures the control plane is adequately protected.
+        When the CPU saturates, routing adjacencies time out first. The switch withdraws its routes, so the outage propagates well beyond the device under attack, and the management session you need for recovery is queued behind the flood.
+
+        Tightening the profile can drop traffic that was previously tolerated, so change it in a maintenance window and watch the per-class drop counters.
       audit: |-
         To verify that CoPP uses a non-lenient profile:
 
@@ -1492,17 +1508,19 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that VTY lines have an exec timeout configured to disconnect idle sessions. The exec timeout reduces the risk of unauthorized access through unattended terminals.
+        This check verifies that idle remote administrative sessions are closed rather than left open indefinitely.
+
+        `exec-timeout` under `line vty` sets the idle period in minutes after which NX-OS disconnects a session. The NX-OS default is 30 minutes, which passes. A value of 0 disables the timeout entirely and fails. Because the default is not printed in the abbreviated configuration, confirm the effective value with `show running-config all | section "line vty"`.
 
         **Why this matters**
 
-        Without an exec timeout, idle VTY sessions remain open indefinitely. If exec timeouts are not configured:
+        An abandoned VTY session is an authenticated shell with `network-admin` rights waiting on somebody's screen, meaning the ability to shut an uplink, add an SPAN session, or install an account with no further authentication.
 
-        - Forgotten sessions can be exploited by unauthorized users.
-        - Connection resources are consumed by idle sessions.
-        - Compliance requirements for session management cannot be met.
+        The realistic path is not a stranger at a desk. It is a jump host where the engineer stays logged in, a terminal multiplexer that survives the laptop closing, or a workstation compromised by unrelated malware, where the attacker inherits a live switch session rather than needing credentials at all.
 
-        Configuring exec timeouts on VTY lines ensures idle sessions are terminated.
+        Sessions also accumulate. NX-OS caps concurrent VTY sessions, and stale ones hold those slots, so the operator who needs to log in during an outage is refused.
+
+        Choose a value that fits real work rather than the smallest number available. Nine or ten minutes is common, while an aggressive timeout drops operators mid-change and invites keepalive workarounds that defeat the control.
       audit: |-
         To verify that VTY lines have an exec timeout configured:
 
@@ -1559,16 +1577,19 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that the console line has an exec timeout configured to disconnect idle sessions automatically.
+        This check verifies that a session left open on the physical console does not stay authenticated indefinitely.
+
+        `exec-timeout` under `line console` disconnects an idle console session after the configured number of minutes. The NX-OS default is 30 minutes and passes, while `exec-timeout 0` disables the timeout and fails. The default does not appear in the abbreviated configuration, so verify it with `show running-config all | section "line console"`.
 
         **Why this matters**
 
-        Without a console timeout, an idle session remains open indefinitely. If the timeout is not set:
+        The console is treated as physically trusted because reaching it needs a cable. In practice that cable usually terminates on a terminal server, which is itself a network device with its own management interface and its own weaknesses. An attacker who reaches it does not land at a login prompt, they land in whatever session was left running on the switch.
 
-        - An unattended console connection can be used for unauthorized changes.
-        - Physical access security requirements cannot be met.
+        Data center floors are not closed rooms either. Vendor engineers, cabling contractors, and colocation staff pass racks routinely, and a console left at a live prompt needs no credential at all.
 
-        Configuring a console exec timeout ensures idle console sessions are terminated.
+        The console is also where AAA fallback delivers a local login, which makes a stale session there a bypass of the entire management plane rather than one more way in.
+
+        Keep it short enough to matter but long enough for real console work, since the console is the recovery path you depend on if a VTY access class or an AAA change removes remote access.
       audit: |-
         To verify that the console line has an exec timeout configured:
 
@@ -1625,16 +1646,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that VTY lines have inbound ACLs configured to restrict which IP addresses can establish remote management sessions.
+        This check verifies that remote management sessions are accepted only from approved source addresses.
+
+        An inbound access class applied under `line vty`, as in `access-class VTY-MGMT in`, filters SSH connections before authentication is attempted. This check requires every VTY line to carry an inbound access class.
 
         **Why this matters**
 
-        VTY lines without ACLs allow connection attempts from any source. If ACLs are not configured:
+        Without one, the SSH daemon answers anything that can route to any address the switch owns, and a Nexus switch owns many: the management port, every loopback, and an address on every SVI it routes for. A switch acting as default gateway for a server VLAN therefore offers its management plane to every host in that VLAN, including a compromised application server.
 
-        - Any host can attempt brute-force attacks against the device.
-        - Management access cannot be restricted to trusted networks.
+        Filtering ahead of authentication also removes the switch from opportunistic target lists. Password guessing stops at the ACL rather than the login prompt, and a flaw in the SSH implementation itself is unreachable from an address that never gets a TCP session.
 
-        Applying ACLs to VTY lines restricts access to authorized management stations.
+        This is the control most likely to lock you out. The access class takes effect the moment it is applied and can drop the session you are typing in. Build and verify the ACL first, keep a console session open, apply it, confirm a fresh SSH connection from a permitted station, and only then run `copy running-config startup-config`. Saving before verifying removes the reload as an escape route.
       audit: |-
         To verify that VTY lines have an inbound ACL configured:
 
@@ -1694,17 +1716,17 @@ queries:
       cisco.nxos.motdBanner != ""
     docs:
       desc: |
-        This check verifies that a Message of the Day (MOTD) banner is configured. The MOTD banner provides legal notice to users before authentication.
+        This check verifies that anyone connecting to the switch is shown a warning before they authenticate.
+
+        `banner motd` sets the text NX-OS presents at connection time, ahead of the username prompt, using a delimiter character to mark the start and end of the message. This check requires the banner text to be non-empty.
 
         **Why this matters**
 
-        Without a MOTD banner, there is no legal warning before access. If the banner is not configured:
+        This banner is a legal instrument rather than a technical control, and it is the one control on this list whose value is realized in a courtroom or a disciplinary hearing. Action under unauthorized access statutes generally turns on whether the person was on notice that the system was restricted, and a switch that greets a stranger with a bare login prompt supports the argument that access appeared open.
 
-        - Legal proceedings against unauthorized access may be weakened.
-        - Users are not informed of acceptable use policies.
-        - Compliance requirements for access warnings cannot be met.
+        Placement is what makes it work. A notice shown only after login has no bearing on someone who never intended to log in, which is why the message has to arrive at connection time, before credentials are requested.
 
-        Configuring a MOTD banner ensures users receive legal notice before accessing the device.
+        Keep the text free of anything useful to an attacker. Hostname, model, site, department, and support contacts are all reconnaissance, and welcoming language undercuts the notice itself. State that use is restricted, that activity is monitored and logged, and have your legal team supply the exact wording so the same text is deployed fleet-wide.
       audit: |-
         To verify that a Message of the Day banner is configured:
 
@@ -1758,16 +1780,17 @@ queries:
       cisco.nxos.execBanner != ""
     docs:
       desc: |
-        This check verifies that an exec banner is configured. The exec banner is displayed after successful authentication and can provide additional security reminders or policy information.
+        This check verifies that a policy notice is presented to users once they have successfully authenticated.
+
+        `banner exec` sets text that NX-OS prints immediately after login, just before the first prompt, delimited the same way as the message of the day banner. This check requires the banner text to be non-empty.
 
         **Why this matters**
 
-        The exec banner provides an opportunity to display post-login security reminders. If not configured:
+        The pre-login banner addresses strangers. This one addresses the people who belong here, and on a data center switch that audience causes most of the real damage. The engineer who shuts the wrong uplink or applies a change meant for a lab spine is working from an unremarkable prompt on a device that looks like forty others.
 
-        - Users are not reminded of security policies after login.
-        - There is no post-authentication notice about monitoring or acceptable use.
+        Use it to say what only an authenticated operator needs to know: that the session and the commands in it are recorded through TACACS+ accounting, that the device is under change control, and what class of device this is. A distinctive marker on production spines is read in the second before a disruptive command is typed, which is the moment it can still change the outcome.
 
-        Configuring an exec banner reinforces security awareness after authentication.
+        Recognize what it is not. An attacker sees this text only after they already have a session, so it works alongside the pre-authentication banner rather than in place of it. Keep it brief and free of details that would help someone who should not be reading it.
       audit: |-
         To verify that an exec banner is configured:
 
@@ -1823,17 +1846,19 @@ queries:
       cisco.nxos.hostname.downcase != "nexus"
     docs:
       desc: |
-        This check verifies that a unique, descriptive hostname is configured. A meaningful hostname is essential for identifying the device in logs, alerts, and management systems.
+        This check verifies that the switch identifies itself by a name unique to it.
+
+        `hostname <unique-descriptive-name>` sets the value that appears in the CLI prompt, in every syslog message the switch emits, in its CDP and LLDP advertisements, and in the SSH session banner. A factory Nexus answers to `switch`, and many are left at `nexus` after a partial build. This check requires a non-empty hostname and rejects the literal values `switch` and `nexus`.
 
         **Why this matters**
 
-        Without a unique hostname, the device uses a generic default name. If the hostname is not configured:
+        Syslog identifies the sender by hostname, so a collector receiving from forty devices that all call themselves `switch` merges them into one unusable stream. The interface that flapped, the ACL that changed, and the login that failed all become events without a device, and the reconstruction an incident depends on cannot be built.
 
-        - The device cannot be identified in logs or management platforms.
-        - Log correlation across multiple devices is unreliable.
-        - Network topology documentation is incomplete.
+        The prompt is also the last verification an operator performs before a disruptive command. A window showing `switch#` could be any device in the fabric, and that ambiguity is how a change lands on the wrong Nexus during a maintenance window.
 
-        Setting a descriptive hostname ensures the device is identifiable across all workflows.
+        A factory hostname signals something to an attacker too: a device still carrying its default name advertises that nobody finished a build checklist on it, which reliably predicts default community strings and untouched credentials nearby.
+
+        Name it for role and location and apply the same convention fleet-wide.
       audit: |-
         To verify that a unique, descriptive hostname is configured:
 
@@ -1887,16 +1912,19 @@ queries:
       cisco.nxos.ip.sourceRouteEnabled == false
     docs:
       desc: |
-        This check verifies that IP source routing is disabled. Source routing allows a sender to specify the route a packet takes, which can be abused to bypass security controls.
+        This check verifies that the switch ignores packets that try to dictate their own forwarding path.
+
+        The IP loose and strict source route options let a sender list hops a packet must traverse, overriding the forwarding decision the network would otherwise make. `no ip source-route` makes the switch discard them. Because the setting is not printed in the abbreviated configuration, confirm it with `show running-config all | include ip source-route`. This check requires source routing disabled.
 
         **Why this matters**
 
-        IP source routing enables attackers to specify routing paths that circumvent firewalls and ACLs. If source routing is enabled:
+        Firewall and ACL placement rests on an assumption about which paths traffic can take. Source routing breaks that assumption directly, letting an attacker steer a packet through the switch and out an interface that no filter inspects, reaching a segment the topology was designed to keep unreachable.
 
-        - Attackers can route packets through paths that bypass security controls.
-        - Spoofed packets can reach internal networks.
+        The return path is the sharper problem. Replies follow the source route in reverse, so an attacker who spoofs a trusted internal address still receives the answers. That turns blind spoofing, which is mostly useless, into a working two-way session under a borrowed identity.
 
-        Disabling source routing prevents attackers from manipulating packet routing paths.
+        The same options serve as a reconnaissance tool, letting an outsider probe internal reachability and map segments they cannot route to directly.
+
+        There is effectively no legitimate production use left. The mechanism was deprecated in practice decades ago precisely because its abuse cases outnumbered its uses, so disable it globally and save the configuration.
       audit: |-
         To verify that IP source routing is disabled:
 
@@ -1952,16 +1980,19 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that IP directed broadcast is disabled on all interfaces. Directed broadcasts can be used as amplification vectors for denial-of-service attacks (Smurf attacks).
+        This check verifies that no interface will convert a unicast packet addressed to a subnet broadcast into an actual broadcast on that subnet.
+
+        `no ip directed-broadcast` under each routed interface stops that translation. This check requires it disabled on every interface, so a single interface that still permits it fails the check.
 
         **Why this matters**
 
-        IP directed broadcasts allow a single packet to be broadcast to all hosts on a subnet. If directed broadcast is enabled:
+        Directed broadcast is the amplifier in a Smurf attack. One spoofed ICMP echo sent to a subnet's broadcast address becomes one reply from every live host on that segment, and because the source was forged, all of those replies converge on a victim who never sent anything. The amplification factor is simply the number of responding hosts.
 
-        - The interface can be used as a Smurf attack amplifier.
-        - Denial-of-service attacks can be amplified through the device.
+        A data center switch makes this considerably worse than a campus router does. A server VLAN holds hundreds of active hosts behind high speed uplinks, so a modest inbound stream becomes an outbound flood large enough to saturate whatever the attacker aims it at, and the traffic leaves from your address space.
 
-        Disabling directed broadcast on all interfaces prevents amplification attacks.
+        The same mechanism doubles as a host census. One probe returns a reply per responding host, handing an attacker the live inventory of a segment they cannot otherwise enumerate.
+
+        Fix every routed interface rather than the first one flagged, verify with `show running-config interface`, and persist the change with `copy running-config startup-config`.
       audit: |-
         To verify that IP directed broadcast is disabled on all interfaces:
 
@@ -2022,16 +2053,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that all BGP neighbors have MD5 authentication configured. BGP authentication prevents unauthorized peers from injecting routes.
+        This check verifies that BGP sessions authenticate the peer before exchanging routes.
+
+        With `feature bgp` enabled, each neighbor under `router bgp` takes a `password <shared-secret>` that turns on TCP MD5 signing for the session. This check applies when BGP is configured and requires every neighbor to carry a password.
 
         **Why this matters**
 
-        Without BGP authentication, an attacker can establish rogue BGP sessions. If authentication is not configured:
+        BGP believes what its peer tells it. An unauthenticated neighbor statement accepts a session from anything reaching the right address with the right autonomous system number, so an attacker who can source traffic from the peer's address becomes a trusted routing source.
 
-        - Malicious routes can be injected, redirecting or black-holing traffic.
-        - BGP sessions can be disrupted through TCP reset attacks.
+        What follows is not a routing bug, it is a tap. The attacker announces a more specific prefix for a production subnet, the switch prefers it, and traffic destined for your servers arrives at a next hop they control, to be recorded or modified before being forwarded on so nothing appears broken. A withdrawal instead blackholes the same traffic outright.
 
-        Configuring authentication on BGP neighbors ensures only authorized peers establish sessions.
+        MD5 signing also blunts the blind TCP reset: without it, an attacker who lands a plausible sequence number tears the session down and forces a reconvergence.
+
+        Coordinate with the peer operator first. Setting a password on an established neighbor drops the session until both ends match, so routing through that peer stops. Confirm recovery with `show bgp sessions`.
       audit: |-
         To verify that BGP neighbors have authentication configured:
 
@@ -2097,17 +2131,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that BGP neighbor change logging is enabled. Logging BGP peer state changes provides visibility into routing stability and potential security events.
+        This check verifies that BGP peer state transitions are recorded as they happen.
+
+        `log-neighbor-changes` under `router bgp <as-number>` makes NX-OS emit a syslog message each time a neighbor enters or leaves the established state. This check applies when BGP is configured and requires the setting on every BGP instance.
 
         **Why this matters**
 
-        Without BGP neighbor change logging, routing disruptions may go unnoticed. If logging is not enabled:
+        A BGP session dropping is one of the few switch events that is always significant. It means routes were withdrawn and traffic moved somewhere else, and on a data center fabric that is either an outage or the early shape of one.
 
-        - BGP session flaps and resets are not recorded.
-        - Unauthorized BGP peering attempts are not logged.
-        - Routing stability issues cannot be diagnosed from historical data.
+        Without the log line the evidence is transient. `show bgp` reports the state right now, so an adjacency that dropped for eleven seconds at two in the morning and recovered leaves nothing behind. The application team's latency spike has no explanation on the network side, and the flapping peer keeps flapping.
 
-        Enabling BGP log neighbor changes ensures routing events are captured for monitoring and troubleshooting.
+        The pattern of transitions is also the security signal. An attacker probing the BGP port, attempting a session from a spoofed source, or running a reset attack against an established peer produces a characteristic burst of state changes that is visible only if state changes are logged.
+
+        Pair it with remote logging, since messages held only in the on-box buffer are lost at reload and can be cleared by anyone with `network-admin`. Alert on transition frequency rather than on each event.
       audit: |-
         To verify that BGP neighbor change logging is enabled:
 
@@ -2168,17 +2204,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that all OSPF interfaces have authentication configured using either MD5 or a key chain. OSPF authentication prevents unauthorized routers from injecting routes.
+        This check verifies that OSPF accepts routing information only from routers that prove they hold a shared key.
+
+        Authentication is set per interface, either with `ip ospf authentication message-digest` alongside `ip ospf message-digest-key 1 md5 <key>`, or by referencing a key chain with `ip ospf authentication key-chain <keychain-name>`. This check applies when OSPF is configured and requires every OSPF interface to carry one of the two.
 
         **Why this matters**
 
-        Without OSPF authentication, any device on the segment can participate in OSPF routing. If authentication is not configured:
+        OSPF forms an adjacency with whatever answers a hello on the segment. On an unauthenticated interface that means any host on the VLAN can become a router: a server running a rogue routing daemon, a compromised hypervisor, or a laptop plugged into a live port.
 
-        - Rogue routers can inject false routes.
-        - OSPF adjacencies can be disrupted.
-        - Man-in-the-middle attacks via route injection are possible.
+        Once adjacent, the attacker advertises a low cost route to a prefix they want and its traffic starts arriving at them. Because they can forward it onward, the result is a transparent interception that no application notices.
 
-        Configuring OSPF interface authentication ensures only authorized routers participate in the routing domain.
+        The destructive version needs less finesse. Flooding the area with churning link state advertisements forces every router in it to recompute continuously, and the instability spreads well past the segment the attacker reached.
+
+        Prefer a key chain over a static digest key, because key chains support rotation without tearing the adjacency down. Enabling authentication on a live interface drops the adjacency until the neighbor matches, so schedule it with the neighboring device and verify with `show ip ospf neighbors`.
       audit: |-
         To verify that OSPF interfaces use authentication:
 

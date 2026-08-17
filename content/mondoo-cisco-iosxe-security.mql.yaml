@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-cisco-iosxe-security
     name: Mondoo Cisco IOS-XE Security
-    version: 1.0.3
+    version: 1.0.4
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -130,17 +130,15 @@ queries:
       cisco.iosxe.ssh.enabled == true
     docs:
       desc: |
-        This check verifies that SSH is enabled on the device. SSH provides encrypted remote management access, replacing insecure protocols like Telnet.
+        This check verifies that the device offers an encrypted channel for remote command-line administration.
+
+        IOS-XE does not run an SSH server until it has an identity to present. A hostname, a domain name set with `ip domain name`, and an RSA key pair created by `crypto key generate rsa modulus 2048` are all prerequisites, after which `show ip ssh` reports the server as enabled. The check requires the SSH server to be running.
 
         **Why this matters**
 
-        Without SSH enabled, the device cannot provide encrypted management access. If SSH is not enabled:
+        Without SSH, remote administration falls back to telnet, which carries the username, the password, the enable secret typed at the prompt, and every configuration command as readable text across the network. An attacker positioned anywhere on the path, on a span port, on a compromised neighboring switch, or on the same broadcast domain running ARP spoofing, harvests the credential without ever touching the router. From there the device is theirs: they add a local account, mirror traffic to a port they control, or change routing so that traffic detours through equipment they own.
 
-        - Remote management must rely on insecure protocols such as Telnet.
-        - All management traffic including credentials is transmitted in clear text.
-        - Compliance with security frameworks requiring encrypted management access cannot be met.
-
-        Enabling SSH ensures that secure, encrypted remote management access is available.
+        Bringing up SSH is only half the work. The VTY lines must actually accept it and must have a login method attached, so pair this with the transport restriction and the AAA login configuration that companion checks in this policy cover, or remote access still lands on telnet.
       audit: |-
         To verify that SSH is enabled on the device:
 
@@ -199,17 +197,17 @@ queries:
       cisco.iosxe.ssh.version == "2.0"
     docs:
       desc: |
-        This check verifies that SSH version 2 is enforced. SSH version 1 has known cryptographic vulnerabilities and must not be used.
+        This check verifies that the device negotiates only the modern SSH protocol version.
+
+        `show ip ssh` reports the version the server offers. IOS-XE reports 2.0 when only SSHv2 is accepted and 1.99 when the server still falls back to SSHv1 for older clients. The check requires 2.0, which the global `ip ssh version 2` command sets.
 
         **Why this matters**
 
-        SSH version 1 has well-documented weaknesses including susceptibility to man-in-the-middle attacks. If SSH version 2 is not enforced:
+        SSHv1 has a broken integrity model. It protects packets with a CRC-32 checksum rather than a keyed message authentication code, which lets an attacker able to modify ciphertext in flight inject chosen plaintext into an authenticated session. That insertion attack was published in 1998 and remains straightforward to execute. The protocol also has no downgrade protection in its key exchange.
 
-        - Management sessions are vulnerable to cryptographic attacks in SSH version 1.
-        - Session integrity cannot be guaranteed.
-        - Compliance with modern security frameworks cannot be met.
+        The 1.99 setting is the trap. It looks like version 2 is available, and it is, but the server still advertises SSHv1 alongside it and a client that asks for the older protocol gets it. An attacker who can influence the client, or who simply connects with an SSHv1 tool, obtains the weak session while the operator believes the device is on version 2.
 
-        Enforcing SSH version 2 ensures all remote management sessions use strong cryptographic protections.
+        Legacy management tools that speak only SSHv1 stop working once the fallback is removed, so inventory them before the change rather than discovering them after it.
       audit: |-
         To verify that SSH version 2 is enforced:
 
@@ -262,16 +260,15 @@ queries:
       cisco.iosxe.ssh.timeoutSeconds <= 120
     docs:
       desc: |
-        This check verifies that an SSH login timeout is configured to limit the time allowed for authentication. The timeout should be 120 seconds or less.
+        This check verifies that an unauthenticated SSH connection cannot hold a session slot indefinitely.
+
+        The `ip ssh time-out` value bounds how long IOS-XE waits for a client to finish authenticating before tearing the connection down. The device reports the value in seconds and will not accept more than 120. The check requires a value between 1 and 120 seconds, which rejects a device where the timeout has been zeroed out.
 
         **Why this matters**
 
-        Without an SSH timeout, connection attempts can remain open indefinitely during authentication. If the timeout is not configured:
+        The router has a small, fixed number of VTY slots, typically sixteen. Every half-open SSH connection occupies one from the moment the TCP handshake completes until authentication succeeds, fails, or times out. An attacker who opens connections and then simply never sends credentials consumes all of them in seconds, and the result is that no administrator can log in. On a device that is also the default gateway for a site, losing management access during an incident means driving to the building with a console cable.
 
-        - Resources are consumed by stale connection attempts.
-        - Slow brute-force attacks can keep connections open for extended periods.
-
-        Configuring an SSH timeout limits the authentication window and reduces resource consumption.
+        A short authentication window is the cheapest defense against that. Pair it with an inbound access class on the VTY lines so those connections never reach the authentication stage from untrusted addresses, and with `service tcp-keepalives-in` so that sessions which died mid-flight are reaped rather than left holding a slot.
       audit: |-
         To verify that an SSH login timeout is configured:
 
@@ -323,16 +320,15 @@ queries:
       cisco.iosxe.cryptoKeysRsa.any(modulusSize >= 2048)
     docs:
       desc: |
-        This check verifies that at least one RSA key pair has a modulus of 2048 bits or larger. Keys smaller than 2048 bits are considered cryptographically weak.
+        This check verifies that the host key protecting SSH sessions is long enough to resist factoring.
+
+        `crypto key generate rsa modulus 2048` creates the key pair IOS-XE presents to SSH clients and uses to prove the device's identity. Older devices frequently carry a 512-bit or 1024-bit key generated years earlier and never rotated, because no modulus was specified at the time and the default was small. The check requires at least one RSA key pair on the device with a modulus of 2048 bits or more.
 
         **Why this matters**
 
-        RSA keys with fewer than 2048 bits can be factored with current computing resources. If the key size is insufficient:
+        A 512-bit RSA modulus is factorable on rented compute for a few dollars in a few hours. Recovering the private key lets an attacker impersonate the router outright: they intercept the SSH connection, present the genuine host key, and the client accepts it with no warning because the fingerprint matches the one it cached. The administrator then types their password and enable credential directly into the attacker's session, and every command they believe they are sending to the router is being relayed and read.
 
-        - The SSH host key can potentially be compromised.
-        - Compliance with NIST and other standards requiring minimum 2048-bit RSA keys cannot be met.
-
-        Using RSA keys of at least 2048 bits ensures adequate cryptographic strength.
+        Rotating the key changes the device's SSH host identity, so every client that stored the old fingerprint prompts on the next connection and any automation that pins the host key needs updating first. A device can also hold more than one key pair, so remove the obsolete short keys rather than only generating a new one alongside them.
       audit: |-
         To verify the RSA key modulus size:
 
@@ -386,18 +382,15 @@ queries:
       cisco.iosxe.aaa.newModelEnabled == true
     docs:
       desc: |
-        This check verifies that the AAA new model is enabled. The AAA new model (`aaa new-model`) is required to use TACACS+ or RADIUS for centralized authentication, authorization, and accounting.
+        This check verifies that the device is able to authenticate administrators against a central identity service rather than only against credentials stored on the box.
+
+        `aaa new-model` is the global switch that replaces the legacy per-line `login` and `login local` behavior with method lists. Nothing else in the AAA subsystem is available until it is set. The check requires the AAA new model to be enabled.
 
         **Why this matters**
 
-        Without the AAA new model enabled, the device cannot use centralized authentication services. If AAA new model is not enabled:
+        Without it, every administrator's access lives in the local user database of each individual router and switch. When an engineer leaves, someone has to remember to remove that account from several hundred devices, and the one that gets missed stays reachable with a working credential for as long as the device lives, which on network hardware is a decade. State-sponsored intrusion campaigns against Cisco routers have turned on exactly this: valid administrative credentials that were never revoked and never expired.
 
-        - The device relies solely on local authentication, which is difficult to manage at scale.
-        - Centralized access control through TACACS+ or RADIUS is not available.
-        - Audit trails for authentication events are incomplete.
-        - Compliance with security frameworks requiring centralized authentication cannot be achieved.
-
-        Enabling the AAA new model is the prerequisite for all AAA functionality.
+        Enabling the new model rewrites authentication on every line the moment the command is accepted, including the VTY session you are typing it from. If no local user exists and no default login list is defined, the next login attempt fails and recovery means a console cable. Create the local account and the default method list in the same configuration session, verify from a second window, and only then copy the configuration to startup.
       audit: |-
         To verify that the AAA new model is enabled:
 
@@ -453,17 +446,17 @@ queries:
       cisco.iosxe.aaa.loginEntries.length > 0
     docs:
       desc: |
-        This check verifies that AAA authentication login method lists are configured. AAA authentication login defines how users are authenticated when accessing the device.
+        This check verifies that a method list exists to decide how administrators logging in are authenticated.
+
+        With the AAA new model on, a line authenticates using a named method list, or using the list called `default` when none is named. `aaa authentication login default group tacacs+ local` is the usual form: try the TACACS+ servers first, fall back to the local database when they are unreachable. The check requires at least one login method list to be present.
 
         **Why this matters**
 
-        Without AAA authentication login configured, the device may allow access without proper authentication. If AAA login is not configured:
+        The new model with no login list is a half-configured state, and it is worse than either endpoint. Lines that previously prompted for a line password now behave according to rules nobody wrote, and depending on the release and the line the result ranges from a locked door to an unexpected prompt. Neither is something you want to discover during an outage.
 
-        - User authentication may not be enforced consistently.
-        - Centralized identity management cannot be leveraged.
-        - Audit trails for authentication events are incomplete.
+        More concretely, the method list is what routes authentication to TACACS+, and TACACS+ is what makes per-administrator identity, immediate revocation, and command authorization possible. Without it, everyone shares whatever is in the local database, and the accounting records name a device rather than a person.
 
-        Configuring AAA authentication login ensures proper authentication is enforced for all access methods.
+        Always terminate the list with `local`. A method list naming only the server group turns a TACACS+ outage or a broken WAN link into a device nobody can log into, which is the failure mode that pushes teams to abandon AAA entirely.
       audit: |-
         To verify that AAA authentication login method lists are configured:
 
@@ -523,17 +516,17 @@ queries:
       cisco.iosxe.aaa.accountingRecords.length > 0
     docs:
       desc: |
-        This check verifies that AAA accounting is configured to log user activity. Accounting records provide an audit trail of commands executed, sessions started, and system events.
+        This check verifies that administrative activity on the device is recorded to an external system.
+
+        `aaa accounting exec default start-stop group tacacs+` records session starts and stops, and `aaa accounting commands 15 default start-stop group tacacs+` records each privileged command as it is entered. Records leave the device as they are generated rather than at the end of the session. The check requires at least one accounting method list to be configured.
 
         **Why this matters**
 
-        Without AAA accounting, there is no record of administrative activity. If accounting is not configured:
+        When a route changes and a customer segment goes dark, the question is who typed what and when. Accounting is the only thing on the device that answers with a person's name attached. Configuration change logging records that a change happened; command accounting records the exact command line, the user, and the terminal it came from, forwarded off the box in real time.
 
-        - There is no forensic evidence of commands executed during a security incident.
-        - Compliance requirements for audit logging cannot be met.
-        - Accountability for privileged operations is lost.
+        That off-box property is what turns it into evidence. An attacker who reaches privileged EXEC can clear the local log buffer and purge the configuration archive, but they cannot retract records the TACACS+ server already holds. Emitting the record as the command is typed, rather than when the session closes, is what defeats an intruder who tidies up before logging off.
 
-        Enabling AAA accounting ensures that all activity is logged for audit and compliance.
+        Accounting depends on a reachable TACACS+ or RADIUS server, so confirm that records actually arrive after the next login rather than treating the configuration lines as proof the control works.
       audit: |-
         To verify that AAA accounting is configured:
 
@@ -590,17 +583,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that all local user accounts use `secret` rather than `password` for credential storage. The `secret` keyword uses a one-way hash (MD5, SHA-256, or SCRYPT) while `password` uses reversible Type 7 encryption that is trivially decoded.
+        This check verifies that local account credentials are stored as one-way hashes rather than in a reversible form.
+
+        An account defined with `username admin password ...` stores the credential as Type 7, a reversible encoding. Defined with `username admin algorithm-type scrypt secret ...`, it stores a Type 9 hash instead. The check requires every local account on the device to use the secret form.
 
         **Why this matters**
 
-        Type 7 passwords can be decoded instantly using freely available tools. If users are configured with `password` instead of `secret`:
+        Type 7 is decoded, not cracked. The algorithm is a published XOR against a fixed key and web pages reverse it as fast as you can paste. Anyone who obtains the configuration, from a TFTP backup share, a network management platform's archive, a ticket attachment, or a read-only account allowed to run `show running-config`, walks away with working plaintext passwords for the accounts on that device. Because network engineers reuse credentials across a fleet, that single file frequently opens every device in it.
 
-        - Credentials can be recovered in plain text from the running configuration.
-        - Configuration backups expose all user passwords.
-        - An attacker with read access to the configuration obtains all credentials.
+        Type 9 scrypt is memory-hard and resists offline cracking well. Type 5 MD5, the older default for `secret`, resists it far less well but is still a hash rather than an encoding, so it is an acceptable fallback on releases without scrypt.
 
-        Using `secret` for all user accounts ensures that credentials are stored with a one-way hash.
+        Converting an account means deleting and recreating it, because IOS-XE will not hold both forms for one username. Have a second administrative account or console access ready first, so a session that drops between the two commands does not lock you out of the device.
       audit: |-
         To verify that local users use `secret` rather than `password`:
 
@@ -655,17 +648,17 @@ queries:
       cisco.iosxe.configuration.enableSecret.type == "secret"
     docs:
       desc: |
-        This check verifies that the privileged EXEC mode access is protected with `enable secret` rather than `enable password`. The `enable secret` uses a one-way hash, while `enable password` uses easily reversed Type 7 encryption.
+        This check verifies that the credential guarding privileged EXEC mode is stored as a hash rather than a reversible string.
+
+        IOS-XE accepts two commands for the same door. `enable password` writes a Type 7 value and `enable secret` writes a hash, Type 5 by default or Type 9 with `enable algorithm-type scrypt secret`. When both exist the secret takes precedence, but the password is still sitting in the configuration in recoverable form. The check requires privileged access to be governed by a secret.
 
         **Why this matters**
 
-        The enable password controls access to privileged EXEC mode, which grants full administrative control. If `enable password` is used instead of `enable secret`:
+        Privileged EXEC is total control of the device. From it an attacker rewrites access lists, adds accounts, turns off logging, changes routing so traffic detours through a host they own, and copies out the full configuration with every other credential the device holds. There is no lesser privilege level to fall back to and no second gate behind it.
 
-        - The privileged mode credential is stored with reversible encryption.
-        - An attacker can decode the password from the configuration.
-        - Full administrative access to the device is compromised.
+        A Type 7 enable password therefore means that anyone who can read the configuration owns the device. That set includes read-only operations staff whose accounts were only ever meant to display state, backup systems nobody audits, and whoever ends up with a stale config file years later.
 
-        Using `enable secret` ensures the privileged mode credential is protected with a one-way hash.
+        Remove `enable password` once the secret is in place rather than leaving it behind, and verify the new credential from a second session before saving to startup, because a mistyped one-way hash is one you will be fixing from the console.
       audit: |-
         To verify that privileged EXEC access uses `enable secret`:
 
@@ -720,17 +713,17 @@ queries:
       cisco.iosxe.configuration.service.passwordEncryptionEnabled == true
     docs:
       desc: |
-        This check verifies that the `service password-encryption` command is enabled. While this provides only Type 7 encryption (which is reversible), it prevents passwords from being visible in plain text when viewing the configuration.
+        This check verifies that plaintext passwords are obscured in the device configuration.
+
+        Several IOS-XE configuration elements, including line passwords, the BGP neighbor password, and authentication server keys, are stored exactly as typed unless `service password-encryption` is set. With it enabled, IOS-XE rewrites those values as Type 7 strings whenever the configuration is displayed or saved. The check requires the global `service password-encryption` command to be present.
 
         **Why this matters**
 
-        Without service password encryption, some passwords appear in clear text in the configuration. If password encryption is not enabled:
+        Router configurations travel widely. They are pasted into tickets, mailed to vendor support, archived by backup jobs, and committed to configuration management repositories. Every one of those copies is a credential store if the passwords in it are readable, and an attacker who reaches a backup share reaches the routing and management credentials for every device backed up to it.
 
-        - Passwords are visible to anyone who can view the running configuration.
-        - Shoulder-surfing during configuration review exposes credentials.
-        - Configuration backups contain clear-text passwords.
+        Type 7 is not encryption and should not be treated as such. The algorithm is a published XOR against a fixed key, and decoders have been available for over two decades, so anyone who obtains the configuration recovers the original strings in seconds. What `service password-encryption` buys is protection against casual reading: the operator running `show running-config` on a shared screen, the screenshot in a ticket, the over-the-shoulder glance during a change window.
 
-        Enabling service password encryption provides a basic layer of protection against casual observation.
+        Treat it as a floor, not a control. Local accounts belong under `username ... secret` and privileged access under `enable secret`, both of which are one-way hashes rather than reversible encoding, and both are covered by companion checks in this policy.
       audit: |-
         To verify that service password encryption is enabled:
 
@@ -782,17 +775,17 @@ queries:
       cisco.iosxe.ip.httpEnabled == false
     docs:
       desc: |
-        This check verifies that the HTTP server is disabled. HTTP transmits all data in clear text, making it unsuitable for device management.
+        This check verifies that the device is not serving its web management interface over an unencrypted transport.
+
+        The embedded HTTP server on IOS-XE answers on TCP port 80 and exposes administrative operations authenticated by whatever `ip http authentication` names. It is turned off with `no ip http server`. The check requires the HTTP server to be disabled.
 
         **Why this matters**
 
-        The HTTP server provides a web-based management interface over an unencrypted connection. If HTTP is enabled:
+        Every request to that server carries its credential in a plaintext header and every response carries configuration data back the same way. An attacker with any position on the path reads the administrative password out of a single request and replays it. That is the same exposure telnet has, on a port that perimeter filters and monitoring rules are far less likely to be watching, because nobody expects a router to be a web server.
 
-        - All management traffic including credentials is transmitted in clear text.
-        - Sessions can be hijacked through traffic interception.
-        - The HTTP service increases the attack surface with potential web vulnerabilities.
+        The interface is also a productive bug target. Cisco advisories include authentication bypasses and path-handling flaws in the IOS-XE web UI that permitted unauthenticated configuration changes, and the implant campaign tracked as CVE-2023-20198 in 2023 turned exactly this interface into full device compromise on internet-facing IOS-XE routers. Devices whose owners never used the web UI were taken over through it because it was simply running.
 
-        Disabling HTTP and using only HTTPS ensures that all web-based management is encrypted.
+        If a web interface is genuinely required by a management platform, run the TLS listener with `ip http secure-server`, keep the cleartext one off, and restrict who can reach either with `ip http access-class`.
       audit: |-
         To verify that the HTTP server is disabled:
 
@@ -844,16 +837,17 @@ queries:
       cisco.iosxe.ip.httpsEnabled == true
     docs:
       desc: |
-        This check verifies that the HTTPS server is enabled for secure web-based management. HTTPS provides TLS-encrypted management access when a web interface is required.
+        This check verifies that where the device serves a web management interface, that interface is protected by TLS.
+
+        `ip http secure-server` starts the encrypted listener on TCP port 443 using the device's certificate. It is independent of the cleartext listener, so a device can have neither, either, or both running. The check requires the TLS listener to be enabled.
 
         **Why this matters**
 
-        If web-based management is needed, HTTPS must be used to encrypt all traffic. Without HTTPS:
+        Several things reach into IOS-XE over the web transport rather than the CLI: RESTCONF, application hosting workflows, and network management platforms that push configuration through it. If TLS is off and those tools still have to work, they get pointed at the cleartext listener and the credential they carry crosses the network readable. An attacker on the path does not need to break anything; they read the authorization header and replay it against the device.
 
-        - Web-based management is either unavailable or relies on unencrypted HTTP.
-        - Compliance requirements for encrypted management interfaces cannot be met.
+        The certificate IOS-XE generates for itself is not verified by anything, so a client configured to ignore certificate warnings remains interceptable. Install a certificate from an authority the management tooling actually trusts, and keep the listener reachable only from the management network with `ip http access-class`, because a TLS-protected administrative interface exposed to the internet is still an administrative interface exposed to the internet.
 
-        Enabling HTTPS ensures that web-based management uses encrypted communications.
+        Where no web-based management is used at all, the stronger position is to run neither listener. On those devices this expectation is better exempted than satisfied by starting a service nothing needs.
       audit: |-
         To verify that the HTTPS server is enabled:
 
@@ -905,17 +899,17 @@ queries:
       cisco.iosxe.cdp.enabled == false
     docs:
       desc: |
-        This check verifies that Cisco Discovery Protocol (CDP) is disabled. CDP broadcasts detailed device information that can be exploited for network reconnaissance.
+        This check verifies that the device is not announcing its own identity and software details to everything on its directly attached segments.
+
+        Cisco Discovery Protocol, or CDP, is on by default in IOS-XE and multicasts a frame out every enabled interface roughly every 60 seconds. Each frame carries the hostname, a management IP address, the hardware platform, the full software version string, the local port, and often the VTP domain and native VLAN. `no cdp run` turns it off globally. The check requires CDP to be disabled.
 
         **Why this matters**
 
-        CDP operates at Layer 2 and sends information in clear text including hostname, IP address, platform, and software version. If CDP is not disabled:
+        An attacker who gains any foothold on an access port, whether a compromised printer, an unattended conference room jack, or a hijacked IP phone, does not need to scan the network. They listen for one minute and learn the exact software train the router is running, which turns vulnerability selection into a lookup against published advisories rather than a noisy probe that might be noticed. The native VLAN and VTP details in the same frame are the starting point for VLAN hopping.
 
-        - Detailed device information is broadcast to all directly connected devices.
-        - Attackers can passively collect network topology and software version data.
-        - This information enables targeted attacks against specific platform vulnerabilities.
+        CDP frames are unauthenticated and handled by the control plane, so forged neighbor announcements sent at volume have historically been usable to exhaust memory on the receiving device.
 
-        Disabling CDP prevents unnecessary information disclosure.
+        CDP is not always removable. Cisco IP phones use it to learn the voice VLAN and negotiate power, and some topology and monitoring products depend on it. Where phones are attached, disable CDP per interface on the ports that do not need it and confirm with the voice team before making the change globally.
       audit: |-
         To verify that CDP is disabled globally:
 
@@ -969,16 +963,17 @@ queries:
       cisco.iosxe.bootp.enabled == false
     docs:
       desc: |
-        This check verifies that the Bootstrap Protocol (BOOTP) service is disabled. BOOTP is a legacy protocol for network bootstrapping that is rarely needed and increases the attack surface.
+        This check verifies that the device is not answering bootstrap requests from hosts on its own segments.
+
+        The BOOTP responder is enabled by default in IOS-XE and answers the legacy bootstrap requests that predate DHCP, handing out an address and pointing the client at a boot image to fetch over TFTP. `no ip bootp server` disables the responder and `ip dhcp bootp ignore` makes the DHCP service drop BOOTP requests. The check requires the BOOTP service to be off.
 
         **Why this matters**
 
-        The BOOTP service allows the device to act as a BOOTP server. If enabled unnecessarily:
+        A device answering bootstrap requests is a device that can tell another device where to get its operating system. On any segment where something still boots over the network, an attacker who gets the router to answer, or who exploits the fact that it answers at all, points a booting client at an image of their choosing. That is a full compromise of the client, delivered by a piece of infrastructure the client has every reason to trust.
 
-        - The service increases the attack surface with an unused network service.
-        - It can be exploited for network reconnaissance or denial-of-service attacks.
+        Even where nothing network boots, the responder is a UDP listener that nobody monitors on a device that is patched once every few years. Advisories have covered crafted-packet crashes in the BOOTP and DHCP relay paths, and a crash on a router is a site outage rather than a single service restart.
 
-        Disabling BOOTP removes an unnecessary service and reduces the attack surface.
+        Almost nothing modern uses BOOTP. Before disabling it, check for network-booted appliances and older phone deployments that still depend on it, then confirm nothing lost its address after the change.
       audit: |-
         To verify that the BOOTP service is disabled:
 
@@ -1030,17 +1025,17 @@ queries:
       cisco.iosxe.ip.sourceRouteEnabled == false
     docs:
       desc: |
-        This check verifies that IP source routing is disabled. Source routing allows a sender to specify the route a packet takes through the network, which can be abused to bypass security controls.
+        This check verifies that the router refuses packets that carry their own routing instructions.
+
+        The IPv4 loose and strict source route options let a sender list the hops a packet must traverse, overriding the router's own forwarding decision. IOS-XE honors those options by default, and `no ip source-route` stops it from processing them. The check requires source routing to be disabled.
 
         **Why this matters**
 
-        IP source routing enables attackers to specify routing paths that circumvent firewalls, ACLs, and other security controls. If source routing is enabled:
+        Source routing lets an attacker choose the path, and choosing the path is how you get around controls that assume packets arrive from where the routing table says they should. A packet source-routed through an interface on the trusted side of a filter arrives looking like it originated inside. Return traffic follows the recorded route back to the sender, which means the technique also works with a forged source address: the attacker spoofs an internal address and the record-route option still brings the answer to them. That defeats address-based trust, and address-based trust is what most infrastructure access lists are built on.
 
-        - Attackers can route packets through paths that bypass security controls.
-        - Spoofed packets can be directed to reach internal networks.
-        - Network access controls can be circumvented.
+        It is also a reconnaissance tool. Loose source routing through chosen intermediate addresses maps reachability behind a perimeter that ordinary probes cannot see past.
 
-        Disabling source routing prevents attackers from manipulating packet routing paths.
+        There is essentially no legitimate use left. The options were designed for debugging a network that no longer exists, and most operators filter them at the edge in addition to disabling processing on each device. Do both, since a device deeper in the network may still honor what the edge let through.
       audit: |-
         To verify that IP source routing is disabled:
 
@@ -1092,16 +1087,17 @@ queries:
       cisco.iosxe.configuration.service.padEnabled == false
     docs:
       desc: |
-        This check verifies that the X.25 Packet Assembler/Disassembler (PAD) service is disabled. PAD is a legacy service for X.25 networks that is no longer needed in modern networks and increases the attack surface.
+        This check verifies that the device is not listening for X.25 terminal connections.
+
+        The packet assembler and disassembler service lets a device accept X.25 sessions and hand them to a terminal line. IOS-XE enables it by default for historical reasons and `no service pad` removes it. The check requires the service to be off.
 
         **Why this matters**
 
-        The PAD service is a legacy protocol that has no place in modern network environments. If PAD is enabled:
+        X.25 has been gone from commercial networks for well over a decade, so the honest reason to remove this is that it is code answering on a device where nobody would ever notice it answering. No monitoring rule covers it, no baseline includes it, and no operator would recognize a PAD session in a connection table as anomalous. A listener with no owner and no observer is precisely what a long-dwell intruder looks for when choosing where to sit.
 
-        - An unnecessary service is exposed that could be exploited.
-        - The attack surface is increased with a rarely monitored legacy service.
+        The deeper problem is maintenance. Legacy protocol handlers in IOS-XE receive very little scrutiny compared with SSH or the web server, they are rarely fuzzed, and the platform they run on is patched every few years at best. A parsing flaw in that code path stays exploitable for a very long time on hardware that is expected to run for a decade.
 
-        Disabling PAD removes an unnecessary legacy service.
+        Turning the service off has no operational cost on any network built this century. It belongs with BOOTP and the small servers in the handful of default-on services worth clearing out during initial hardening.
       audit: |-
         To verify that the PAD service is disabled:
 
@@ -1153,17 +1149,17 @@ queries:
       cisco.iosxe.ntp.authenticate == true
     docs:
       desc: |
-        This check verifies that NTP authentication is enabled to ensure the device only synchronizes time with trusted NTP servers.
+        This check verifies that the device only accepts a time update from a server that can prove which server it is.
+
+        `ntp authenticate` turns verification on, `ntp authentication-key` defines the shared key, `ntp trusted-key` marks which keys are acceptable, and each `ntp server` statement must reference its key number. All four parts are needed for the control to do anything. The check requires NTP authentication to be enabled.
 
         **Why this matters**
 
-        Without NTP authentication, an attacker can manipulate the device's clock through NTP spoofing. If NTP authentication is not enabled:
+        Unauthenticated NTP accepts time from whoever answers first. An attacker on the path, or anyone able to spoof the server's address toward the router, sets the clock to whatever they like, and the clock is load-bearing in more places than operators expect.
 
-        - Log timestamps become unreliable, undermining forensic investigations.
-        - Certificate validation can be bypassed with manipulated time.
-        - Time-sensitive security mechanisms can be compromised.
+        Moving it forward expires certificates that were valid, breaking IKE and TLS sessions the device depends on. Moving it backward revives a certificate that has been revoked or a key lifetime in a key chain that had already ended. Moving it sideways scrambles the timestamps on every log message the device emits, which is the cheapest way for an intruder to make their activity impossible to line up against firewall and server logs during an investigation.
 
-        Enabling NTP authentication ensures the device only accepts time updates from verified sources.
+        Enabling authentication without matching the key number and value exactly at the server end leaves the device rejecting every update and drifting silently, which is worse than the state you started from. Confirm the peer actually synchronizes after the change.
       audit: |-
         To verify that NTP authentication is enabled:
 
@@ -1220,17 +1216,17 @@ queries:
       cisco.iosxe.ntp.servers.length > 0
     docs:
       desc: |
-        This check verifies that at least one NTP server is configured. Accurate time is essential for log correlation, certificate validation, and security event analysis.
+        This check verifies that the device has an authoritative time source to synchronize its clock against.
+
+        A router with no `ntp server` statement runs on its own hardware clock, which on this class of device drifts by seconds a day and comes back at a meaningless value after a power loss on units without a battery-backed calendar. The check requires at least one NTP server to be configured.
 
         **Why this matters**
 
-        Without NTP servers configured, the device clock drifts over time. If NTP servers are not configured:
+        Correlation is the whole point. An investigation that has to line up router syslog against firewall logs, authentication records, and endpoint telemetry depends on all of them agreeing about when things happened. A device drifting by minutes turns a clear sequence of events into an ambiguous one, and the analyst cannot tell whether the router saw the traffic before or after the server did.
 
-        - Log timestamps are inaccurate, making incident investigation unreliable.
-        - Certificate expiration checks may malfunction.
-        - Event correlation across multiple devices is impossible.
+        Time also gates security functions on the device itself. Certificate validity windows for IKE and the TLS management listener, key lifetimes in the key chains used by routing protocol authentication, and time-based access lists all evaluate against the local clock. A wrong clock fails them open or closed with no message that explains why, which is a fault that can sit undiagnosed for months.
 
-        Configuring NTP servers ensures accurate, synchronized time.
+        Configure more than one server, drawn from sources that do not share a single upstream, so one unreachable peer does not leave the device unsynchronized. Then authenticate them, which a companion check in this policy covers.
       audit: |-
         To verify that NTP servers are configured:
 
@@ -1283,17 +1279,17 @@ queries:
       cisco.iosxe.logging.configurationChangesLoggingEnabled == true
     docs:
       desc: |
-        This check verifies that logging of configuration changes is enabled. Configuration change logging records all modifications to the device configuration, providing an audit trail of who changed what and when.
+        This check verifies that changes to the device configuration are recorded as they are made.
+
+        The configuration change logger is enabled under `archive` with `log config` followed by `logging enable`. Once running, IOS-XE records each configuration command with the user, the session, and the time, readable with `show archive log config all` and forwardable to syslog. The check requires configuration change logging to be enabled.
 
         **Why this matters**
 
-        Without configuration change logging, modifications to the device go unrecorded. If change logging is not enabled:
+        Most network outages are self-inflicted, and the first question after one is what changed. Without this log the answer has to be reconstructed by diffing a configuration backup taken at some unknown earlier point, which shows the net result and says nothing about the sequence or the author.
 
-        - There is no record of configuration modifications.
-        - Unauthorized changes cannot be detected.
-        - Compliance requirements for change management cannot be met.
+        For an intrusion the gap is worse. An attacker with privileged access adds a local account, opens a hole in an access list, or repoints logging somewhere harmless, then leaves. Nothing on the device records those individual commands. A configuration diff taken weeks later shows the account exists but not when it appeared or from which session, and that is the difference between scoping an incident and guessing at it.
 
-        Enabling configuration change logging provides visibility into all configuration modifications.
+        Send the records off the device as well. Anything held only in the local archive can be cleared by whoever reaches privileged EXEC, so pair this with a remote syslog destination and, where AAA is in place, with command accounting to a TACACS+ server.
       audit: |-
         To verify that configuration change logging is enabled:
 
@@ -1347,17 +1343,17 @@ queries:
       cisco.iosxe.logging.hosts.length > 0
     docs:
       desc: |
-        This check verifies that at least one remote logging host is configured. Sending logs to a remote server ensures data is preserved even if the device is compromised.
+        This check verifies that the device's log messages are delivered to a system outside the device.
+
+        `logging host` names a syslog destination, `logging trap` sets which severities are sent to it, and `logging source-interface` pins the source address so the collector sees a stable identity for the device. The check requires at least one remote logging host to be configured.
 
         **Why this matters**
 
-        Logs stored only on the device are vulnerable to loss or tampering. If remote logging hosts are not configured:
+        Local logging on IOS-XE is a circular memory buffer. It is small, it is overwritten continuously on a busy device, and it is emptied by a reload. On a router that is dropping and re-establishing sessions during an incident, the buffer can turn over in minutes, so the evidence of initial access is frequently gone before anyone logs in to look for it.
 
-        - Logs are lost when the device reboots or the buffer overflows.
-        - An attacker who compromises the device can erase local logs.
-        - Centralized log correlation is not possible.
+        It is also under the attacker's control. `clear logging` empties the buffer and leaves nothing behind to say it happened, which makes it a routine first step for anyone who knows the platform. A message that has already left the device cannot be recalled, so the copy at the collector is the only one worth relying on.
 
-        Configuring remote logging hosts ensures logs are preserved centrally.
+        Point the device at a collector that sits in a different trust zone from the network it is reporting on, and confirm the access lists along the path actually permit syslog, because a `logging host` that cannot be reached fails silently and looks configured.
       audit: |-
         To verify that remote logging hosts are configured:
 
@@ -1411,17 +1407,17 @@ queries:
       cisco.iosxe.logging.logUnsuccessfulLogin == true
     docs:
       desc: |
-        This check verifies that failed login attempts are logged. Logging failed authentications is essential for detecting brute-force attacks and unauthorized access attempts.
+        This check verifies that rejected authentication attempts against the device generate a log message.
+
+        `login on-failure log` makes IOS-XE emit a syslog record for each failed login, naming the username offered, the source address, and the line. It is off by default, so a device can be under sustained password guessing and report nothing at all. The check requires failed login logging to be enabled.
 
         **Why this matters**
 
-        Without failed login logging, suspicious authentication activity goes undetected. If failed login logging is not enabled:
+        Credential guessing against network devices is the quiet part of most infrastructure intrusions. It is slow, it comes from one address, and it disturbs no traffic. The only signal it produces is a stream of authentication failures, and if the device does not write them, there is no signal to detect.
 
-        - Brute-force attacks go undetected.
-        - There is no evidence of attempted unauthorized access.
-        - Real-time alerting on suspicious activity is not possible.
+        The absence also hides the moment that matters most. When guessing finally succeeds, the pattern that identifies it is a run of failures from an address followed by a success from that same address. With the failures unrecorded, the successful login looks exactly like an administrator arriving for work.
 
-        Enabling failed login logging captures authentication failures for security monitoring.
+        Turn on `login on-success log` alongside it, because the pair is what makes that pattern legible, and forward both to a remote collector so they outlive the device's buffer. Then consider `login block-for` to make guessing expensive rather than merely visible, and build its quiet-mode access list carefully, since a blocking period that does not exempt your management network locks your own operators out during exactly the wrong hour.
       audit: |-
         To verify that failed login logging is enabled:
 
@@ -1476,17 +1472,17 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that the default SNMP community strings "public" and "private" are not in use. These well-known defaults are the first values attackers try.
+        This check verifies that the device is not reachable over SNMP using the community strings that ship with every vendor's equipment.
+
+        A community string is the entire credential for SNMPv1 and v2c. `public` and `private` are the historical defaults, removed with `no snmp-server community public` and the equivalent for private. The check applies where an SNMP agent is running and requires neither default community to be configured.
 
         **Why this matters**
 
-        Default SNMP community strings are universally known and actively scanned for. If default communities are in use:
+        These two strings are the first thing every internet-wide scanner tries, and SNMP answers over UDP with no handshake, so the probe is a single packet and it leaves nothing in a connection table. With read access an attacker retrieves the interface list, the routing table, the ARP cache, the running software version, and on many IOS-XE releases the entire running configuration by way of a TFTP transfer the router performs on their behalf. That configuration holds the enable secret, the TACACS+ key, and every other credential on the device.
 
-        - Anyone can read device data using the "public" community.
-        - The "private" community may allow unauthorized configuration changes.
-        - Automated scanning tools will immediately exploit default strings.
+        Where a write community is left at `private`, the attacker skips the CLI entirely and changes the configuration through SNMP. This is not hypothetical; SNMP was the pivot in multiple documented state-actor campaigns against Cisco routers.
 
-        Removing default community strings and using unique values ensures SNMP access is restricted.
+        Renaming the community is a stopgap rather than a fix. Version 1 and 2c send the string in clear text on every poll, so anyone on the path collects the new one. The durable answer is SNMPv3 with both authentication and privacy, with community-based access retired once the polling platform supports it.
       audit: |-
         To verify that default SNMP community strings are not in use:
 
@@ -1547,16 +1543,17 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that all SNMP community strings have ACLs applied to restrict which hosts can query the device via SNMP.
+        This check verifies that SNMP polling is accepted only from the management systems that are supposed to be polling.
+
+        Each `snmp-server community` statement takes a trailing access list number or name that limits which source addresses may use that community, as in `snmp-server community <string> RO 10`. The check applies where an SNMP agent is running with communities defined, and requires every community to carry an access list.
 
         **Why this matters**
 
-        SNMP without ACL restrictions allows any network host to query the device. If ACLs are not applied:
+        Because version 1 and 2c carry the community string in clear text, it is recoverable by anyone who can observe a poll: a compromised host on the management VLAN, a span port, or a device sitting in the path between the network management station and the router. Once they hold the string, the only thing left between them and the device's data is where they are permitted to send packets from.
 
-        - Any device on the network can query SNMP data.
-        - Write-access community strings allow remote configuration changes from any host.
+        An access list turns a stolen string into something that must be used from a specific address, forcing the attacker to compromise or spoof the monitoring station rather than replaying from wherever they happen to be. UDP source addresses are spoofable, so this is not absolute, but the response goes to the spoofed address and that removes most of the value for a read operation.
 
-        Applying ACLs restricts SNMP access to authorized management stations.
+        Build the list before you attach it and include every poller, including standby collectors and discovery tools that run only occasionally. Any server left out loses SNMP the moment the list is applied, and gaps in monitoring tend to be found late.
       audit: |-
         To verify that SNMP communities have ACLs applied:
 
@@ -1615,17 +1612,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that all VTY lines are configured to accept only SSH as the transport protocol. Telnet transmits all data in clear text, including credentials.
+        This check verifies that remote administrative sessions can only arrive over an encrypted transport.
+
+        Each VTY line has an inbound transport setting, restricted with `transport input ssh` under `line vty 0 15`. IOS-XE will otherwise accept telnet on those lines. The check requires every VTY line to accept SSH and to refuse telnet.
 
         **Why this matters**
 
-        Telnet on VTY lines exposes management traffic to interception. If telnet is allowed:
+        Telnet puts the username, the password, the enable secret typed at the prompt, and every command and its output on the wire as readable text. Anyone with a tap point recovers the credentials by reading a single session, and tools have been reassembling telnet sessions into transcripts for thirty years. On a device that is itself a traffic aggregation point, the tap point is often the device sitting next to it in the rack.
 
-        - Usernames and passwords are transmitted unencrypted.
-        - Active sessions can be hijacked.
-        - Compliance with encrypted management requirements cannot be met.
+        The session can also be taken rather than merely read. Telnet has no integrity protection, so an attacker able to inject TCP segments appends commands into an authenticated session that the administrator never typed, and the router executes them at that administrator's privilege level.
 
-        Restricting VTY transport to SSH ensures all remote sessions are encrypted.
+        The number of VTY lines varies by platform and many chassis provide ranges above 15. Run `show line`, apply the setting to every range the device reports, and verify SSH login from a second session before closing the one you are working in, because new telnet connections are refused the instant the command is accepted.
       audit: |-
         To verify that VTY lines accept only SSH transport:
 
@@ -1686,17 +1683,19 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that all VTY lines have an exec timeout configured. The exec timeout disconnects idle sessions to reduce the risk of unauthorized access through unattended terminals.
+        This check verifies that an idle remote administrative session is disconnected rather than left open indefinitely.
+
+        `exec-timeout 10 0` under `line vty 0 15` sets ten minutes of inactivity. The form `exec-timeout 0 0` explicitly means never, and that is the state this check is looking for the absence of. The check requires every VTY line to carry a nonzero idle timeout.
 
         **Why this matters**
 
-        Without an exec timeout, idle VTY sessions remain open indefinitely. If exec timeouts are not configured:
+        The session that stays open is the one nobody is watching. An engineer opens a terminal, gets pulled into a meeting, and leaves an authenticated privileged-EXEC session on an unlocked laptop in a shared office or a hotel lobby. Whoever sits down next has full control of a router without authenticating to anything.
 
-        - Forgotten sessions can be exploited by unauthorized users.
-        - Connection resources are consumed by idle sessions.
-        - Compliance requirements for session management cannot be met.
+        The same session is a target from the network side. A long-lived idle TCP connection to the router is available for hijacking by anyone able to inject into it, and an already-authenticated session skips the part of the attack that is hard.
 
-        Configuring exec timeouts on VTY lines ensures idle sessions are terminated.
+        Idle sessions also occupy VTY slots, and a device whose slots are all held by abandoned sessions is a device you cannot log into during an incident. Pair the timeout with `service tcp-keepalives-in`, which reaps the connections that died without closing rather than merely those a person stopped typing at.
+
+        Ten minutes is a reasonable balance. Aggressively short values interrupt legitimate work during change windows, and engineers respond by setting the timeout back to zero.
       audit: |-
         To verify that VTY lines have an exec timeout configured:
 
@@ -1751,16 +1750,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that all VTY lines have an inbound access class (ACL) configured to restrict remote management access to authorized source IP addresses.
+        This check verifies that remote management connections are only accepted from the networks permitted to make them.
+
+        An inbound access class applied with `access-class 11 in` under `line vty 0 15` filters connection attempts before authentication happens at all. The check requires every VTY line to have an inbound access class.
 
         **Why this matters**
 
-        VTY lines without ACLs allow connection attempts from any source. If ACLs are not configured:
+        Without one, any host that can route a packet to any address on the device reaches the login prompt. That includes every user VLAN, every guest network, every site connected over an unfiltered WAN link, and on a badly placed device the internet. That reachability is what makes credential guessing practical: the attacker needs no privileged position, only a route.
 
-        - Any host can attempt brute-force attacks against the device.
-        - Management access cannot be restricted to trusted networks.
+        Filtering at the line rather than only on the interfaces is what makes the control hold. The device has many addresses and traffic to any of them terminates on the control plane, so an access list applied to one interface protects neither the loopback nor the address of a different interface. An access class on the line covers every path to the VTY at once.
 
-        Applying ACLs to VTY lines restricts access to authorized management stations.
+        This is the control most capable of locking you out of the device. It takes effect on the next connection, and if it omits the address you connect from, or names the wrong management subnet, the next login fails and recovery means the console port. Apply it with a session already open, verify a fresh connection from the management network succeeds, and only then save to startup.
       audit: |-
         To verify that VTY lines have an inbound access class configured:
 
@@ -1818,17 +1818,17 @@ queries:
       cisco.iosxe.auxLine.exec == false
     docs:
       desc: |
-        This check verifies that the auxiliary (AUX) line has exec mode disabled. The AUX port is typically used for modem connections and should not provide direct EXEC access, as it represents a potential backdoor.
+        This check verifies that the auxiliary port cannot be used to open a command-line session.
+
+        The auxiliary port on IOS-XE routers is a serial port intended for a dialup modem, and by default the line permits an EXEC session. `no exec` under `line aux 0` stops it from offering one. The check requires EXEC to be disabled on the auxiliary line.
 
         **Why this matters**
 
-        The AUX port provides a physical access path that bypasses network-based security controls. If exec is enabled on the AUX line:
+        The port has no owner. It was provisioned for out-of-band access to a site in an era when that meant a modem, the modem was removed at some point, and nobody has looked at the back of the chassis since. Where a modem is still attached, the device answers a phone call and offers a login prompt over a path that never crosses the firewall, appears in no network diagram, and generates no traffic anyone monitors.
 
-        - An attacker with physical access to the AUX port can gain CLI access.
-        - Modem connections to the AUX port can be used for unauthorized remote access.
-        - The AUX port bypasses network ACLs and firewall rules.
+        Even with nothing plugged in, a live EXEC on that line is an entry point for whoever has physical access to the rack. That includes contractors, facilities staff, and anyone who walks into an unlocked branch office closet, and a session opened there bypasses every access class configured on the VTY lines and every filter on the management path.
 
-        Disabling exec on the AUX line prevents it from being used as an entry point.
+        Disabling EXEC leaves the physical port present but inert. It does not affect the console port, so legitimate out-of-band recovery through a terminal server cabled to the console remains available, which is the supported way to do it.
       audit: |-
         To verify that the auxiliary line has exec disabled:
 
@@ -1881,16 +1881,17 @@ queries:
       cisco.iosxe.consoleLine.execTimeout > 0 * time.second
     docs:
       desc: |
-        This check verifies that the console line has an exec timeout configured to disconnect idle sessions automatically.
+        This check verifies that a session left open at the physical console is closed after a period of inactivity.
+
+        `exec-timeout 10 0` under `line con 0` sets ten minutes. The check requires the console line to carry a nonzero idle timeout.
 
         **Why this matters**
 
-        Without a console timeout, an idle session remains open indefinitely. If the console timeout is not set:
+        The console is the one path that no access list filters and no AAA outage can block, which is precisely why it deserves a timeout. An engineer working at the rack, or through a terminal server in the same cabinet, walks away and the authenticated session stays live for the next person at that keyboard to inherit.
 
-        - An unattended console connection can be used for unauthorized changes.
-        - Physical access security requirements cannot be met.
+        Console servers make this the common case rather than the rare one. Console ports in modern deployments are usually cabled to a network-reachable console server, so an abandoned console session is not protected by the door on the data center; it is protected only by who holds an account on that console server. A privileged EXEC session sitting idle there is a credential-free route onto the device for anyone who can open the right port.
 
-        Configuring a console exec timeout ensures idle sessions are terminated.
+        Set the timeout and treat it as complementary to physical control rather than a substitute for it. Because the console is your recovery path when an AAA method list or a VTY access class goes wrong, keep the value generous enough that a genuine recovery session is not dropped part way through the fix.
       audit: |-
         To verify that the console line has an exec timeout configured:
 
@@ -1943,17 +1944,17 @@ queries:
       cisco.iosxe.configuration.loginBanner != ""
     docs:
       desc: |
-        This check verifies that a login banner is configured. A login banner provides legal notice to users before they authenticate, which is essential for prosecuting unauthorized access.
+        This check verifies that a warning is presented to anyone connecting before they are offered the chance to authenticate.
+
+        `banner login ^...^` sets the text IOS-XE displays after the connection is established and immediately before the username prompt. It is delivered on every line type, console and VTY alike. The check requires the login banner to be non-empty.
 
         **Why this matters**
 
-        Without a login banner, there is no legal warning before access. If a login banner is not configured:
+        The purpose is legal and it is specific. Prosecutions and internal disciplinary actions for unauthorized access frequently turn on whether the person was on notice that the system was restricted and that their activity was recorded. A banner stating that the system is limited to authorized users and that use is monitored removes the argument that access appeared to be permitted. Guidance from the United States Department of Justice on network monitoring has long treated a consent banner as the mechanism that establishes that notice.
 
-        - Legal proceedings against unauthorized access may be weakened.
-        - Users are not informed of acceptable use policies or monitoring.
-        - Compliance requirements for access warnings cannot be met.
+        Write the text with care. A banner that names the device model, the site, the owning company, or the software release hands a scanner free reconnaissance before authentication, and welcoming wording has been argued in both directions in court. State that access is restricted and that activity is logged, and stop there.
 
-        Configuring a login banner ensures all users receive legal notice before accessing the device.
+        The login banner and the message-of-the-day banner appear at different points in the connection and a companion check in this policy covers the second, so configure both rather than treating either as covering the other.
       audit: |-
         To verify that a login banner is configured:
 
@@ -2005,16 +2006,17 @@ queries:
       cisco.iosxe.configuration.motdBanner != ""
     docs:
       desc: |
-        This check verifies that a Message of the Day (MOTD) banner is configured. The MOTD banner is displayed before login and serves as a general warning to all users.
+        This check verifies that a notice is shown to everyone who connects to the device, whether or not they go on to log in.
+
+        `banner motd ^...^` sets text that IOS-XE displays as soon as the connection is established, ahead of the login banner and the username prompt. The check requires the message-of-the-day banner to be non-empty.
 
         **Why this matters**
 
-        The MOTD banner provides an additional layer of legal notice and organizational messaging. If the MOTD banner is not configured:
+        The message-of-the-day banner is the first thing on the wire, which makes it the notice that reaches a connection which never authenticates. Someone who connects and disconnects, or whose access is refused before any credential is entered, has still been shown it. That is what makes it useful for establishing that a warning was given at the point of contact rather than only at the point of credential entry.
 
-        - Users connecting to the device receive no warning about authorized use.
-        - Legal requirements for displaying access warnings may not be met.
+        Operationally it also carries change-window and maintenance notices, which is what keeps two engineers from working on the same device at the same time during an incident. Many organizations rotate the text for the duration of planned work for exactly that reason.
 
-        Configuring a MOTD banner ensures users are notified of access policies.
+        Keep its reconnaissance value at zero. The banner is shown to anyone who can open a TCP connection, a scanner included, so it must not name the platform, the software release, the site address, the circuit identifier, or an on-call phone number. Restrict it to a statement that the system is restricted and monitored, and put operational detail somewhere that requires an authenticated session to read.
       audit: |-
         To verify that a Message of the Day banner is configured:
 
@@ -2068,17 +2070,17 @@ queries:
       cisco.iosxe.hostname.downcase != "switch"
     docs:
       desc: |
-        This check verifies that a unique, descriptive hostname is configured. A meaningful hostname is essential for identifying the device in logs, alerts, and management systems.
+        This check verifies that the device identifies itself by a name that is unique and meaningful within the estate.
+
+        `hostname <name>` sets it. IOS-XE ships as `Router` or `Switch` depending on the platform, and the check treats those two defaults as unconfigured along with an empty value. A hostname must be set and must not be either default.
 
         **Why this matters**
 
-        Without a unique hostname, the device uses a generic default name. If the hostname is not configured:
+        The hostname is the field that every log message, SNMP trap, flow record, and AAA accounting record is keyed on. When several devices in the same estate are all still called `Router`, the collector either merges their events into one apparent device or discards them as duplicates, and an investigation that needs to know which of forty branch routers saw the traffic cannot answer the question. Renaming the device later does not repair the records already collected under the wrong name.
 
-        - The device cannot be clearly identified in logs or management platforms.
-        - Log correlation across multiple devices is unreliable.
-        - Network topology documentation is incomplete.
+        The default name is also a signal to an attacker: this device was racked and never hardened. Equipment still carrying its shipping hostname reliably also still carries default community strings, no access class on the VTY lines, and whatever enable password the installation script left behind.
 
-        Setting a descriptive hostname ensures the device is identifiable across all workflows.
+        One dependency is worth knowing before changing it. The hostname combines with the domain name to form the fully qualified name that an RSA key pair is labeled with, so both must be set before `crypto key generate rsa` will run.
       audit: |-
         To verify that a unique, descriptive hostname is configured:
 
@@ -2130,17 +2132,17 @@ queries:
       cisco.iosxe.domainNames.length > 0
     docs:
       desc: |
-        This check verifies that a domain name is configured. A domain name is required for generating an FQDN, which is used for SSH key generation and certificate creation.
+        This check verifies that the device holds the domain component it needs in order to carry a cryptographic identity.
+
+        `ip domain name example.com` sets it. IOS-XE combines the hostname and the domain name into a fully qualified name and refuses to run `crypto key generate rsa` until both exist, because that name is what the key pair is labeled with. The check requires at least one domain name to be configured.
 
         **Why this matters**
 
-        Without a domain name, the device cannot generate an FQDN. If the domain name is not set:
+        The practical consequence is that a device with no domain name cannot have an RSA key pair, and a device with no RSA key pair cannot run SSH. Operators who hit this during a hardening pass often work around it by leaving telnet enabled until later, and later does not arrive. A missing domain name is therefore a common upstream cause of a device still being administered in clear text years after the decision was made to stop.
 
-        - SSH RSA key generation may fail.
-        - SSL/TLS certificate creation requires an FQDN.
-        - Device identification in DNS is not possible.
+        It matters for certificates for the same reason. The fully qualified name is what the device puts in a certificate request for the TLS management listener and for IKE, so a device without one cannot obtain a certificate that a client will validate against the address it connects to.
 
-        Configuring a domain name ensures the device can participate in secured communications.
+        Set the domain name to match what DNS actually resolves for the device. A key pair labeled with a name that corresponds to nothing makes host key verification and certificate troubleshooting considerably harder for whoever inherits the device.
       audit: |-
         To verify that a domain name is configured:
 
@@ -2192,16 +2194,17 @@ queries:
       cisco.iosxe.configuration.service.tcpKeepalivesInEnabled == true
     docs:
       desc: |
-        This check verifies that TCP keepalives for inbound sessions are enabled. TCP keepalives detect dead connections and clean up orphaned sessions that consume resources.
+        This check verifies that inbound management connections which have died without closing are detected and cleared.
+
+        `service tcp-keepalives-in` makes IOS-XE probe the far end of each incoming TCP session and tear the session down when the probes go unanswered. The check requires the service to be enabled.
 
         **Why this matters**
 
-        Without TCP keepalives, dead sessions persist indefinitely. If keepalives-in is not enabled:
+        A VTY session ends cleanly when the client sends a close. It does not end cleanly when a laptop battery dies, a wireless link drops, a VPN tunnel flaps, or an intermediate firewall silently discards its state entry. In every one of those cases the router still believes the session is live and continues to hold a VTY slot for it. With a small fixed number of slots, an afternoon of unstable connectivity is enough to fill them, and the symptom is administrators unable to log in to the device they need in order to fix the instability.
 
-        - Orphaned sessions consume VTY line resources, potentially blocking legitimate access.
-        - Dead sessions are not detected and cleaned up.
+        That is also the cheapest denial of service against the management plane. An attacker who opens sessions and then goes silent, never sending a close, holds slots for as long as the router will keep them, and without keepalives the router keeps them indefinitely.
 
-        Enabling TCP keepalives-in ensures dead inbound sessions are detected and removed.
+        An idle exec timeout does not cover this. It expires a session a person stopped typing at; keepalives detect a peer that is no longer there at all. Configure both, together with the outbound equivalent that a companion check in this policy covers.
       audit: |-
         To verify that TCP keepalives for inbound sessions are enabled:
 
@@ -2253,16 +2256,17 @@ queries:
       cisco.iosxe.configuration.service.tcpKeepalivesOutEnabled == true
     docs:
       desc: |
-        This check verifies that TCP keepalives for outbound sessions are enabled. TCP keepalives detect dead connections and clean up orphaned outbound sessions.
+        This check verifies that connections the device itself opened are torn down when the far end stops responding.
+
+        `service tcp-keepalives-out` applies the same probing to outgoing TCP sessions that the inbound service applies to incoming ones. The check requires the service to be enabled.
 
         **Why this matters**
 
-        Without TCP keepalives for outbound sessions, stale connections persist. If keepalives-out is not enabled:
+        The router originates more TCP than operators tend to remember: sessions to TACACS+ and RADIUS servers, syslog carried over TCP, BGP peerings, file transfers during a software upgrade, and outbound sessions to console servers. When one of those peers disappears without closing, the device keeps the socket and the memory behind it, and it keeps believing the destination is reachable.
 
-        - Dead outbound connections consume resources.
-        - The device may not detect when a remote peer has become unreachable.
+        The security consequence sits in the AAA path. A device that thinks it still has a working session to an authentication server behaves differently from one that knows the server is gone: the fallback to the local method list is delayed, and the window during which nobody can log in stretches out. On a device whose method list has no local fallback at all, that window is an outage with no way in except the console.
 
-        Enabling TCP keepalives-out ensures dead outbound sessions are detected and removed.
+        Stale outbound sockets also accumulate. Memory on a router is not generous, and sessions that are never reaped are a slow leak that surfaces as an unexplained reload months later, usually at the least convenient moment.
       audit: |-
         To verify that TCP keepalives for outbound sessions are enabled:
 
@@ -2316,16 +2320,17 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that all BGP neighbors have MD5 authentication configured. BGP authentication prevents unauthorized peers from injecting routes.
+        This check verifies that each BGP peering will only come up with a peer that holds a shared secret.
+
+        `neighbor <address> password <value>` under `router bgp` enables TCP MD5 signing for that session, signing each segment of the peering with a key both ends must possess. The check applies where BGP neighbors are configured and requires every one of them to have a password set.
 
         **Why this matters**
 
-        Without BGP authentication, an attacker can establish rogue BGP sessions. If authentication is not configured:
+        BGP runs over an ordinary TCP session on port 179, and without signing that session is protected only by the peer's source address and the time-to-live of arriving packets. An attacker able to spoof the peer's address, or positioned on the path between the two routers, injects a segment into the established session. A forged reset drops the peering, and dropping a transit peering blackholes everything it was carrying. A forged update inserts a route, and a more specific prefix wins, so the attacker draws traffic for that prefix to equipment they control and reads or alters it before passing it along.
 
-        - Malicious routes can be injected, redirecting or black-holing traffic.
-        - BGP sessions can be disrupted through TCP reset attacks.
+        Signing is what makes the contents of the session attributable rather than merely its source address plausible.
 
-        Configuring authentication on BGP neighbors ensures only authorized peers can establish sessions.
+        MD5 here is old, and the keys are frequently weak and never rotated, so treat it as a floor and move to the TCP Authentication Option where both ends support it. Coordinate before applying it: the session stays down until both sides match, so this needs a maintenance window and the peer's operator on the call. Where neighbors belong to a peer group, set the key on the group so every member inherits it.
       audit: |-
         To verify that BGP neighbors have authentication configured:
 
@@ -2384,17 +2389,17 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that all OSPF areas have authentication configured. OSPF authentication prevents unauthorized routers from injecting routes into the routing domain.
+        This check verifies that only routers holding a shared key can form adjacencies and inject routes into an OSPF area.
+
+        Authentication is enabled per area with `area <id> authentication message-digest` under `router ospf`, and each participating interface carries a key set with `ip ospf message-digest-key 1 md5 <key>`. The check applies where OSPF processes exist and requires every area to have either plain or message-digest authentication enabled.
 
         **Why this matters**
 
-        Without OSPF authentication, any device on the segment can participate in OSPF routing. If authentication is not configured:
+        OSPF forms adjacencies with whatever answers hellos on a segment. Without authentication, anything plugged into a routed VLAN becomes a router in your topology: an unused access port, a compromised server running a routing daemon, a laptop in a branch office. From there the attacker advertises itself as the best path to a prefix, the real routers install it, and traffic for that prefix arrives at them to be read and forwarded on with nobody the wiser.
 
-        - Rogue routers can inject false routes.
-        - OSPF adjacencies can be disrupted.
-        - Man-in-the-middle attacks via route injection are possible.
+        The same position lets them break the network rather than watch it. Advertising and withdrawing a link repeatedly forces continuous shortest-path recalculation on every router in the area, which on a large area is enough to disturb forwarding.
 
-        Configuring OSPF authentication ensures only authorized routers participate in the routing domain.
+        Message digest is materially stronger than the plain-text form, which puts the password in every hello and stops accidents rather than adversaries. Apply the interface keys throughout the area before enabling authentication on the area itself, because a router whose neighbors do not match drops adjacency at once, and losing adjacency in the backbone partitions the routing domain.
       audit: |-
         To verify that OSPF areas have authentication configured:
 
