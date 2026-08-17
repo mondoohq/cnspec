@@ -139,20 +139,19 @@ queries:
       mariadb.conf.bindAddress.none(_ == "*" || _ == "0.0.0.0" || _ == "::")
     docs:
       desc: |
-        This check ensures that `bind_address` names specific addresses instead of accepting connections on every interface. MariaDB binds to every interface when the option is unset, so an installation that never sets it is reachable from every network the host is attached to.
+        This check verifies that the server answers TCP connections only on addresses an administrator has named, rather than on every interface the host happens to have.
 
-        Where the database only serves applications on the same host, `skip_networking` removes the TCP listener entirely and is stronger still. Where remote access is required, naming the addresses keeps the listener off networks the database was never meant to serve.
+        `bind_address` is written as `bind-address` under the `[mysqld]` group of the server option file, typically `/etc/mysql/mariadb.conf.d/50-server.cnf` or a fragment under `/etc/my.cnf.d`. It takes a comma-separated list of addresses. The check fails the wildcard forms `*`, `0.0.0.0`, and `::`, and it also fails an installation that never sets the option, because an unset value means the same thing. The option cannot be changed at runtime, so it has to be written to the option file and the server restarted.
 
         **Why this matters**
 
-        - **Smaller network surface:** Only the addresses you name can accept a connection attempt.
-        - **Defense in depth behind the firewall:** Binding narrowly means a firewall change does not immediately expose the database.
-        - **Explicit intent:** A named address documents which network the server is expected to serve.
+        An unrestricted listener is found by scanning, not by targeting. Anyone with a route to the host sweeps port 3306, gets a version banner from the handshake, and starts guessing passwords against accounts defined for `'%'`. The database never had to be advertised anywhere for this to begin.
 
-        **Risk mitigation**
+        The distinction that carries the weight here is local socket against network. Applications on the same host reach MariaDB over its Unix socket and need no TCP listener at all, so on a single-host deployment the listener is pure exposure. Where nothing off-box needs to connect, `skip_networking` removes the TCP listener entirely and is stronger than any address list.
 
-        - **Blocks opportunistic scanning:** Scanners probing port 3306 cannot fingerprint a server that never answers them.
-        - **Contains credential attacks:** Password guessing cannot begin against an address the server does not accept.
+        Binding narrowly also keeps a firewall mistake from becoming an immediate breach. A security group opened one rule too wide reaches a database that still refuses the packet, because the server was never listening on that address.
+
+        Replicas, cluster members, and application tiers on other hosts legitimately need a network listener. Name the private address they reach the server on and leave the rest of the host's interfaces alone.
       audit: |
         ### Audit via CLI
 
@@ -261,20 +260,17 @@ queries:
       mariadb.conf.skipNameResolve == true
     docs:
       desc: |
-        This check ensures that `skip_name_resolve` is enabled so the server matches accounts by IP address rather than resolving client hostnames. With name resolution active, an account defined for a hostname is authorized based on the answer a reverse lookup returns at connection time.
+        This check verifies that the server decides which account a connection matches from the client's IP address alone, without consulting a naming service.
 
-        That makes an external naming service part of the authorization decision. An attacker who can influence reverse DNS for an address they control can cause the server to match a host pattern that was meant for a trusted machine.
+        `skip_name_resolve` belongs under `[mysqld]` in the server option file. When it is off, MariaDB performs a reverse lookup on every incoming connection and matches the answer against the host part of each account. An account defined as `'app'@'build.example.com'` is therefore authorized on the strength of whatever a resolver returns at the moment the connection arrives.
 
         **Why this matters**
 
-        - **Authorization stops depending on DNS:** Host matching uses the address the connection actually came from.
-        - **Removes a spoofable input:** Reverse lookup answers cannot be manipulated into matching a trusted pattern.
-        - **Predictable connection handling:** Connections are not delayed when a naming service is slow or unavailable.
+        That turns DNS into part of the authorization decision. An attacker who controls the reverse record for an address they own, whether through a compromised resolver, a poisoned cache, or a delegated `in-addr.arpa` zone the organization forgot it delegated, points that record at a trusted name. Their connection from an untrusted address then matches an account scoped to a trusted host, and they authenticate as it. Nothing on the database side was compromised to make that work.
 
-        **Risk mitigation**
+        It also removes a failure mode with nothing to do with attackers. Every connection waits on a resolver before it can proceed, so a slow or unreachable naming service stalls or refuses new connections while the database itself is healthy.
 
-        - **Blocks DNS-based authorization bypass:** A forged reverse record cannot satisfy a hostname-scoped account.
-        - **Removes a denial of service path:** A failing resolver cannot prevent clients from connecting.
+        Enabling this option changes which accounts match. Any account whose host part is a hostname stops matching anything at all once name resolution is off, so redefine those accounts against addresses or address patterns first. On MariaDB the account definitions live in `mysql.global_priv`, and the privilege each account holds is what has to be re-issued against the new host pattern before the option is set and the server restarted.
       audit: |
         ### Audit via CLI
 
@@ -389,20 +385,17 @@ queries:
       mariadb.conf.skipShowDatabase == true
     docs:
       desc: |
-        This check ensures that `skip_show_database` is enabled so `SHOW DATABASES` is restricted to accounts holding the `SHOW DATABASES` privilege. Without it, every authenticated account can enumerate every schema name on the server, including schemas it has no privilege to read.
+        This check verifies that listing the schemas on the server is a privilege an account has to be granted rather than something every authenticated connection can do.
 
-        Schema names routinely disclose which applications, tenants, and environments share a server. That information shapes an attacker's next step after obtaining any low-privilege credential.
+        `skip_show_database` belongs under `[mysqld]` in the server option file. With it off, any account that authenticates can run `SHOW DATABASES` and receive every schema name on the server, including schemas it holds no privilege to read. With it on, the statement returns results only to accounts that hold the `SHOW DATABASES` privilege, so grant that privilege to the administrative accounts that genuinely need it before making the change.
 
         **Why this matters**
 
-        - **Limits enumeration:** An account sees only the schemas it is entitled to know about.
-        - **Reduces tenant disclosure:** Shared servers do not reveal the names of unrelated applications.
-        - **Least privilege for metadata:** Catalog visibility becomes a privilege rather than a default.
+        Schema names are reconnaissance. An attacker who has obtained one low-privilege application credential, from a leaked configuration file or an injected query, runs the statement and learns the shape of the whole server: which other applications share it, which tenants or customers are named, whether `staging` and `prod` sit side by side, whether a schema called `billing` or `pii_archive` exists. That list is what decides where they spend their next effort, and it costs them a single statement.
 
-        **Risk mitigation**
+        On a shared server the disclosure crosses a customer boundary. One tenant's compromised credential reveals the names of every other tenant on the instance, which is information those tenants never agreed to publish.
 
-        - **Slows lateral movement:** A compromised application account cannot map the rest of the server.
-        - **Reduces targeting information:** Attackers cannot identify high-value schemas to pursue.
+        Making catalog visibility a privilege rather than a default is the same argument as any other least-privilege decision, applied to metadata instead of rows. An account that can only read one schema has no reason to be told the others exist.
       audit: |
         ### Audit via CLI
 
@@ -509,20 +502,17 @@ queries:
       mariadb.conf.requireSecureTransport == true
     docs:
       desc: |
-        This check ensures that `require_secure_transport` is enabled so the server refuses connections that are neither encrypted nor made over a local socket. Configuring certificate material makes TLS available, but MariaDB still accepts unencrypted TCP connections unless this option forces the requirement.
+        This check verifies that the server refuses any connection that is neither encrypted nor made over a local Unix socket.
 
-        Enforcing the requirement server-side is what closes the gap. Per-account `REQUIRE SSL` clauses achieve the same for individual accounts, but they must be applied to every account and are easy to omit when a new one is created.
+        `require_secure_transport` belongs under `[mysqld]` in the server option file. Installing certificate material makes TLS available to clients that ask for it, but MariaDB still accepts a plain unencrypted TCP connection from a client that does not. This option removes the choice from the client: an unencrypted TCP connection is rejected at the handshake. Local socket connections still succeed, because they never cross a network.
 
         **Why this matters**
 
-        - **Encryption becomes mandatory:** A client cannot connect by declining TLS.
-        - **Applies to every account:** The requirement does not depend on remembering a per-account clause.
-        - **Credentials protected in transit:** Authentication exchanges are never observable on the network.
+        Without it, a client library that defaults to no TLS, or one whose TLS configuration silently failed, connects in cleartext and nobody notices, because the connection works. Everything then crosses the network readable: the authentication exchange, the queries, and every row returned. An attacker with a tap on a switch, a compromised host on the same subnet running ARP spoofing, or access to a mirrored port captures a working database credential and then the data itself, without touching either endpoint.
 
-        **Risk mitigation**
+        Per-account `REQUIRE SSL` clauses achieve the same outcome for the accounts that carry them, which is why they are not a substitute. They have to be remembered on every account, including the one a colleague creates during an incident at two in the morning, and one omission reopens the whole path.
 
-        - **Defeats passive interception:** Captured traffic yields no readable queries or credentials.
-        - **Prevents accidental cleartext:** A misconfigured client library cannot silently connect without TLS.
+        Enable this only once the server has usable certificate material. A server with no certificate that also refuses unencrypted transport refuses every remote connection, so a companion check in this policy on the certificate and key should be satisfied first. Because this reads the option file, a runtime change does not count: the value has to be written to the file to survive a restart.
       audit: |
         ### Audit via CLI
 
@@ -648,20 +638,17 @@ queries:
       mariadb.conf.tlsVersion.none(_.downcase == "tlsv1" || _.downcase == "tlsv1.1")
     docs:
       desc: |
-        This check ensures that `tls_version` is set explicitly and names only TLS 1.2 and TLS 1.3. TLS 1.0 and TLS 1.1 are deprecated, depend on obsolete hashing and cipher constructions, and are no longer adequate for protecting authentication material.
+        This check verifies that the server offers only modern TLS versions, and that the accepted set is stated in configuration rather than inherited from the build.
 
-        Leaving the option unset falls back to the versions the server was compiled to accept, which varies by build and by MariaDB release. Setting it explicitly makes the accepted set verifiable from the option file and keeps it from widening when the server is upgraded.
+        `tls_version` belongs under `[mysqld]` in the server option file and takes a comma-separated list such as `TLSv1.2,TLSv1.3`. The check fails when the option is unset and when the list names `TLSv1` or `TLSv1.1`. TLS 1.0 and TLS 1.1 rely on obsolete hashing and cipher constructions, have no authenticated encryption modes, and are not adequate for carrying authentication material.
 
         **Why this matters**
 
-        - **Removes downgrade room:** A client cannot negotiate a protocol version the server refuses to offer.
-        - **Modern cipher suites only:** TLS 1.2 and above provide authenticated encryption modes older versions lack.
-        - **Verifiable from configuration:** The accepted set does not depend on a compiled-in default.
+        A version the server still offers is a version an attacker can steer the handshake toward. An interposed attacker who can modify packets in flight tampers with the client hello so the negotiation lands on TLS 1.0, then attacks the weaker construction rather than the strong one the client was willing to use. The client sees an encrypted connection throughout. Removing the old versions from the server's offer is what makes that impossible, because there is nothing to downgrade to.
 
-        **Risk mitigation**
+        Leaving the option unset does not mean the server is strict. It means the accepted set comes from whatever the build was compiled against, which differs between distributions, between MariaDB releases, and between a package upgrade and the version it replaced. A server that was strict last year can quietly widen after a routine upgrade, and nothing in the configuration records that it changed.
 
-        - **Blocks protocol downgrade attacks:** An attacker influencing the handshake cannot force a deprecated version.
-        - **Removes weak-cipher exposure:** Attacks against obsolete constructions in TLS 1.0 and 1.1 no longer apply.
+        Confirm that every client library in use negotiates TLS 1.2 or above before restricting the list, because an old connector pinned to TLS 1.0 stops connecting the moment the server stops offering it.
       audit: |
         ### Audit via CLI
 
@@ -771,20 +758,17 @@ queries:
       mariadb.conf.sslKeyFile != empty
     docs:
       desc: |
-        This check ensures that `ssl_cert` and `ssl_key` name the server certificate and its private key. Without both, the server cannot present a verifiable identity, and clients configured to verify it will refuse to connect.
+        This check verifies that the server presents an identity clients can verify, by naming both a certificate and the private key that belongs to it.
 
-        Naming the material explicitly means the certificate is one you issued and can rotate. It is also the prerequisite for requiring secure transport, since a server with no usable certificate that refuses unencrypted connections refuses every remote connection.
+        `ssl_cert` and `ssl_key` belong under `[mysqld]` in the server option file and name file paths the account running the server can read. Both are required. A certificate with no key, or a key with no certificate, leaves the server unable to complete a TLS handshake at all.
 
         **Why this matters**
 
-        - **Server identity is verifiable:** Clients can confirm they reached the intended database rather than an interposed listener.
-        - **Certificates become manageable:** Explicit paths give you a place to rotate and monitor expiry.
-        - **Enables strict client verification:** Clients using verify-identity modes have a chain they can validate.
+        Encryption without identity protects against a passive observer and nothing else. An attacker who can redirect traffic, through DNS, ARP, or a route they control, stands up their own listener, terminates the client's TLS session against material they generated, and relays the connection onward to the real database. The client sees encryption and connects. The attacker reads every credential and every row that passes through. A certificate the client can chain to a trusted authority is the only thing that distinguishes the real server from that listener.
 
-        **Risk mitigation**
+        Naming the material explicitly also makes it manageable. A certificate at a known path is one you can watch for expiry, replace on a schedule, and reissue when a key is suspected of exposure. Nothing about a certificate that nobody can point to is any of those things.
 
-        - **Defeats machine-in-the-middle:** An attacker cannot present substitute material that clients will accept.
-        - **Prevents a lockout during hardening:** Requiring TLS on a server with no certificate is caught before it breaks access.
+        This is also the prerequisite for requiring encrypted transport. Turning on that requirement against a server with no usable certificate does not harden it, it takes it offline for every remote client, so configure the material first and verify the key matches the certificate before restarting.
       audit: |
         ### Audit via CLI
 
@@ -932,20 +916,17 @@ queries:
       mariadb.conf.sslCaFile != empty || mariadb.conf.sslCaPath != empty
     docs:
       desc: |
-        This check ensures that either `ssl_ca` or `ssl_capath` names a trust anchor. The server needs one to validate client certificates, so accounts created with `REQUIRE X509`, `REQUIRE ISSUER`, or `REQUIRE SUBJECT` cannot be enforced without it.
+        This check verifies that the server holds a trust anchor it can validate client certificates against.
 
-        A configured authority also completes the chain that clients verify. Clients using verify modes need the same authority to validate the certificate the server presents, so publishing it alongside the server material is what makes strict client verification workable.
+        `ssl_ca` names a single authority certificate file and `ssl_capath` names a directory of them; both belong under `[mysqld]` in the server option file, and either one satisfies this check. Without one, the server has nothing to check a presented client certificate against, so an account created with `REQUIRE X509`, `REQUIRE ISSUER`, or `REQUIRE SUBJECT` cannot be enforced at all.
 
         **Why this matters**
 
-        - **Client certificates become enforceable:** Account-level X.509 requirements have something to validate against.
-        - **Controls who can issue identities:** Only certificates chaining to the configured authority are accepted.
-        - **Supports revocation:** A managed authority gives you a place to distrust compromised certificates.
+        An account requirement that cannot be evaluated is worse than no requirement, because it reads as a control during a review. Someone scopes a high-privilege account to certificate authentication, records that decision, and moves on. The server, lacking an anchor, is left with the password as the only real barrier on an account whose password policy was relaxed precisely because a certificate was supposed to be doing the work.
 
-        **Risk mitigation**
+        A configured authority is also what bounds who can mint an identity the server will accept. Only certificates chaining to it are honored, so an attacker who generates their own self-signed client certificate is rejected rather than admitted. It gives you a place to distrust a certificate whose key has leaked, which is not possible when there is no chain at all.
 
-        - **Rejects untrusted certificates:** A self-issued client certificate cannot satisfy an X.509 account requirement.
-        - **Prevents a false sense of assurance:** Account requirements that could never validate are surfaced before they are relied upon.
+        The same authority completes the other direction. Clients that verify the server's certificate rather than merely encrypting to it need to trust the issuer, so distributing the authority alongside the server material is what makes strict client-side verification practical instead of theoretical.
       audit: |
         ### Audit via CLI
 
@@ -1071,20 +1052,17 @@ queries:
       mariadb.conf.skipGrantTables == false
     docs:
       desc: |
-        This check ensures that `skip_grant_tables` is not present in any option file. The option starts the server with the privilege system switched off entirely: every connection is accepted without a password and acts with full privileges on every schema.
+        This check verifies that the privilege system is loaded, by confirming that no option file anywhere in the include chain asks the server to start without it.
 
-        The option exists to recover a server whose administrative password has been lost, and it is meant to be used briefly with networking disabled. Left in an option file, it survives every restart and turns the database into an unauthenticated service. Because the resource reports an option written with no value as enabled, a bare `skip_grant_tables` line is detected as well as an explicit `ON`.
+        `skip_grant_tables` belongs, when it belongs anywhere, under `[mysqld]`, and the check searches the whole chain including every `!include` and `!includedir` fragment. The option is enabled by its presence: a bare `skip_grant_tables` line with no value counts exactly as much as an explicit `ON`, and both fail.
 
         **Why this matters**
 
-        - **Access control is switched off:** No password is required and no privilege is checked.
-        - **Recovery settings must not persist:** A recovery option left in place becomes a permanent bypass.
-        - **A bare flag counts:** The option is enabled by its presence alone, without a value.
+        With the option in effect, the server has no privilege system. Every connection is accepted with no password, and every connection acts with full privileges on every schema. There is no account to compromise and no credential to steal, because none is asked for. Anyone who can reach the port reads every table, writes to every table, and reads the account table itself so the password hashes can be cracked offline for use against the other servers where those people reused them.
 
-        **Risk mitigation**
+        The option exists for one legitimate reason: recovering a server whose administrative password has been lost. That procedure is meant to run for a few minutes with networking disabled and the option removed again immediately afterward. What this check catches is the version of that procedure that ended with the operator restoring service and forgetting the line. It survives every restart from then on, and the server looks entirely normal from the outside.
 
-        - **Prevents unauthenticated full access:** Nobody reaching the server obtains administrative control without a credential.
-        - **Blocks credential exfiltration:** The privilege tables cannot be read and cracked offline.
+        Remove the option from every file that declares it, not only the main one, and restart so the privilege system is loaded again. Nothing else in this policy has any effect while it is present.
       audit: |
         ### Audit via CLI
 
@@ -1205,20 +1183,17 @@ queries:
       mariadb.conf.pluginLoad.any(_ == /simple_password_check/)
     docs:
       desc: |
-        This check ensures that `simple_password_check` is named in `plugin_load` or `plugin_load_add` so password strength rules are enforced from the moment the server starts. MariaDB accepts any password without this plugin, including single characters and the account name itself.
+        This check verifies that password strength rules are in force from the instant the server starts, by confirming the plugin that enforces them is loaded from configuration.
 
-        Loading the plugin at runtime instead leaves a window after every restart during which any password is accepted, and a runtime installation is easy to lose during a host rebuild. The length and composition options in this group have no effect until the plugin is loaded.
+        The `simple_password_check` plugin has to be named in `plugin_load` or `plugin_load_add` under `[mysqld]` in the server option file. MariaDB ships with no password rules of its own, so until this plugin is active the server accepts whatever an account is created with: a single character, the account name, or the word `password`.
 
         **Why this matters**
 
-        - **Rules apply from startup:** There is no interval after a restart where weak passwords are accepted.
-        - **Survives host rebuilds:** The requirement lives in configuration rather than in server state.
-        - **Prerequisite for the policy options:** Length and composition minimums depend on it.
+        Installing the plugin at runtime rather than in the option file leaves a real gap. A runtime installation is recorded in server state, so it survives a restart on a healthy host, but it does not survive a rebuild, a restore from an image, or a node built from configuration management that never knew about it. Anything that stands the server up from its option files stands it up with no password policy, and the accounts created during that window are the ones nobody audits afterward.
 
-        **Risk mitigation**
+        The concrete outcome is an account with a guessable password. An attacker who can reach the port runs a short wordlist against the application account and is in, without needing a leak or an exploit, because nothing on the server ever refused the password when it was set.
 
-        - **Blocks trivial passwords:** Short and simple strings are rejected at the point an account is created.
-        - **Closes the post-restart gap:** Accounts cannot be created with weak passwords immediately after a restart.
+        This is also the prerequisite for the rest of the password checks in this group. The minimum length and character composition options are read by this plugin, so they have no effect at all until it is loaded, and a configuration that sets them without loading it enforces nothing while looking like it does.
       audit: |
         ### Audit via CLI
 
@@ -1342,20 +1317,17 @@ queries:
       mariadb.conf.simplePasswordCheckMinimalLength >= 14
     docs:
       desc: |
-        This check ensures that `simple_password_check_minimal_length` requires at least 14 characters. The plugin defaults this to 8, which is short enough that a stolen hash can be recovered by exhaustive search on commodity hardware.
+        This check verifies that a password has to be at least 14 characters before the server will accept it.
 
-        Length contributes more to resistance against offline cracking than composition rules do, because each additional character multiplies the search space. The resource reports 0 when the option is unset, so an unset value fails this check and prompts an explicit minimum to be configured.
+        `simple_password_check_minimal_length` belongs under `[mysqld]` in the server option file and is read by the `simple_password_check` plugin. The plugin's own default is 8. The check also fails when the option is absent, which reads as 0, so the minimum has to be written down rather than inherited.
 
         **Why this matters**
 
-        - **Exponential cost growth:** Each additional character multiplies the work an attacker must do.
-        - **Outlasts hardware gains:** A 14 character minimum remains defensible as cracking speeds increase.
-        - **Explicit rather than inherited:** The minimum is visible in configuration rather than left at a short default.
+        The threat this addresses is offline, not online. An attacker who obtains the account table, through a filesystem read, a stolen backup, a copied data directory, or a `SELECT` on a server where privileges were too broad, takes the password hashes away and attacks them at their leisure on hardware you do not control. No rate limit applies and no failed-login alert fires, because nothing is connecting to your server any more.
 
-        **Risk mitigation**
+        Against that attack length is the variable that matters most. Each additional character multiplies the search space, so the cost of exhausting it grows exponentially while composition rules only widen the alphabet by a constant factor. Eight characters is inside the reach of commodity GPUs for common hash constructions; 14 keeps a randomly chosen password out of reach of exhaustive search, and stays out of reach as cracking hardware improves.
 
-        - **Defeats exhaustive search:** Full keyspace attacks against a stolen hash become impractical.
-        - **Limits credential stuffing success:** Longer passwords are less likely to appear in breach corpora.
+        Longer passwords are also less likely to appear verbatim in a breach corpus, which is what defeats credential stuffing from an unrelated site's leak. Writing the minimum explicitly means it is visible in the option file rather than sitting at whatever the plugin's default happens to be in the installed release.
       audit: |
         ### Audit via CLI
 
@@ -1465,20 +1437,17 @@ queries:
       mariadb.conf.simplePasswordCheckOtherCharacters >= 1
     docs:
       desc: |
-        This check ensures that the `simple_password_check` plugin requires at least one digit, at least one letter of each case, and at least one non-alphanumeric character. Setting any of these to 0 removes that class from the requirement, so a password made entirely of lowercase letters can satisfy the policy on length alone.
+        This check verifies that an accepted password has to draw on more than one class of character, by requiring a nonzero minimum for digits, for letters of each case, and for symbols.
 
-        The three options are evaluated together because each covers a different part of the character space. All three must be at least 1 for the composition requirement to be meaningful, and the resource reports 0 for any option left unset.
+        Three options under `[mysqld]` in the server option file control this, all read by the `simple_password_check` plugin: `simple_password_check_digits`, `simple_password_check_letters_same_case`, and `simple_password_check_other_characters`. Each has to be at least 1. Any one of them set to 0 removes that class from the requirement entirely, and an option that is absent reads as 0.
 
         **Why this matters**
 
-        - **Larger effective character set:** Requiring several classes multiplies the search space for any given length.
-        - **Rejects patterned passwords:** All-letter or all-digit passwords fail the requirement.
-        - **Each class covers a gap:** Digits, letter case, and symbols each expand a different part of the keyspace.
+        They are evaluated together because each covers a different part of the keyspace and any single zero collapses the requirement. Leave the symbol minimum at 0 and a password of nothing but lowercase letters satisfies the policy on length alone, which is exactly the shape a person picks when asked for something long and memorable.
 
-        **Risk mitigation**
+        That shape is what a cracking rig is optimized for. Attackers working a stolen hash do not start from the full character space, they start from dictionary words, then those words with predictable mutations, then all-lowercase strings by length. A password drawn from one class falls in the first few hours of that ordering. Requiring digits, both letter cases, and a symbol pushes the candidate out of the cheap part of the search and into the expensive part.
 
-        - **Defeats dictionary attacks:** Plain words and their simple mutations are rejected.
-        - **Slows offline cracking:** A stolen hash takes substantially longer to recover.
+        The rules apply when a password is set, so they shape the credentials that enter the account table rather than judging the ones already there. Passwords set before the plugin was loaded are unaffected and should be rotated deliberately.
       audit: |
         ### Audit via CLI
 
@@ -1604,20 +1573,19 @@ queries:
       mariadb.conf.passwordReuseCheckInterval > 0
     docs:
       desc: |
-        This check ensures that `password_reuse_check_interval` sets a number of days during which a previous password cannot be reused. The option comes from the `password_reuse_check` plugin and defaults to 0, which means an account prompted to change its password can set it back to the value it just replaced.
+        This check verifies that the server records password history and enforces a retention window, by requiring an explicit positive number of days.
 
-        Without an interval, rotation produces no new secret. An account can alternate between two familiar passwords indefinitely, so a credential that leaked once stays in circulation.
+        `password_reuse_check_interval` belongs under `[mysqld]` in the server option file. It is read by the `password_reuse_check` plugin, which is not loaded by default, so the plugin has to be named in the plugin load options as well. The check requires a value greater than 0, which is also what shows that this server has the reuse control configured at all rather than leaving the option absent.
 
         **Why this matters**
 
-        - **Rotation becomes meaningful:** A forced change produces a genuinely new credential.
-        - **Defeats alternation:** Accounts cannot cycle between two familiar passwords.
-        - **Bounded history:** The interval defines how far back the server remembers.
+        Rotation without a history check produces no new secret. An account told to change its password sets it back to the value it just replaced, or alternates between two familiar ones indefinitely, and the rotation record shows a change on every cycle while the credential in circulation never actually changed.
 
-        **Risk mitigation**
+        That matters most for the credential you already know leaked. A password exposed in a repository commit, a log file, or a support ticket is supposed to be dead the moment it is rotated. If nothing stops the owner from setting it again three months later, an attacker who filed it away and retried it periodically gets back in on a credential everyone believes was retired.
 
-        - **Prevents restoring a leaked password:** A credential known to an attacker cannot be reinstated.
-        - **Makes expiry effective:** Rotation cannot be satisfied without changing the secret.
+        The interval also decides how far back the server remembers, so it is worth choosing against the rotation cadence rather than picking a number. A retention window shorter than the interval between forced changes lets a password age out of history before the next rotation asks for it, and the account can cycle straight back to it.
+
+        Set the plugin load option and the interval together in the option file, since a plugin installed only at runtime leaves the history unenforced after a rebuild.
       audit: |
         ### Audit via CLI
 
@@ -1754,20 +1722,19 @@ queries:
       mariadb.conf.serverOptions["user"] != empty && mariadb.conf.serverOptions["user"].downcase != "root"
     docs:
       desc: |
-        This check ensures that the `user` option names a dedicated unprivileged account rather than `root`. The account named here is the identity the server drops to after binding its port, and it is the identity every file operation the server performs runs under.
+        This check verifies that the server drops to a dedicated unprivileged operating system account rather than running as `root`.
 
-        A server running as `root` turns any file write primitive into full host compromise. MariaDB exposes several such primitives to sufficiently privileged accounts, including `SELECT ... INTO OUTFILE` and user-defined function libraries, so the account boundary is what keeps a database compromise from becoming a host compromise. The check also fails when the option is unset, because the server then keeps the identity of whichever account started it.
+        The `user` option belongs under `[mysqld]` in the server option file and names the account the server switches to after it has bound its port. On a packaged install that is `mysql`. The check fails when the option names `root` and when it is absent, because an unset option leaves the server holding the identity of whichever account started it, which for a service started at boot is `root`.
 
         **Why this matters**
 
-        - **Blast radius containment:** File writes are limited to what the database account can reach.
-        - **Data directory ownership is meaningful:** Files are owned by an account that owns nothing else.
-        - **Explicit rather than inherited:** Naming the account means the identity does not depend on how the service was started.
+        This is the boundary that keeps a database compromise from becoming a host compromise. MariaDB hands sufficiently privileged accounts several ways to write a file: `SELECT ... INTO OUTFILE`, a user-defined function library loaded from the plugin directory, and the log destinations themselves. Each of those writes runs as the operating system account the server holds.
 
-        **Risk mitigation**
+        Running as `root`, that write primitive is full control of the machine. An attacker who reaches a privileged database account appends a key to `/root/.ssh/authorized_keys`, drops a file into `/etc/cron.d`, or overwrites a systemd unit, and comes back as the host administrator on the next connection or the next minute. None of that requires a MariaDB exploit; it is the ordinary use of a documented statement by an account that should never have had it aimed at those paths.
 
-        - **Prevents privilege escalation to the host:** A file write primitive cannot overwrite system files or authorized keys.
-        - **Limits damage from a UDF loaded by an attacker:** Library code executes without host administrative rights.
+        Running as a dedicated account, the same primitive reaches only what that account owns, which is the data directory and the log directory and nothing else on the host.
+
+        Create the account, transfer ownership of the data directory to it, then set the option and restart. Confirm the running process actually holds the identity afterward, because the option is only honored when the server has the privilege to make the switch.
       audit: |
         ### Audit via CLI
 
@@ -1911,20 +1878,17 @@ queries:
       mariadb.conf.localInfile == false
     docs:
       desc: |
-        This check ensures that `local_infile` is disabled so the server does not accept `LOAD DATA LOCAL INFILE` statements. That statement makes the server ask the connecting client to send the contents of a file from the client's own filesystem.
+        This check verifies that the server does not accept `LOAD DATA LOCAL INFILE`, the form of the bulk load statement that reads a file from the connecting client rather than from the server.
 
-        The direction of that transfer is what makes the option dangerous. A malicious or compromised server, or an attacker who can inject a statement into an application's connection, can request any file the client process can read, including application configuration holding credentials. The read happens on the client, so no privilege on the server is required.
+        `local_infile` belongs under `[mysqld]` in the server option file and has to be set to `OFF` explicitly. MariaDB's own default for this option is on, so a server that never mentions it is accepting the statement.
 
         **Why this matters**
 
-        - **Clients stop honoring file requests:** The server never asks a client to upload local files.
-        - **No server privilege is needed to abuse it:** Disabling the feature is the control, not restricting grants.
-        - **Bulk loading has safer alternatives:** Server-side `LOAD DATA INFILE` confined by `secure_file_priv` covers legitimate use.
+        The danger is the direction of the transfer. In the `LOCAL` form the server sends the client a request naming a path, and a compliant client library opens that path on its own filesystem and uploads the contents. Nothing about that exchange requires any privilege on the server, because the file read happens on the client.
 
-        **Risk mitigation**
+        That gives two concrete attacks. An attacker who can inject a statement into an application's database connection, through SQL injection or a compromised query builder, has the server ask the application host for `/etc/passwd`, for the application's own configuration file with its credentials in it, for a cloud instance credential on disk, or for a private key. The contents arrive as rows in a table the attacker can read. Alternatively an attacker who stands up a malicious server and persuades a client to connect to it, through a hostname they control or a redirected connection, requests files from every client that connects, harvesting configuration from developer workstations and CI runners.
 
-        - **Prevents client-side file disclosure:** An injected statement cannot exfiltrate files from application hosts.
-        - **Blocks a credential theft path:** Application configuration files cannot be read through the database connection.
+        Bulk loading has a safe counterpart. The server-side `LOAD DATA INFILE` reads from the server's own filesystem, confined by `secure_file_priv`, so confirm no job depends on the client-side form before turning it off.
       audit: |
         ### Audit via CLI
 
@@ -2030,20 +1994,19 @@ queries:
       mariadb.conf.secureFilePriv != empty
     docs:
       desc: |
-        This check ensures that `secure_file_priv` is not set to an empty value. An empty value removes the restriction entirely, which lets `LOAD DATA INFILE` read and `SELECT ... INTO OUTFILE` write anywhere on the filesystem the server account can reach.
+        This check verifies that the server's file-reading and file-writing statements are confined, by requiring `secure_file_priv` to hold a value rather than being empty.
 
-        Set to a directory, the option confines both statements to that directory. Set to `NULL`, it disables the statements outright, which is the strongest setting where no bulk file exchange is needed. Either satisfies this check; only an empty value fails it.
+        The option belongs under `[mysqld]` in the server option file. A directory path confines both `LOAD DATA INFILE` and `SELECT ... INTO OUTFILE` to that directory. The literal value `NULL` disables both statements outright and is the stronger choice where no bulk file exchange is needed. Either satisfies this check; only an empty value fails, because an empty value removes the restriction entirely.
 
         **Why this matters**
 
-        - **File access is confined:** Reads and writes are limited to a directory you designate.
-        - **Sensitive files are unreachable:** Server configuration and key material fall outside the permitted path.
-        - **NULL is available:** Servers with no bulk load requirement can disable the statements completely.
+        Unrestricted, those two statements are an arbitrary file read and an arbitrary file write anywhere the server account can reach, available to any account holding the `FILE` privilege.
 
-        **Risk mitigation**
+        The read side turns a database credential into a filesystem credential. An attacker selects the server's own option files to find where the TLS key and the encryption key file live, then reads those, then reads whatever else on the host the server account can open. Nothing they take that way appears in a query log as anything but an ordinary bulk load.
 
-        - **Blocks arbitrary file read:** An attacker with `FILE` privilege cannot read files outside the directory.
-        - **Prevents arbitrary file write:** Writing a web shell or a cron entry through the database is not possible.
+        The write side is worse, because it is persistence. A file written into a web root that the same host serves is a web shell. A file written into `/etc/cron.d` runs as the account that owns it. A file appended to an authorized keys file is a login. Each is a single statement, and each converts read access to a database into code execution on the machine.
+
+        Set a directory owned by the server account and used for nothing else, or set `NULL` and be done with it.
       audit: |
         ### Audit via CLI
 
@@ -2169,20 +2132,19 @@ queries:
       mariadb.conf.symbolicLinks == false
     docs:
       desc: |
-        This check ensures that `symbolic_links` is disabled so table files cannot be redirected outside the data directory. With the feature enabled, a table's data file may be a symbolic link pointing anywhere the server account can write.
+        This check verifies that the data directory is a real boundary, by confirming the server will not follow a symbolic link out of it when it opens a table file.
 
-        That breaks the assumption that the data directory bounds where the server reads and writes. An account able to create a table with a `DATA DIRECTORY` clause, or an attacker who can place a link inside the data directory, can cause the server to write through it to a path of their choosing.
+        `symbolic_links` belongs under `[mysqld]` in the server option file and has to be off. With the feature enabled, a table's data file may be a symbolic link pointing anywhere the server account can write, and the server follows it without complaint.
 
         **Why this matters**
 
-        - **The data directory becomes a real boundary:** Table storage stays inside the directory the server owns.
-        - **Backups and snapshots stay complete:** Tools that copy the data directory capture everything.
-        - **Removes an indirection:** File paths cannot be redirected after a table is created.
+        The whole rest of the file protection in this policy assumes the server reads and writes inside its data directory. A symbolic link breaks that assumption silently, because the path in the catalog still looks local while the bytes land somewhere else.
 
-        **Risk mitigation**
+        Two routes get an attacker there. An account that can issue `CREATE TABLE` with a `DATA DIRECTORY` clause chooses where the table's storage lives, and every subsequent insert writes to that location as the server account. An attacker who has any file write inside the data directory, from a bulk export or from a compromised backup process, replaces a table file with a link and lets the server itself do the writing through it on the next flush.
 
-        - **Prevents writes outside the data directory:** A symbolic link cannot be used to overwrite unrelated files.
-        - **Blocks a privilege escalation path:** Table creation cannot be turned into an arbitrary file write.
+        Either way, table content the attacker controls is written to a path they chose, as an account the host trusts. That is the same escalation the file privilege checks in this policy are trying to close, arriving through the storage layer instead of through a statement.
+
+        Look for existing links inside the data directory before changing this. Any table that currently relies on one becomes unreadable when the option is turned off, and a link you did not put there is worth investigating before it is broken.
       audit: |
         ### Audit via CLI
 
@@ -2298,20 +2260,19 @@ queries:
       mariadb.conf.allowSuspiciousUdfs == false
     docs:
       desc: |
-        This check ensures that `allow_suspicious_udfs` is disabled. The option controls whether the server accepts a user-defined function library that exports only the main function symbol, without the auxiliary initialization and deinitialization symbols a legitimate UDF provides.
+        This check verifies that the server refuses to load a shared library as a user-defined function unless the library is shaped like a real one.
 
-        A library exporting only that one symbol is characteristic of a shared object that was not written as a MariaDB UDF at all, which is exactly the shape of a library repurposed to gain code execution inside the server process. Refusing such libraries removes a well-established post-exploitation technique.
+        `allow_suspicious_udfs` belongs under `[mysqld]` in the server option file, and the check searches the whole include chain for it. With it off, the server requires a function library to export the auxiliary initialization and deinitialization symbols alongside the main function symbol. With it on, a library exporting only the main symbol is accepted.
 
         **Why this matters**
 
-        - **Libraries must look like real UDFs:** The server rejects shared objects that lack the expected symbols.
-        - **Code runs in the server process:** A loaded library executes with the server account's full access.
-        - **Legitimate UDFs are unaffected:** Properly written functions export the required symbols.
+        A library that exports only that one symbol is almost never a user-defined function that someone wrote. It is the shape of an arbitrary shared object being pointed at the server so its code runs inside the server process, which is a long-established way of turning database access into host code execution.
 
-        **Risk mitigation**
+        The technique runs like this. An attacker who has reached an account with enough privilege gets a shared object into the plugin directory, often by writing it there with the file statements this policy also restricts, registers it as a function with `CREATE FUNCTION` or by using `INSERT` on `mysql.func` directly, and calls it. The library's code then executes in the server process, with the server account's full access to the data directory, the encryption key file, the TLS private key, and the network. From there they no longer need the database at all.
 
-        - **Blocks a code execution technique:** An attacker with `INSERT` on `mysql.func` cannot load an arbitrary shared object.
-        - **Raises the bar after compromise:** Turning database access into host code execution requires more work.
+        Refusing the malformed libraries does not stop a determined attacker who compiles a properly formed one, but it removes the off-the-shelf version of the attack, which is the one that arrives inside an automated toolkit.
+
+        Legitimate functions are unaffected, because a correctly written user-defined function exports the symbols the server is asking for. Review the functions currently registered and the plugin directory contents when the option is found enabled.
       audit: |
         ### Audit via CLI
 
@@ -2430,20 +2391,19 @@ queries:
       mariadb.conf.logBinTrustFunctionCreators == false
     docs:
       desc: |
-        This check ensures that `log_bin_trust_function_creators` is disabled so creating a stored function requires the `SUPER` privilege in addition to `CREATE ROUTINE` when binary logging is active. Enabling the option removes that additional requirement.
+        This check verifies that the extra privilege check on stored function creation is still in place while binary logging is active.
 
-        The safety check exists because stored functions can be nondeterministic, which makes statement-based replication diverge between a primary and its replicas. Its security value is that it keeps routine creation, a form of persistent server-side code, behind a privilege that is granted sparingly.
+        `log_bin_trust_function_creators` belongs under `[mysqld]` in the server option file and has to be off. Off, creating a stored function requires the `SUPER` privilege in addition to `CREATE ROUTINE`. On, that additional requirement is removed and `CREATE ROUTINE` alone is enough.
 
         **Why this matters**
 
-        - **Routine creation stays privileged:** Adding server-side code requires more than routine-level grants.
-        - **Replication consistency is preserved:** Nondeterministic routines cannot silently diverge replicas.
-        - **Fewer accounts can persist code:** The set of accounts able to install a routine stays small.
+        A stored function is server-side code that persists in the schema and runs under a definer's rights whenever anything calls it. That makes routine creation a persistence mechanism, and the privilege required to do it decides how many accounts hold one.
 
-        **Risk mitigation**
+        An attacker who has compromised an ordinary application account, which usually holds routine privileges on its own schema so migrations work, installs a function and then arranges for something to call it: a trigger, a view, a scheduled event, or the application's own next query. The function can read tables the application account can read and write what it can write, and it survives a password rotation on the account that created it, because the code is now part of the schema. Keeping this behind `SUPER`, which is granted to few accounts and audited, is what keeps that path closed to application credentials.
 
-        - **Limits persistence mechanisms:** A compromised application account cannot install a routine to maintain access.
-        - **Prevents replica divergence:** An attacker cannot use a nondeterministic routine to corrupt replicas.
+        The option's original purpose is replication correctness rather than security. A nondeterministic function produces different results on a primary and on its replicas under statement-based replication, so the requirement exists to make someone with broad privilege take responsibility for that. The security value is a side effect worth keeping.
+
+        Confirm no deployment process relies on creating routines without `SUPER` before restoring the requirement.
       audit: |
         ### Audit via CLI
 
@@ -2549,20 +2509,17 @@ queries:
       mariadb.conf.automaticSpPrivileges == false
     docs:
       desc: |
-        This check ensures that `automatic_sp_privileges` is disabled so creating a stored routine does not automatically grant its creator `EXECUTE` and `ALTER ROUTINE` on it. The option is enabled by default, which means routine privileges appear without anyone granting them.
+        This check verifies that every privilege on a stored routine was granted deliberately, rather than appearing because someone created the routine.
 
-        Automatic grants make the privilege model harder to reason about, because the grants recorded for an account no longer reflect only deliberate decisions. Disabling the option means every routine privilege is explicit and reviewable.
+        `automatic_sp_privileges` belongs under `[mysqld]` in the server option file and has to be set to `OFF` explicitly. The server's own default is on, which means that whenever an account creates a stored routine it is silently granted `EXECUTE` and `ALTER ROUTINE` on that routine, with no statement recorded anywhere saying so.
 
         **Why this matters**
 
-        - **Privileges stay deliberate:** Every grant appears because someone issued it.
-        - **Reviews are meaningful:** The grant tables reflect intended access rather than side effects.
-        - **Separation of duties:** Creating a routine and being able to execute it can be split between accounts.
+        The problem is that the grant tables stop being a record of decisions. Reviewing what an account can do means reading its grants; when some of those grants materialized as a side effect of a `CREATE PROCEDURE` run months ago by a migration job, the reviewer cannot tell intended access from accumulated access, and the natural response to an unexpected routine privilege becomes to assume it arrived automatically and move on.
 
-        **Risk mitigation**
+        That assumption is what an attacker relies on. An account that can create routines accumulates the ability to execute and alter them, so a compromised deployment credential that was only ever meant to install code also holds the ability to run it and to rewrite it afterward. Separating creation from execution means an attacker who takes the deployment account still needs a second credential to make the code run.
 
-        - **Prevents unintended privilege accumulation:** An account does not gain execute rights simply by creating routines.
-        - **Makes privilege audits reliable:** Unexpected routine access is visible rather than explained away as automatic.
+        Turning the option off does not revoke anything already granted. Grant `EXECUTE` explicitly to the accounts that call existing routines before the change, then review the routine-level grants that are already recorded, since the ones that arrived automatically look identical to the ones somebody chose.
       audit: |
         ### Audit via CLI
 
@@ -2671,20 +2628,17 @@ queries:
       mariadb.conf.logError != empty
     docs:
       desc: |
-        This check ensures that `log_error` names a destination for the error log. When the option is empty, the server writes diagnostics to its standard error stream, where they depend entirely on how the service was started and are frequently discarded.
+        This check verifies that the server writes its diagnostics to a file you can name, rather than to whatever its standard error stream happened to be attached to.
 
-        The error log records startup and shutdown, failed connection attempts, and plugin load failures. It is the record that shows whether the security settings in this policy actually took effect, and it is usually the first artifact examined during an incident.
+        `log_error` belongs under `[mysqld]` in the server option file and names a path in a directory the server account owns. When the option is empty, output goes to standard error, where its fate depends entirely on how the service was started: captured by the journal on one host, redirected to a file that nobody rotates on another, and discarded into the void on a third.
 
         **Why this matters**
 
-        - **Durable diagnostics:** Messages are written to a file that survives a restart.
-        - **Failed authentication is recorded:** Repeated connection failures become visible.
-        - **Confirms configuration took effect:** Plugin load failures are reported rather than silent.
+        The error log is where the evidence of an attack in progress accumulates. Repeated failed connection attempts from one address, a client that keeps aborting mid-handshake, an authentication failure against an account that should never be authenticating from outside, all land here and nowhere else on a server that is not running a separate audit plugin. Responders reach for this file first, and finding that it was never written is the point at which an investigation stops being able to establish anything.
 
-        **Risk mitigation**
+        It is also where you find out whether the rest of this policy actually took effect. A plugin that failed to load, an option the server parsed and rejected, a certificate file it could not read, all of these are reported at startup and then never again. A server that discards its startup output is a server where a password validation plugin can fail silently and the configuration keeps saying it is enabled.
 
-        - **Preserves incident evidence:** Authentication failures and errors remain available for investigation.
-        - **Surfaces silent security failures:** A password plugin that failed to load is visible.
+        Create the log directory owned by the server account before setting the path, and confirm entries are appearing after the restart.
       audit: |
         ### Audit via CLI
 
@@ -2810,20 +2764,19 @@ queries:
       mariadb.conf.logWarnings >= 2
     docs:
       desc: |
-        This check ensures that `log_warnings` is at least 2 so aborted connections are recorded in the error log. MariaDB uses a numeric verbosity here rather than the named levels MySQL uses, and at level 1 the messages that report aborted connections and failed authentication attempts are suppressed.
+        This check verifies that the error log records aborted connections and warnings, not only hard errors, by requiring a verbosity of at least 2.
 
-        Level 2 is the threshold at which aborted connection notes appear, which is where most security-relevant signal lives. An attacker probing credentials produces aborted connections rather than errors, so a server at level 1 can be attacked continuously without the error log showing anything.
+        `log_warnings` belongs under `[mysqld]` in the server option file. MariaDB uses a numeric level here rather than the named severities used elsewhere, and 2 is the level at which notes about aborted connections begin to appear. At 1 those messages are suppressed, and the check fails 1 and 0 alike.
 
         **Why this matters**
 
-        - **Failed authentication becomes visible:** Aborted connection notes record unsuccessful attempts.
-        - **Configuration problems surface:** Options the server ignored are reported rather than silently dropped.
-        - **Small volume increase:** Warnings add far less volume than statement logging while carrying most of the signal.
+        Failed authentication does not produce an error on this server, it produces an aborted connection. That means a server at level 1 can be under a sustained password guessing attack, thousands of attempts an hour against every account name the attacker can think of, and the error log stays completely quiet. The first evidence anyone sees is the successful login, which looks like every other successful login.
 
-        **Risk mitigation**
+        Level 2 is where that signal starts. A run of aborted connections from one address, or against one account name, is the pattern that distinguishes an attack from a misconfigured client, and it is only distinguishable if the individual events were recorded.
 
-        - **Detects credential attacks:** Repeated aborted connections from one address become apparent.
-        - **Reveals ineffective hardening:** An option the server rejected is reported instead of assumed active.
+        The same level surfaces options the server accepted the file for but then ignored, which is the difference between a hardening change that took effect and one that was silently dropped for a typo or a version mismatch.
+
+        The cost is modest. Warnings add far less volume than statement logging while carrying most of the security-relevant signal, so this is the setting to raise before considering anything that records queries.
       audit: |
         ### Audit via CLI
 
@@ -2932,20 +2885,17 @@ queries:
       mariadb.conf.logOutput.none(_.downcase == "none")
     docs:
       desc: |
-        This check ensures that `log_output` names a real destination rather than `NONE`. The option controls where the general and slow query logs are written, and setting it to `NONE` discards their contents even while the logs themselves are enabled.
+        This check verifies that the general and slow query logs actually write somewhere, by requiring `log_output` to name a real destination.
 
-        That combination is misleading during a review, because `slow_query_log` reads as `ON` while nothing is retained anywhere. Naming `FILE` or `TABLE` explicitly means an enabled log actually produces records.
+        The option belongs under `[mysqld]` in the server option file and accepts `FILE`, `TABLE`, or both. The check fails the value `NONE`, which discards the output of both logs while leaving the logs themselves switched on, and it fails an unset option.
 
         **Why this matters**
 
-        - **Enabled logs produce output:** A log that is on is written somewhere.
-        - **Removes a misleading configuration:** The log state and the retained data agree.
-        - **Slow query analysis stays possible:** Long-running statements are recorded for review.
+        `NONE` produces a configuration that lies to a reviewer. `slow_query_log` reads as `ON`, the log appears in every inventory of enabled controls, and not a single record exists anywhere. Someone signs off on query logging being in place, and the evidence it was meant to produce was never written.
 
-        **Risk mitigation**
+        The practical loss is the slow query log, which is the one of the two that should be on. It is the record that shows a query returning far more rows than the application ever asks for, a full table scan against a table that is always queried by key, or a statement shape that nothing in the codebase generates. Those are the fingerprints of data being pulled out in bulk through a legitimate credential, and they are the difference between noticing an exfiltration and reading about it later.
 
-        - **Prevents silent loss of query records:** Statements are retained rather than discarded.
-        - **Avoids false assurance during audit:** An enabled log cannot appear compliant while retaining nothing.
+        Set `FILE` for a destination that a log pipeline can ship off the host, or `TABLE` where the records need to be queryable on the server. Note that this option decides only where output goes, not what is recorded; the general query log is a separate decision and a companion check in this policy requires it to stay off.
       audit: |
         ### Audit via CLI
 
@@ -3056,20 +3006,19 @@ queries:
       mariadb.conf.generalLog == false
     docs:
       desc: |
-        This check ensures that `general_log` is disabled. Unlike the other logging checks in this policy, the secure state here is off, because the general query log records every statement the server receives in cleartext, including the statements that set passwords.
+        This check verifies that the general query log is off, which is the opposite of what the other logging checks in this policy ask for, and for a specific reason.
 
-        A `CREATE USER` or `SET PASSWORD` statement is written to the general log with the password in plain text, so an enabled general log turns the log file into a credential store. Use the `server_audit` plugin for a durable record of activity, since it can record connections and queries without capturing password arguments the same way.
+        `general_log` belongs under `[mysqld]` in the server option file. When on, the server writes every statement it receives to the log verbatim, in cleartext, including the statements that set passwords.
 
         **Why this matters**
 
-        - **Passwords are written in cleartext:** Statements that set a password are recorded verbatim.
-        - **Log readers become credential holders:** Anyone able to read the log obtains those passwords.
-        - **A purpose-built alternative exists:** The `server_audit` plugin records activity for audit retention.
+        That means a `CREATE USER` or a `SET PASSWORD` statement lands in the file with the password written out in full. An enabled general query log is therefore a credential store, holding every database password created or changed while it was running, in plain text, in a file with ordinary log permissions.
 
-        **Risk mitigation**
+        Everyone who can read logs then holds those credentials. That is a much wider group than the people who hold database administration rights: the monitoring agent shipping logs off the host, the log aggregation service and everyone with a search box on it, the backup that captured `/var/log`, and the support engineer given read access to diagnose something unrelated. An attacker who gets a foothold anywhere in that chain, or who exfiltrates the log file outright, walks away with working passwords rather than hashes, and no cracking is required.
 
-        - **Prevents credential disclosure through logs:** Passwords are not persisted to disk in readable form.
-        - **Limits damage from log exfiltration:** A copied log file does not yield working credentials.
+        The performance cost is real too, since every statement is written synchronously, but the credential exposure is the reason this check exists.
+
+        Use the `server_audit` plugin where a durable activity record is needed. It records connections and statements in a form built for retention and does not capture password arguments the way this log does. When the option is found on, treat the existing log file as exposed: rotate it, remove it securely, and rotate every credential that was set while it was running.
       audit: |
         ### Audit via CLI
 
@@ -3189,20 +3138,19 @@ queries:
       mariadb.conf.serverAuditLogging == true
     docs:
       desc: |
-        This check ensures that `server_audit_logging` is enabled so the MariaDB `server_audit` plugin actually writes records. Loading the plugin is not sufficient: with logging off it is installed and idle, which is easy to mistake for working auditing during a review.
+        This check verifies that the audit plugin is actually recording, not merely installed.
 
-        The plugin is the mechanism MariaDB provides for a durable activity record. It captures connections and statements in a consistent format suitable for a log pipeline, and it is the alternative to the general query log, which cannot be used for audit retention because it records passwords in cleartext.
+        `server_audit_logging` belongs under `[mysqld]` in the server option file and has to be on. The distinction it captures is easy to miss during a review: the `server_audit` plugin can be loaded, present in the plugin list, and reported as active, while writing nothing at all, because logging is a separate switch from loading.
 
         **Why this matters**
 
-        - **Loaded is not the same as active:** The plugin records nothing until logging is switched on.
-        - **Durable activity record:** Connections and statements are captured in a parseable format.
-        - **Retention without credential exposure:** Auditing does not require the general query log.
+        An installed-but-idle plugin is the worst of both states. The configuration shows an audit mechanism, the compliance inventory records one, and there is no record. Nobody discovers this until an incident, at which point the questions that auditing exists to answer, which accounts connected, from where, and what they ran, have no answer for any period before the day someone noticed.
 
-        **Risk mitigation**
+        With logging on, the plugin produces the durable activity record MariaDB provides for this purpose. It captures connections and statements in a consistent parseable format suited to shipping into a log pipeline, and it does so without the problem that rules out the general query log, which writes passwords in cleartext and cannot be retained.
 
-        - **Supports incident reconstruction:** Responders can establish which accounts acted and when.
-        - **Detects credential misuse:** Connections from unexpected accounts or addresses are recorded.
+        The record is what makes incident response possible rather than speculative. Given a compromised credential and a date, responders can establish which sessions used it, from which addresses, and what those sessions touched, which is what decides the scope of a breach notification.
+
+        Set the plugin load option, the logging state, and the destination together in the option file so all three survive a restart, then confirm records are appearing.
       audit: |
         ### Audit via CLI
 
@@ -3371,20 +3319,19 @@ queries:
       mariadb.conf.serverAuditEvents.any(_.downcase == "query")
     docs:
       desc: |
-        This check ensures that `server_audit_events` includes both `CONNECT` and `QUERY`. The option selects which classes of activity the audit plugin records, and a plugin that is logging but recording neither class produces a file with almost nothing useful in it.
+        This check verifies that the audit record covers both who connected and what they ran, by requiring `server_audit_events` to include `CONNECT` and `QUERY`.
 
-        The two classes answer different questions. `CONNECT` records who authenticated, from where, and whether the attempt succeeded, which is the basis for detecting credential misuse. `QUERY` records the statements that were run, which is what establishes what an attacker actually did. Adding `TABLE` narrows attribution further by recording the objects each statement touched.
+        The option belongs under `[mysqld]` in the server option file and takes a comma-separated list of event classes. The check fails when either class is missing and when the option is empty, which leaves only the plugin's own default in force rather than a stated selection.
 
         **Why this matters**
 
-        - **Attribution and activity together:** Connection records identify the actor and query records show the actions.
-        - **Failed authentication is captured:** The `CONNECT` class records unsuccessful attempts, not just successful ones.
-        - **Explicit selection:** The recorded classes are visible in configuration rather than left to a default.
+        The two classes answer different questions and neither is useful alone. `CONNECT` records the authentication events: which account, from which address, and whether the attempt succeeded. That is what makes a password guessing run visible as a run rather than as unrelated events, and what identifies the moment a stolen credential was first used.
 
-        **Risk mitigation**
+        `QUERY` records the statements. That is what establishes what an attacker actually did once inside, which tables they read, whether they created an account or altered a grant, and whether data left. Connection records without statements tell you someone was there and nothing more; statements without connection records tell you what happened with no way to attribute it.
 
-        - **Detects credential attacks:** Repeated failed connections from one address are recorded.
-        - **Supports incident scoping:** Responders can determine which statements ran under a compromised account.
+        An audit log that captures neither is a file that grows without answering anything, which is the state a plugin left at its default can be in without anyone noticing.
+
+        Adding the `TABLE` class narrows attribution further by recording the objects each statement touched, which is worth the extra volume on servers holding regulated data. Name the classes explicitly rather than relying on a default, so the selection is visible in the option file and does not change under the server on an upgrade.
       audit: |
         ### Audit via CLI
 
@@ -3493,20 +3440,19 @@ queries:
       mariadb.conf.serverAuditExclUsers == empty
     docs:
       desc: |
-        This check ensures that `server_audit_excl_users` is empty so no account is exempt from the audit log. Every account named in this option has its activity omitted from the audit record entirely, which creates a blind spot precisely where an attacker would want one.
+        This check verifies that no account is exempt from the audit record, by requiring the exclusion list to be empty.
 
-        The option is usually populated for volume reasons, most often to silence a busy application or monitoring account. That is also the account most likely to be targeted, because it holds broad access and its traffic is expected. Where volume is genuinely a problem, narrow `server_audit_events` rather than exempting an identity.
+        `server_audit_excl_users` belongs under `[mysqld]` in the server option file and names accounts whose activity the audit plugin will not record at all. Every name on it is a hole in the record, and the check fails when the list holds anything.
 
         **Why this matters**
 
-        - **No exempt identities:** Every account's activity appears in the record.
-        - **Busy accounts are high value:** An application account with broad access is the most attractive target to hide behind.
-        - **Volume has a better remedy:** Restricting event classes reduces volume without creating a blind spot.
+        The list is almost always populated for volume rather than for secrecy. A busy application account or a monitoring account generates most of the traffic on the server, the audit file grows faster than anyone wants, and silencing that one account brings the volume back under control.
 
-        **Risk mitigation**
+        That account is also the one an attacker most wants. It holds broad access across the schemas the application uses, its credential is sitting in an application configuration file on a host with a much larger attack surface than the database, and its traffic is expected, so nothing about it looks unusual. Exempting it means an attacker who obtains it operates completely unrecorded: every table they read, every row they exported, every grant they altered, absent from the audit file with no gap to notice, because excluded activity leaves no trace of having been excluded.
 
-        - **Removes a hiding place:** An attacker who obtains an exempt account cannot act unrecorded.
-        - **Keeps the audit record complete:** Investigations do not have gaps for specific identities.
+        The remedy for volume is to narrow what is recorded rather than who is recorded. Reducing the event classes in `server_audit_events`, or dropping the object-level class if it is enabled, cuts the file size without creating an identity-shaped blind spot.
+
+        Before removing the list, record which accounts were on it, since anything they did while exempt is not in the record and cannot be reconstructed from it.
       audit: |
         ### Audit via CLI
 
@@ -3624,20 +3570,19 @@ queries:
       mariadb.conf.innodbEncryptTables.downcase == "on" || mariadb.conf.innodbEncryptTables.downcase == "force"
     docs:
       desc: |
-        This check ensures that `innodb_encrypt_tables` is set to `ON` or `FORCE` so InnoDB tables are encrypted at rest. Unlike the boolean options elsewhere in this policy, this one takes three values: `OFF` encrypts nothing, `ON` encrypts tables unless a statement opts out with `ENCRYPTED=NO`, and `FORCE` refuses to create an unencrypted table at all.
+        This check verifies that InnoDB tables are encrypted on disk, by requiring `innodb_encrypt_tables` to be `ON` or `FORCE`.
 
-        `FORCE` is the stronger setting because it removes the per-table opt-out, so no migration script or application can create an unencrypted table by accident. Either value satisfies this check, and enabling encryption also requires a configured key management plugin.
+        The option belongs under `[mysqld]` in the server option file and takes three values rather than the two most options in this policy take. `OFF` encrypts nothing. `ON` encrypts tables unless a statement opts out with `ENCRYPTED=NO`. `FORCE` refuses to create an unencrypted table at all. Either of the latter two satisfies this check.
 
         **Why this matters**
 
-        - **Tables are covered by default:** Encryption does not depend on per-statement clauses.
-        - **FORCE removes the opt-out:** No statement can create an unencrypted table.
-        - **Protects data at rest:** Files copied from the data directory are unreadable without the keys.
+        Encryption at rest is what stands between the files and someone who has them but not the running server. A decommissioned disk that left the building without being wiped, a snapshot copied to a bucket that turns out to be readable, a backup archive on a share, a stolen laptop with a restored dump: in every one of those the attacker has the data directory and no credential at all. Encrypted tablespaces are inert without the keys; unencrypted ones open in any tool that understands the file format.
 
-        **Risk mitigation**
+        It also contains an attacker who has reached the host but not a privileged database account. Reading the table files directly out of the data directory bypasses every grant the server would have enforced, and encryption is what makes that read produce nothing.
 
-        - **Limits exposure from stolen media:** A lost disk or backup does not disclose table contents.
-        - **Contains filesystem-level access:** An account able to read data files cannot read table data directly.
+        `FORCE` is the stronger of the two acceptable values because it removes the per-table opt-out, so no migration script and no application can create an unencrypted table by accident, and no attacker can create one deliberately as a staging area.
+
+        Encryption needs a key source. Confirm a key management plugin is configured before making the change, because table creation fails without one, and convert the tablespaces that already exist afterward.
       audit: |
         ### Audit via CLI
 
@@ -3757,20 +3702,19 @@ queries:
       mariadb.conf.innodbEncryptLog == true
     docs:
       desc: |
-        This check ensures that `innodb_encrypt_log` is enabled so the InnoDB redo log is encrypted at rest. The redo log holds recently modified page contents, so encrypted tables can still leave readable copies of their most recent data in it.
+        This check verifies that the InnoDB redo log is encrypted on disk, closing the copy of recent data that table encryption alone leaves readable.
 
-        Table encryption alone therefore leaves a gap. The redo log is written continuously and lives inside the data directory, so anything able to read the data directory can recover recent changes to encrypted tables from it.
+        `innodb_encrypt_log` belongs under `[mysqld]` in the server option file and has to be on. It needs the same key management plugin that table encryption needs.
 
         **Why this matters**
 
-        - **Closes a recent-data gap:** Modified page contents are protected as well as the tables.
-        - **Covers the whole data directory:** Encryption is consistent across the files InnoDB writes.
-        - **Protects crash recovery data:** Content retained for recovery is not readable.
+        The redo log holds the contents of recently modified pages so the server can recover after a crash. Those page contents are table data. Encrypting the tables and leaving the redo log in cleartext therefore leaves the most recent writes to those tables sitting readable in a second file, inside the same data directory, written continuously.
 
-        **Risk mitigation**
+        For an attacker, that is often the better target. The tables are the whole dataset and take effort to work through; the redo log is what changed recently, which is where the new orders, the new accounts, and the freshly rotated credentials are. Anyone who can read the data directory, whether through a filesystem foothold, a copied snapshot, or a backup that captured the whole directory, recovers those changes without ever holding a database credential and without touching the encrypted tablespaces at all.
 
-        - **Prevents recovery of recent changes:** The redo log cannot be read to reconstruct encrypted table data.
-        - **Limits exposure from filesystem access:** Reading the data directory does not reveal recent writes.
+        The gap is invisible from inside the database. Every table reports as encrypted, and the audit that checks table encryption passes, while the file next to them is plaintext.
+
+        Confirm the key management plugin is active before enabling this, then restart. Data written to the redo log before the change is not retroactively protected, so treat any existing log content as exposed if the data directory was ever accessible.
       audit: |
         ### Audit via CLI
 
@@ -3885,20 +3829,19 @@ queries:
       mariadb.conf.encryptBinlog == true
     docs:
       desc: |
-        This check ensures that `encrypt_binlog` is enabled so binary and relay log files are encrypted at rest. The binary log records the row images of every change, which means it contains the same data as the tables themselves.
+        This check verifies that binary and relay log files are encrypted on disk.
 
-        Encrypting tables while leaving the binary log in cleartext leaves the data readable in a second location. Binary logs are also frequently retained longer than expected and copied to replicas and backup hosts, which widens the number of places the unencrypted content exists.
+        `encrypt_binlog` belongs under `[mysqld]` in the server option file and has to be on. It depends on the same key management plugin as the other encryption options here, and it takes effect for newly written files, so the logs have to be rotated after the restart for existing files to be replaced.
 
         **Why this matters**
 
-        - **Closes a parallel copy of the data:** Row images in the log are protected like the tables.
-        - **Covers replicas and backups:** Log files copied elsewhere remain encrypted.
-        - **Consistent encryption posture:** Table encryption is not undermined by an unprotected log.
+        The binary log records the row images of every change the server makes. That is not metadata about the data, it is the data, written a second time in a different file. A server with encrypted tables and a cleartext binary log has published its entire change history in the clear.
 
-        **Risk mitigation**
+        Binary logs also travel further than tables do. They are pulled by every replica, so the content lands on every replica host and on the relay logs there. They are captured by backup jobs, often into a different retention tier with different access controls. They are read by change-data-capture pipelines, which frequently run on hosts the database team does not administer. Each copy is another place an attacker only needs read access to a file to reconstruct the rows.
 
-        - **Prevents data recovery from log files:** A copied binary log does not disclose table contents.
-        - **Limits exposure from long retention:** Historical changes stay protected for as long as the log exists.
+        They also live longer than people expect. An expiry setting that was tuned for disk space rather than for retention leaves months of changes on disk, so the exposure covers not just what the tables hold now but every value they have held since.
+
+        Confirm a key management plugin is active, set the option, restart, and rotate the logs so the current files are rewritten encrypted.
       audit: |
         ### Audit via CLI
 
@@ -4014,20 +3957,19 @@ queries:
       mariadb.conf.encryptTmpDiskTables == true
     docs:
       desc: |
-        This check ensures that `encrypt_tmp_disk_tables` is enabled so internal temporary tables written to disk are encrypted. The server spills a temporary table to disk whenever a sort, join, or aggregate exceeds the in-memory limit, and that spilled table holds real row data drawn from the tables being queried.
+        This check verifies that the internal temporary tables the server spills to disk are encrypted.
 
-        This is the encryption gap that is easiest to overlook, because temporary files are transient and live outside the tables an operator thinks of as sensitive. A query against an encrypted table can still write its intermediate results to an unencrypted file in `tmpdir`.
+        `encrypt_tmp_disk_tables` belongs under `[mysqld]` in the server option file and has to be on. The files it covers are written to the directory named by `tmpdir`, which is frequently a different filesystem from the data directory and frequently has different access controls.
 
         **Why this matters**
 
-        - **Query intermediates hold real data:** Spilled temporary tables contain rows from the source tables.
-        - **Transient files are still readable:** A file only has to exist briefly to be copied.
-        - **Completes the encryption picture:** Tables, logs, and temporary files are all covered.
+        Whenever a sort, a join, or an aggregate exceeds the in-memory limit, the server writes the intermediate result to disk as a temporary table. That table holds real rows drawn from the tables being queried, so a query against an encrypted table can write its contents to an unencrypted file a few directories away.
 
-        **Risk mitigation**
+        This is the encryption gap that is easiest to miss, because these files are transient and nobody thinks of them as storage. Transience is not protection. A file only has to exist for as long as it takes to copy, and on a busy reporting server these files exist more or less constantly. An attacker with read access to the temporary directory, which is often more permissive than the data directory precisely because it is thought of as scratch space, watches it and collects the results of other people's queries, including the large analytical ones that touch the most sensitive tables.
 
-        - **Prevents disclosure through temporary files:** Data from encrypted tables is not written in cleartext.
-        - **Closes a query-time gap:** Large sorts and joins do not bypass the encryption posture.
+        A nonzero count of disk temporary tables on a running server shows the gap is not theoretical but actively in use.
+
+        Confirm the key management plugin is active before enabling the option, and check where `tmpdir` actually points while you are there, since a temporary directory on shared storage widens who can reach these files in the first place.
       audit: |
         ### Audit via CLI
 
@@ -4143,20 +4085,19 @@ queries:
       mariadb.conf.fileKeyManagementFilename != empty
     docs:
       desc: |
-        This check ensures that `file_key_management_filename` names the key file the `file_key_management` plugin reads. Every encryption option in this policy depends on a key source, and without one the server cannot encrypt anything regardless of how the encryption options are set.
+        This check verifies that the server has a key source for encryption at rest, by requiring `file_key_management_filename` to name a key file.
 
-        Naming the key file explicitly is what makes the encryption settings effective rather than aspirational. Where a dedicated key management service is used instead of the file-based plugin, this check will fail and the exception should be recorded, since the resource reports only the file-based plugin's option.
+        The option belongs under `[mysqld]` in the server option file and is read by the `file_key_management` plugin, which also has to be named in the plugin load options. The key file holds one or more key identifiers with their hex keys.
 
         **Why this matters**
 
-        - **Encryption needs a key source:** The encryption options have no effect without one.
-        - **Explicit key location:** The file is a known artifact that can be backed up and rotated deliberately.
-        - **Makes encryption verifiable:** A configured key source shows the encryption settings can actually work.
+        Every encryption option in this policy depends on a key source, and none of them does anything without one. A server configured to encrypt tables, redo logs, binary logs, and temporary tables, with no key source, does not encrypt anything: table creation fails or the options are inert, depending on which one, and the configuration reads as fully hardened throughout.
 
-        **Risk mitigation**
+        That is the failure this check catches. The at-rest posture on paper says the data directory is unreadable without keys; the reality is a directory of plaintext files, and nobody finds out until a disk goes missing and someone tries to argue that the loss was covered.
 
-        - **Prevents silently ineffective encryption:** Encryption options that could never apply are surfaced.
-        - **Supports key rotation:** A named key file gives you a place to add new key versions.
+        Naming the file explicitly also makes the key a managed artifact rather than an implicit one. A key file at a known path is something you can back up separately from the data it protects, add a new key version to when rotating, and account for when a host is decommissioned.
+
+        Where a dedicated key management service is used instead of the file-based plugin, this check will fail, because it reads only the file-based plugin's option. That is a legitimate exception worth recording rather than working around. When a key file is used, a companion check in this policy covers its permissions, which matter as much as its existence.
       audit: |
         ### Audit via CLI
 
@@ -4320,20 +4261,19 @@ queries:
       mariadb.conf.fileKeyManagementFilename == empty || file(mariadb.conf.fileKeyManagementFilename).permissions.group_readable == false && file(mariadb.conf.fileKeyManagementFilename).permissions.other_readable == false
     docs:
       desc: |
-        This check ensures that the key file named by `file_key_management_filename` is readable only by the account that runs the server. The file holds the encryption keys themselves, so any account that can read it can decrypt every encrypted table, log, and temporary file the server produces.
+        This check verifies that the encryption key file can be read only by the account that runs the server.
 
-        A readable key file collapses the entire encryption-at-rest posture. Backups, snapshots, and the data directory all remain encrypted, but the key sits alongside them, so an attacker who obtains both has plaintext. Servers using a key management service rather than the file-based plugin pass this check, because there is no key file on disk to protect.
+        The file is the one named by `file_key_management_filename`, and the check requires that neither its group nor other accounts can read it, which is the mode `-rw-------` owned by the server account. A server with no key file configured passes, because there is no file on disk to protect.
 
         **Why this matters**
 
-        - **The key is the whole secret:** Reading it defeats every encryption option at once.
-        - **Keys and data often travel together:** A backup that captures the data directory and the key file yields plaintext.
-        - **File mode is the only boundary:** The plugin does not refuse to start on a permissive key file.
+        That file holds the keys themselves. Any account that can read it can decrypt every encrypted table, every encrypted log, and every encrypted temporary file the server has ever written. It is not one control among several, it is the single secret the whole at-rest posture reduces to.
 
-        **Risk mitigation**
+        The realistic failure is that the key and the data travel together. A backup job that captures the configuration directory alongside the data directory puts both into the same archive, and that archive is now equivalent to an unencrypted copy. A container image built with the key baked in ships it to every registry the image reaches. A host snapshot taken for troubleshooting carries both to wherever it is restored. In each case the encryption did exactly what it was configured to do and provided nothing.
 
-        - **Prevents local key theft:** An unprivileged account cannot read the encryption keys.
-        - **Preserves encryption value after filesystem access:** Reading data files without the key yields nothing useful.
+        A group-readable key file also collapses the local boundary. Another service account on the same host, one compromised through an unrelated web application, reads the key and then the data files, without ever authenticating to the database or appearing in any of its logs.
+
+        Nothing warns you about this. The plugin does not refuse to start on a permissive key file, so the file mode is the entire control. Restrict the directory holding it as well, since a traversable directory reintroduces the exposure.
       audit: |
         ### Audit via CLI
 
@@ -4465,20 +4405,19 @@ queries:
       mariadb.conf.wsrepOn == false || mariadb.conf.wsrepProviderOptions == /socket\.ssl/
     docs:
       desc: |
-        This check ensures that a Galera cluster node configures TLS for the replication channel through `wsrep_provider_options`. The `socket.ssl_key`, `socket.ssl_cert`, and `socket.ssl_ca` entries are what secure traffic between nodes. Without them, write set replication crosses the network in cleartext.
+        This check verifies that a Galera cluster node encrypts the replication channel it uses to talk to the other nodes.
 
-        The replication channel carries the row images of every committed change, so an unencrypted cluster link exposes the same data as the tables themselves. Requiring TLS on client connections does nothing for this channel, because it is a separate transport between nodes. The check applies only to nodes with `wsrep_on` enabled, so a standalone server is not asked to configure cluster options.
+        The transport is configured through `wsrep_provider_options`, where the `socket.ssl_key`, `socket.ssl_cert`, and `socket.ssl_ca` entries name the node's key, its certificate, and the authority that issued them. Nodes that are not part of a cluster are not asked for cluster settings: the check applies only where `wsrep_on` is enabled, so a standalone server passes.
 
         **Why this matters**
 
-        - **The cluster link carries table data:** Write sets contain the rows being changed.
-        - **A separate transport from client TLS:** Client encryption settings do not cover node-to-node traffic.
-        - **Nodes often span failure domains:** Cluster members are frequently in different racks or availability zones.
+        The cluster link carries write sets, and a write set contains the row images of the change being replicated. Every insert and every update crosses this channel with its actual values in it, so an unencrypted link exposes the same data the tables hold, continuously, as it changes.
 
-        **Risk mitigation**
+        This is a separate transport from the one clients use, which is what makes it easy to miss. Requiring TLS on client connections and installing a server certificate does nothing here. A cluster can present a perfectly configured encrypted front door to applications while replicating everything in cleartext behind it.
 
-        - **Prevents interception between nodes:** Captured replication traffic yields no readable data.
-        - **Blocks a rogue node joining unencrypted:** Requiring TLS means a joiner must present valid material.
+        Nodes are also usually further apart than the client tier is. Cluster members are deliberately placed in different racks, different data halls, or different availability zones so that losing one does not lose the cluster, which means the replication traffic crosses more network, and more of it that somebody else operates, than a client connection does.
+
+        Install certificate material readable by the server account on every node, add the entries, and restart the nodes one at a time. All nodes have to agree on the transport before the cluster re-forms, so a partial rollout leaves the joiner unable to connect.
       audit: |
         ### Audit via CLI
 
@@ -4621,20 +4560,19 @@ queries:
       mariadb.conf.wsrepOn == false || mariadb.conf.wsrepSstMethod.downcase != "rsync"
     docs:
       desc: |
-        This check ensures that a Galera node does not use `rsync` for state snapshot transfer. A state snapshot transfer sends the entire dataset from an existing node to a joining one, and the `rsync` method carries it over an unauthenticated, unencrypted connection on a separate port.
+        This check verifies that a Galera node does not use the `rsync` method to transfer a full state snapshot to a joining node.
 
-        A snapshot transfer is the single largest data exposure in a cluster's lifetime, because it moves everything at once rather than incremental changes. The `mariabackup` method supports encryption and authentication for the transfer, which is why it is the appropriate choice for a cluster handling sensitive data. The check applies only to nodes with `wsrep_on` enabled.
+        `wsrep_sst_method` is set in the Galera option file, and the check applies only to nodes with `wsrep_on` enabled, so a standalone server is not asked about cluster settings. A state snapshot transfer is what happens when a node joins or rejoins the cluster too far behind to catch up incrementally: an existing node sends it the entire dataset.
 
         **Why this matters**
 
-        - **A snapshot transfer moves everything:** The full dataset crosses the network in one operation.
-        - **The rsync method has no transport security:** The transfer is neither encrypted nor authenticated.
-        - **A supported alternative exists:** The `mariabackup` method can encrypt and authenticate the transfer.
+        That is the single largest data exposure in a cluster's lifetime. Ordinary replication moves the changes; a snapshot transfer moves everything, all of it, in one operation, over a separate connection on its own port.
 
-        **Risk mitigation**
+        The `rsync` method carries it with neither encryption nor authentication. Anyone able to observe the network between the two nodes during a transfer captures the complete database, and because a joining node initiates the request, an attacker who can reach the donor's transfer port during the window has a path to ask for it. Node joins are also not rare or unpredictable: they follow every restart, every host replacement, and every recovery, which are exactly the moments when attention is elsewhere.
 
-        - **Prevents bulk interception:** An observer on the network cannot capture the whole dataset during a node join.
-        - **Blocks unauthorized snapshot requests:** An authenticated transfer method cannot be triggered by an arbitrary host.
+        The `mariabackup` method is the appropriate choice for a cluster holding sensitive data, because it supports encrypting and authenticating the transfer rather than trusting the network between nodes.
+
+        Install the backup package on every node before changing the method, since a node that cannot find the tool fails its next join rather than falling back, and roll the change through the cluster one node at a time.
       audit: |
         ### Audit via CLI
 
@@ -4761,20 +4699,19 @@ queries:
       mariadb.conf.clientOptions["password"] == empty
     docs:
       desc: |
-        This check ensures that no `password` option appears in the client option groups. The `[client]`, `[mysql]`, and `[client-server]` groups are read by every client program MariaDB ships, so a password written there is available to every account that can read the option file.
+        This check verifies that no database password is written into the client option groups of a shared option file.
 
-        A password in a system-wide option file is a durable credential in a file that is often more readable than intended and is frequently captured by configuration management, backups, and container images. Supply the credential from a secret store at run time, or use a per-user option file restricted to its owner.
+        The `password` option is what the check looks for, in the groups the MariaDB client programs read: `[client]`, `[client-server]`, `[client-mariadb]`, and `[mariadb-client]`. A password in any of them is available to every program that reads the file and to every account on the host that can open it.
 
         **Why this matters**
 
-        - **Option files are widely readable:** System option files are commonly readable beyond the database account.
-        - **Credentials spread with copies:** Backups, images, and configuration repositories carry the password with them.
-        - **Better mechanisms exist:** Secret stores and per-user files keep the credential out of a shared file.
+        A credential in a system-wide option file does not stay in that file. Configuration management checks it into a repository, where it reaches everyone with read access to that repository and stays in the history after it is removed. Backups copy it. Container images bake it into a layer that is then pushed to a registry. Host snapshots taken for troubleshooting carry it to wherever they are restored. Each copy is a working password, not a hash, usable directly against the database.
 
-        **Risk mitigation**
+        Locally the exposure is immediate. Any account on the host that can read the option file authenticates as whatever that credential names, which on a shared host is a much larger set of principals than the database team intended, and none of them appear in the database's own access controls as having been granted anything.
 
-        - **Prevents credential harvesting:** A local account cannot read a database password from a shared file.
-        - **Limits exposure from leaked configuration:** A copied option file does not include a working credential.
+        Keep the credential out of the shared file instead. A per-user option file in a home directory, restricted to its owner, keeps it scoped to one account, and a companion check in this policy covers those files' permissions. Supplying it from a secret store at run time keeps it off disk entirely.
+
+        When one is found, remove it and rotate it. A password written into a shared file has to be treated as already compromised, because you cannot enumerate the copies.
       audit: |
         ### Audit via CLI
 
@@ -4899,20 +4836,17 @@ queries:
       mariadb.conf.files.all(permissions.group_writeable == false && permissions.other_readable == false && permissions.other_writeable == false)
     docs:
       desc: |
-        This check ensures that every file in the option file chain is readable only by its owner and the server account. MariaDB does not refuse to start when an option file is world readable, so a permissive mode goes unnoticed.
+        This check verifies that every file the server reads its configuration from is protected, not just the one at the top of the chain.
 
-        Include fragments deserve the same protection as the main file. MariaDB packages ship several fragments under `mariadb.conf.d`, and configuration management tooling adds more with whatever permissions wrote them, which leaves a fragment world readable even when the main file is correctly restricted. This check evaluates every contributing file rather than only the entry point.
+        The server resolves a chain of option files, following each `!include` and `!includedir` directive, and this check requires that none of them is group writable or accessible to other accounts. That is the mode `-rw-------` or `-rw-r-----` owned by an account the server can read as. MariaDB does not refuse to start when an option file is world readable, so a permissive mode produces no warning anywhere.
 
         **Why this matters**
 
-        - **Option files describe the server:** Data directory paths, TLS material, and encryption key locations are all disclosed.
-        - **Write access is server control:** An account able to modify a fragment can disable authentication on the next restart.
-        - **Fragments are numerous:** A packaged MariaDB install reads several files, any of which can be permissive.
+        Read access to these files is a map of the server. They name the data directory, the paths to the TLS certificate and private key, the location of the encryption key file, the plugin directory, and the log destinations. An attacker with a foothold as any unprivileged account on the host reads them first, and every subsequent step is aimed rather than exploratory.
 
-        **Risk mitigation**
+        Write access is worse, because it is control of the server on its next restart. An account that can modify any fragment in the chain adds `skip_grant_tables` and waits for a reboot, at which point the database accepts every connection with no password and no privilege check. It could equally repoint the encryption key file, disable audit logging, or widen the bind address.
 
-        - **Blocks local reconnaissance:** An unprivileged account cannot learn where keys and data live.
-        - **Prevents configuration tampering:** An attacker cannot add an option that weakens the server.
+        The fragments are where this usually goes wrong. MariaDB packages ship several files under `mariadb.conf.d`, and configuration management tooling adds more with whatever permissions happened to be in effect when it wrote them, so a single world readable drop-in undoes a correctly restricted main file. Apply ownership and mode across the whole directory, not only the entry point.
       audit: |
         ### Audit via CLI
 
@@ -5031,20 +4965,17 @@ queries:
       mariadb.conf.userFiles.all(file.permissions.group_readable == false && file.permissions.other_readable == false)
     docs:
       desc: |
-        This check ensures that every per-user option file found in a home directory is readable only by its owner. These files are `.my.cnf` and the obfuscated `.mylogin.cnf` credential store, and both routinely hold the credentials a person or a service uses to reach the database.
+        This check verifies that the option files sitting in users' home directories, which hold their database credentials, are readable only by the account that owns them.
 
-        A `.my.cnf` holds its password in plain text. A `.mylogin.cnf` is obfuscated rather than encrypted, so its contents can be recovered by anyone who can read the file. In both cases the file mode is the only thing separating the credential from other accounts on the host. Servers with no per-user option files pass this check, because there is nothing to protect.
+        Two files matter here. A `.my.cnf` holds its password as plain text. A `.mylogin.cnf` is the obfuscated credential store, and obfuscation is not encryption: the format is documented and reversible, so anyone who can read the file can recover what is in it. A host with no such files passes this check, because there is nothing to protect.
 
         **Why this matters**
 
-        - **These files hold working credentials:** Their contents authenticate directly to the database.
-        - **Obfuscation is not encryption:** A readable `.mylogin.cnf` can be decoded by any account that reads it.
-        - **File mode is the only boundary:** Nothing else prevents another local account from reading them.
+        These files exist so a person or a service does not have to type a password, which means they contain working credentials that authenticate directly to the database. The file mode is the only thing standing between those credentials and the other accounts on the host. There is no second factor, no address restriction, and nothing in the database that would treat a connection using them as unusual.
 
-        **Risk mitigation**
+        The concrete path is lateral movement on a shared host. An attacker who compromises an unrelated service on the machine, through a web application or an exposed agent, has a local unprivileged account. If a developer's `.my.cnf` or an operator's `.mylogin.cnf` is group readable, that foothold becomes a database credential, and the resulting connection is indistinguishable from the legitimate owner's. It authenticates as a real account, from a real host, and lands in the audit log as ordinary work.
 
-        - **Prevents local credential theft:** A compromised service account cannot read another user's database password.
-        - **Contains lateral movement:** A foothold on a shared host does not yield database credentials.
+        Restrict each file to its owner, then rotate any credential that was readable, since a file that other accounts could open has to be assumed to have been opened.
       audit: |
         ### Audit via CLI
 
