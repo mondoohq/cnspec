@@ -95,18 +95,17 @@ queries:
       databricks.workspaceConf.enhancedSecurityMonitoringEnabled == true
     docs:
       desc: |
-        This check ensures that Enhanced Security Monitoring is turned on for the workspace so that compute nodes run a hardened operating system image and carry additional antivirus and behavior based monitoring agents. By default the setting is disabled, which leaves cluster hosts running a standard image with no host level threat detection.
+        This check verifies that the compute nodes behind a workspace boot a hardened operating system image and run antivirus and behavior based monitoring agents.
+
+        Enhanced security monitoring is a workspace admin setting, not an account console setting. An administrator finds it under Settings on the **Security and compliance** tab, and the Databricks CLI reads the same value through `databricks settings enhanced-security-monitoring get`, which reports `is_enabled`. This check requires that flag to be true. The setting is off by default, so a workspace that no one has hardened runs its clusters on a stock image with no host level detection at all.
 
         **Why this matters**
 
-        - **Detects host compromise:** Behavior based agents surface malware, unexpected processes, and file integrity changes on the compute nodes that run your jobs.
-        - **Hardens the base image:** The hardened operating system image reduces the attack surface exposed on every cluster node.
-        - **Feeds security telemetry:** Monitoring agents forward findings that let responders investigate suspicious activity on Databricks compute.
+        Cluster nodes execute whatever a notebook, job, or library asks them to. An attacker who gets code onto a node through a typosquatted package pulled from a public index, a poisoned dependency in a job, or an init script pointed at a bucket somebody else can write to, now owns a process on a host that holds the cluster's cloud identity. From there they read the instance profile or managed identity credentials off the node and use them against every storage location the cluster is entitled to reach.
 
-        **Risk mitigation**
+        Without the hardened image and the monitoring agents, nothing on the host observes any of that. There is no antivirus scan of what the process writes to disk, no behavioral signal when a long running Spark executor suddenly spawns a shell or opens an outbound connection, and no host telemetry for a responder to correlate afterward. The first evidence tends to be an egress bill or a downstream data alert weeks later.
 
-        - **Enable on every workspace:** Turn on Enhanced Security Monitoring so all clusters inherit the hardened image and monitoring agents automatically.
-        - **Review the findings:** Route the generated security signals to your monitoring pipeline so detections are triaged promptly.
+        Turning the setting on changes the image clusters boot from, so running clusters keep their current image until they restart. Pair the change with the automatic cluster update companion check in this policy so nodes actually cycle onto the hardened build rather than waiting for a manual restart.
       audit: |
         ### Audit via Console
 
@@ -186,18 +185,17 @@ queries:
       databricks.workspaceConf.complianceSecurityProfileEnabled == true
     docs:
       desc: |
-        This check ensures that the Compliance Security Profile is enabled on the workspace. The profile applies a hardened baseline that adds a hardened operating system image, enforces FIPS validated cryptography, and turns on enhanced monitoring. By default the profile is disabled, so the workspace runs without the hardened controls required by frameworks such as FedRAMP, HIPAA, and PCI DSS.
+        This check verifies that the workspace runs under the hardened baseline that the compliance security profile applies.
+
+        The compliance security profile is a workspace admin setting under Settings on the **Security and compliance** tab, and the Databricks CLI reports it through `databricks settings compliance-security-profile get` as `is_enabled`. Enabling it turns on the hardened operating system image, forces FIPS validated cryptographic modules for data in transit and at rest, and switches on enhanced monitoring, all as one bundle. An administrator then attaches the standards that apply to the workload, values such as `HIPAA`, `PCI_DSS`, and the FedRAMP levels. This check requires the profile to be enabled; it is off by default.
 
         **Why this matters**
 
-        - **Establishes a hardened baseline:** The profile enforces a consistent set of hardened configuration settings across the workspace rather than relying on defaults.
-        - **Enforces strong cryptography:** FIPS validated cryptographic modules protect data in transit and at rest on compliant compute.
-        - **Anchors regulated workloads:** The profile is the prerequisite baseline for running FedRAMP, HIPAA, and PCI DSS workloads on Databricks.
+        Without the profile, each hardening control is an independent toggle that somebody has to remember. A workspace that was built for a regulated workload but never had the profile enabled runs on a stock image, negotiates with whatever cipher suites the default stack offers, and carries no host monitoring. An attacker probing that workspace gets the widest set of protocol options to work with and the least chance of being noticed on the node once they land there.
 
-        **Risk mitigation**
+        The profile also constrains what the platform itself does with the data. Regulated workloads assume a specific handling posture from the vendor, and a workspace outside the profile does not have it, so sensitive records processed there sit under weaker guarantees than the paperwork claims.
 
-        - **Enable before onboarding regulated data:** Turn on the profile so the hardened controls are active before sensitive workloads run.
-        - **Select the applicable standards:** Attach the compliance standards that match your obligations so the correct controls are enforced.
+        Enabling the profile on a workspace is permanent and cannot be undone, so confirm the target workspace before you turn it on. It also restricts which runtime versions and cluster configurations remain available, which can break jobs pinned to older runtimes.
       audit: |
         ### Audit via Console
 
@@ -280,18 +278,17 @@ queries:
       databricks.workspaceConf.automaticClusterUpdateEnabled == true
     docs:
       desc: |
-        This check ensures that Automatic Cluster Update is enabled on the workspace so that compute node virtual machine images are updated and patched during scheduled maintenance windows. By default the setting is disabled, which lets clusters keep running outdated images that carry known, unpatched vulnerabilities.
+        This check verifies that the virtual machine images behind the workspace's compute are patched on a schedule instead of drifting.
+
+        Automatic cluster update is a workspace admin setting under Settings on the **Security and compliance** tab, where an administrator enables it and picks a maintenance window. The Databricks CLI reads the same state with `databricks settings automatic-cluster-update get`, which reports `enabled`. This check requires that flag to be true. The setting is disabled by default, so nothing restarts a long lived cluster onto a newer image.
 
         **Why this matters**
 
-        - **Closes known vulnerabilities:** Scheduled image updates remove flaws in the operating system and runtime before they can be exploited on compute nodes.
-        - **Removes manual toil:** Automated patching during maintenance windows keeps clusters current without operators tracking and applying updates by hand.
-        - **Shrinks the exposure window:** Timely updates reduce the time a cluster runs a vulnerable image.
+        A cluster keeps the image it booted with for as long as it runs. An all purpose cluster that has been up for months is running the kernel, container runtime, and system libraries that shipped the day it started, and every vulnerability disclosed since then is still present on it. The exploit code for those flaws is public, which is exactly what makes this reachable rather than theoretical.
 
-        **Risk mitigation**
+        The path an attacker takes is short. They get ordinary code execution on the node first, through a notebook they are allowed to run or a library the cluster loads, then use a published local privilege escalation against the unpatched kernel to break out of whatever confinement the workload had. At that point they hold the node's cloud credentials and can read every storage location the cluster is entitled to, plus anything else cached on local disk from other work that ran there.
 
-        - **Enable workspace wide:** Turn on Automatic Cluster Update so every cluster is patched on a predictable schedule.
-        - **Set a maintenance window:** Choose a window that limits disruption while keeping the update cadence frequent.
+        Scheduled updates close that gap without anyone tracking advisories by hand. Choose a maintenance window that tolerates a restart, because applying an image requires cycling the cluster, and long running streaming jobs need their restart behavior checked before you enable it.
       audit: |
         ### Audit via Console
 
@@ -381,18 +378,17 @@ queries:
       databricks.workspaceConf.ipAccessListsEnabled == true
     docs:
       desc: |
-        This check ensures that IP access list enforcement is enabled for the workspace so that the web application and REST API only accept connections from approved networks. By default enforcement is off, which leaves the workspace reachable from any address on the internet even when allow lists have been defined.
+        This check verifies that the workspace only accepts connections from networks an administrator has approved.
+
+        IP access list enforcement is a workspace admin setting under Settings on the **Security** tab, where allow and block lists are defined and enforcement is switched on. The Databricks CLI reads the enforcement flag with `databricks workspace-conf get-status enableIpAccessLists` and the lists themselves with `databricks ip-access-lists list`. This check requires `enableIpAccessLists` to be true. It is false by default, and it stays false even after someone defines allow lists, so a workspace can carry a carefully written list that gates nothing.
 
         **Why this matters**
 
-        - **Closes global exposure:** With enforcement off, the workspace endpoints are reachable from any IP address in the world.
-        - **Contains stolen credentials:** Network gating prevents leaked tokens or passwords from being used outside trusted networks.
-        - **Adds a defense layer:** IP allow and block lists protect the workspace independently of authentication.
+        With enforcement off, the workspace web application and the whole REST API answer from any address on the internet. That turns every credential in the workspace into a remotely usable one. An attacker who picks up a personal access token from a committed `.env` file, a CI log, a laptop backup, or a phishing page does not need to be anywhere near the corporate network to use it. They point the Databricks CLI at the workspace host from their own machine, list clusters, read secret scopes they have access to, submit a job that reads the storage the cluster identity can reach, and pull the results out.
 
-        **Risk mitigation**
+        Enforcement makes the stolen token useless outside the ranges you named. It is a control that holds even when authentication has already failed, which is the case that matters.
 
-        - **Enable enforcement:** Turn on IP access lists so the defined allow and block lists are actually applied.
-        - **Scope to trusted ranges:** Populate allow lists with corporate networks and VPN egress ranges, and confirm your own address is covered before enforcing.
+        Enable it only after the allow list covers your own current egress address, along with corporate ranges, VPN exit addresses, and any CI runner that talks to the workspace. Turning enforcement on without those entries locks out everyone, including the administrator making the change.
       audit: |
         ### Audit via Console
 
@@ -489,18 +485,17 @@ queries:
       databricks.workspaceConf.disableLegacyAccess == true
     docs:
       desc: |
-        This check ensures that legacy access paths are disabled on the workspace so that data access is forced through Unity Catalog governance. When legacy access is allowed, the workspace still permits direct legacy Hive metastore access and fallback mode on external locations, both of which bypass Unity Catalog controls. By default legacy access remains available.
+        This check verifies that data access in the workspace is forced through Unity Catalog rather than the legacy paths that predate it.
+
+        The legacy access setting lives under Settings on the **Security** tab of the workspace admin console, and the Databricks CLI reads it with `databricks settings disable-legacy-access get`, which reports `disabled`. This check requires legacy access to be disabled. It is available by default, which leaves direct Hive metastore access, fallback mode on external locations, and Databricks Runtime versions that predate the governed access model all still usable.
 
         **Why this matters**
 
-        - **Removes ungoverned paths:** Direct Hive metastore access and external location fallback bypass Unity Catalog permissions and lineage.
-        - **Enforces least functionality:** Disabling deprecated data access protocols shrinks the attack surface to the governed path only.
-        - **Retires outdated runtimes:** The setting blocks Databricks Runtime versions that predate the governed access model.
+        Unity Catalog is where the grants, row and column filters, and lineage live. The legacy paths do not consult any of it. A user who cannot query a table through the catalog can point a cluster at the Hive metastore, read the table's storage location straight from it, and get the underlying files with the cluster's own credentials. The permission model that was supposed to stop them was never in the request path.
 
-        **Risk mitigation**
+        Fallback mode on external locations does the same for cloud storage. It lets a workload bypass the external location's credential and use whatever identity the compute carries, so a person with cluster access reads storage that Unity Catalog would have denied them. Neither route leaves a lineage record, so the read does not appear where an auditor would look for it.
 
-        - **Disable legacy access:** Turn on the setting so all data access flows through Unity Catalog.
-        - **Migrate before enforcing:** Move any workloads that still depend on legacy Hive metastore access to Unity Catalog first to avoid breakage.
+        Disabling legacy access also retires the old runtimes that only speak the ungoverned protocol. Migrate any workload that still reads through the Hive metastore into Unity Catalog before you flip the setting, because those jobs will fail immediately once the legacy path closes.
       audit: |
         ### Audit via Console
 
@@ -580,18 +575,17 @@ queries:
       databricks.workspaceConf.tokensEnabled == false || databricks.workspaceConf.maxTokenLifetimeDays != empty && databricks.workspaceConf.maxTokenLifetimeDays <= 90
     docs:
       desc: |
-        Personal access tokens are long-lived bearer credentials that authenticate to the full Databricks REST API. This check passes when personal access tokens are disabled for the entire workspace, or when a maximum token lifetime of 90 days or fewer is enforced. By default Databricks allows personal access tokens to be created with no maximum lifetime, so a single token can remain valid until it is manually revoked. The evaluation relies on MQL boolean precedence, in which the AND operator binds more tightly than the OR operator, so the disabled test and the lifetime test compose correctly without any grouping punctuation.
+        This check verifies that the workspace either refuses to issue personal access tokens at all or caps how long a newly issued one stays valid.
+
+        Personal access tokens are bearer credentials that authenticate to the entire Databricks REST API. An administrator controls them under Settings in the **Advanced** section of the workspace admin console, and the Databricks CLI reads the two governing keys with `databricks workspace-conf get-status enableTokens` and `databricks workspace-conf get-status maxTokenLifetimeDays`. This check passes when `enableTokens` is false, or when `maxTokenLifetimeDays` is set to 90 or fewer. Databricks ships with no maximum lifetime configured, so a token created today can remain valid until somebody remembers to revoke it.
 
         **Why this matters**
 
-        - **Limits the credential exposure window:** A capped lifetime bounds how long a leaked or stolen token remains usable.
-        - **Reduces standing attack surface:** Disabling tokens removes an entire class of static credentials that bypass interactive authentication.
-        - **Forces credential rotation:** Expiring tokens require periodic reissue, which surfaces stale automation and unused integrations.
+        A token is a single string, and everything an attacker needs comes with it. They find one in a git history, a notebook someone exported, a Slack message, a CI job log, or a stolen laptop's shell history, and they replay it against the workspace API from anywhere. No password, no second factor, no session to expire. They enumerate clusters and jobs, read the secret scopes the owning user can read, and submit their own job that reads the storage the workspace compute can reach.
 
-        **Risk mitigation**
+        An uncapped lifetime is what turns that from an incident into a standing foothold. The credential in a two year old repository is still live. The token belonging to a contractor who left last spring still works. Capping the lifetime at 90 days means the leaked string becomes dead weight on its own schedule, whether or not anyone ever noticed the leak.
 
-        - **Contains compromised credentials:** An attacker who exfiltrates a token loses access when the token expires.
-        - **Enforces least persistence:** Short-lived credentials align machine access with the duration of the work it performs.
+        Disabling tokens outright is the stronger position where OAuth and service principals cover the automation. Where tokens are still needed, the cap is what bounds the damage.
       audit: |
         ### Audit via Console
 
@@ -675,18 +669,17 @@ queries:
       databricks.workspaceConf.restrictWorkspaceAdminsStatus == "RESTRICT_TOKENS_AND_JOB_RUN_AS"
     docs:
       desc: |
-        Workspace admins hold broad control over a Databricks workspace. This check passes when the workspace admin restriction status is set to `RESTRICT_TOKENS_AND_JOB_RUN_AS`, which prevents workspace admins from generating personal access tokens on behalf of arbitrary service principals and from changing the run-as identity of jobs. The insecure default is `ALLOW_ALL`, under which a workspace admin can mint tokens for any service principal and execute jobs under any identity.
+        This check verifies that a workspace administrator cannot act as identities they do not own.
+
+        The **Restrict workspace admins** setting sits under Settings in the **Security** section of the workspace admin console, and the Databricks CLI reads it with `databricks settings restrict-workspace-admins get`. This check requires the status `RESTRICT_TOKENS_AND_JOB_RUN_AS`, which stops workspace admins from minting personal access tokens on behalf of arbitrary service principals and from changing the run-as identity of a job. The default is `ALLOW_ALL`, under which both are permitted.
 
         **Why this matters**
 
-        - **Blocks privilege escalation:** Restricting run-as identity changes stops an admin from executing workloads under a more privileged service principal.
-        - **Prevents token minting abuse:** Admins can no longer issue long-lived tokens for identities they do not own.
-        - **Narrows the blast radius of a compromised admin:** A stolen admin session cannot pivot into arbitrary service-principal contexts.
+        Workspace admin is a role many people hold, often as a convenience for managing clusters and settings. Under `ALLOW_ALL` it is also a route to every other identity in the workspace. An admin, or anyone who takes over an admin session, edits an existing job to run as the service principal that owns your most sensitive pipeline, adds a task that dumps that pipeline's tables to a location they control, and runs it once. The job runs with the pipeline identity's grants, not theirs, so Unity Catalog authorizes every read.
 
-        **Risk mitigation**
+        Token minting is the quieter version of the same move. The admin issues a personal access token for a privileged service principal, and from then on holds a portable credential for that identity that outlives their own session and does not look like an admin action in the logs.
 
-        - **Enforces identity boundaries:** Jobs and tokens stay bound to their legitimate owners.
-        - **Supports separation of duties:** Administrative control is decoupled from the ability to act as other principals.
+        Restricting the setting keeps jobs and tokens bound to their legitimate owners, so administering the workspace stays separate from acting inside it. Expect to hear from teams that relied on an admin changing a job's run-as identity for them; that work moves to the identity's own owner.
       audit: |
         ### Audit via Console
 
@@ -769,18 +762,17 @@ queries:
       databricks.workspaceConf.deprecatedGlobalInitScriptsEnabled == false
     docs:
       desc: |
-        Legacy global init scripts run automatically on every cluster in the workspace during startup, executing with root privileges. This check passes when the deprecated global init script mechanism is disabled. On older workspaces this legacy mechanism can remain enabled, where the scripts are unversioned, are not individually access controlled, and leave no per-script audit trail. Databricks replaced it with named global init scripts, which are versioned and auditable.
+        This check verifies that the workspace has retired the legacy global init script mechanism in favor of the named, versioned replacement.
+
+        Legacy global init scripts run as root on every node of every cluster in the workspace at startup. An administrator switches the mechanism off under Settings in the **Compute** section of the workspace admin console, and the Databricks CLI reads the same key with `databricks workspace-conf get-status enableDeprecatedGlobalInitScripts`. This check requires `enableDeprecatedGlobalInitScripts` to be false. Older workspaces often still carry it enabled because the flag was never turned off after Databricks introduced named global init scripts, which are versioned, individually access controlled, and auditable.
 
         **Why this matters**
 
-        - **Removes an unaudited root execution path:** Legacy scripts run as root on every cluster with no per-script logging.
-        - **Eliminates unversioned configuration:** Changes to legacy scripts cannot be tracked or reviewed.
-        - **Shrinks the cluster attack surface:** Disabling the mechanism prevents silent code execution across all compute.
+        The legacy mechanism is root code execution across the entire workspace with no per script access control and no per script audit record. An attacker who reaches the storage path the legacy scripts are read from appends a few lines to one of them, and from that point every cluster anyone starts executes those lines as root before the workload begins. They run on the analyst's ad hoc cluster, on the nightly job cluster, on the cluster the security team uses.
 
-        **Risk mitigation**
+        That gives the attacker persistence that survives cluster restarts, cluster deletion, and the incident response that follows, because nothing about the change is attributable. There is no version history to diff, no owner to ask, and no log line naming which script did what. A responder looking at a compromised node sees a root process with no provenance.
 
-        - **Prevents persistent compromise:** An attacker cannot hide root-level code in an unauditable legacy script.
-        - **Enforces supported configuration:** Init logic moves to the named, access-controlled replacement.
+        The named replacement keeps the same capability with the properties that make it reviewable. Move any surviving init logic to it before disabling the legacy path, because clusters that depend on a legacy script will start without it.
       audit: |
         ### Audit via Console
 
@@ -854,18 +846,17 @@ queries:
       databricks.workspaceConf.deprecatedClusterNamedInitScriptsEnabled == false
     docs:
       desc: |
-        Legacy cluster-named init scripts are stored in DBFS and run automatically when a cluster whose name matches the script starts. This check passes when the deprecated cluster-named init script mechanism is disabled. On older workspaces this legacy mechanism can remain enabled, where any workspace user with DBFS write access can create or modify a script that then executes at cluster startup. Databricks replaced it with access-controlled cluster-scoped and named global init scripts.
+        This check verifies that the workspace no longer executes init scripts selected by matching a cluster's name against a DBFS path.
+
+        Legacy cluster-named init scripts live in DBFS and run automatically when a cluster whose name matches the script starts. An administrator disables the mechanism under Settings in the **Compute** section of the workspace admin console, and the Databricks CLI reads the key with `databricks workspace-conf get-status enableDeprecatedClusterNamedInitScripts`. This check requires `enableDeprecatedClusterNamedInitScripts` to be false. Workspaces created before Databricks replaced the mechanism with access controlled cluster-scoped and named global init scripts often still have it enabled.
 
         **Why this matters**
 
-        - **Closes a shared-write execution path:** DBFS-stored scripts can be modified by any user with DBFS access and then run at startup.
-        - **Removes an integrity gap:** Cluster startup can execute code that the cluster owner never reviewed.
-        - **Shrinks the cluster attack surface:** Disabling the mechanism prevents name-based script injection.
+        The mechanism binds code execution to a string that anyone can guess and a storage path that many people can write to. Any workspace user with DBFS write access creates a file at the path matching a cluster name, and the next time that cluster starts, their code runs on every node before the workload does. The cluster owner never reviewed it and has no reason to look.
 
-        **Risk mitigation**
+        That is a direct privilege escalation for a low privileged user. They write a script named after the production job cluster, wait for the nightly run, and their code executes with the cluster's cloud identity, reading the storage that identity is entitled to and forwarding it somewhere else. It also works in reverse as a trap: create the file first, then wait for anyone to happen to name a cluster that way.
 
-        - **Prevents unauthorized code execution:** Cluster startup no longer trusts mutable DBFS paths.
-        - **Enforces supported configuration:** Init logic moves to access-controlled alternatives.
+        Cluster-scoped init scripts stored in workspace files or Unity Catalog volumes give the same startup hook with real access control on both the script and the cluster. Migrate anything still relying on the name match before disabling the mechanism.
       audit: |
         ### Audit via Console
 
@@ -940,18 +931,17 @@ queries:
       databricks.workspaceConf.storeInteractiveNotebookResultsInCustomerAccount == true
     docs:
       desc: |
-        Interactive notebook command results can be stored either in the Databricks-managed control plane or in the customer's own cloud storage account. This check passes when interactive notebook results are stored in the customer account. By default results may be held in the Databricks control plane, which places query output outside the customer's own storage, encryption, and access-control boundary.
+        This check verifies that the output of interactive notebook commands is persisted in your own cloud storage account rather than in the Databricks control plane.
+
+        The setting appears under Settings in the **Security** section of the workspace admin console, and the Databricks CLI reads it with `databricks workspace-conf get-status storeInteractiveNotebookResultsInCustomerAccount`. This check requires `storeInteractiveNotebookResultsInCustomerAccount` to be true. Left at its default, result data for interactive commands is held in the vendor managed control plane instead of the storage account you configured for the workspace.
 
         **Why this matters**
 
-        - **Keeps result data in the customer trust boundary:** Output stays under the customer's own storage and key management.
-        - **Applies customer encryption controls:** Results at rest are protected by the customer's storage encryption.
-        - **Reduces third-party data exposure:** Sensitive query output does not persist in the vendor control plane.
+        Notebook results are the data, not a summary of it. A cell that displays the first rows of a customer table persists those rows. A query written to check a join persists real identifiers, account numbers, and whatever else the table holds. Analysts run hundreds of these a day, and every one leaves its output behind.
 
-        **Risk mitigation**
+        When that output lives in the control plane it sits outside every control you built for the data itself. Your customer managed key does not encrypt it. Your storage account policies, network restrictions, and object level audit logging do not apply to it. Your retention and deletion process cannot reach it, so a record you deleted from the source table still exists in a result blob you cannot enumerate. If you are obligated to keep data in a particular region, that obligation is not being met for the copy you cannot see.
 
-        - **Limits data residency risk:** Result data remains in the customer's chosen cloud account and region.
-        - **Strengthens confidentiality at rest:** Access to results is governed by the customer's storage permissions.
+        Storing results in your own account brings them back inside the boundary, under the same key, the same access policies, and the same audit trail as the tables they came from. The setting applies to results produced after the change, so plan for the older material separately.
       audit: |
         ### Audit via Console
 
@@ -1025,18 +1015,17 @@ queries:
       databricks.clusters.all(localDiskEncryptionEnabled == true)
     docs:
       desc: |
-        Every compute cluster should encrypt the locally attached disks that worker nodes use for scratch storage such as shuffle spill and cached data. By default local disk encryption is off, so intermediate data written to worker node storage during query and job execution is left unencrypted at rest.
+        This check verifies that every compute cluster encrypts the local disks its nodes use for scratch storage.
+
+        Spark writes shuffle partitions, cached datasets, and spilled records to node local storage during execution. The cluster attribute controlling whether that storage is encrypted is `enable_local_disk_encryption`, visible in the JSON view of a cluster under **Compute** and readable with `databricks clusters get <cluster-id> --output JSON`. This check requires the attribute to be true on every cluster. It is off by default, and it is absent rather than false on a cluster nobody set it on, which reads the same way.
 
         **Why this matters**
 
-        - **Sensitive data reaches local disk:** Spark spills shuffle partitions and cached datasets to node-local storage, so records that never leave memory in principle are written in clear text on the worker.
-        - **Node storage outlives the workload:** Cloud instance storage and its snapshots can be recovered by anyone with access to the underlying infrastructure, exposing the spilled data long after a job finishes.
-        - **Encryption at rest is a baseline expectation:** Regulated data sets require that all copies, including transient and temporary ones, remain encrypted wherever they are stored.
+        Data that an operator believes never leaves memory does leave memory. A join large enough to spill, a cached DataFrame under pressure, a shuffle across a wide dataset: all of them land plaintext records on the worker's attached storage, including columns the query only touched in passing. The rows land there whether or not the query result was ever displayed.
 
-        **Risk mitigation**
+        Those disks outlive the workload. Cloud instance storage and any snapshot taken from it are readable by anyone who reaches the underlying infrastructure, which includes an attacker who has compromised the cloud account rather than Databricks itself. They do not need to authenticate to the workspace or hold any Unity Catalog grant. They read the volume and recover whatever the last jobs spilled, sometimes long after the cluster is gone.
 
-        - **Turn on local disk encryption for every cluster:** Set the cluster specification so worker node scratch storage is encrypted with an ephemeral key that lives only for the lifetime of the cluster.
-        - **Enforce it through a cluster policy:** Fix the encryption attribute in a cluster policy so no user can launch a cluster that writes unencrypted data to local disk.
+        Enabling encryption binds an ephemeral key to the cluster's lifetime, so the spilled data is unreadable once the cluster ends. Fix the attribute in a cluster policy rather than per cluster, using a `"type": "fixed"` entry, so nobody can launch compute that writes plaintext to local disk. Existing clusters must be recreated to pick it up.
       audit: |
         ### Audit via Console
 
@@ -1137,20 +1126,17 @@ queries:
       databricks.clusters.all(dataSecurityMode != empty && dataSecurityMode != "NONE")
     docs:
       desc: |
-        Every compute cluster should run with a data security mode that enforces user isolation so Unity Catalog governance and table access controls apply. The `NONE` mode disables isolation entirely, runs without Unity Catalog, and ignores table access controls, which lets any code on the cluster read all data the cluster identity can reach. This check fails a cluster whose data security mode is unset or set to `NONE`.
+        This check verifies that every compute cluster runs under an access mode that keeps Unity Catalog governance and table access controls in the request path.
 
-        Isolation enforcing modes include `SINGLE_USER`, `USER_ISOLATION`, and the newer `DATA_SECURITY_MODE_DEDICATED`, `DATA_SECURITY_MODE_STANDARD`, and `DATA_SECURITY_MODE_AUTO` modes. The `LEGACY_*` modes are deprecated but still provide some isolation and therefore pass. Only `NONE` provides no isolation at all.
+        The **Access mode** field on a cluster under **Compute** maps to the `data_security_mode` attribute. This check fails a cluster whose mode is unset or set to `NONE`, the value behind the no isolation shared option. Modes that provide isolation include `SINGLE_USER`, `USER_ISOLATION`, and the newer `DATA_SECURITY_MODE_DEDICATED`, `DATA_SECURITY_MODE_STANDARD`, and `DATA_SECURITY_MODE_AUTO`. The deprecated `LEGACY_*` modes still provide some isolation and therefore pass. Only `NONE` provides none.
 
         **Why this matters**
 
-        - **No governance without isolation:** A cluster in `NONE` mode bypasses Unity Catalog and table access controls, so row and column level permissions and audit lineage do not apply to workloads running on it.
-        - **Shared clusters leak between users:** Without user isolation, arbitrary Python, Scala, or JVM code can read credentials, mounted data, and other users' results present on the same cluster.
-        - **Privilege escalation surface:** Unisolated clusters expose the underlying instance identity and its cloud permissions to any code that runs, widening the blast radius of a single compromised notebook.
+        A cluster in `NONE` mode is not connected to Unity Catalog and does not evaluate table access controls, so the row filters, column masks, and grants that define who may see what are not consulted for anything that runs on it. The permissions still exist in the catalog; they are just not in the path.
 
-        **Risk mitigation**
+        What runs on such a cluster is arbitrary JVM code. A user who is allowed to attach a notebook can read the cluster's mounted storage directly, dump the credentials the cluster holds out of the Spark configuration and the environment, and reach every dataset the cluster identity is entitled to rather than every dataset they personally are. On a shared no isolation cluster they can also read what other users on the same cluster left behind, including results and cached frames from queries they had no right to run.
 
-        - **Select an isolation enforcing access mode:** Configure each cluster for single user or standard shared access rather than no isolation shared, so Unity Catalog and access controls are enforced.
-        - **Constrain the choice with a cluster policy:** Fix the data security mode in a cluster policy so users cannot create clusters that run without isolation.
+        The escalation is to the compute identity itself: the instance profile or managed identity the nodes assume, and every bucket or container it can reach. Fixing the mode in a cluster policy is what prevents someone from creating an unisolated cluster in the first place, since changing it on one cluster does not stop the next one.
       audit: |
         ### Audit via Console
 
@@ -1227,18 +1213,17 @@ queries:
       databricks.clusters.all(autoterminationMinutes > 0 && autoterminationMinutes <= 120)
     docs:
       desc: |
-        Every compute cluster should terminate automatically after a bounded period of inactivity so idle compute does not stay running indefinitely. This check requires an idle timeout of 120 minutes or fewer. A value of `0` means auto-termination is disabled and the cluster runs until stopped by hand.
+        This check verifies that compute clusters shut themselves down after a bounded idle period instead of running until someone stops them by hand.
+
+        The **Terminate after ... minutes of inactivity** setting on a cluster under **Compute** maps to the `autotermination_minutes` attribute, readable with `databricks clusters get <cluster-id> --output JSON`. This check requires a value between 1 and 120 on every cluster. A value of `0` means auto-termination is off and the cluster runs indefinitely.
 
         **Why this matters**
 
-        - **Idle compute is standing attack surface:** A running cluster keeps an authenticated environment, mounted data, and cloud instance credentials available for an attacker to reach even when no one is using it.
-        - **Forgotten clusters accumulate risk and cost:** Clusters left running without a timeout drift out of monitoring attention and continue to consume resources and hold access to data.
-        - **Bounded lifetime limits exposure:** Terminating idle compute shrinks the window during which a stale, unattended environment can be abused.
+        An idle cluster is a live, authenticated execution environment that nobody is watching. It holds the cloud identity its nodes assume, whatever storage is mounted on it, the Spark configuration it was launched with, and the cached and spilled data from the last work that ran there. All of that stays reachable to anyone who can attach to the cluster or who lands code on a node.
 
-        **Risk mitigation**
+        That is what makes forgotten compute attractive. An attacker who obtains any workspace credential looks for the cluster that has been up for six weeks, because the people who would have noticed unusual activity on it stopped looking at it long ago. They attach a notebook, read the mounted paths and the environment, use the node identity against cloud storage, and everything they do blends into a cluster whose utilization pattern nobody tracks. On a cluster that terminates after two hours of inactivity, that same window closes on its own.
 
-        - **Set a conservative idle timeout:** Configure each cluster to auto-terminate after an idle period no longer than 120 minutes, and shorter where workloads allow.
-        - **Enforce the timeout with a cluster policy:** Fix a maximum auto-termination value in a cluster policy so users cannot disable it or set an unbounded idle period.
+        Bounded lifetimes also stop the population of stale compute from growing, which keeps the set of clusters small enough to actually review. Set the value in a cluster policy so a user cannot disable it, and give streaming and always on workloads a deliberate exception rather than leaving the default open for everyone.
       audit: |
         ### Audit via Console
 
@@ -1315,18 +1300,17 @@ queries:
       databricks.clusters.all(sparkConf.where( key == /(?i)(password|secret|token|passwd|pwd|apikey|access.?key|credential)/ ).all( value == /\{\{secrets\// ))
     docs:
       desc: |
-        Sensitive values in a cluster Spark configuration should reference the Databricks secrets store rather than embed a credential in clear text. Any Spark configuration key whose name looks like a credential, such as a password, secret, token, API key, access key, or credential, should hold a `{{secrets/scope/key}}` reference. By default a Spark configuration value is stored and displayed verbatim, so a pasted credential is retained as plaintext.
+        This check verifies that credential shaped entries in a cluster's Spark configuration point at the Databricks secrets store instead of holding the credential itself.
+
+        Under **Compute**, a cluster's **Advanced options** hold its **Spark config**, which appears as `spark_conf` in the cluster JSON. This check looks at every key whose name reads like a credential, covering password, secret, token, passwd, pwd, apikey, access key, and credential, and requires the value to be a `{{secrets/scope/key}}` reference. Databricks stores and displays a Spark configuration value verbatim, so a pasted credential stays there in clear text.
 
         **Why this matters**
 
-        - **Cluster configuration is widely readable:** Spark configuration is visible to anyone who can view the cluster and is captured in cluster event logs and API responses, so an embedded credential is exposed far beyond its intended use.
-        - **Plaintext credentials get copied and leaked:** A secret pasted into a Spark configuration is easily duplicated into cloned clusters, exported specifications, and version control, multiplying where it can be stolen.
-        - **Secret references keep values out of sight:** The `{{secrets/scope/key}}` syntax resolves the value at runtime and redacts it in logs and the user interface, so the credential is never persisted in the configuration.
+        Spark configuration is not a private field. Anyone who can view the cluster sees it in the UI, anyone who can call the clusters API gets it in the response, and it is captured in cluster event logs and in exported cluster specifications. A database password pasted there is therefore readable by a much larger group than the one that was meant to have it, and by anyone who has obtained a token belonging to any member of that group.
 
-        **Risk mitigation**
+        From there the credential leaves the platform. Cloned clusters carry it, exported JSON specifications carry it into tickets and repositories, and infrastructure code that was generated from a running cluster commits it to version control. An attacker who reads one cluster definition walks straight into the database or the external service it points at, using an account that is often far more privileged than any Databricks identity.
 
-        - **Move every credential into a secret scope:** Store sensitive values in a Databricks secret scope and replace the plaintext Spark configuration value with a `{{secrets/scope/key}}` reference.
-        - **Restrict access to the secret scope:** Grant read access on the secret scope only to the principals that need it, so referencing a secret does not expose it to everyone on the cluster.
+        A `{{secrets/scope/key}}` reference resolves at runtime and is redacted in logs and in the interface, so the value is never persisted in the configuration. Restrict read access on the secret scope to the principals that need it, otherwise the reference is only moving the exposure rather than closing it.
       audit: |
         ### Audit via Console
 
@@ -1432,18 +1416,17 @@ queries:
       databricks.clusters.all(policy != empty)
     docs:
       desc: |
-        Every compute cluster should be bound to a cluster policy so administrators can constrain how clusters are created rather than allowing unconstrained ad-hoc compute. A cluster policy limits instance types, runtime versions, tags, and security settings to an approved baseline. By default clusters can be created without any policy, leaving their configuration entirely up to the person who launches them.
+        This check verifies that every compute cluster was created against a cluster policy rather than as unconstrained ad hoc compute.
+
+        A cluster's **Policy** field under **Compute** shows either an assigned policy or **Unrestricted**, and the underlying attribute is `policy_id` in the cluster JSON. This check requires it to be populated on every cluster. Databricks lets any user with cluster creation rights launch compute with no policy at all, which leaves every attribute of that cluster up to whoever pressed the button.
 
         **Why this matters**
 
-        - **Unconstrained clusters drift from baseline:** Without a policy, users can select any runtime, node type, and security setting, so security controls such as encryption and isolation are applied inconsistently or not at all.
-        - **Policies enforce security settings centrally:** A cluster policy is the mechanism that fixes attributes like local disk encryption, data security mode, and auto-termination across every cluster it governs.
-        - **Governance and cost controls depend on it:** Required tags, instance limits, and approved runtimes can only be enforced when clusters are created through a policy.
+        Cluster policies are the only place the other cluster level controls can be made mandatory. Local disk encryption, the data security mode that keeps Unity Catalog in the request path, the idle timeout, the permitted runtime versions, and the instance types are all per cluster attributes that a user can set however they like unless a policy fixes them. Each of those has its own check in this policy, and each of those checks is a lagging indicator; the policy is what makes them hold going forward.
 
-        **Risk mitigation**
+        The practical failure is a user creating a cluster to get some work done, accepting whatever the create form defaults to, and attaching an instance profile that reaches production storage. That cluster now runs without isolation, writes plaintext to local disk, never terminates, and boots a runtime nobody patches. An attacker who finds it has an environment that would never have passed review, sitting inside a workspace that otherwise looks well governed.
 
-        - **Bind every cluster to a policy:** Create cluster policies that encode your secure baseline and require users to select one when they create a cluster.
-        - **Restrict unrestricted cluster creation:** Limit the entitlement to create clusters without a policy so ad-hoc compute cannot bypass the baseline.
+        Write policies that encode your baseline, assign them to the groups that create clusters, and restrict the entitlement to create unrestricted compute so nothing can be launched outside them. Existing clusters need to be recreated under the policy for its constraints to apply.
       audit: |
         ### Audit via Console
 
@@ -1547,18 +1530,17 @@ queries:
           mondoo.com/filter-icon: databricks
     docs:
       desc: |
-        Databricks personal access tokens and service principal OAuth secrets are long-lived bearer credentials that authenticate to the REST API. Personal access tokens act for a workspace user, and service principal secrets act for a machine identity at the account level. Every credential of either kind should have an expiry time set. The insecure default appears when a token or secret is created with no lifetime, because it never expires and remains valid until someone manually revokes it.
+        This check verifies that no Databricks credential is set to never expire, covering both personal access tokens in a workspace and the OAuth secrets of account level service principals.
+
+        Personal access tokens act as a workspace user and are listed with `databricks token-management list`, where a token that never expires reports an `expiry_time` of `-1`. Service principal secrets act as a machine identity and are managed in the account console under **User management** and then **Service principals**. This check requires an expiration on every personal access token and on every active service principal secret. Both are created without one when the **Lifetime (days)** field is left blank or no expiration is set on the secret, and the credential then stays valid until a person revokes it.
 
         **Why this matters**
 
-        - **Never rotates:** A token or secret with no expiry stays valid indefinitely, so a credential that leaks today can still be used months or years later.
-        - **Evades cleanup:** Non-expiring credentials accumulate as employees, pipelines, and service principals change, leaving forgotten credentials that no one revokes.
-        - **Grants standing access:** Anyone who obtains the token or secret holds continuous API access with no automatic cutoff, and a service principal secret grants that access to an unattended machine identity.
+        Both are bearer credentials for the REST API: whoever holds the string is the identity. There is no second factor to fail and no session to end. An attacker who recovers one from a repository history, a container image layer, a CI log, a backup, or a departed employee's machine authenticates as that principal and works through the API at their own pace.
 
-        **Risk mitigation**
+        A credential with no expiry means that recovery never goes stale. The token in a repository archived three years ago still opens the workspace. The service principal secret issued for a pipeline that was decommissioned still authenticates, and because it belongs to an unattended machine identity, nobody is going to notice unusual sign in behavior for it the way they might for a person.
 
-        - **Always set a lifetime:** Create every personal access token and every service principal secret with an expiry so it becomes invalid automatically.
-        - **Enforce a maximum lifetime:** Configure a workspace-wide maximum token lifetime so new tokens cannot be created without an expiry, and set an expiration when issuing service principal secrets.
+        Non expiring credentials also accumulate faster than anyone prunes them, so the set of live keys grows with every pipeline and every departure. Setting a lifetime makes the cleanup happen whether or not the leak was ever detected.
       audit: |
         ### Audit via Console
 
@@ -1665,18 +1647,17 @@ queries:
       databricks.tokens.all(expiryTime - creationTime <= 90 * time.day)
     docs:
       desc: |
-        Databricks personal access tokens should have a short lifetime so a leaked credential is valid for only a bounded window. Each token's lifetime from creation to expiry should be at most 90 days. The insecure default appears when a token is created with a longer lifetime, because the workspace maximum is 730 days unless an administrator lowers it, leaving tokens valid for as long as two years.
+        This check verifies that no personal access token in the workspace was issued with a lifetime longer than 90 days.
+
+        The lifetime is the span between a token's creation and its expiry. An individual sets it in the **Lifetime (days)** field under Settings and then **Developer** and **Access tokens**, but that page shows only the current user's tokens, so a workspace wide review needs `databricks token-management list` and a comparison of each token's creation and expiry timestamps. This check requires that span to be at most 90 days. The workspace maximum is 730 days unless an administrator lowers it, so a token created with the default ceiling stays valid for two years.
 
         **Why this matters**
 
-        - **Extends exposure:** A long-lived token that leaks stays usable for months, giving an attacker a wide window to reach workspace data and APIs.
-        - **Delays natural cleanup:** Short lifetimes retire stale credentials automatically, while long lifetimes let forgotten tokens linger.
-        - **Weakens rotation:** Bounded lifetimes force regular reissue, which limits how long any single compromised credential remains valid.
+        A personal access token authenticates to the entire Databricks REST API as its owner. It travels well: it ends up in a `.databrickscfg` file on a laptop, in a CI secret store, in a notebook someone shared, in a shell history. Any of those is a credential an attacker can pick up, and once they have it there is nothing else to defeat. They list the clusters, read the secret scopes the owner can read, and submit jobs that read whatever the owner's grants allow.
 
-        **Risk mitigation**
+        The lifetime decides how long that holds. At two years, a token leaked from a laptop stolen last spring still works today, and it still works for the person who bought the disk image months from now. At 90 days it is dead well before most leaks are even discovered, which is the point: the cap protects you in the case where you never find out.
 
-        - **Cap the lifetime:** Configure a workspace-wide maximum token lifetime of 90 days or fewer.
-        - **Reissue short-lived tokens:** Replace long-lived tokens with new tokens that carry a lifetime within the limit.
+        Cap the workspace maximum rather than relying on individuals, and reissue existing long lived tokens with a shorter lifetime rather than letting them run out their original term.
       audit: |
         ### Audit via Console
 
@@ -1771,18 +1752,17 @@ queries:
       databricks.secretScopes.all(acls["users"] == empty)
     docs:
       desc: |
-        Databricks secret scopes hold sensitive values such as database credentials, cloud storage keys, and API tokens. No secret scope should grant any permission to the built-in `users` group, which contains every workspace user. The insecure default appears whenever an ACL entry assigns MANAGE, READ, or WRITE to `users`, because that single grant makes the scope's secrets available to the entire workspace.
+        This check verifies that no secret scope grants a permission to the built-in `users` group, which contains every member of the workspace.
+
+        Secret scopes hold database passwords, cloud storage keys, and API tokens for downstream systems. The workspace UI does not display scope ACLs, so the review runs through `databricks secrets list-scopes` and then `databricks secrets list-acls <scope-name>`. This check fails a scope whose ACL list names the `users` principal at any permission, because MANAGE, READ, and WRITE all put the scope's contents within reach of the whole workspace.
 
         **Why this matters**
 
-        - **Exposes stored credentials broadly:** A READ grant to `users` lets any workspace member retrieve the secrets in the scope, turning a shared credential store into a workspace-wide leak.
-        - **Enables privilege escalation:** Secrets often unlock downstream systems, so broad read access lets a low-privileged user reach data and services well beyond their assigned role.
-        - **Breaks need-to-know:** Access to secrets should follow job function, and a grant to all users removes any separation between those who need a credential and those who do not.
+        A single READ grant to `users` means every person with workspace access can retrieve every secret in that scope. That is not an abstract exposure. Any user opens a notebook, calls the secret utility for the scope and key, and prints the value. A contractor with read only analytics access, an intern, a partner account, a compromised low privilege session: all of them get the production database password out of a scope that was set up for one team.
 
-        **Risk mitigation**
+        The escalation goes outside Databricks. Secrets are credentials for other systems, and those systems usually have no idea the caller came from a workspace notebook. The attacker takes the storage key and reads the bucket directly, bypassing Unity Catalog entirely. They take the service account password and connect to the warehouse from their own machine. Whatever careful grant structure exists inside the workspace is irrelevant once the underlying credential is in hand.
 
-        - **Grant to named principals:** Assign secret scope ACLs only to the specific users, groups, or service principals that require them.
-        - **Remove the `users` grant:** Delete any ACL that assigns a permission to the `users` group and replace it with a narrowly scoped grant.
+        Grant secret scope ACLs only to the named users, groups, or service principals that need them, and delete any `users` entry outright rather than downgrading it. A workspace wide MANAGE grant is worse still, since it lets any user rewrite the secrets other people's pipelines depend on.
       audit: |
         ### Audit via Console
 
@@ -1877,18 +1857,17 @@ queries:
       databricks.ipAccessLists.where(listType == "ALLOW").all(ipAddresses.none(_ == "0.0.0.0/0" || _ == "::/0"))
     docs:
       desc: |
-        Databricks IP access lists restrict which source networks can reach a workspace. No ALLOW-type list should include an open CIDR such as `0.0.0.0/0` for IPv4 or `::/0` for IPv6. The insecure default appears when an ALLOW entry contains one of these wildcards, because that single range admits the entire internet and defeats the purpose of the access list.
+        This check verifies that no allow entry in the workspace's IP access lists opens the workspace to the entire internet.
+
+        IP access lists are managed under Settings on the **Security** tab of the workspace admin console and read with `databricks ip-access-lists list`. This check examines every list whose type is ALLOW and fails if any of them contains `0.0.0.0/0` or `::/0`, the open ranges for IPv4 and IPv6. Either one admits every address on the internet, which cancels the effect of every other entry in the list.
 
         **Why this matters**
 
-        - **Nullifies network restriction:** An ALLOW list containing `0.0.0.0/0` or `::/0` permits connections from any address, so the workspace has no effective network boundary.
-        - **Creates false assurance:** The presence of an access list can make a workspace look protected while the wildcard entry silently gates nothing.
-        - **Widens the attack surface:** Every host on the internet can attempt authentication, exposing the workspace to credential stuffing and token abuse from anywhere.
+        The failure mode here is not an absent control but a control that reports as present. Enforcement is on, lists exist, an audit finding was closed, and a reviewer looking at the workspace concludes that network access is restricted. The wildcard entry means it is not. That gap between the documented posture and the real one is what makes this worth catching, because nobody goes back to look at a control they believe is working.
 
-        **Risk mitigation**
+        Concretely, the workspace API answers from anywhere, so any credential that leaks is usable from anywhere. An attacker who buys a token from a credential dump, phishes a user, or pulls one out of a public repository connects straight to the workspace host, and the access list that was supposed to require them to be on the corporate network waves them through. They enumerate clusters, read the secret scopes their stolen identity can read, and run jobs against your data from wherever they are.
 
-        - **Replace wildcards with real ranges:** Substitute open CIDRs with the specific office, VPN, and egress ranges your organization uses.
-        - **Apply least-privilege CIDRs:** Use the smallest ranges that still cover legitimate access, and review them regularly for over-permissive entries.
+        Replace the open range with the specific office, VPN, and egress ranges you actually use, and keep them as narrow as the legitimate traffic allows. Confirm your own current address falls inside one of the remaining ranges before saving, or you will lock yourself out.
       audit: |
         ### Audit via Console
 
@@ -1983,18 +1962,17 @@ queries:
       databricks.privateAccessSettings.all(publicAccessEnabled == false)
     docs:
       desc: |
-        This check ensures that every private access setting in the Databricks account keeps public network access disabled, so a workspace is reachable only through its private endpoint. By default a workspace accepts connections from any address on the public internet, which exposes the control plane and data plane to credential-based attacks from untrusted networks.
+        This check verifies that the private access settings registered in the Databricks account keep public network access turned off, so workspaces bound to them are reachable only through a private endpoint.
+
+        Private access settings are an account console object, not a workspace setting. An account admin finds them under **Cloud resources** and then **Network**, and the Databricks CLI lists them with `databricks account private-access list` and reads one with `databricks account private-access get <private-access-settings-id>`. This check requires `public_access_enabled` to be false on every setting. A workspace without private only connectivity accepts connections from any address on the internet.
 
         **Why this matters**
 
-        - **Removes internet exposure:** Disabling public access forces all traffic through the cloud provider private endpoint and keeps the workspace off the public internet.
-        - **Contains stolen credentials:** Private-only connectivity prevents leaked tokens or passwords from being used outside trusted networks.
-        - **Adds a network control layer:** Endpoint-based access operates independently of authentication, so it holds even when a credential is compromised.
+        Public reachability is what makes a stolen credential usable from anywhere. An attacker who obtains a personal access token, a service principal secret, or a user's password and session does not need a foothold in your network to spend it. They resolve the workspace host from their own machine and authenticate. Everything that identity is entitled to, the clusters, the jobs, the secret scopes, the catalogs, follows from there.
 
-        **Risk mitigation**
+        Private only connectivity removes that. The same credential presented from the open internet reaches nothing, because the workspace endpoint is not there to answer. The attacker now needs a position inside a network that holds an approved private endpoint, which is a much harder and much noisier thing to get.
 
-        - **Enforce private connectivity:** Route access through AWS PrivateLink, Azure Private Link, or GCP Private Service Connect instead of public endpoints.
-        - **Review settings regularly:** Confirm that no private access setting re-enables public access after infrastructure changes.
+        Route access through the cloud provider's private endpoint service and confirm your own users and CI runners reach the workspace over it before you disable public access. Also recheck the settings after infrastructure changes, since a rebuilt private access setting can come back with public access re-enabled and the workspace will keep working, which is exactly why nobody notices.
       audit: |
         ### Audit via Console
 
@@ -2095,18 +2073,17 @@ queries:
       databricks.privateAccessSettings.all(privateAccessLevel == "ENDPOINT" && allowedVpcEndpointIds != empty)
     docs:
       desc: |
-        This check ensures that each private access setting uses the most restrictive private access level, `ENDPOINT`, and defines an explicit allow-list of VPC endpoint IDs. The private access level accepts the values `ACCOUNT` and `ENDPOINT`. With `ACCOUNT`, any registered endpoint in the account can reach the workspace, so only named endpoints should be permitted for sensitive workloads.
+        This check verifies that a private access setting names the specific endpoints allowed to reach the workspace instead of admitting every endpoint registered in the account.
+
+        Private access settings are managed in the Databricks account console under **Cloud resources** and then **Network**, and read with `databricks account private-access get <private-access-settings-id>`. The private access level takes two values. With `ACCOUNT`, any registered endpoint in the account can connect. With `ENDPOINT`, only the endpoints listed in `allowed_vpc_endpoint_ids` can. This check requires the level to be `ENDPOINT` and the allow-list to be non-empty.
 
         **Why this matters**
 
-        - **Limits the reachable surface:** The `ENDPOINT` level allows only the VPC endpoints listed in the allow-list to connect, rather than every endpoint registered in the account.
-        - **Prevents lateral reach:** An endpoint created for one workspace cannot connect to another workspace unless it is explicitly named.
-        - **Makes access intentional:** An explicit allow-list turns connectivity into a reviewed decision instead of a broad default.
+        Private connectivity is often treated as the end of the network story, but at the `ACCOUNT` level it only moves the boundary from the internet to the account. Every endpoint anyone registers, including one created for a sandbox, a partner integration, or a team experimenting in a separate network, can reach every workspace bound to that setting.
 
-        **Risk mitigation**
+        That is the lateral path. An attacker who gets code running in the least defended network that happens to have a registered endpoint, a development virtual network with permissive rules, say, now has a route to the production workspace. They still need a credential, but they have skipped the network control that was supposed to be the reason the workspace was safe to expose at all. A stolen token that would have been useless from the internet works from there.
 
-        - **Name every endpoint:** Populate the allow-list with only the VPC endpoint IDs that must reach the workspace.
-        - **Prune stale entries:** Remove endpoint IDs from the allow-list when the corresponding infrastructure is decommissioned.
+        Naming endpoints makes each connection a decision someone made. Populate the allow-list with only the endpoints that must reach the workspace, and remove entries when the corresponding infrastructure is decommissioned, since a stale entry is a route to a network you no longer control.
       audit: |
         ### Audit via Console
 
@@ -2210,18 +2187,17 @@ queries:
       databricks.workspaces.all(managedServicesCustomerManagedKey != empty && storageCustomerManagedKey != empty)
     docs:
       desc: |
-        This check ensures that every workspace is configured with a customer-managed key for both managed services and workspace storage. Managed services covers notebooks, secrets, and other control-plane data, while workspace storage covers the DBFS root and cluster EBS volumes. By default Databricks encrypts this data with keys it controls, which leaves customers unable to independently rotate or revoke access to the encryption keys.
+        This check verifies that each workspace in the account is encrypted with keys the organization controls, for both managed services and workspace storage.
+
+        These are two separate assignments made in the Databricks account console. Managed services covers control plane data such as notebook source, command results, and secrets; workspace storage covers the DBFS root and the cluster volumes. An account admin registers a key for each use case under **Cloud resources** and then **Encryption keys**, and assigns both to the workspace, which shows up as `managed_services_customer_managed_key_id` and `storage_customer_managed_key_id`. This check requires both to be set. Without them, Databricks encrypts the data with keys it holds.
 
         **Why this matters**
 
-        - **Keeps key control with the customer:** A customer-managed key lets the organization rotate, disable, or revoke the key, which cuts off access to encrypted data on demand.
-        - **Separates duties:** Splitting the key from the platform means access to stored data requires both platform access and key access.
-        - **Covers both data domains:** Requiring keys for managed services and for storage closes the gap where one domain stays on platform-managed keys.
+        Platform managed encryption protects the data at rest, but it leaves you with no independent way to cut access off. If a workspace is compromised, if a credential you cannot enumerate is still circulating, or if you need to be certain a decommissioned workspace's data can no longer be read, the only reliable lever is the key. With your own key you disable or revoke it in your cloud key service and every copy of that data becomes ciphertext immediately, regardless of what tokens or sessions an attacker still holds.
 
-        **Risk mitigation**
+        Splitting the key from the platform also splits the access needed to read the data. Someone who compromises the platform side alone gets encrypted blobs; they need a separate compromise of your key service to make anything of them.
 
-        - **Encrypt with organization keys:** Register keys in the cloud provider key service and assign them to both the managed services and storage use cases.
-        - **Rotate on a schedule:** Rotate the customer-managed keys according to the organization key-management policy.
+        Assign keys for both use cases, since covering only one leaves the other domain, notebooks and secrets or the storage root, on platform keys and outside your control. Rotate them on whatever schedule your key management policy sets.
       audit: |
         ### Audit via Console
 
@@ -2337,18 +2313,17 @@ queries:
       databricks.deltaSharingRecipients.where(authenticationType == "TOKEN").all(ipAccessList != empty)
     docs:
       desc: |
-        This check ensures that every open-sharing Delta Sharing recipient that authenticates with a bearer token has an IP access list configured, so shared data can be retrieved only from approved networks. The other authentication types are `DATABRICKS`, `OAUTH_CLIENT_CREDENTIALS`, and `OIDC_FEDERATION`. A token recipient without an IP access list can pull the shared data from any network that holds the token.
+        This check verifies that every Delta Sharing recipient authenticating with a bearer token is limited to network ranges you approved.
+
+        Open sharing recipients are managed under **Catalog** and then **Delta Sharing** by a metastore admin, and read with `databricks recipients get <recipient-name>`. A recipient whose authentication type is `TOKEN` presents a bearer credential and nothing else. The other authentication types, `DATABRICKS`, `OAUTH_CLIENT_CREDENTIALS`, and `OIDC_FEDERATION`, bind the share to an identity system instead. This check requires a non-empty `ip_access_list.allowed_ip_addresses` on every token recipient.
 
         **Why this matters**
 
-        - **Binds sharing to trusted networks:** An IP access list limits data retrieval to the recipient approved address ranges.
-        - **Contains token leakage:** A bearer token that leaks cannot be used from an address outside the allow-list.
-        - **Targets the weakest auth type:** Token authentication carries no network binding on its own, so an explicit list restores that control.
+        Delta Sharing hands data to people outside your organization, and a token recipient is the weakest form of that arrangement. The credential is a file the partner downloads and then stores wherever their tooling puts it: a shared drive, a notebook repository, a laptop, a container image. You have no visibility into any of it and no control over who at the partner can copy it.
 
-        **Risk mitigation**
+        Once that file gets out, whoever holds it retrieves the full contents of the share from anywhere in the world. There is no user to disable, no second factor to fail, and no sign in event that looks unusual, because the token is the entire authentication story. The pull looks exactly like the partner's normal access.
 
-        - **Scope every token recipient:** Add the recipient known egress ranges to its IP access list before sharing data.
-        - **Prefer stronger auth:** Where possible, move recipients to an identity-federated authentication type instead of long-lived tokens.
+        An IP access list binds the token to the partner's known egress ranges, so a copy that leaves their network is inert. Collect those ranges before you activate the share, and keep them current as the partner's infrastructure changes. Where the partner can support it, moving them to an identity federated authentication type is stronger than a long lived token with a network restriction bolted on.
       audit: |
         ### Audit via Console
 
@@ -2441,18 +2416,17 @@ queries:
       databricks.servingEndpoints.all(aiGateway != empty && aiGateway.guardrails != empty)
     docs:
       desc: |
-        This check ensures that every Mosaic AI model serving endpoint has an AI Gateway with guardrails configured. Guardrails apply input and output content filtering, PII detection, and topic or keyword blocking to requests and responses. By default a serving endpoint has no guardrails, so prompts and generated output flow through unfiltered.
+        This check verifies that model serving endpoints screen the prompts they receive and the responses they return.
+
+        AI Gateway is configured per endpoint under **Serving** in the workspace, where an administrator enables input and output guardrails and sets the safety and PII filters. The Databricks CLI reads the same configuration with `databricks serving-endpoints get <endpoint-name>`, and this check requires a populated `ai_gateway.guardrails` block on every endpoint. A serving endpoint has no guardrails by default, so prompts and generated output pass through unexamined.
 
         **Why this matters**
 
-        - **Blocks data exfiltration:** Output filtering and PII detection stop sensitive data from leaving through model responses.
-        - **Reduces prompt-injection impact:** Input filtering screens malicious or unsafe prompts before the model processes them.
-        - **Controls unsafe content:** Topic and keyword blocking keep the endpoint from returning content outside its intended purpose.
+        A serving endpoint that reaches internal data is a query interface with a natural language front door. Without output filtering, the model is free to include in a response whatever it retrieved or memorized, so an attacker who can send prompts asks for customer records, support ticket contents, or credentials that appeared in the training corpus, and reads them straight out of the completion. PII detection with a blocking behavior is what stops that response from being returned at all.
 
-        **Risk mitigation**
+        Input filtering addresses the other direction. Where the endpoint is wired to tools, retrieval, or downstream systems, a prompt crafted to override its instructions turns the model into a confused deputy acting with the endpoint's privileges. That prompt does not have to come from a person; it can arrive inside a document the application feeds the model, which is why screening the input rather than trusting the caller is the useful control.
 
-        - **Enable guardrails everywhere:** Attach an AI Gateway with input and output guardrails to every serving endpoint that handles untrusted prompts.
-        - **Tune the filters:** Configure PII behavior and safety filters to match the sensitivity of the data the endpoint can reach.
+        Attach guardrails to any endpoint that handles prompts from outside a trusted set of callers, and tune the PII behavior and safety filters to the sensitivity of the data the endpoint can reach. An endpoint serving a classical model over non sensitive features is a reasonable place to decide the filters add nothing.
       audit: |
         ### Audit via Console
 
@@ -2562,18 +2536,17 @@ queries:
       databricks.servicePrincipals.all(active == true)
     docs:
       desc: |
-        This check ensures that no account service principal is left in a deactivated or inactive state. A deactivated service principal keeps its identity and its assigned entitlements, so it can be reactivated later and used to access resources. Inactive machine identities should be removed rather than retained as dormant credentials.
+        This check verifies that the Databricks account carries no service principal left sitting in a deactivated state.
+
+        Service principals are account level machine identities, managed in the account console under **User management** and then **Service principals**, and listed with `databricks account service-principals list`. Each carries an `active` flag. This check requires it to be true on every one of them, which in practice means deactivated identities are deleted rather than parked.
 
         **Why this matters**
 
-        - **Removes dormant access paths:** A deactivated service principal still carries entitlements that return the moment it is reactivated.
-        - **Shrinks the attack surface:** Every identity that no longer serves a purpose is one more credential an attacker could target or revive.
-        - **Keeps the inventory honest:** Removing inactive identities keeps the service principal list aligned with what is actually in use.
+        Deactivation is not deletion. A deactivated service principal keeps its identity, its group memberships, its entitlements, and its workspace and Unity Catalog grants. The account only refuses to authenticate it. Flip the flag back and every one of those grants is live again, exactly as it was on the day the identity was retired.
 
-        **Risk mitigation**
+        That makes a dormant service principal an attractive thing for an attacker who has account admin access to find. Creating a new identity and granting it access to production data is a conspicuous act that shows up in review. Reactivating one that already exists, already holds the grants they want, and already has a plausible name from a project two years ago is not. The audit trail shows a status change rather than a privilege grant, and the identity's ongoing API activity looks like a pipeline resuming.
 
-        - **Delete unused identities:** Remove service principals that are no longer needed instead of leaving them deactivated.
-        - **Review on a schedule:** Audit the account service principals periodically and act on any that are inactive.
+        Dormant identities also decay. Nobody owns them, nobody reviews their entitlements, and the reason they were granted access is forgotten, so they accumulate permissions that no current process justifies. Delete service principals that are no longer needed, and reactivate one only when there is a live workload that requires it.
       audit: |
         ### Audit via Console
 
