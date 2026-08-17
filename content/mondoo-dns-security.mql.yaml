@@ -72,13 +72,17 @@ queries:
       dns.records.where(type == "CNAME") == empty
     docs:
       desc: |
-        This check verifies that the root domain has no CNAME record in its DNS settings. The DNS standard prohibits a CNAME at the apex domain because a CNAME cannot coexist with the SOA and NS records that every zone apex must carry.
+        This check verifies that the zone apex, the bare domain with no label in front of it, resolves through an address record and carries no CNAME.
+
+        A CNAME declares that this name is an alias for another name and that the other name's records are authoritative for everything. That is incompatible with the apex, which must carry its own SOA and NS records for the zone to exist at all. The fix in your DNS provider's control panel is to delete the apex CNAME and publish an `A` or `AAAA` record, or, where the target is a hostname whose address moves, the provider's alias record type: `ALIAS`, `ANAME`, or CNAME flattening, each of which resolves the target and answers with an address.
 
         **Why this matters**
 
-        - **Reliable resolution:** A CNAME at the apex conflicts with mandatory SOA and NS records, which can break resolution for the entire domain and cause service interruptions.
-        - **Standards compliance:** Avoiding apex CNAME records keeps the zone compliant with DNS standards and DNS provider rules.
-        - **Service functionality:** Essential domain-related services such as email and subdomains depend on the apex carrying valid SOA and NS records rather than a CNAME.
+        The failure is availability, and it is total rather than partial. A resolver that meets a CNAME at the apex either ignores the SOA and NS records sitting alongside it or rejects the zone as malformed, and which one happens depends on the resolver. The result is a domain that answers for some users and not others, or that resolves through a caching resolver and fails through a validating one, which is the hardest class of outage to reproduce and the slowest to diagnose.
+
+        Everything anchored at the apex goes with it. Mail stops, because the `MX` lookup is an apex lookup. Subdomain delegation stops, because the `NS` records that delegate are apex records. Certificate issuance stops for challenges that read a `TXT` record at the apex, so renewal fails during the outage and the site cannot be recovered by reissuing.
+
+        Some providers accept the record and answer correctly by flattening it internally, which is why the configuration survives in a zone for years. Moving to the provider's alias type gets the same behavior without depending on that.
       audit: |
         Run the `dig <domain>` command and inspect the answer section for the root domain.
 
@@ -161,14 +165,19 @@ queries:
       dns.records.where(type == "NS").all( rdata != regex.ipv4 && rdata != regex.ipv6 )
     docs:
       desc: |
-        This check verifies that DNS Name Server (NS) and Mail Exchange (MX) records resolve to fully qualified domain names rather than pointing directly to IP addresses. The DNS standard requires both record types to reference hostnames.
+        This check verifies that every `NS` and `MX` record in the zone names a host rather than a literal address, and that both record sets exist at all.
+
+        Both record types are defined to carry a domain name in their data, and the address is resolved separately through that name's `A` or `AAAA` record. In your DNS provider's control panel that means an `NS` record reading `ns1.example.com` and an `MX` record reading `10 mail.example.com`, with each of those hostnames having an address record of its own.
 
         **Why this matters**
 
-        - **Operational flexibility:** Pointing a record at a hostname rather than a literal IP keeps server migrations and load balancing transparent to clients, which only ever see the name.
-        - **Downtime risk:** When a server IP changes, an IP-based record must be updated everywhere it appears, and any missed update silently breaks email or domain resolution.
-        - **Standards compliance:** DNS resolvers expect NS and MX records to reference hostnames, so literal IP addresses can cause unpredictable behavior or resolution failures.
-        - **Reduced exposure:** Hiding server IP addresses behind hostnames limits the reconnaissance and direct-targeting information available to attackers.
+        Resolvers and mail servers are entitled to treat the field as a name, and several of them do exactly that. They read the dotted quad as a hostname, look it up, get no answer, and give up. Because implementations fail differently, the symptom is partial: mail from some senders is delivered and mail from others bounces, while the zone looks correct to whoever configured it.
+
+        The operational cost compounds. A hostname is one place to change an address. A literal address is copied into every record that referenced it, and into every zone anyone else copied it into. When the mail server or nameserver moves, the record nobody remembered keeps pointing at the old address, which is frequently reassigned to someone else. Mail then gets delivered to whoever holds it now.
+
+        There is a disclosure cost as well. Publishing the address directly tells anyone reading the zone which host to attack, without the indirection a name allows, and it forecloses the operational moves that indirection buys: a failover that changes the address behind a stable name, a load-balanced set of mail servers, or a provider migration nobody outside has to notice.
+
+        Publish hostnames, give each one an address record, and confirm the result with `dig NS` and `dig MX`.
       audit: |
         Run the `dig NS <domain>` and `dig MX <domain>` commands and inspect the answer sections.
 
@@ -250,14 +259,19 @@ queries:
       dns.mx.all( domainName.downcase != "mail.global.bigfish.com." )
     docs:
       desc: |
-        This check verifies that a domain's MX records do not reference legacy Microsoft hosting endpoints such as `mail.outlook.com`, `mail.messaging.microsoft.com`, `mail.global.frontbridge.com`, or `mail.global.bigfish.com`. Current Microsoft 365 mail flow uses endpoints under `*.mail.protection.outlook.com`.
+        This check verifies that the domain's `MX` records do not point at Microsoft's retired mail endpoints.
+
+        Four hostnames are checked: `mail.outlook.com`, `mail.messaging.microsoft.com`, `mail.global.frontbridge.com`, and `mail.global.bigfish.com`. Each belonged to an earlier generation of Microsoft's hosted mail, back through Forefront Online Protection and FrontBridge. A current Microsoft 365 tenant publishes a single record under `*.mail.protection.outlook.com`, and the exact value for a domain is shown in the Microsoft 365 admin center under Settings and then Domains. Replace the legacy records with that value at preference `0` in your DNS provider's control panel.
 
         **Why this matters**
 
-        - **Email delivery:** Legacy endpoints may route mail to obsolete servers, causing delivery failures or delays.
-        - **Security exposure:** Routing mail through outdated or untrusted servers can expose traffic to spoofing, phishing, and interception.
-        - **Microsoft 365 compatibility:** Microsoft 365 expects MX records under `*.mail.protection.outlook.com` so spam filtering and transport encryption work as designed.
-        - **Operational simplicity:** Removing stale records reduces the surface for misconfiguration during troubleshooting and migrations.
+        An `MX` record naming a retired endpoint is a public statement about where your mail goes, and mail follows it. Where the hostname no longer resolves, messages queue at the sender and bounce after several days, and the sender is the one who finds out. Where it does still resolve, the traffic is reaching infrastructure that is no longer part of your tenant, so it bypasses the filtering, the transport encryption negotiation, and the mail flow rules your tenant applies.
+
+        That gap is where an attacker operates. Phishing sent to your users along a path that never touches Microsoft 365 anti-spam arrives without the checks that would have caught it, and quarantine and reporting show nothing, because the message was never seen.
+
+        The stale record is also a reconnaissance signal. An attacker enumerating the zone reads a retired endpoint and infers that the mail configuration has not been reviewed since the migration, which makes the domain a promising target for spoofing attempts and for probing the rest of the zone.
+
+        Publish the current endpoint, delete the four legacy names, and confirm the zone with a `dig MX` query.
       audit: |
         Run the `dig MX <domain>` command and inspect the answer section.
 
@@ -324,14 +338,19 @@ queries:
         containsOnly(["aspmx.l.google.com.", "alt1.aspmx.l.google.com.", "alt2.aspmx.l.google.com.", "alt3.aspmx.l.google.com.", "alt4.aspmx.l.google.com."])
     docs:
       desc: |
-        This check verifies that a domain routing mail through Google sends it only to the canonical Google Workspace endpoints — `aspmx.l.google.com` and the `alt1` through `alt4` variants. Records under `l.google.com` that point anywhere else indicate a stale or incorrect configuration.
+        This check verifies that a domain routing mail through Google Workspace publishes only the canonical Google mail endpoints, with no stale host left behind under the same suffix.
+
+        The records live at the zone apex in your DNS provider's control panel. Google Workspace expects five `MX` records: `aspmx.l.google.com` at preference 1, then `alt1.aspmx.l.google.com` and `alt2.aspmx.l.google.com` at 5, then `alt3.aspmx.l.google.com` and `alt4.aspmx.l.google.com` at 10. The check looks at every record whose target sits under `l.google.com` and requires that set to contain nothing but those five.
 
         **Why this matters**
 
-        - **Reliable delivery:** Routing mail to the canonical Google Workspace servers ensures messages reach their intended recipients without delay.
-        - **Reduced exposure:** Keeping mail flow on Google's published endpoints prevents email from traversing untrusted or incorrect servers.
-        - **Feature availability:** Google Workspace spam protection, transport encryption, and account-based mail management depend on the correct MX endpoints.
-        - **Standards compliance:** Matching Google's published DNS configuration minimizes the risk of service disruption.
+        An `MX` record decides where the internet delivers your mail, and anyone can read it. A record pointing at a host that is no longer yours hands mail to whoever controls that host: password resets, invoices, contract attachments, and anything else that arrives by email. The recipient never sees a failure, because delivery succeeded, and the sender has no way to know their message went somewhere else.
+
+        Stale endpoints under `l.google.com` are usually left behind by a migration, a decommissioned regional relay, or a zone file copied between domains. They keep receiving mail for as long as they resolve, and because the domain still works for everyone, nobody investigates.
+
+        Delivering through the canonical endpoints is also what makes Google Workspace's own protections apply. Spam and phishing filtering, transport encryption negotiation between sending servers, and the account-level controls over what happens to a message all sit behind those hosts. Mail that reaches a mailbox by some other path skipped every one of them.
+
+        Publish the five records, delete anything else pointing into Google's mail infrastructure, and confirm the result with a `dig MX` query rather than trusting the control panel view.
       audit: |
         Run the `dig MX <domain>` command and inspect the answer section.
 
@@ -410,14 +429,19 @@ queries:
     mql: dns.dnssec.enabled
     docs:
       desc: |
-        This check verifies that DNSSEC (Domain Name System Security Extensions) is enabled for a domain by confirming that DNSKEY records are published for the zone. DNSSEC adds cryptographic signatures that let resolvers authenticate DNS responses.
+        This check verifies that the domain is signed with DNSSEC, by confirming that the zone publishes `DNSKEY` records.
+
+        Signing is enabled at the DNS host, which generates the keys and starts serving `DNSKEY` and `RRSIG` records alongside the existing data. That is only half of it. The registrar must then publish a `DS` record in the parent zone, and until it does, resolvers have no trust anchor to validate against and the signatures are ignored. Where the host and the registrar are the same company, confirm it published the `DS` rather than assuming so, and verify from outside with a `dig DS` query.
 
         **Why this matters**
 
-        - **Spoofing prevention:** Signed responses let resolvers detect forged answers, blocking DNS spoofing.
-        - **Cache poisoning resistance:** Cryptographic validation stops poisoned records from being accepted into resolver caches.
-        - **Data integrity:** Digital signatures on DNS records prove the data was not altered in transit.
-        - **Standards compliance:** Many security frameworks recommend or require DNSSEC for internet-facing domains.
+        DNS answers are unauthenticated by default, so the safety of a name rests on an attacker not being able to answer first. Anyone who can, does. An attacker on the same network as the client, or one who can get a forged response accepted by a resolver, answers a query for your hostname with an address they control, and every connection that follows goes to their server. From there they collect credentials, serve modified content, or hold the connection open while they answer a certificate challenge and get a genuine certificate issued for your name.
+
+        Cache poisoning makes that scale. A single accepted forgery sits in a resolver's cache and redirects every user behind it until the entry expires, and the operator of the domain sees nothing, because their own servers are answering normally for everyone else.
+
+        DNSSEC closes both routes by signing the records. A validating resolver checks the signature against the chain from the root and discards an answer that does not verify, so a forged response is rejected instead of cached.
+
+        Watch signature expiry and key rollover after enabling it, since a zone whose signatures lapse fails closed for validating resolvers.
       audit: |
         Run the `dig DNSKEY <domain>` command and inspect the answer section.
 
@@ -512,14 +536,19 @@ queries:
       dns(fqdn: "mondoo-wildcard-probe-x7f3q9." + dns.fqdn).records.where(type == "A") == empty
     docs:
       desc: |
-        This check verifies that a domain has no wildcard DNS records, such as a record whose name begins with `*`. A wildcard makes every undefined subdomain resolve to a single target, including names the operator never intended to publish.
+        This check verifies that the zone publishes no wildcard record, meaning a record whose owner name is `*` and which therefore answers for every label nobody defined explicitly.
+
+        Detection works by asking for a name that should not exist. An answer for an invented subdomain means a wildcard expanded it. The fix in your DNS provider's control panel is to enumerate the subdomains currently depending on the wildcard, publish an explicit `A` or `CNAME` record for each, and only then delete the wildcard.
 
         **Why this matters**
 
-        - **Reduced attack surface:** Without a wildcard, an attacker cannot summon arbitrary subdomains that resolve to your infrastructure.
-        - **Abuse resistance:** Explicit records prevent attacker-chosen subdomains from being used for phishing, malware distribution, or impersonation.
-        - **Resolution control:** Defining each subdomain explicitly keeps traffic routed only to names the operator deliberately published.
-        - **Standards compliance:** Security best practices discourage wildcard DNS records on production domains.
+        A wildcard makes every name an attacker invents resolve to your infrastructure, and the name is what users and filters trust. An attacker who can get content served from your servers, through a hosted-content path, an open redirect, or a virtual host that answers with a default site, now serves it from `login-secure.example.com` or `billing-update.example.com`, hostnames that did not exist until they typed them. Those names carry your registrable domain, they resolve, and a certificate authority will issue for them on request, so the phishing page arrives with a valid certificate and a padlock.
+
+        The same property defeats controls written in terms of names. Cookies scoped to the parent domain are sent to the invented host. Content policies, mail filters, and proxy allowlists that trust your domain trust it too. Takedown is slower, because the abusive name is genuinely yours.
+
+        A wildcard also erases the boundary of what you expose. Nobody can enumerate what the zone answers for, so an inventory of your public surface cannot be produced from the zone at all.
+
+        Where a wildcard is genuinely required, a multi-tenant product provisioning customer subdomains on demand being the usual case, keep it deliberate. Document why it exists and monitor which names actually get requested, because the wildcard answers for every name an attacker invents.
       audit: |
         A wildcard is detected by asking for a name that should not exist. If the zone answers for an arbitrary label, a wildcard is expanding it.
 
@@ -611,14 +640,17 @@ queries:
       dns.records.where(type == "NS").first.rdata.length >= 2
     docs:
       desc: |
-        This check verifies that a domain publishes at least two authoritative nameservers in its NS records. A single nameserver is a single point of failure for the entire domain.
+        This check verifies that the domain is delegated to at least two authoritative nameservers.
+
+        The `NS` records at the zone apex list them, and the registrar's delegation in the parent zone must name the same set. Most managed DNS providers assign four nameservers on separate networks when the zone is created, so this usually passes on its own, and a single `NS` record generally means a hand-built zone or a self-hosted nameserver. RFC 1034 has recommended multiple nameservers for a domain since the protocol was defined.
 
         **Why this matters**
 
-        - **High availability:** Redundant nameservers keep the domain resolvable even if one server suffers an outage or network disruption.
-        - **Attack resilience:** Spreading authority across multiple nameservers makes the domain harder to take offline with a targeted DDoS.
-        - **Standards compliance:** RFC 1034 recommends multiple nameservers for every domain.
-        - **Query performance:** Geographically distributed nameservers reduce resolution latency for end users.
+        One nameserver is one machine standing between your domain and the internet. When it stops answering, every name under the domain becomes unresolvable as soon as the cached records expire. That is not only the website. Mail stops being delivered because the `MX` lookup fails, certificate renewal stops because the issuance challenge cannot be resolved, and monitoring that reaches your services by name goes dark alongside the services, so the outage is invisible in exactly the tooling meant to report it.
+
+        A single nameserver is also the cheapest denial of service target available. There is no need to attack the application, the load balancer, or the origin. Saturating one address takes the whole domain offline, and it takes it offline for everyone rather than for the users routed to one region. Spreading authority across nameservers on different networks, ideally at two providers, means an attacker has to hold all of them down at once, and a provider-wide outage does not automatically become your outage.
+
+        Publish the `NS` records in the zone and confirm the registrar's delegation matches. The two are separate records in separate places, and a domain whose zone lists redundant nameservers while the parent delegates to one is still delegated to one.
       audit: |
         Run the `dig NS <domain>` command and inspect the answer section.
 
@@ -709,14 +741,17 @@ queries:
     mql: dns.records.where(type.in(["A", "AAAA"])).all(ttl == null || ttl >= 60)
     docs:
       desc: |
-        This check verifies that A and AAAA records do not carry suspiciously low TTL (Time-To-Live) values below 60 seconds. The TTL controls how long resolvers cache a record before querying the authoritative server again.
+        This check verifies that the `A` and `AAAA` records in the zone carry a TTL of at least 60 seconds.
+
+        The TTL is the per-record field telling resolvers how long they may cache an answer, set in the TTL column of your DNS provider's control panel. Production address records normally sit between 300 and 3600 seconds. The check accepts any value of 60 or above, and also accepts a record whose TTL the provider does not report.
 
         **Why this matters**
 
-        - **Fast-flux resistance:** Malware and botnets use very low TTLs to rotate IP addresses rapidly; a sensible floor makes that pattern stand out.
-        - **Reduced attack surface:** Higher TTLs mean fewer DNS queries, lowering exposure to spoofing and cache poisoning.
-        - **Performance:** Reasonable TTLs improve caching and reduce load on authoritative nameservers.
-        - **Configuration hygiene:** A TTL left very low after a migration or troubleshooting session often signals an incomplete change.
+        A TTL of a few seconds is the signature of fast flux, the technique malware operators use to keep a command-and-control name alive by rotating it through a large pool of compromised hosts. Legitimate services rarely need it, so a very short TTL on a production record is worth explaining rather than accepting. Where a domain has been taken over, the shortened TTL is often the first visible change, because it is what lets the attacker move the name quickly and move it back just as quickly if they are noticed.
+
+        The more common cause is more mundane and still worth fixing. A TTL is dropped to 60 seconds or less ahead of a migration so the cutover propagates quickly, and then nobody restores it. The record stays that way for years, and every resolver on the internet re-queries your nameservers for it constantly. That multiplies query load, and it converts any brief nameserver unavailability into an immediate outage, because almost nothing is still cached to ride it out.
+
+        Raise the value once a cutover is finished, and treat a low TTL on a record with no migration in progress as a change to investigate rather than as a preference somebody expressed.
       audit: |
         Run the `dig <domain>` command and inspect the TTL column of the A and AAAA records in the answer section.
 
