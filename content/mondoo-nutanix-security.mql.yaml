@@ -119,18 +119,19 @@ queries:
       nutanix.clusters.where(clusterType == "AOS").all(encryptionScopes.length > 0)
     docs:
       desc: |
-        This check ensures that data-at-rest encryption is enabled on each AOS storage cluster. Without encryption, the data written to physical drives is recoverable by anyone who gains physical access to a disk that is decommissioned, stolen, or returned under warranty.
+        This check verifies that each AOS storage cluster has data-at-rest encryption turned on with a configured scope.
+
+        Encryption is enabled under Settings, then Data-at-Rest Encryption, where you choose the key manager and then the scope, either the whole cluster or individual storage containers. The cluster can use software encryption, self-encrypting drives, or hardware encryption depending on what the hardware supports. There is no command that enables it; `ncli data-at-rest-encryption get-status` on a Controller VM only reports the result.
 
         **Why this matters**
 
-        - **Physical theft:** Encrypted drives are unreadable when removed from the cluster, defeating drive theft and improper disposal.
-        - **Regulatory data protection:** Many frameworks require sensitive data to be encrypted while stored.
-        - **Defense in depth:** Encryption protects data even when other controls, such as access control on the array, are bypassed.
+        Everything the cluster stores ends up on physical drives that eventually leave your control. Drives fail and are returned to the vendor under warranty, nodes are decommissioned and resold, and disks are pulled during a hardware swap and set aside. Any of those drives, read outside the cluster with ordinary tools, yields the extents that made up guest virtual disks: databases, credential files, and whatever the workloads on this cluster hold.
 
-        **Risk mitigation**
+        Theft is the sharper version of the same exposure. A drive removed from a rack in a shared or remote facility travels easily, and a plaintext drive gives the person holding it access to data from every VM whose disks touched it, without any credential and without ever appearing in a log.
 
-        - **Confidentiality at rest:** Software, self-encrypting drive, or hardware encryption renders stored data unintelligible without the keys.
-        - **Safe decommissioning:** Cryptographic erasure lets you retire drives without physically destroying them.
+        Encryption also changes what decommissioning costs. Destroying the keys makes the media unreadable, so drives can be retired without physical destruction and without a chain-of-custody argument about who handled them.
+
+        Plan this before you enable it. Software encryption cannot be turned off once it is on, and switching key managers afterward means rekeying the cluster, so decide first whether keys will live with the cluster's local key manager or with an external key management server, which a companion check in this policy requires.
       audit: |
         ### Audit via Console
 
@@ -184,18 +185,19 @@ queries:
       nutanix.clusters.where(clusterType == "AOS").all(encryptionInTransitStatus == "ENABLED")
     docs:
       desc: |
-        This check ensures that encryption-in-transit is enabled on each AOS cluster so that replication and storage traffic between nodes is protected on the wire. When in-transit encryption is disabled, an attacker positioned on the storage or backplane network can read or tamper with data as it moves between Controller VMs.
+        This check verifies that each AOS cluster encrypts the traffic that moves between its nodes.
+
+        The setting is enabled in Prism Element for the cluster, under Settings, then Data-in-Transit Encryption, or with `ncli cluster edit-params enable-intransit-encryption=true` on a Controller VM. Either way the cluster applies it to every node in a rolling change, and the clustermgmt v4 API reports the result as `encryptionInTransitStatus` with a value of ENABLED.
 
         **Why this matters**
 
-        - **Network eavesdropping:** Unencrypted inter-node traffic exposes data to anyone who can sniff the storage network.
-        - **Tampering:** Without integrity protection, replicated data can be altered in flight.
-        - **Lateral movement:** A compromised host on the backplane can harvest data destined for other nodes.
+        A Nutanix cluster is a distributed storage system, so a guest's write does not stay on the node that received it. It is replicated to another node over the backplane network, and reads are served across the same path. With in-transit encryption off, that traffic is the contents of guest disks in the clear on the wire: database pages, files, and anything the workload wrote.
 
-        **Risk mitigation**
+        Anyone with a capture point on that network reads it. A mirrored switch port, a compromised host that shares the segment, or a device plugged into the storage VLAN gives an attacker a stream of live guest data without touching any VM, authenticating to Prism, or leaving a trace in the cluster's own logs. Because the traffic is unauthenticated as well as unencrypted, a well-positioned attacker can alter replicated data in flight, so the second copy quietly differs from the first.
 
-        - **Confidentiality in transit:** TLS protects replication and RPC traffic between nodes.
-        - **Integrity:** Authenticated transport detects modification of data in flight.
+        The backplane is usually a dedicated network, and that is why the encryption gets skipped. The assumption holds only until something else appears on the same VLAN, which a mis-tagged guest interface or a flat management network does routinely.
+
+        The rolling apply means the cluster works through every node, so run it during a window where you can tolerate node-by-node change, and confirm data resiliency is healthy before you start.
       audit: |
         ### Audit via Console
 
@@ -262,18 +264,19 @@ queries:
       nutanix.clusters.where(clusterType == "AOS").all(network.keyManagementServerType == "EXTERNAL")
     docs:
       desc: |
-        This check ensures that encryption keys are managed by an external key management server (KMS) rather than stored locally on the cluster. When the cluster holds its own keys, an attacker who compromises the cluster can obtain both the ciphertext and the keys, defeating encryption entirely.
+        This check verifies that each AOS cluster protects its encryption keys with an external key management server rather than its own local key manager.
+
+        The server is registered under Settings, then Key Management Server, with its address and KMIP port, the default being 5696, along with a client certificate and the CA certificate. Registering it is not enough: under Settings, then Data-at-Rest Encryption, the key manager must also be switched from the local key manager to the external one and the cluster rekeyed. From a Controller VM the equivalent is `ncli key-management-server add` followed by `ncli key-management-server change-key-management-server-type key-management-server-type=ekm`, where `ekm` selects the external manager and `lkm` the local one.
 
         **Why this matters**
 
-        - **Key and data separation:** Keeping keys off the cluster means a single compromise does not yield both data and keys.
-        - **Centralized lifecycle:** An external KMS provides rotation, revocation, and auditing of key usage.
-        - **Compliance:** Several frameworks expect cryptographic keys to be managed in a dedicated, hardened key store.
+        Encryption at rest only helps if the keys are somewhere the attacker does not already stand. With the local key manager, the ciphertext and the key that opens it live on the same cluster, so an attacker who reaches a Controller VM with sufficient privilege obtains both at once and the encryption has cost them nothing. The same is true of a stolen node rather than a stolen drive, since the node carries its share of the key material with it.
 
-        **Risk mitigation**
+        Separating them means the cluster must ask a system it does not control for the key every time it needs one, and that system can refuse. When you discover a compromise, revoking at the key management server renders the cluster's data unreadable immediately, which is a containment action you do not otherwise have.
 
-        - **Reduced blast radius:** Revoking keys at the KMS renders cluster data inaccessible after a breach.
-        - **Auditable access:** Key operations are logged centrally and independently of the cluster.
+        It also produces an independent record. Key requests are logged where the cluster cannot alter them, so an unusual pattern of key access is visible even if the cluster's own logs have been tampered with.
+
+        Confirm the server speaks KMIP before you start, and treat its availability as a dependency: a cluster whose key manager is unreachable at boot cannot bring encrypted storage online.
       audit: |
         ### Audit via Console
 
@@ -338,18 +341,19 @@ queries:
       nutanix.clusters.all(isPasswordRemoteLoginEnabled == false)
     docs:
       desc: |
-        This check ensures that password-based SSH login to the cluster is disabled so that Controller VM and host access requires key-based authentication. Password SSH access to the cluster is a direct target for brute-force and credential-stuffing attacks, and a single guessed password yields administrative control of the storage stack.
+        This check verifies that SSH access to the cluster requires a key rather than a password.
+
+        The control is Cluster Lockdown, found under Settings in Prism, where you add the SSH public keys that should have administrative access and then turn off Remote Login With Password. From a Controller VM the same change is `ncli cluster edit-params enable-password-remote-login=false`, and `ncli cluster get-params` reports the current state. Add your keys and confirm they work before disabling passwords.
 
         **Why this matters**
 
-        - **Brute-force exposure:** Password authentication can be attacked automatically and at scale.
-        - **Privileged blast radius:** Cluster SSH access exposes the storage controllers that every workload depends on.
-        - **Credential reuse:** Shared or reused passwords compromise the cluster when leaked elsewhere.
+        SSH on a Nutanix cluster reaches the Controller VMs, which are the storage stack. An account there does not manage one machine; it sits underneath every VM the cluster runs, with access to the storage containers holding their virtual disks and to the cluster's own configuration and key material.
 
-        **Risk mitigation**
+        Password authentication exposes that to guessing at whatever rate an attacker chooses. The usernames are not secret, they are the documented Nutanix defaults, and a password reused from another system or weak enough to appear in a wordlist gets tried and works without any exploit being involved. Automated credential-stuffing runs find management interfaces on any network they can route to, and there is nothing to slow them down.
 
-        - **Key-only authentication:** SSH keys defeat password-guessing campaigns.
-        - **Accountability:** Per-user keys tie cluster access to identifiable operators.
+        The consequence lands where the guests cannot see it. An attacker on a Controller VM reads guest data from the storage layer directly, and none of the operating systems running above notice anything, because from inside a VM the storage controller is invisible.
+
+        Key-based access removes the guessable path entirely and, when each administrator has their own key, ties every session to a person instead of a shared secret. Keep a documented recovery route through the node console or IPMI before you make the change, since a cluster with no working keys and no passwords is reachable only out of band.
       audit: |
         ### Audit via Console
 
@@ -406,18 +410,19 @@ queries:
       nutanix.clusters.all(isRemoteSupportEnabled == false)
     docs:
       desc: |
-        This check ensures that the Nutanix remote support tunnel is disabled. The remote support tunnel opens an outbound connection that lets Nutanix support access the cluster; left on permanently, it is a standing remote access path into the storage controllers that sits outside your normal access controls.
+        This check verifies that the remote support tunnel is closed.
+
+        Remote support is switched off under Settings, then Remote Support in Prism, or with `ncli cluster stop-remote-support` on a Controller VM, and `ncli cluster get-params` reports its state. The tunnel opens an outbound connection from the cluster that lets Nutanix support reach it, which is intended to be turned on for the duration of a case and turned off again afterward.
 
         **Why this matters**
 
-        - **Standing access path:** A persistent support tunnel is an always-available entry point into the cluster.
-        - **Reduced visibility:** Access through the vendor tunnel may bypass your own authentication and logging.
-        - **Least functionality:** Disabling unused remote access reduces the attack surface.
+        While the tunnel is open, there is a live inbound path to the Controller VMs that your own network controls do not govern. It is outbound-initiated, so the firewall rules you wrote to restrict who may reach the cluster do not apply to it, and the authentication that gates the far end belongs to the vendor rather than to you. Your identity provider, your second factor, and your access reviews are all outside the loop.
 
-        **Risk mitigation**
+        That makes it an attractive target rather than a theoretical one. An attacker who compromises the vendor's support tooling or a support engineer's credentials arrives at the cluster through a channel you are not watching, with privileges appropriate to fixing storage problems, which means access to the containers holding every guest's disks. Sessions through the tunnel also do not necessarily land in the logs you review, so the first sign of misuse may be the effect rather than the access.
 
-        - **On-demand only:** Enable the tunnel only for the duration of an active support case, then disable it.
-        - **Controlled maintenance:** Vendor access becomes a deliberate, time-boxed action rather than a default-on service.
+        Left on permanently, the tunnel is a standing entry point that exists for the convenience of a support case that closed months ago.
+
+        The control is procedural as much as technical. Enable it when a case genuinely needs it, agree with the engineer when the work is finished, and disable it the same day, so vendor access is a deliberate, time-boxed act rather than a background condition of running the cluster.
       audit: |
         ### Audit via Console
 
@@ -474,18 +479,19 @@ queries:
       nutanix.clusters.where(clusterType == "AOS").all(redundancyFactor >= 2)
     docs:
       desc: |
-        This check ensures that each AOS cluster uses a redundancy factor of at least 2 so that data remains available after the loss of a node or disk. A redundancy factor of 1 keeps only a single copy of data, meaning any single drive or node failure causes permanent data loss and an outage for every workload on the cluster.
+        This check verifies that each AOS cluster keeps at least two copies of the data it stores.
+
+        The redundancy factor is set when a cluster is created and is reported by `ncli cluster get-redundancy-state` on a Controller VM or on the cluster details page in Prism Element. A factor of 2 means every write is committed to two nodes before it is acknowledged; a factor of 1 means a single copy exists anywhere in the cluster.
 
         **Why this matters**
 
-        - **Single point of failure:** With one copy of data, a single hardware failure is unrecoverable.
-        - **Availability:** Redundancy lets the cluster keep serving data while a failed component is replaced.
-        - **Ransomware and corruption resilience:** Multiple copies support recovery from localized data damage.
+        At redundancy factor 1 the cluster has no answer to ordinary hardware failure. A single drive failure permanently destroys the only copy of whatever extents lived on it, and those extents belong to guest virtual disks scattered across the cluster, so the damage is not confined to one VM. A node failure takes out everything it held at once. There is no rebuild, no degraded mode, and no recovery short of restoring from a backup, if one exists and is recent.
 
-        **Risk mitigation**
+        The metadata layer is affected the same way. Cassandra and Zookeeper hold the cluster's own state, and without a second copy the loss of one node can leave the cluster unable to assemble a consistent view of where data lives, which turns a single component failure into a cluster-wide outage rather than a degraded one.
 
-        - **Fault tolerance:** A redundancy factor of 2 tolerates the loss of one node or disk without data loss.
-        - **Continuous operation:** Workloads stay online while the cluster self-heals.
+        Redundancy is also what makes routine maintenance safe. Patching a node, replacing a disk, and upgrading AOS all involve taking a node out of service, and at factor 1 each of those is a window in which data is unavailable rather than merely less protected.
+
+        Raising the factor on an existing cluster is not a setting toggle. It requires enough nodes for the target, enough free capacity for the extra copy, and on many AOS releases it is not offered as an in-place edit at all. Treat it as a planned change, and coordinate with Nutanix Support where the release does not expose it.
       audit: |
         ### Audit via Console
 
@@ -551,18 +557,19 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that each AOS cluster is actually prepared to meet its desired fault tolerance: the metadata (Cassandra) and configuration (Zookeeper) ensembles are ready and the current fault tolerance is above zero. A cluster can be configured for redundancy yet temporarily unable to deliver it while ensembles rebuild, leaving a window where a failure causes data loss despite the configured policy.
+        This check verifies that each AOS cluster can currently deliver the fault tolerance it is configured for.
+
+        Three conditions have to hold together: the Cassandra metadata ring and the Zookeeper configuration ensemble both report their preparation complete, and the cluster's current fault tolerance is above zero rather than the state meaning no node and no disk failure can be absorbed. Prism Element shows this in the Data Resiliency Status widget on the cluster dashboard, and `ncli cluster get-domain-fault-tolerance-status type=node` reports it from a Controller VM.
 
         **Why this matters**
 
-        - **Configured versus actual:** A redundancy policy provides no protection if the ensembles cannot currently satisfy it.
-        - **Metadata loss:** Cassandra and Zookeeper hold cluster-critical state; losing quorum can take the whole cluster offline.
-        - **Hidden risk window:** Operators may believe the cluster is protected when it is not.
+        Configured redundancy and delivered redundancy are different things, and the gap between them is invisible from the configuration. A cluster set to keep two copies is only keeping two copies when the rebuild that follows a disk replacement has finished, the metadata ring has re-formed after a node was added or removed, and there is enough free capacity to place the second copy at all. While any of those is outstanding, the cluster is running on one effective copy of some of its data while reporting the policy that says otherwise.
 
-        **Risk mitigation**
+        A failure during that window is unrecoverable in exactly the way redundancy exists to prevent, and the window is not short. Rebuilds on a large cluster run for hours, and a cluster near its capacity limit can sit unable to complete one indefinitely without anyone noticing, because nothing is failing yet.
 
-        - **Verified resilience:** Confirming ensemble readiness ensures the cluster can survive the loss it is configured to tolerate.
-        - **Early warning:** Detecting an unprepared state prompts remediation before a second failure.
+        The metadata ensembles carry the sharper risk. Cassandra and Zookeeper hold where every extent lives and what the cluster believes about itself, and losing quorum there takes the whole cluster offline rather than degrading one workload.
+
+        This check reports a condition, not a misconfiguration. Resolve the underlying cause, which is usually a failed component to replace, capacity to free, or a rebuild still in progress, rather than looking for a setting to change.
       audit: |
         ### Audit via Console
 
@@ -614,18 +621,19 @@ queries:
       nutanix.clusters.all(network.ntpServers.length > 0)
     docs:
       desc: |
-        This check ensures that NTP servers are configured on each cluster so that system clocks stay synchronized with an authoritative time source. Without reliable time, log timestamps drift, correlation across systems during an investigation becomes unreliable, and time-sensitive operations such as certificate validation and Kerberos authentication fail.
+        This check verifies that each cluster has at least one NTP server configured.
+
+        Time sources are added under Settings, then NTP Servers in Prism, or with `ncli cluster add-to-ntp-servers servers=<hosts>` on a Controller VM, and `ncli cluster get-ntp-servers` lists what is configured. Add at least two reachable sources so a single unavailable server does not leave the cluster unsynchronized.
 
         **Why this matters**
 
-        - **Audit integrity:** Accurate timestamps are essential for correlating events during incident response.
-        - **Authentication:** Kerberos and certificate checks fail when clocks drift too far.
-        - **Cluster operations:** Distributed storage operations depend on consistent time across nodes.
+        Time is a security dependency here, not just an operational nicety. Certificate validation compares notBefore and notAfter against the local clock, so a cluster whose time has drifted rejects valid certificates or, worse, accepts expired ones. Kerberos refuses tickets outside a tight skew, so directory authentication to Prism stops working when the clock moves. A cluster that cannot reach its key management server because the TLS handshake fails on a clock error cannot bring encrypted storage online.
 
-        **Risk mitigation**
+        The investigative cost is just as concrete. When you are reconstructing an incident, you correlate Prism events against guest logs, firewall logs, and directory logs, and that correlation is only possible if the timestamps agree. A cluster running minutes or hours off puts its own events in the wrong place in the sequence, which can hide the causal order entirely and makes the record hard to rely on if it is ever questioned.
 
-        - **Time synchronization:** NTP keeps every node aligned to a trusted source.
-        - **Forensic reliability:** Consistent time enables defensible event reconstruction.
+        An attacker who can influence unauthenticated time also gains something directly, since moving a clock can revive an expired credential or certificate and can push their activity out of the window a responder is examining.
+
+        Point the cluster at sources you control or trust rather than arbitrary public servers, keep every node in the cluster and the surrounding infrastructure on the same sources, and confirm the cluster actually synchronizes rather than only that the addresses were accepted.
       audit: |
         ### Audit via Console
 
@@ -682,18 +690,19 @@ queries:
       nutanix.clusters.all(network.nameServers.length > 0)
     docs:
       desc: |
-        This check ensures that DNS name servers are configured on each cluster. Name resolution underpins critical cluster functions including directory authentication, NTP, key management server reachability, alerting, and software upgrades. A cluster without name servers may silently fall back to cached or hardcoded behavior and fail these services in ways that are hard to diagnose.
+        This check verifies that each cluster has at least one DNS name server configured.
+
+        Resolvers are added under Settings, then Name Servers in Prism, or with `ncli cluster add-to-name-servers servers=<addresses>` on a Controller VM, and `ncli cluster get-name-servers` lists them. Configure at least two reachable resolvers so the loss of one does not stop resolution.
 
         **Why this matters**
 
-        - **Dependent services:** Directory, KMS, NTP, and alerting endpoints are commonly referenced by name.
-        - **Operational reliability:** Missing resolvers cause intermittent failures that are difficult to trace.
-        - **Security tooling:** Reaching external security and update services depends on working DNS.
+        Nearly every external dependency the cluster has is referenced by name. Directory servers for authentication, the key management server that holds encryption keys, NTP sources, the SMTP relay that carries alerts, and the upgrade and support endpoints are all configured as hostnames. Without a working resolver, each of those fails, and they fail in ways that do not point at DNS.
 
-        **Risk mitigation**
+        The security consequences are the visible ones. Directory authentication stops, which pushes operators onto local accounts that bypass your identity provider and its second factor. The key management server becomes unreachable, so encrypted storage cannot be brought online after a restart. Alert email stops being delivered, so the cluster continues to detect problems and nobody hears about them, which is indistinguishable from a healthy cluster right up until something fails hard.
 
-        - **Consistent resolution:** Configured name servers ensure dependent services resolve reliably.
-        - **Predictable behavior:** Explicit resolvers remove reliance on undocumented fallbacks.
+        Partial resolution is worse than none, because it produces intermittent failures that get attributed to the dependent service rather than to name resolution, and the investigation goes to the wrong place.
+
+        Use resolvers you control, and treat them as part of the cluster's availability chain. A resolver that is itself hosted as a VM on this cluster creates a circular dependency that only shows up when you are trying to restart the cluster after an outage, which is exactly the moment you need name resolution to work.
       audit: |
         ### Audit via Console
 
@@ -750,18 +759,21 @@ queries:
       nutanix.clusters.where(network.smtpEmailAddress != "").all(network.smtpType != "PLAIN")
     docs:
       desc: |
-        This check ensures that, where a cluster is configured to send email, it uses STARTTLS or SSL rather than a plaintext SMTP connection. Cluster alert emails can disclose host names, IP addresses, software versions, and the nature of failures; sent in plaintext, this operational intelligence is readable by anyone on the network path.
+        This check verifies that a cluster configured to send email does so over an encrypted connection.
+
+        The SMTP relay is configured under Settings, then SMTP Server in Prism, where the security mode must be STARTTLS or SSL rather than none, with the matching port. From a Controller VM the equivalent is `ncli cluster set-smtp-server address=<host> port=587 security-mode=STARTTLS from-email-address=<address>`, and `ncli cluster get-smtp-server` reports the configured mode. Clusters with no sending address configured are out of scope, since they send nothing.
 
         **Why this matters**
 
-        - **Information disclosure:** Alert emails reveal infrastructure details useful to an attacker.
-        - **Credential exposure:** Plaintext SMTP with authentication can leak the relay credentials.
-        - **Tampering:** Unencrypted mail can be intercepted or altered in transit.
+        Cluster alert email is a running commentary on your infrastructure. Each message carries node names, management IP addresses, the AOS version in use, which component has failed, and how far a rebuild has progressed. Sent in plaintext, that stream is readable by anyone on the path between the cluster and the relay, which on a corporate network is a larger set of people and devices than it appears.
 
-        **Risk mitigation**
+        It is genuinely useful to an attacker. Knowing the version tells them which published vulnerabilities apply, knowing the node addresses tells them where the management plane lives, and knowing that a node is degraded or a rebuild is running tells them when the cluster is least able to absorb another problem and when operators are already distracted.
 
-        - **Encrypted transport:** STARTTLS or SSL protects alert content and any SMTP credentials.
-        - **Integrity:** TLS prevents interception and modification of cluster notifications.
+        If the relay requires authentication, plaintext SMTP also puts those credentials on the wire, and a relay account is frequently reused across other systems.
+
+        The messages can be altered as well as read. An attacker who can modify them in transit can suppress the alerts describing what they are doing while leaving normal traffic intact, so the cluster reports a problem and the operators never see it.
+
+        Set the mode and the port together, and send a test message afterward, since a mismatched port silently fails rather than falling back.
       audit: |
         ### Audit via Console
 
@@ -818,18 +830,19 @@ queries:
       nutanix.clusters.all(network.nfsSubnetWhitelist.all(_ != "0.0.0.0/0" && _ != "0.0.0.0" && _ != "0.0.0.0/0.0.0.0"))
     docs:
       desc: |
-        This check ensures that the cluster-wide NFS allowlist does not include a wide-open entry such as `0.0.0.0/0`. The global NFS allowlist controls which clients may mount cluster storage; an open entry lets any host on the network mount exported file systems and read or write the data they contain.
+        This check verifies that the cluster-wide filesystem allowlist does not contain a wide-open entry.
+
+        The allowlist is maintained under Settings, then Filesystem Whitelists in Prism, and it controls which client addresses may mount cluster storage over NFS. This check fails when it contains `0.0.0.0`, `0.0.0.0/0`, or `0.0.0.0/0.0.0.0`, all of which mean every address. Remove an open entry with `ncli cluster remove-from-nfs-whitelist` and add the specific subnets that genuinely need access with `ncli cluster add-to-nfs-whitelist`, both on a Controller VM.
 
         **Why this matters**
 
-        - **Unauthorized access:** An open allowlist exposes stored data to every reachable host.
-        - **Data tampering:** Writable NFS exports can be modified by unauthorized clients.
-        - **Lateral movement:** Open storage is a foothold for spreading across the environment.
+        The allowlist is the only authentication in front of these mounts. NFS as the cluster exposes it does not ask the client to prove anything; it trusts the source address and then trusts the client's own idea of which user is making each request. An open entry therefore means that any host able to route to the data services IP can mount the export and, by claiming to be root locally, read and write the files it contains.
 
-        **Risk mitigation**
+        Those files are guest virtual disks. An attacker who has compromised any machine on a network with a path to the cluster mounts the export from there and copies a database VM's disk image, or writes into one, without needing a Prism credential, without touching the VM, and without the guest operating system being able to detect it. The read looks like ordinary storage traffic.
 
-        - **Least access:** Restricting the allowlist to specific trusted subnets limits who can mount storage.
-        - **Network segmentation:** Explicit allowlist entries enforce a deny-by-default posture on storage exports.
+        Writes are the sharper risk. Modifying a running guest's disk from underneath it corrupts data or plants content the workload will later execute, and the cluster has no way to distinguish that from legitimate client activity.
+
+        Restrict the list to the specific subnets that mount cluster storage, review it when networks change, and remember that per-container allowlists can reopen access independently, which a companion check in this policy covers.
       audit: |
         ### Audit via Console
 
@@ -887,18 +900,19 @@ queries:
       nutanix.clusters.where(clusterType == "AOS").all(isLts == true)
     docs:
       desc: |
-        This check ensures that each AOS cluster runs a long-term-support (LTS) release. LTS releases receive maintenance and security fixes over an extended window, whereas short-term-support (STS) releases reach end of maintenance quickly and stop receiving security patches, leaving the cluster exposed to known vulnerabilities.
+        This check verifies that each AOS cluster runs a long-term-support release.
+
+        Nutanix publishes AOS in two streams. Long-term-support releases receive maintenance and security fixes over an extended window; short-term-support releases carry newer features and reach end of maintenance quickly. The running version is on the cluster details page in Prism Element and from `ncli cluster version` on a Controller VM, and which stream it belongs to is stated on the Nutanix support portal. Upgrades are applied through the Life Cycle Manager after running an inventory and the pre-upgrade checks.
 
         **Why this matters**
 
-        - **Patch availability:** Only supported releases receive security fixes for newly discovered vulnerabilities.
-        - **Predictable maintenance:** LTS releases provide a defined support lifecycle for planning upgrades.
-        - **Stability:** LTS branches prioritize stability and security over new features.
+        Once a release stops receiving maintenance, its known vulnerabilities stop being fixed but do not stop being published. Advisories continue to describe flaws in that code, so an attacker reading them has an accurate, dated list of what works against your cluster and you have no patch to apply. The only remedy at that point is an upgrade, which is a larger and riskier operation than the one you avoided.
 
-        **Risk mitigation**
+        What is exposed is the storage layer for every workload on the cluster. Controller VM services and the Prism interface are what these advisories concern, and a flaw there reaches guest data directly, underneath the operating systems that would otherwise be your line of defense.
 
-        - **Vulnerability management:** Running a supported release ensures fixes are available when needed.
-        - **Reduced exposure:** Avoiding end-of-life software removes a class of unpatchable risk.
+        Running an unsupported release also removes your escalation path. When something does go wrong, the vendor's first request is that you upgrade to a supported version, and doing that in the middle of an incident is far worse than doing it on a schedule.
+
+        The short-term stream exists for a reason and is a legitimate choice when you need a specific feature and have the operational capacity to keep upgrading on its faster cadence. Choose it deliberately, and do not select a version by copying a number out of documentation, since the current supported release moves and a stale value mis-targets the download.
       audit: |
         ### Audit via Console
 
@@ -962,18 +976,19 @@ queries:
       nutanix.hosts.all(isSecureBooted == true)
     docs:
       desc: |
-        This check ensures that UEFI Secure Boot is enabled on each hypervisor host. Secure Boot verifies the cryptographic signature of the bootloader and kernel before they execute, preventing a tampered or malicious boot chain from loading. Without it, an attacker with low-level access can install a bootkit that survives reinstalls and evades the operating system.
+        This check verifies that UEFI Secure Boot is enabled on every hypervisor host.
+
+        Secure Boot is a firmware feature, so it is enabled in each host's own firmware setup rather than in Prism, and Prism Central then reports the resulting state per host under Hardware. Enabling it requires UEFI firmware and host downtime: place the host in maintenance mode so its VMs migrate off, shut down the Controller VM running on it, reboot into firmware setup, turn on UEFI and Secure Boot, and bring the host back before moving to the next one.
 
         **Why this matters**
 
-        - **Boot integrity:** Secure Boot blocks unsigned or modified boot components from running.
-        - **Persistence resistance:** It defeats bootkits and rootkits that load before the OS.
-        - **Supply chain assurance:** Only firmware-trusted code is allowed to start the host.
+        Secure Boot checks the signature of each stage of the boot chain before handing control to it, so firmware only starts a signed bootloader and that bootloader only starts a signed kernel. Without it, nothing verifies what the machine loads, and an attacker who has gained sufficient access to write to the boot device installs their own code beneath the hypervisor.
 
-        **Risk mitigation**
+        That position is the worst one available. A bootkit runs before the kernel, so it can modify the kernel as it loads and remain invisible to everything running afterward, including any security tooling on the host and every guest above it. It survives reinstalling the hypervisor, because reinstallation replaces the operating system and not the compromised boot path, so the usual response to a suspected compromise leaves it in place.
 
-        - **Verified boot chain:** Each stage validates the next before handing off control.
-        - **Tamper detection:** A modified bootloader fails signature verification and is refused.
+        A hypervisor host is where that matters most. Code running underneath the kernel sits underneath the memory of every VM on the node and can read guest data, alter what the storage layer writes, and lie to the management plane about all of it. The guests have no means of detecting any of it.
+
+        Work one host at a time and confirm the cluster reports healthy data resiliency before each, since the procedure removes a node from service.
       audit: |
         ### Audit via Console
 
@@ -1044,18 +1059,19 @@ queries:
       nutanix.hosts.all(ipmi.username != "ADMIN" && ipmi.username != "admin" && ipmi.username != "root" && ipmi.username != "")
     docs:
       desc: |
-        This check ensures that the IPMI/BMC out-of-band management interface on each host does not use a default vendor username such as `ADMIN`. The IPMI interface provides complete out-of-band control of the physical server, including power, console, and firmware; default credentials on this interface are a well-known target and grant an attacker total control of the host below the hypervisor.
+        This check verifies that no host's IPMI interface still uses a vendor default account name such as `ADMIN`, `admin`, or `root`.
+
+        IPMI, the baseboard management controller, is administered from the host's own BMC web interface rather than from Prism, though Prism Central shows the configured username under Hardware. Create a new administrative account with a unique name and a strong password, verify you can log in with it, and only then disable or rename the default. Changing the default account's password is not sufficient; the default name must no longer be in use.
 
         **Why this matters**
 
-        - **Total host control:** IPMI access allows power control, virtual media, and console regardless of the OS.
-        - **Well-known defaults:** Default BMC usernames and passwords are widely published and scanned for.
-        - **Below the hypervisor:** Compromise here is invisible to OS-level defenses.
+        The BMC is a separate computer inside the server with its own processor, its own network connection, and complete authority over the machine. Whoever logs into it can power the host off, attach a virtual CD image and boot the host from it, watch and drive the console, and reflash firmware, all without the hypervisor or any guest being aware.
 
-        **Risk mitigation**
+        Default BMC credentials are the most scanned-for thing in a datacenter. The vendor defaults are published in the manual, mass scanners look for them continuously, and a management network that is reachable at all will be found. An attacker who logs in boots the host from their own image, which gives them the contents of the local drives and the Controller VM that serves guest storage, and the guests running above see only that a node restarted.
 
-        - **Unique accounts:** Replacing default usernames removes a trivially guessable entry point.
-        - **Credential hygiene:** Distinct, managed BMC credentials tie access to accountable operators.
+        Because the BMC sits below the hypervisor, nothing running on the host can observe or prevent it. Host-based tooling, hypervisor logging, and guest security agents are all above the layer where the compromise happens.
+
+        Take care with the account slots. Slot numbers vary by BMC vendor, so read the current list before disabling anything, confirm the new account works first, and keep the BMC network segregated from general traffic regardless of which accounts exist on it.
       audit: |
         ### Audit via Console
 
@@ -1125,18 +1141,19 @@ queries:
       nutanix.hosts.all(isDegraded == false)
     docs:
       desc: |
-        This check ensures that no hypervisor host is flagged as degraded. Nutanix marks a node degraded when it detects persistent problems such as intermittent network connectivity, hardware errors, or unresponsive services. A degraded node still participates in the cluster but behaves unreliably, which can slow the whole cluster, corrupt data paths, and erode the redundancy the cluster depends on.
+        This check verifies that no host in the cluster is flagged as degraded.
+
+        AOS marks a node degraded when it detects persistent misbehavior rather than outright failure: intermittent network connectivity, hardware errors, or services that respond slowly or not at all. The state appears in the Hardware view and the alerts dashboard in Prism Element, and `ncli host list` reports it from a Controller VM. Clearing it is a two-step job: resolve the underlying cause, then mark the node as fixed in the Hardware view.
 
         **Why this matters**
 
-        - **Reduced resilience:** A degraded node consumes a fault-tolerance budget without reliably contributing capacity.
-        - **Performance impact:** Intermittent faults on one node can stall cluster-wide operations.
-        - **Failure precursor:** Degradation often precedes a full node failure.
+        A degraded node is worse than a failed one because the cluster cannot cleanly route around it. It still holds a copy of data and still claims a share of the fault tolerance budget, so the cluster believes it is protected while one of the copies it is counting on lives somewhere that responds unpredictably. A second failure elsewhere then finds the cluster with less real redundancy than its status suggests, and that is how a single hardware problem turns into data loss.
 
-        **Risk mitigation**
+        The effect spreads beyond the node itself. Distributed storage waits on its slowest participant, so a node with a flapping link or a failing disk stalls operations for guests running elsewhere, and the symptom shows up as unexplained latency across unrelated workloads.
 
-        - **Early detection:** Surfacing degraded nodes lets operators act before a hard failure.
-        - **Maintained redundancy:** Removing or repairing degraded nodes preserves the cluster's protection level.
+        Degradation is also a reliable precursor. Nodes marked degraded frequently fail outright soon afterward, so the flag is the warning that lets you replace a component during a maintenance window instead of during an outage.
+
+        Because clearing the flag is manual, a node can sit degraded long after the cause was fixed, and a persistently degraded node can also be a symptom of something in the surrounding network rather than the hardware. If a node returns to the degraded state repeatedly, involve Nutanix Support before putting it back into service.
       audit: |
         ### Audit via Console
 
@@ -1199,18 +1216,19 @@ queries:
       nutanix.vms.all(isCpuPassthroughEnabled == false)
     docs:
       desc: |
-        This check ensures that host CPU passthrough is disabled on virtual machines. CPU passthrough exposes the physical host's exact CPU model and feature flags directly to the guest. This narrows the isolation boundary between guest and host, leaks precise hardware details that aid targeting of CPU-level side-channel attacks, and prevents live migration to dissimilar hosts, weakening both security and resilience.
+        This check verifies that no virtual machine is configured with host CPU passthrough.
+
+        Passthrough presents the physical host's exact processor model and full feature set to the guest instead of an abstracted CPU. It is reviewed per VM in the Prism Central VM list and changed with `acli vm.update <vm-name> cpu_passthrough=false` on a Controller VM, with the VM powered off, since the CPU configuration is fixed while it runs.
 
         **Why this matters**
 
-        - **Isolation boundary:** Passing host CPU features through reduces the abstraction that separates guest from host.
-        - **Side-channel targeting:** Exact CPU details help an attacker select microarchitectural attacks.
-        - **Migration constraints:** Passthrough pins a VM to compatible hardware, undermining live migration and resilience.
+        The virtualized CPU model is part of the boundary between a guest and the hardware underneath it. Passing the real one through hands the guest an exact description of the silicon it is running on: the specific model, stepping, and every instruction set extension the host supports. That is precisely the information a microarchitectural attack needs, because those attacks depend on the details of a particular processor generation's cache structure, branch predictor, and speculation behavior.
 
-        **Risk mitigation**
+        An attacker inside a guest that would otherwise have to work blind can instead select the technique that matches the hardware and target the cores it shares with its neighbors. The other guests on that host have no visibility into it and no way to opt out.
 
-        - **Hardware abstraction:** A virtualized CPU model keeps host specifics from the guest.
-        - **Portability:** Disabling passthrough preserves live migration across the cluster.
+        There is an availability cost as well. A VM pinned to the host's exact CPU cannot live migrate to a node with a different processor, so it stops being movable across a mixed-generation cluster. That removes it from the maintenance and evacuation paths the cluster relies on, and the workload ends up staying on a node that needs patching or replacement.
+
+        Passthrough is sometimes required by a workload that needs an instruction set the abstracted model does not expose. Where it is, keep those VMs on nodes whose other guests belong to the same trust domain, and accept that they are not migratable.
       audit: |
         ### Audit via Console
 
@@ -1267,18 +1285,19 @@ queries:
       nutanix.vms.where(powerState == "ON").all(guestTools.isInstalled == true && guestTools.isReachable == true)
     docs:
       desc: |
-        This check ensures that Nutanix Guest Tools (NGT) is installed and reachable on every powered-on virtual machine. NGT provides the in-guest agent that enables application-consistent snapshots, self-service file restore, and accurate guest inventory. Without it, the platform has limited visibility into the guest and cannot take consistent backups, leaving recovery and asset tracking incomplete.
+        This check verifies that every powered-on virtual machine has Nutanix Guest Tools installed and communicating with the cluster.
+
+        NGT is enabled per VM from Prism Central through Manage Guest Tools, which mounts the installer ISO; the installer then has to be run inside the guest. On a Controller VM the equivalent is `ncli ngt enable vm-id=<id>` followed by `ncli ngt mount vm-id=<id>`, and `ncli ngt list` reports whether each VM's agent is installed and reachable. Both conditions are required, since an installed agent that cannot reach the cluster provides nothing.
 
         **Why this matters**
 
-        - **Consistent backups:** NGT enables application-consistent snapshots through VSS and file-system quiescing.
-        - **Asset visibility:** The agent reports guest OS and configuration details for inventory.
-        - **Recovery features:** Self-service restore depends on a working NGT agent.
+        Without the in-guest agent, a snapshot is a copy of the disk taken at an arbitrary instant while the workload is mid-write. A database captured that way is in the state it would be in after a power cut, and whether it recovers depends on its own crash recovery. Some do; some come back with a corrupt index or a truncated transaction, and you discover which during the restore, at the point where you needed the backup to work.
 
-        **Risk mitigation**
+        NGT is what turns that into a consistent snapshot. It coordinates with the guest, using the Volume Shadow Copy Service on Windows or filesystem quiescing elsewhere, so the workload flushes and pauses briefly and the resulting image is one the application can open cleanly. Self-service file restore depends on it as well, so without it the only recovery unit is the whole VM.
 
-        - **Reliable recovery:** Consistent snapshots reduce the risk of unrecoverable backups.
-        - **Accurate inventory:** Reachable agents keep guest records current.
+        The reachability half matters for visibility. The agent is how the platform learns the guest operating system and its configuration, so a VM without it is an inventory gap: nobody can answer what it runs or whether it is affected by a given advisory without logging into it.
+
+        The agent runs privileged inside every guest, so keep it current, which a companion check in this policy covers, and treat an unreachable agent as a real finding rather than noise.
       audit: |
         ### Audit via Console
 
@@ -1336,18 +1355,19 @@ queries:
       nutanix.vms.where(guestTools.isInstalled == true).all(guestTools.version == guestTools.availableVersion)
     docs:
       desc: |
-        This check ensures that, where Nutanix Guest Tools is installed, it is running the version available on the cluster. An outdated in-guest agent may contain known vulnerabilities and may fail to deliver the consistent-snapshot and inventory features the platform relies on. Keeping the agent current is patch management for a privileged component running inside every guest.
+        This check verifies that, where Nutanix Guest Tools is installed, it matches the version the cluster has available.
+
+        Prism Central lists the installed NGT version alongside the available one for each VM, and `ncli ngt list` reports both from a Controller VM. Updating is done from the Prism Element VM table by selecting the VMs with outdated agents and choosing Upgrade NGT, or by mounting the current installer with `ncli ngt mount` and rerunning it inside the guest.
 
         **Why this matters**
 
-        - **Vulnerability exposure:** Outdated agents may carry unpatched security flaws.
-        - **Feature reliability:** Newer NGT versions fix snapshot and quiescing bugs that affect recoverability.
-        - **Compatibility:** Matching the cluster version avoids agent-to-cluster protocol mismatches.
+        NGT is a privileged agent running inside every guest that has it. It holds a communication channel to the cluster, and on Windows it participates in the Volume Shadow Copy Service, which means it runs with rights an ordinary application does not have. A vulnerability in that agent is a vulnerability inside each guest, reachable from the cluster side, and patching it is patch management for software you deployed to every workload rather than an optional refresh.
 
-        **Risk mitigation**
+        Old agents also fail at the job they exist for. Quiescing and snapshot coordination are the parts that get fixed between releases, and a stale agent that reports success while failing to quiesce produces a snapshot that looks fine in the interface and turns out to be crash-consistent when you restore it. That failure is only discovered during a recovery.
 
-        - **Patch currency:** Updating NGT closes known agent vulnerabilities.
-        - **Dependable backups:** Current agents deliver reliable application-consistent snapshots.
+        Version drift between the agent and the cluster causes the same outcome by another route. When the cluster is upgraded and the agents are not, the protocol between them can mismatch, so the agent stops responding and the VMs it covers quietly lose application-consistent protection.
+
+        Upgrading NGT touches every guest, so stage it rather than doing the fleet at once, and confirm afterward that the agents report both the new version and a reachable state.
       audit: |
         ### Audit via Console
 
@@ -1410,18 +1430,19 @@ queries:
       nutanix.vms.all(protectionType != "UNPROTECTED")
     docs:
       desc: |
-        This check ensures that virtual machines are covered by a protection policy (a protection domain or a recovery/protection rule) rather than left unprotected. An unprotected VM has no automated snapshots or replication, so a ransomware event, accidental deletion, or storage failure results in permanent loss of that workload with no recovery point.
+        This check verifies that virtual machines are covered by a protection policy rather than left unprotected.
+
+        Protection is assigned in Prism Central under Data Protection, where a policy defines a snapshot schedule and, where applicable, a replication target, and VMs are attached to it individually or by category. The older equivalent is a protection domain, managed with `ncli protection-domain protect name=<pd> vm-names=<vms>` on a Controller VM. A VM covered by neither has no scheduled recovery point at all.
 
         **Why this matters**
 
-        - **Ransomware recovery:** Protected VMs can be restored to a clean recovery point after an attack.
-        - **Operational mistakes:** Snapshots recover from accidental deletion or corruption.
-        - **Disaster recovery:** Replication enables failover when a site or cluster is lost.
+        An unprotected VM has no restorable copy anywhere. If its disks are encrypted by ransomware, deleted by mistake, or corrupted by a storage fault, the workload is gone in the sense that matters: there is nothing to restore from and no earlier point to return to.
 
-        **Risk mitigation**
+        Ransomware is what makes this a security control rather than an operations one. Modern intrusions deliberately look for backups first and destroy or encrypt them before touching production, because a victim who can restore does not pay. Scheduled snapshots held by the cluster, and replicated to another site, are the thing that decides whether an incident is an expensive weekend or an extortion negotiation. Recovering also requires a recovery point from before the intrusion, which means the schedule has to reach back far enough that you can pick a clean one.
 
-        - **Recovery points:** Scheduled snapshots provide restorable copies of each workload.
-        - **Business continuity:** Replication supports recovery objectives during a disaster.
+        Replication addresses the case the local snapshots do not, where the site or the cluster itself is lost.
+
+        Assign policies by category rather than per VM where you can, so that a newly created workload inherits protection instead of waiting for someone to remember it. Not every VM warrants the same schedule, and a deliberately excluded scratch or test workload is a legitimate exception; make that exception explicit rather than leaving it as an oversight, and test a restore, because a policy that has never been exercised is an assumption.
       audit: |
         ### Audit via Console
 
@@ -1484,18 +1505,19 @@ queries:
       nutanix.directoryServices.all(usesLdaps && secondaryUrls.all(_ == /^ldaps:\/\//i))
     docs:
       desc: |
-        This check ensures that every configured directory service (Active Directory or LDAP) uses LDAPS rather than plaintext LDAP. Directory authentication carries credentials and group membership over the network; plaintext LDAP exposes the bind service-account password and every user's credentials to anyone able to observe the traffic.
+        This check verifies that every configured directory service connects over LDAPS rather than plaintext LDAP.
+
+        Directories are configured in Prism Central under Settings, then Authentication, then Directory List. The URL must begin with `ldaps://` and use a secure port, typically 636 for the directory itself or 3269 for a global catalog, and the directory's CA certificate has to be trusted by the cluster. From a Controller VM the equivalent is `ncli authconfig edit-directory` with a `directory-url` of the `ldaps://` form, and `ncli authconfig list-directory` shows what is configured.
 
         **Why this matters**
 
-        - **Credential interception:** Plaintext LDAP binds reveal usernames and passwords on the wire.
-        - **Service-account exposure:** The directory bind account is high value and is sent in the clear over LDAP.
-        - **Authorization tampering:** Unencrypted directory responses can be altered to change group membership.
+        Every login to Prism that uses a directory account crosses this connection. Over plaintext LDAP, the simple bind carries the user's password in the clear, so anyone with a capture point between the cluster and the domain controller collects administrator credentials as they are used, without touching either system.
 
-        **Risk mitigation**
+        The service account is the bigger prize. The cluster binds with it constantly to look up users and groups, so its password crosses the wire repeatedly and predictably. That account typically has directory-wide read access, which turns a single capture into a complete map of your users, groups, and privileged accounts, useful far beyond this cluster.
 
-        - **Encrypted channel:** LDAPS protects credentials and directory responses in transit.
-        - **Integrity:** TLS prevents manipulation of authentication and group data.
+        The responses are equally exposed. Group membership arrives over the same unauthenticated channel, so an attacker positioned to modify it can add a group to a reply and grant themselves whatever role your mapping assigns to it. The cluster has no way to detect the change, because there is no signature to verify.
+
+        Switching requires the cluster to trust the directory's issuing CA, so upload the certificate before you change the URL and test a login immediately afterward. Pair this with the group allowlist that a companion check in this policy requires, since encrypting the channel does not by itself limit who may authenticate through it.
       audit: |
         ### Audit via Console
 
@@ -1552,18 +1574,19 @@ queries:
       nutanix.directoryServices.all(whiteListedGroups.length > 0)
     docs:
       desc: |
-        This check ensures that each directory service restricts which directory groups may access Prism by defining a group allowlist. Without an allowlist, the scope of who can attempt to authenticate and be authorized is far broader than intended, and access depends entirely on role mappings being perfectly maintained. An explicit allowlist enforces least privilege at the directory-integration boundary.
+        This check verifies that each directory service names the groups permitted to authenticate.
+
+        The allowlist is set per directory in Prism Central under Settings, then Authentication, alongside the Role Mapping that grants those groups their privileges. It is the set of directory groups whose members may authenticate to Prism at all, and it is enforced before role mapping is consulted. The same field is available through the IAM v4 API as `whiteListedGroups`.
 
         **Why this matters**
 
-        - **Least privilege:** Limiting access to named groups keeps the authorized population small and intentional.
-        - **Reduced attack surface:** Fewer eligible accounts means fewer credentials an attacker can target for access.
-        - **Defense in depth:** The allowlist backstops role-mapping mistakes that would otherwise grant access.
+        Without an allowlist, the population that can attempt to authenticate to your hypervisor management plane is everyone in the directory. That is typically every employee and contractor, plus service accounts and any stale account nobody has removed. Whether they get anywhere then depends entirely on the role mappings being exactly right, and role mappings drift: a mapping written against a broad group such as Domain Users, or a nested group that later acquired members nobody reviewed, silently widens access without any change being made to the cluster.
 
-        **Risk mitigation**
+        The attacker's version of this is simpler. They do not need a hypervisor administrator's credentials, only any directory credential plus a mapping that is looser than intended, and phishing an ordinary employee is far easier than phishing the storage team. An allowlist means that credential is refused at the door regardless of what the mapping says.
 
-        - **Scoped access:** Only members of approved groups can use the directory to reach Prism.
-        - **Clear ownership:** Allowlisted groups make the set of authorized users explicit and reviewable.
+        It also gives you something reviewable. Answering the question of who can log into this cluster becomes reading a short list of named groups rather than reasoning about nested directory membership.
+
+        Keep the groups purpose-built for cluster access rather than reusing broad organizational ones, and review the membership on the same cadence as your other privileged access, since the allowlist is only as narrow as the groups it names.
       audit: |
         ### Audit via Console
 
@@ -1638,18 +1661,19 @@ queries:
       nutanix.samlIdentityProviders.all(isSignedAuthnReqEnabled == true)
     docs:
       desc: |
-        This check ensures that each SAML identity provider used for single sign-on is configured to sign authn requests. Signing the authentication request lets the identity provider verify that the request genuinely originated from Prism Central, preventing forged or replayed requests from being processed and hardening the federated authentication exchange against tampering.
+        This check verifies that each SAML identity provider used for single sign-on requires the authentication request to be signed.
+
+        The option is set per provider in Prism Central under Settings, then Authentication, then Identity Providers, and appears as `isSignedAuthnReqEnabled` in the IAM v4 API. Enabling it makes Prism Central sign the authentication request it sends to the identity provider, and the identity provider's metadata may need updating so it holds the certificate to verify against.
 
         **Why this matters**
 
-        - **Request authenticity:** Signing proves the authn request came from the trusted service provider.
-        - **Replay and forgery resistance:** Unsigned requests can be forged or replayed against the IdP.
-        - **Federation integrity:** A signed exchange protects the trust relationship between Prism and the IdP.
+        An unsigned authentication request is one anyone can compose. The identity provider receiving it has no cryptographic evidence of where it came from, so it treats a request forged by an attacker exactly as it treats one Prism Central actually sent.
 
-        **Risk mitigation**
+        That opens the parameters of the request to manipulation. The relay state, which is where the user is sent after authenticating, and the assertion consumer service location, which is where the identity provider returns the signed response, both travel inside the request. An attacker who crafts one and lures an already-authenticated administrator into following it can have the identity provider issue a genuine, valid assertion and deliver it somewhere of their choosing, or return the user to a location the attacker controls after a real login. The user sees their own identity provider, authenticates normally, and nothing looks wrong.
 
-        - **Verified origin:** The IdP rejects requests that are not signed by the expected service provider.
-        - **Tamper resistance:** Signatures detect modification of the authentication request.
+        Signing removes the ambiguity: the identity provider verifies that the request came from the registered service provider and rejects anything else, so forged and replayed requests are refused before an assertion is ever issued.
+
+        Enable it on the identity provider side at the same time, since a provider that does not check the signature gains nothing from Prism Central adding one, and confirm a login works immediately afterward, because a certificate mismatch between the two sides breaks single sign-on for everyone.
       audit: |
         ### Audit via Console
 
@@ -1725,18 +1749,19 @@ queries:
       nutanix.users.where(userType == "LOCAL").all(status != "INACTIVE")
     docs:
       desc: |
-        This check ensures that local user accounts in an inactive state are removed rather than left in place. An inactive account is no longer used but still exists; if it can be re-enabled or its credentials are recovered, it becomes an unmonitored path back into Prism. Removing accounts that are no longer needed enforces account lifecycle hygiene.
+        This check verifies that local user accounts left in an inactive state have been deleted.
+
+        Local accounts are managed in Prism Central under Settings, then Users, and the IAM v4 API reports each one's `userType` and status. An account marked inactive is disabled but still present, with its identity, its group memberships, and its role assignments intact. This check requires those accounts to be removed rather than left in place.
 
         **Why this matters**
 
-        - **Dormant access:** Inactive accounts are not watched yet can still represent valid identities.
-        - **Re-enablement risk:** A dormant account can be reactivated by an attacker who gains administrative access.
-        - **Credential leakage:** Old accounts may share passwords later exposed in breaches.
+        A disabled account is a live account with a switch. Re-enabling it is a single change that any administrative credential can make, which means an attacker who has obtained one, or an insider who still has one, gains an identity that already carries permissions nobody re-approved. That is a quieter path than creating a new account, because the account already exists in the directory of users, its presence raises no questions, and its role assignments look established rather than new.
 
-        **Risk mitigation**
+        Inactive accounts also go unwatched precisely because they are inactive. Nobody reviews the permissions of an account that is switched off, so it drifts out of scope for access reviews while retaining whatever it was granted, and its password sits unchanged in whatever breach dumps it may have appeared in since.
 
-        - **Account lifecycle:** Removing inactive accounts closes unused entry points.
-        - **Smaller attack surface:** Fewer standing accounts means fewer credentials to compromise.
+        Local accounts are worth more on this platform than they look. They authenticate directly to Prism, outside the directory service and outside whatever second factor and conditional access your identity provider enforces, so a re-enabled local account bypasses those controls entirely.
+
+        Confirm each account is genuinely unneeded before deleting it, because a local account is sometimes retained deliberately as a break-glass path for when directory authentication is unavailable. Where that is the intent, document it, keep it active with a credential you manage, and monitor its use rather than leaving it disabled and forgotten.
       audit: |
         ### Audit via Console
 
@@ -1805,18 +1830,19 @@ queries:
       nutanix.users.where(userType == "LOCAL" && status == "ACTIVE").where(lastLoginTime != null).all(lastLoginTime > time.now - 90 * time.day)
     docs:
       desc: |
-        This check ensures that active local accounts that have logged in have done so within the last 90 days. An account that is still enabled but unused for months is a prime target: nobody is watching it, yet it retains valid access. Reviewing and disabling stale accounts keeps the set of usable credentials aligned with actual need.
+        This check verifies that active local accounts that have logged in have done so within the last 90 days.
+
+        Prism Central shows the last login time for each local account under Settings, then Users, and the IAM v4 API reports it as `lastLoginTime`. This check compares that timestamp against a 90 day window. Where an account has not been used in that time, confirm whether it is still required and delete it if not; disabling it leaves an inactive account that a companion check in this policy will then flag.
 
         **Why this matters**
 
-        - **Unwatched credentials:** Long-idle accounts attract little scrutiny while remaining fully usable.
-        - **Orphaned access:** Stale accounts often belong to former staff or decommissioned integrations.
-        - **Compliance:** Periodic access review is a baseline expectation across frameworks.
+        A stale account is a working credential nobody is watching. It usually belongs to someone who changed roles or left, or to an integration that was decommissioned, and the reason nobody removed it is the same reason nobody would notice it being used: it is off everyone's mental map. An attacker using it draws no attention, because there is no baseline of normal activity for that account to deviate from.
 
-        **Risk mitigation**
+        The credential is also more likely to be exposed than an active one. It has probably not been rotated since it was created, it may sit in an old runbook, a script, a password manager belonging to a former employee, or a breach dump, and none of those routes leave any trace on the cluster.
 
-        - **Right-sized access:** Disabling unused accounts shrinks the credential attack surface.
-        - **Review cadence:** A 90-day window enforces a regular check on account necessity.
+        What it opens is Prism, which is administration of the storage layer beneath every VM the cluster runs. Local accounts authenticate directly, outside your directory and outside whatever second factor your identity provider applies, so a stale one is a route in that your central identity controls never see.
+
+        Ninety days is a review cadence, not a security boundary. Accounts used for genuinely infrequent tasks, such as an annual audit or a break-glass path, will fail this legitimately; keep those few, name them for what they are, and rotate their credentials on a schedule rather than leaving them idle.
       audit: |
         ### Audit via Console
 
@@ -1889,18 +1915,19 @@ queries:
       nutanix.volumeGroups.where(usageType == "USER").all(enabledAuthentications == "CHAP")
     docs:
       desc: |
-        This check ensures that user-facing volume groups exposed over iSCSI or NVMe-oF require CHAP authentication. Without CHAP, any initiator that can reach the data-services IP can connect to the target and access the block storage it presents. Because volume groups hold raw application data such as database volumes, an unauthenticated target is a direct path to that data.
+        This check verifies that user-facing volume groups require CHAP authentication from the initiators that attach to them.
+
+        A volume group presents block storage over iSCSI to clients outside the cluster. CHAP is enabled per volume group in Prism under Storage, then Volume Groups, along with a secret of 12 to 16 characters, and `acli vg.get "<volume-group-name>"` on a Controller VM shows whether the target's external attachment requires it. Every connecting initiator has to be given the matching secret.
 
         **Why this matters**
 
-        - **Unauthenticated access:** Without CHAP, any reachable initiator can attach to the volume group.
-        - **Raw data exposure:** Block targets present application data directly, bypassing file-level controls.
-        - **Data tampering:** An unauthorized initiator can read and write the underlying volumes.
+        Without CHAP, the target accepts whoever connects to it. iSCSI discovery against the cluster's data services IP lists the available targets, and an initiator can then log in and attach with no credential at all. The only thing standing between an attacker and the volume is network reachability.
 
-        **Risk mitigation**
+        What they attach to is raw block storage, which is why this is worse than a file share. Volume groups typically hold database volumes, application data volumes, and cluster shared storage, and attaching gives read and write access to the block device itself. The filesystem permissions, database access controls, and application authorization that protect that data all live above the block layer and are bypassed entirely. An attacker copies the volume and reads the database offline, or writes to it while the real owner has it mounted, which corrupts it.
 
-        - **Initiator authentication:** CHAP requires a shared secret before a connection is established.
-        - **Access control:** Only initiators that present valid credentials can attach to the target.
+        None of this touches a VM, an operating system, or Prism, so nothing in the guests or the management plane records an access that should not have happened. It looks like a storage client doing storage things.
+
+        Enabling CHAP disconnects initiators that do not yet have the secret, so plan a window and update every client. Treat the secret as a shared credential, rotate it when someone with access leaves, and keep the data services network segregated as well, since CHAP is authentication and not encryption.
       audit: |
         ### Audit via Console
 
@@ -1960,18 +1987,19 @@ queries:
       nutanix.storageContainers.where(isInternal == false).all(isEncrypted == true)
     docs:
       desc: |
-        This check ensures that each user-facing storage container is encrypted. Storage containers hold the virtual disks for every VM placed in them; an unencrypted container leaves that data recoverable from the physical media if a drive is stolen, improperly disposed of, or returned under warranty. Container-level encryption applies protection precisely where workload data lives.
+        This check verifies that every user-facing storage container reports encryption as enabled.
+
+        Containers are reviewed under Storage, then Storage Containers in Prism, and `ncli container list` on a Controller VM shows each one's encryption state. Enabling it requires the cluster to have an encryption capability first, either self-encrypting drives or the AOS software encryption feature, together with a key management configuration; on clusters that support per-container scope it is then set per container, and `ncli container edit name=<container> enable-software-encryption=true` does the same from the command line.
 
         **Why this matters**
 
-        - **Drive theft and disposal:** Encrypted containers are unreadable from a removed disk.
-        - **Granular protection:** Per-container encryption protects the specific data sets that need it.
-        - **Regulatory alignment:** Encryption at rest is a common requirement for sensitive workloads.
+        A storage container is where guest virtual disks physically live, so its encryption state is the encryption state of the workloads placed in it. Checking at this level rather than at the cluster level matters because the scope can differ: a cluster that reports encryption enabled may have containers created afterward, or created with a different scope, that are storing data in the clear.
 
-        **Risk mitigation**
+        What plaintext exposes is the media rather than the cluster. Drives leave the building routinely, returned to the vendor under warranty, pulled during a capacity upgrade, or carried out of a decommissioned rack, and any of them read on another machine yields the extents of the guest disks that lived there. That path requires no credential, no network access, and produces no log entry anywhere.
 
-        - **Confidentiality at rest:** Container data is unintelligible without the keys.
-        - **Safe media handling:** Cryptographic erasure simplifies secure decommissioning.
+        Encryption also changes what retiring hardware costs. Destroying the keys makes the media unreadable, so drives can be retired without physical destruction and without depending on a chain of custody being followed.
+
+        Encryption cannot be turned off once enabled, so confirm which capability the cluster actually has before you start. On a cluster with neither self-encrypting drives nor software encryption available, no container can be encrypted until that capability and a key configuration are in place, which a companion check in this policy covers at the cluster level.
       audit: |
         ### Audit via Console
 
@@ -2033,18 +2061,19 @@ queries:
       nutanix.storageContainers.where(isInternal == false).all(nfsWhitelistAddresses.all(_ != "0.0.0.0" && _ != "0.0.0.0/0" && _ != "0.0.0.0/0.0.0.0"))
     docs:
       desc: |
-        This check ensures that a storage container's NFS allowlist does not include a wide-open entry such as `0.0.0.0`. A per-container NFS allowlist controls which clients may mount that container directly; an open entry exposes the container's virtual disks and files to any host that can reach the data-services IP, regardless of the cluster-wide allowlist.
+        This check verifies that no user-facing storage container carries a wide-open entry in its own NFS allowlist.
+
+        Each container can have a filesystem allowlist independent of the cluster-wide one, edited under Storage, then Storage Containers in Prism. This check fails when a container's list contains `0.0.0.0`, `0.0.0.0/0`, or `0.0.0.0/0.0.0.0`. Remove the open entry with `ncli container remove-from-nfs-whitelist name=<container>` and either add the specific subnets that need access or clear the per-container list entirely, which leaves the container inheriting the restricted cluster-wide allowlist.
 
         **Why this matters**
 
-        - **Direct data exposure:** An open container allowlist lets any reachable host mount the container.
-        - **Bypass of higher controls:** A permissive per-container entry can override a stricter global posture.
-        - **Lateral movement:** Mountable storage is a foothold for spreading across the environment.
+        The per-container list is the one that decides access to that container, and a permissive entry here overrides a careful cluster-wide posture. An administrator who has locked down the global allowlist can be entirely unaware that one container was opened during a migration or a troubleshooting session and never closed, because the two lists are reviewed in different places.
 
-        **Risk mitigation**
+        The consequence is direct. NFS as the cluster exposes it authenticates on source address alone and then trusts the client's own claim about which user is making a request, so any host that can route to the data services IP mounts the container and, by claiming to be root locally, reads and writes everything in it. That content is the virtual disks of the VMs placed in that container.
 
-        - **Least access:** Restricting the allowlist to trusted subnets limits who can mount the container.
-        - **Deny by default:** Explicit entries enforce a closed-by-default stance on container exports.
+        An attacker who has compromised any machine with a network path to the cluster therefore copies a database VM's disk without touching the VM, without a Prism credential, and without the guest operating system seeing anything. Writing into a running guest's disk is the sharper version, corrupting data or planting content the workload will later read as its own.
+
+        Prefer inheritance over per-container entries so there is one list to review, and re-check after any migration or restore, which is where these entries usually come from.
       audit: |
         ### Audit via Console
 
@@ -2104,18 +2133,19 @@ queries:
       nutanix.storageContainers.where(isInternal == false).all(replicationFactor >= 2)
     docs:
       desc: |
-        This check ensures that each user-facing storage container keeps at least two copies of its data (a replication factor of 2 or higher). A container with a replication factor of 1 stores a single copy, so any disk or node failure that touches that data results in permanent loss for every virtual disk in the container.
+        This check verifies that each user-facing storage container keeps at least two copies of its data.
+
+        The replication factor is shown per container under Storage, then Storage Containers in Prism and is set with `ncli container edit name=<container> rf=2` on a Controller VM. It is a per-container setting, so a container created with a replication factor of 1 stores a single copy even on a cluster whose redundancy factor allows two. The cluster must have the node count and redundancy factor to support the target before a container can use it.
 
         **Why this matters**
 
-        - **Single point of failure:** One copy means a single hardware failure is unrecoverable.
-        - **Workload impact:** Container data loss affects every VM whose disks live there.
-        - **Recovery resilience:** Multiple copies support recovery from localized data damage.
+        With one copy, there is no recovery from ordinary hardware failure. A drive failure permanently destroys whatever extents lived on it, and those extents belong to the virtual disks of every VM placed in that container, so a single component failure damages multiple unrelated workloads at once rather than one. A node failure removes everything it held. There is no rebuild to wait for, because there is nothing to rebuild from.
 
-        **Risk mitigation**
+        The reach is what makes the per-container setting worth checking separately from the cluster one. Anyone can create a container, and a container built for a workload someone considered unimportant frequently ends up holding VMs that matter, because placement decisions are made later and by different people than the container was.
 
-        - **Data redundancy:** A replication factor of 2 tolerates the loss of one copy without data loss.
-        - **Continuous availability:** The container keeps serving data while the cluster restores redundancy.
+        Single-copy storage also removes the cluster's ability to maintain itself safely. Replacing a disk, patching a node, and upgrading AOS all take a node out of service, and each of those becomes an availability event for that container instead of a routine operation.
+
+        Raising the factor requires free capacity for the additional copy, and the cluster has to be able to support it, so confirm both before changing it and expect the cluster to spend time writing the second copy afterward.
       audit: |
         ### Audit via Console
 

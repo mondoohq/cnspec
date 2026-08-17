@@ -205,18 +205,17 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that two-factor authentication is configured for administrative access to the Proxmox VE cluster. A fresh Proxmox install enforces only a single password factor, leaving accounts exposed if credentials are guessed or stolen.
+        This check verifies that at least one administrator has enrolled a second authentication factor on the cluster.
+
+        Proxmox VE records enrolled factors in `/etc/pve/priv/tfa.cfg`, a file on the cluster filesystem that every node shares. An administrator enrolls one under Datacenter, then Permissions, then Two Factor, choosing TOTP, WebAuthn, or a YubiKey, and a realm can be set to require a factor under Datacenter, then Permissions, then Realms. The check passes when `tfa.cfg` exists and holds more than 10 bytes, the point at which a real enrollment is present rather than an empty placeholder.
 
         **Why this matters**
 
-        - **Credential theft:** A second factor blocks an attacker who has obtained a valid password from phishing, reuse, or a breach.
-        - **Hypervisor blast radius:** Compromising a Proxmox login exposes every guest VM and container running on the cluster.
-        - **Compliance:** Multiple frameworks require multi-factor authentication for access to systems holding sensitive workloads.
+        A fresh install accepts a password alone. Whoever holds one administrator password reaches the web interface on port 8006 and, from there, the console of every VM and container in the cluster. They can attach an installer ISO to a guest and boot it, open a root shell on the node through the built-in shell, read any guest disk directly from the host, or delete the backups that would let you recover. The guests believe they are isolated from one another; the person holding that password is standing on the other side of that boundary looking at all of them at once.
 
-        **Risk mitigation**
+        Password-only management is also the first thing an automated credential-stuffing run finds. The interface answers from any network that can route to the node, so a password that leaked from an unrelated service gets tried here within hours of appearing in a dump.
 
-        - **Brute-force resistance:** TOTP, WebAuthn, or YubiKey factors defeat automated password-guessing campaigns.
-        - **Account assurance:** Enforcing a second factor at the realm level guarantees every user must enroll a token before they can authenticate.
+        Enrolling one administrator satisfies this check without protecting the rest. Pair it with a realm-level requirement so every account must enroll before it can authenticate, and store recovery keys somewhere that does not depend on the cluster still being reachable.
       audit: |
         ### Audit via Web UI
 
@@ -341,18 +340,17 @@ queries:
       file("/etc/pve/user.cfg").content.lines.where(_ == /Administrator/).length <= 3
     docs:
       desc: |
-        This check ensures that the built-in Administrator role is granted to as few principals as possible across the cluster access control list. The Administrator role conveys unrestricted control of the datacenter, so widespread assignment erodes least-privilege boundaries.
+        This check verifies that no more than three access control entries grant the built-in Administrator role.
+
+        The cluster access control list lives in `/etc/pve/user.cfg` and is printed by `pveum acl list`. The Administrator role carries every privilege at whatever path it is granted on, and granted at `/` that is the entire datacenter. This check counts the entries in `user.cfg` that name the role and passes when at most three exist, treating a handful of deliberate break-glass grants as acceptable and a long list as drift.
 
         **Why this matters**
 
-        - **Unrestricted access:** The Administrator role bypasses every scoped permission and grants full control of all nodes, storage, and guests.
-        - **Expanded attack surface:** Each Administrator account is a path to total cluster compromise if its credentials are stolen.
-        - **Accountability:** Broad use of one all-powerful role makes it hard to attribute changes or contain a misused account.
+        Each Administrator grant is a complete copy of the cluster. Someone who takes over one of those accounts can create a user in any realm, revoke everyone else's access, attach another tenant's guest disk to a VM they control and read it, run commands on the node through the web shell, and delete the backup jobs that would undo the damage. There is no smaller blast radius to fall back to, because the role does not stop at a node, a pool, or a storage.
 
-        **Risk mitigation**
+        Broad grants also destroy attribution. When ten people hold the same unrestricted role, a deleted VM or a loosened firewall rule cannot be traced to a person without reading task logs by hand, and a misused account looks exactly like ordinary work.
 
-        - **Least privilege:** Scoped roles such as PVEVMAdmin, PVEDatastoreAdmin, and PVEAuditor limit each operator to the resources they actually manage.
-        - **Containment:** Fewer Administrator holders means a single compromised account cannot reach the entire cluster.
+        Scoped roles cover nearly every real job. PVEVMAdmin on a pool path lets an operator run guests without touching storage or users, PVEDatastoreAdmin covers backup and storage work, and PVEAuditor gives read-only visibility for monitoring and audit. Move each principal to the narrowest role that fits, delete the Administrator entry at `/`, and keep the remaining grants few enough that every one of them has a named owner.
       audit: |
         ### Audit via Web UI
 
@@ -471,18 +469,17 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that the cluster user database at /etc/pve/user.cfg is not readable by unprivileged accounts. This file enumerates every user, group, and access control entry, so exposing it to all local accounts hands attackers a map of the cluster's identity model.
+        This check verifies that the cluster user database is readable only by root and the Proxmox API service.
+
+        `/etc/pve/user.cfg` enumerates every user, group, API token, and access control entry in the cluster. It lives on the Proxmox cluster filesystem mounted at `/etc/pve`, which owns the file root:www-data with mode 0640 and does not allow those permissions to be changed. The check confirms both that `/etc/pve` is a cluster filesystem mount and that `user.cfg` grants no read bit to other.
 
         **Why this matters**
 
-        - **Reconnaissance:** A world-readable user database tells any local account which principals and roles exist and which are worth targeting.
-        - **Privilege escalation:** Knowing the full ACL layout helps an attacker plan a path toward Administrator-level access.
-        - **Sensitive metadata:** The file may include token identifiers and group memberships that should stay confidential.
+        Because the cluster filesystem enforces the mode itself, a failing result almost always means something more serious than a loose permission: `/etc/pve` is not mounted, the pve-cluster service is down, and the scanner is reading a plain directory on the root filesystem. A node in that state is not participating in the cluster, its configuration is stale, and the copy of `user.cfg` sitting underneath the mount point can be edited by anyone with root on that one host without the change ever replicating or being noticed.
 
-        **Risk mitigation**
+        Where the file genuinely is world-readable, any local account, including one belonging to a compromised service, reads the identity model of the whole cluster: which principals exist, which realm each authenticates against, which hold Administrator, and which API tokens have been issued. That turns a foothold in an unprivileged service account into a target list, and the attacker goes after the specific accounts whose compromise gives them the hypervisor rather than guessing.
 
-        - **Access control:** Mode 0640 with root and www-data ownership restricts reads to root and the Proxmox API service.
-        - **Reduced exposure:** Removing world-read access prevents low-privilege users from enumerating the cluster identity model.
+        Fix it by restoring the cluster filesystem with `systemctl enable --now pve-cluster` and confirming with `findmnt /etc/pve` rather than by running chmod, which the mount will not honor.
       audit: |
         ### Audit via CLI
 
@@ -582,18 +579,17 @@ queries:
       sshd.config.params["PermitRootLogin"].in(["prohibit-password", "without-password", "forced-commands-only"])
     docs:
       desc: |
-        This check ensures that SSH root login on Proxmox nodes is permitted only with a key and never with a password. Proxmox VE relies on root SSH access for cluster operations and live migration, so the standard Linux baseline value of PermitRootLogin no would break the cluster, while prohibit-password keeps key-based access working safely.
+        This check verifies that root can log in over SSH with a key but never with a password.
+
+        Proxmox VE uses root SSH between nodes for cluster operations and live migration, so the Linux baseline value of `PermitRootLogin no` would break the cluster. The Proxmox-adapted requirement is `PermitRootLogin prohibit-password` in `/etc/ssh/sshd_config`, and the check also accepts the older synonym `without-password` and the stricter `forced-commands-only`. Set the value, validate with `sshd -t`, and reload the service; confirm a working root key first or you will lock yourself out.
 
         **Why this matters**
 
-        - **Cluster operation:** Proxmox needs working root SSH for corosync, live migration, and node management, so root login cannot simply be disabled.
-        - **Password attacks:** Allowing password-based root login exposes the hypervisor to brute-force and credential-stuffing attempts.
-        - **Strong authentication:** Key-only root login requires possession of a private key that cannot be guessed.
+        With password login permitted, root on a Proxmox node is the single most valuable password in the environment and it is exposed to anything that can reach port 22. Automated guessing runs against root continuously, and there is no account lockout by default, so the attacker gets unlimited attempts against a target whose username they already know.
 
-        **Risk mitigation**
+        One successful guess is total. Root on a node reads `/etc/pve/priv`, which holds the cluster authentication key and any storage encryption keys; it reads and writes every guest disk on local storage directly; it starts a shell inside any container with `pct enter`; and because the cluster filesystem replicates, a configuration change made there propagates to the other nodes. The guests never see any of this happen.
 
-        - **Brute-force resistance:** Setting prohibit-password, without-password, or forced-commands-only refuses every password-based root login attempt.
-        - **Operational compatibility:** Key-only root access preserves the cluster functions Proxmox depends on while closing the password attack path.
+        Key-only root access keeps corosync, migration, and node management working exactly as before while removing the guessable path entirely. Pair it with a companion check in this policy that disables password authentication for all accounts, since `prohibit-password` constrains root alone.
       audit: |
         ### Audit via CLI
 
@@ -694,18 +690,17 @@ queries:
       sshd.config.params["PasswordAuthentication"] == "no"
     docs:
       desc: |
-        This check ensures that SSH password authentication is disabled on Proxmox nodes so that only key-based logins are accepted. Password authentication is enabled by default on Debian-based systems, leaving the hypervisor's SSH service open to brute-force credential attacks.
+        This check verifies that the SSH daemon rejects password logins for every account, not just root.
+
+        Debian-based systems ship with password authentication on, and Proxmox VE inherits that default. The requirement is `PasswordAuthentication no` in `/etc/ssh/sshd_config`, applied with a reload of the service after `sshd -t` validates the file. Confirm that every administrator has a working key installed before reloading.
 
         **Why this matters**
 
-        - **Brute-force exposure:** A password-accepting SSH service can be attacked with automated guessing against any known account.
-        - **Credential reuse:** Stolen or reused passwords let an attacker log in directly without a key.
-        - **Hypervisor compromise:** SSH access to a Proxmox node grants control of every guest it hosts.
+        An SSH service that accepts passwords answers guesses from anywhere it is reachable, at whatever rate the attacker chooses. Usernames on a Proxmox node are not secret: root exists, and the service accounts created by installed packages are predictable. A password reused from a breach elsewhere, or one weak enough to appear in a wordlist, is tried and works on the first pass.
 
-        **Risk mitigation**
+        A shell on the node is a shell underneath every guest. From there an attacker copies the disk image of any VM on local storage, enters any container, reads the cluster private keys under `/etc/pve/priv`, and adds their own key to `authorized_keys` so the access survives a password change. Nothing in the guest operating systems detects this, because the compromise happened at a layer they cannot see.
 
-        - **Key-only access:** Setting PasswordAuthentication no rejects all password logins and requires a private key.
-        - **Attack surface reduction:** Removing the password path eliminates brute-force and credential-stuffing as a route into the hypervisor.
+        Turning password authentication off leaves key-based login as the only route, and a key cannot be guessed or phished the way a password can. Keep console or IPMI access available for recovery before you make the change, since a node with no valid keys and no passwords is reachable only from its physical or out-of-band console.
       audit: |
         ### Audit via CLI
 
@@ -807,18 +802,19 @@ queries:
       users.where(uid == 0).list.all(name == "root")
     docs:
       desc: |
-        This check ensures that root is the only account on a Proxmox node with UID 0. Any additional UID 0 account holds full superuser authority, so a clean system should expose exactly one such account.
+        This check verifies that root is the only account on the node with UID 0.
+
+        UID 0 is what the kernel checks, not the account name. Any entry in `/etc/passwd` whose third field is 0 has full superuser authority regardless of what it is called, and a clean Proxmox node has exactly one such entry. Review the accounts with `awk -F: '($3 == 0) {print $1}' /etc/passwd`, then reassign an offender with `usermod -u <new-uid>` or remove it with `userdel`.
 
         **Why this matters**
 
-        - **Hidden superusers:** A second UID 0 account silently grants complete root authority and is a common backdoor technique.
-        - **Bypassed controls:** A UID 0 account ignores file permissions and every other access restriction on the host.
-        - **Auditing gaps:** Multiple root-equivalent accounts make it hard to attribute privileged actions to a single identity.
+        A second UID 0 account is one of the oldest and quietest persistence mechanisms there is. An attacker who reaches root once adds an innocuous-looking account, gives it UID 0, and then logs in through the front door afterward. Nothing about the login looks unusual: the account has its own name, its own password or key, and its own home directory, and it survives a root password rotation because it is not root's password that gates it.
 
-        **Risk mitigation**
+        On a hypervisor that means continued access to every guest. The account can read and copy VM disks, enter containers, and edit the cluster configuration under `/etc/pve`, and because it is a distinct identity, revoking root's key does nothing to it.
 
-        - **Single superuser:** Keeping root as the only UID 0 account gives one well-known, well-monitored privileged identity.
-        - **Backdoor removal:** Reassigning or deleting extra UID 0 accounts closes a stealthy persistence path.
+        It also breaks accountability in the other direction. Once two names map to the same authority, log lines and audit records attribute privileged actions to whichever name was used, and reconstructing who actually did something requires correlating sessions rather than reading a single field.
+
+        A duplicate UID 0 is occasionally created by accident during a migration or an automation script rather than by an attacker. Confirm which case you are in before deleting anything, because removing a live service account can break the workloads that depend on it.
       audit: |
         ### Audit via CLI
 
@@ -920,18 +916,17 @@ queries:
       file("/etc/shadow").content.lines.none(_ == /^[^:]+::/)
     docs:
       desc: |
-        This check ensures that no account in /etc/shadow has an empty password field on a Proxmox node. An empty hash lets the account authenticate with no credential at all, which is one of the most direct routes onto a host.
+        This check verifies that no account in `/etc/shadow` has an empty password field.
+
+        The second colon-separated field of each line in `/etc/shadow` holds the password hash. When that field is empty, PAM treats the account as having no password at all and authenticates it with nothing supplied. Find affected accounts with `awk -F: '($2 == "") {print $1}' /etc/shadow` and lock each with `passwd -l`, or set a real password if the account is genuinely in use.
 
         **Why this matters**
 
-        - **Credential-free login:** An account with an empty password field can be accessed without supplying any secret.
-        - **Lateral movement:** An attacker who reaches the host can use such an account to gain an interactive session immediately.
-        - **Hypervisor exposure:** Any foothold on a Proxmox node threatens every guest VM and container it runs.
+        An empty hash is not a weak credential, it is the absence of one. Anything that consults PAM accepts the login: a console session, `su` from another account, and depending on the SSH configuration a remote session as well. An attacker who already has an unprivileged shell on the node, perhaps through a compromised service, uses `su` to step straight into the empty-password account without needing to guess anything, and if that account has sudo rights or belongs to a privileged group the step lands on root.
 
-        **Risk mitigation**
+        On a Proxmox node the destination matters as much as the ease. A local session on the host is a session beneath every VM and container it runs, with direct access to guest disks on local storage and to the cluster configuration and keys under `/etc/pve`.
 
-        - **Account lockdown:** Locking or assigning a strong password to each affected account closes the credential-free login path.
-        - **Authentication assurance:** Requiring a valid secret for every account restores a baseline of access control on the host.
+        Empty password fields usually arrive by accident, from an automated account creation that never set a hash or from a restore that truncated the file. Check whether each affected account is meant to exist before locking it, because some system accounts are intentionally non-login and should carry a locked hash such as an exclamation mark rather than nothing at all.
       audit: |
         ### Audit via CLI
 
@@ -1040,18 +1035,17 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that the cluster-wide Proxmox firewall is enabled. The cluster firewall is off by default, and until it is enabled no per-node, per-VM, or per-container rule takes effect.
+        This check verifies that the datacenter-wide firewall is switched on.
+
+        Proxmox VE keeps the cluster firewall configuration in `/etc/pve/firewall/cluster.fw`, and the master switch is the line `enable: 1` in its options section. It is set under Datacenter, then Firewall, then Options in the web interface, or with `pvesh set /cluster/firewall/options --enable 1`. Until it is on, nothing below it filters anything: node rules, per-VM rules, and per-container rules are all stored and all inert.
 
         **Why this matters**
 
-        - **Master switch:** The cluster firewall is the top-level toggle that activates all lower-level firewall rules.
-        - **Default exposure:** With the firewall disabled, management interfaces and guest networks accept traffic without filtering.
-        - **Defense in depth:** A disabled cluster firewall leaves the hypervisor reliant on external network controls alone.
+        That inertness is the trap. Operators write per-guest rules, see them listed in the interface, and reasonably assume traffic is being filtered. With the datacenter switch off, every one of those rules is decoration, and the node's management surface is open to anything that can route to it: the web interface on port 8006, SSH, the corosync ports, and whatever the guests themselves expose.
 
-        **Risk mitigation**
+        The management surface is the one that matters most. An attacker who reaches the web interface or SSH from an untrusted network is one credential away from the console of every guest, and a compromised guest on a flat network can reach its neighbors and the host's own services with nothing in the path to stop it.
 
-        - **Policy enforcement:** Enabling the cluster firewall lets node, VM, and container rules actually filter traffic.
-        - **Network segmentation:** An active firewall allows inbound services to be restricted to trusted sources.
+        Enabling the firewall is disruptive if done carelessly. It blocks inbound traffic with only a built-in exception for the web interface and SSH from the local subnet, so administrators on any other network are cut off. Create enabled allow rules for your real management network first, keep an existing session open while you make the change, and have console or IPMI access ready in case the rules are wrong.
       audit: |
         ### Audit via Web UI
 
@@ -1195,18 +1189,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that the cluster firewall denies inbound traffic by default. A default-deny input policy means only explicitly allowed services are reachable, rather than everything that is not explicitly blocked.
+        This check verifies that the cluster firewall drops inbound traffic that no rule explicitly permits.
+
+        The default input policy is the line `policy_in: DROP` in `/etc/pve/firewall/cluster.fw`, set under Datacenter, then Firewall, then Options, or with `pvesh set /cluster/firewall/options --policy_in DROP`. The alternative, ACCEPT, inverts the model: everything is permitted unless a rule blocks it.
 
         **Why this matters**
 
-        - **Default-allow risk:** An ACCEPT input policy exposes every listening service on the hypervisor unless a rule blocks it.
-        - **Forgotten services:** Default-deny ensures a newly opened or overlooked port is not reachable until a rule is added on purpose.
-        - **Predictable posture:** An explicit deny baseline makes the firewall's effective behavior easy to reason about.
+        With an ACCEPT default, the firewall protects only what someone remembered to write a rule for. Every service the node starts is reachable the moment it binds, which on a hypervisor means the web interface, SSH, corosync, the storage daemons, and anything a package pulls in during an upgrade. A service that appears in a future release is exposed the day it is installed, without anyone deciding that it should be.
 
-        **Risk mitigation**
+        That is how a management plane ends up reachable from a network nobody intended. An attacker scanning the subnet finds port 8006 answering, and from a successful login there they hold the console of every VM and container on the cluster and can read guest disks straight off host storage. The guests have no visibility into any of it.
 
-        - **Allowlist model:** Setting policy_in to DROP forces every inbound service to be opened deliberately with a rule.
-        - **Attack surface reduction:** Unrequested inbound connections are dropped before they reach any service.
+        A DROP default reverses the burden. Nothing is reachable until someone writes a rule saying it should be, so the exposed surface equals the reviewed surface and stays that way across upgrades.
+
+        This is the most dangerous change in this policy to apply carelessly. Once the policy is DROP, anything not covered by an enabled allow rule is silently discarded, including your own session. Create and verify the management allow rules first, keep a working session open through the switch, and make sure you can reach the node console or IPMI if you get it wrong.
       audit: |
         ### Audit via Web UI
 
@@ -1346,18 +1341,17 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that the host firewall is enabled on every node in the Proxmox cluster. The per-node firewall is configured independently of the cluster firewall, so a single node left unprotected becomes the weak link.
+        This check verifies that every node in the cluster has its own host firewall switched on.
+
+        Each node keeps its firewall options in `/etc/pve/nodes/<node>/host.fw`, and the switch is the line `enable: 1`. It is set per node under the node's Firewall, then Options panel, or with `pvesh set /nodes/<node>/firewall/options --enable 1`. This check reads every `host.fw` in the cluster and requires the setting on all of them, because enabling it on one node says nothing about the others.
 
         **Why this matters**
 
-        - **Per-node scope:** Each node carries its own host firewall setting, and enabling it on one node does not cover the others.
-        - **Inconsistent posture:** A node with its firewall off accepts traffic that peer nodes correctly filter.
-        - **Lateral movement:** An unprotected node gives an attacker an easier pivot point into the rest of the cluster.
+        A cluster is only as reachable as its most open member. Nodes are added at different times, sometimes by different people, and the one that joined during an incident or a capacity crunch is the one whose firewall was never turned on. It accepts inbound traffic that its peers drop, which means an attacker probing the management network finds one host answering on ports the rest refuse.
 
-        **Risk mitigation**
+        That host is a full entry point, not a partial one. Its web interface and SSH front the same cluster as every other node, its local storage holds real guest disks, and the cluster filesystem replicates whatever configuration change is made there to everyone else. A guest compromised on the unprotected node also reaches further, since the traffic it emits is unfiltered at the host level.
 
-        - **Uniform enforcement:** Enabling the host firewall on every node applies consistent inbound filtering across the cluster.
-        - **Reduced exposure:** Each protected node drops unrequested traffic to its management and service ports.
+        Uneven firewall state is hard to notice from the interface, because each node's setting is displayed on its own page rather than side by side. Check it across the cluster in one pass and enable it everywhere, and re-check after adding a node, since a new member starts with the firewall off.
       audit: |
         ### Audit via Web UI
 
@@ -1448,18 +1442,17 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that the cluster firewall has at least one explicit IN, OUT, or GROUP rule defined. A firewall with no rules has no meaningful policy of its own and falls back entirely on default behavior.
+        This check verifies that the cluster firewall has at least one rule or security group defined.
+
+        Rules live in `/etc/pve/firewall/cluster.fw` as lines beginning with IN, OUT, or GROUP, and are created under Datacenter, then Firewall, or with `pvesh create /cluster/firewall/rules`. A rule created without `--enable 1` is stored disabled and filters nothing, so count enabled rules rather than lines when you review the result.
 
         **Why this matters**
 
-        - **Empty policy:** A firewall without rules neither permits nor restricts services on purpose, so its behavior is undefined by intent.
-        - **Default reliance:** With no rules, traffic handling depends solely on default policies that may not match the environment.
-        - **Operational intent:** Explicit rules document which services are meant to be reachable and from where.
+        An empty rule set means the firewall carries no intent of its own. Whatever happens to inbound traffic is whatever the default policy does, and nobody has written down which services are supposed to be reachable and from where. If the default is ACCEPT the node is open; if a companion check in this policy has moved it to DROP, the node is closed so completely that administrators on any network other than the local subnet lose access.
 
-        **Risk mitigation**
+        Neither outcome is a decision. The point of a rule set is that reaching the web interface on port 8006 or SSH becomes an explicit, reviewable statement about a named source network, so that a reviewer can look at the configuration and say what should be able to reach the hypervisor. Without that, a change in the surrounding network silently changes the exposure of the cluster and no one notices.
 
-        - **Deliberate access:** Defining IN, OUT, or GROUP rules makes allowed traffic an explicit, reviewable decision.
-        - **Coverage:** A populated rule set ensures management, cluster, and application traffic are each handled intentionally.
+        A populated rule set is also what makes the per-guest firewall usable. Security groups defined at the datacenter level are what individual VM and container interfaces attach to, so an empty cluster configuration usually means the per-guest rules are empty too, and the isolation between guests that the hypervisor is supposed to enforce is not being enforced anywhere.
       audit: |
         ### Audit via Web UI
 
@@ -1592,18 +1585,17 @@ queries:
       command("openssl x509 -in /etc/pve/local/pveproxy-ssl.pem -noout -issuer").stdout.contains("Proxmox Virtual Environment") == false
     docs:
       desc: |
-        This check ensures that the Proxmox web interface presents a TLS certificate issued by a trusted authority rather than the cluster-internal Proxmox CA. A default install ships a certificate signed by the internal CA named Proxmox Virtual Environment, which no browser or external client trusts.
+        This check verifies that the web interface presents a certificate issued by a trusted authority rather than by the cluster's own internal CA.
+
+        A default install serves a certificate signed by an internal CA whose issuer contains the string Proxmox Virtual Environment. A custom certificate is installed as `/etc/pve/local/pveproxy-ssl.pem`, either uploaded under the node's System, then Certificates panel, or ordered automatically with `pvenode acme cert order` after registering an ACME account and setting the domain. The check requires that file to exist and its issuer not to be the internal CA.
 
         **Why this matters**
 
-        - **Trust failure:** Browsers warn on the cluster-internal CA, training operators to click through certificate errors.
-        - **Interception risk:** Users conditioned to ignore TLS warnings cannot distinguish a real warning from a man-in-the-middle attack.
-        - **Integration friction:** External tooling and API clients reject the untrusted certificate or require trust to be disabled.
+        Nobody trusts the internal CA, so every operator meets a full-page browser warning on the way to the management interface and learns to click through it. That habit is the vulnerability. Once clicking through is routine, an attacker who can position themselves on the path between an administrator and port 8006, through DNS poisoning, ARP spoofing, or a hostile network, presents their own certificate and gets the same reflexive click. They capture the administrator's password as it is typed, and with it the console of every guest on the cluster.
 
-        **Risk mitigation**
+        The same warning also blocks automation cleanly, which pushes teams toward the worse fix. Backup scripts, monitoring, and Terraform runs fail on the untrusted chain, and the usual response is to disable verification entirely, which means those credentialed API sessions can be intercepted with no warning at all.
 
-        - **Verified identity:** A certificate from a public CA, for example via ACME, lets clients confirm they are connecting to the genuine node.
-        - **Clean trust chain:** Replacing the internal-CA certificate removes routine TLS warnings so genuine ones stand out.
+        A publicly trusted certificate makes the warning meaningful again: it appears only when something is actually wrong. Nodes that are unreachable from the internet cannot use HTTP-based ACME validation, so use a DNS-01 plugin or issue from an internal CA that your fleet already trusts, and make sure the renewal is automated so a companion check in this policy on expiry never fires.
       audit: |
         ### Audit via Web UI
 
@@ -1722,18 +1714,19 @@ queries:
       command("openssl x509 -in /etc/pve/local/pve-ssl.pem -checkend 2592000 -noout >/dev/null 2>&1 && echo valid || echo expiring").stdout.trim == "valid"
     docs:
       desc: |
-        This check ensures that the Proxmox node TLS certificate is not within 30 days of expiry. An expired certificate breaks the web interface and API for clients and can interrupt cluster management.
+        This check verifies that the node TLS certificate has more than 30 days of validity remaining.
+
+        The certificate the API and web interface present is `/etc/pve/local/pve-ssl.pem`, and its remaining life is tested with `openssl x509 -checkend 2592000`, which is 30 days expressed in seconds. The cluster-CA-issued node certificate is regenerated with `pvecm updatecerts --force` followed by a restart of pveproxy; an ACME certificate is renewed with `pvenode acme cert renew --force`.
 
         **Why this matters**
 
-        - **Service disruption:** An expired certificate causes hard TLS failures that block access to the web UI and API.
-        - **Short notice:** Without monitoring, expiry is often discovered only when connections start failing.
-        - **Warning fatigue:** A near-expired or expired certificate pushes operators toward bypassing TLS validation.
+        Certificate expiry on a hypervisor does not degrade gracefully. When it passes, the web interface stops loading, API clients refuse the connection, and the tooling that depends on that API stops with it: backup jobs that call the node, monitoring, and any automation that provisions or migrates guests. The guests keep running, but the ability to manage them, snapshot them, or move them off a failing node is gone until someone with shell access fixes the certificate.
 
-        **Risk mitigation**
+        The failure also lands at the worst possible moment, because nothing warns you first. Expiry is discovered when a connection fails, which is often during an unrelated incident when the management interface is exactly what you need.
 
-        - **Renewal lead time:** A 30-day buffer gives operators time to renew before any outage occurs.
-        - **Automated renewal:** ACME-issued certificates can be renewed automatically so expiry never reaches the warning window.
+        Under pressure, the fastest workaround is to turn off certificate verification in the client, and that setting tends to stay off long after the certificate is renewed. From then on the API session is interceptable without any indication, which is a far worse position than the outage that prompted it.
+
+        A 30-day window is a renewal buffer, not an alert threshold. Treat a failing result as work to schedule, and automate renewal so it does not recur; a companion check in this policy covers whether the certificate comes from a trusted authority in the first place.
       audit: |
         ### Audit via Web UI
 
@@ -1866,18 +1859,19 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that every LXC container on a Proxmox node is unprivileged. Containers are privileged whenever the unprivileged directive is missing, so each container config must explicitly set unprivileged: 1.
+        This check verifies that every LXC container on the node is unprivileged.
+
+        A container is unprivileged only when its configuration file under `/etc/pve/lxc` contains the line `unprivileged: 1`. There is no in-place conversion: a privileged container must be backed up with `vzdump` and restored with `pct restore ... --unprivileged 1`. In the web interface the setting appears as Unprivileged container under the container's Options panel, and it is fixed at creation time.
 
         **Why this matters**
 
-        - **Default privilege:** Without an explicit unprivileged setting, a Proxmox container runs privileged by default.
-        - **Host root mapping:** A privileged container maps its root user to host root, so a container escape becomes host compromise.
-        - **Project guidance:** The LXC project itself considers privileged containers unsafe for untrusted workloads.
+        In a privileged container, root inside the container is root on the host. The user namespace is not shifted, so UID 0 in the guest is UID 0 outside it, and the only thing standing between the two is the set of dropped capabilities, the AppArmor profile, and the seccomp filter. Every one of those is a software control on a shared kernel, and each has been bypassed before. A container escape in that configuration is not a step toward host compromise, it is host compromise, with immediate access to every other guest's disk and to the cluster keys under `/etc/pve`.
 
-        **Risk mitigation**
+        The default works against you. A container config that omits the directive is privileged, so a container created by an older script, restored from an old backup, or built by a template that predates the default runs privileged without anyone choosing that.
 
-        - **UID isolation:** An unprivileged container maps container root to an unprivileged host UID, containing an escape attempt.
-        - **Reduced impact:** Setting unprivileged: 1 ensures a compromised container cannot wield host root capabilities.
+        An unprivileged container maps its root to an unprivileged host UID, so the same escape lands as a normal user with no access to anything that matters.
+
+        A few workloads genuinely need privileged mode, typically those that mount filesystems or manage devices from inside the container. Where that is unavoidable, treat the container as an extension of the host rather than an isolated guest: apply the same access controls and patching to it, and do not place untrusted workloads beside it.
       audit: |
         ### Audit via Web UI
 
@@ -1995,18 +1989,17 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that LXC container nesting is disabled across all containers on a Proxmox node. Nesting lets a container run further containers or Docker inside itself, which widens the kernel surface exposed to the guest.
+        This check verifies that no LXC container has the nesting feature enabled.
+
+        Nesting appears as `nesting=1` on the `features:` line of a container configuration in `/etc/pve/lxc`, and as the Nesting checkbox under the container's Options, then Features panel. It is removed with `pct set <ctid> --features` listing the remaining features, or `pct set <ctid> --delete features` when nesting was the only one, followed by a restart of the container.
 
         **Why this matters**
 
-        - **Expanded surface:** The nesting feature exposes additional kernel interfaces and mount capabilities to the guest.
-        - **Weaker isolation:** Running nested containers inside a guest complicates the isolation model and its security boundaries.
-        - **Unneeded capability:** Most workloads do not require nesting, so leaving it on grants capability for no benefit.
+        Nesting exists so that a container can run containers of its own, typically Docker or a second layer of LXC. To make that work, Proxmox relaxes the confinement: the guest gets a more permissive AppArmor profile, additional procfs and sysfs paths become writable inside it, and it may create its own user and mount namespaces. Each of those is a piece of kernel surface that the workload can now reach directly.
 
-        **Risk mitigation**
+        On a shared kernel that surface is the boundary. A process inside the container that finds a flaw in a mount or namespace path it should never have been able to touch is attacking the same kernel that runs every other guest on the node, and success there gets it to the host rather than to a sandbox. The nested layer also hides activity from the outside: what runs inside the inner container does not appear in the node's process view the way a directly hosted workload does.
 
-        - **Minimal surface:** Removing nesting=1 keeps the container restricted to the minimum kernel interfaces it needs.
-        - **Stronger boundary:** Disabling nesting preserves a simpler, more defensible isolation model for each guest.
+        Most workloads never need it. Where a team genuinely wants to run containers inside a container, the safer arrangement is usually a VM, which puts a hardware-enforced boundary rather than a relaxed profile between the nested workload and the host. If nesting must stay on for a specific container, keep it unprivileged and treat it as lower-trust than its neighbors.
       audit: |
         ### Audit via Web UI
 
@@ -2143,18 +2136,19 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that no LXC container on a Proxmox node disables its AppArmor profile. Setting lxc.apparmor.profile to unconfined removes the in-kernel mandatory access control sandbox that the container relies on.
+        This check verifies that no LXC container runs with its AppArmor profile turned off.
+
+        Proxmox applies a default AppArmor profile to every container. A configuration line reading `lxc.apparmor.profile: unconfined` in the container's file under `/etc/pve/lxc` removes it entirely. There is no web interface control for this, because it is a raw LXC directive added by hand; remove the line from the config and restart the container with `pct reboot`.
 
         **Why this matters**
 
-        - **Lost sandbox:** An unconfined profile removes the AppArmor confinement that restricts a container's syscalls and file access.
-        - **Escape risk:** Without AppArmor, a process inside the container has a far wider path to attack the host kernel.
-        - **Silent weakening:** The directive lives in a config file and can disable a key control without obvious signs.
+        The AppArmor profile is one of the few controls that actually holds a container to the syscalls and paths it needs. It blocks writes into the host's procfs and sysfs, restricts mounts to a vetted set of filesystem types, and refuses the operations that container escapes are built out of. Unconfined does not weaken that, it deletes it, and what remains is the capability set and seccomp filter alone.
 
-        **Risk mitigation**
+        In a privileged container, unconfined is close to giving the workload the host. Even in an unprivileged one it hands a process a much wider path to attack the kernel that every other guest on the node shares, and the payoff for succeeding is the host itself and, through it, the disks of neighboring guests.
 
-        - **Mandatory access control:** Keeping the default LXC AppArmor profile constrains container processes to a vetted set of operations.
-        - **Defense in depth:** Removing the unconfined directive restores a kernel-enforced isolation layer around each container.
+        The change is quiet, which is what makes it worth checking for. The directive is one line in a config file, usually added while debugging a container that failed to mount something, and it survives reboots and migrations with nothing in the interface showing that this container is confined differently from the rest.
+
+        If a container needs an operation the default profile denies, write a narrow custom profile for it rather than removing confinement, so that the exception is explicit and reviewable.
       audit: |
         ### Audit via CLI
 
@@ -2252,18 +2246,19 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that every `netN` interface on an LXC container is configured to enforce the per-interface Proxmox firewall through the `firewall=1` flag. Proxmox does not enable the firewall on a guest interface unless the flag is set, so traffic to and from that interface bypasses cluster and per-VM rules.
+        This check verifies that every container network interface has per-interface filtering turned on.
+
+        Each `netN:` line in a container configuration under `/etc/pve/lxc` carries a `firewall=1` flag, shown as the Firewall checkbox on the device in the container's Network panel. Proxmox attaches its filter chain to a guest interface only when that flag is present. Re-set the interface with `pct set <ctid> -<netN>` keeping the existing bridge, name, MAC address, and VLAN tag, and adding `firewall=1`.
 
         **Why this matters**
 
-        - **Rule enforcement:** Without `firewall=1` the cluster, node, and per-guest firewall rules never apply to the container's traffic.
-        - **Lateral movement:** An unfiltered interface lets a compromised container reach other guests and host services unimpeded.
-        - **Inconsistent posture:** Mixed firewall states across containers make the overall security stance hard to reason about and audit.
+        Without the flag, the interface is not merely unfiltered by its own rules; it is outside the enforcement path entirely. Cluster rules, node rules, and the container's own rule tab all fail to apply to it, so a rule set that looks correct in the interface has no effect on that guest's traffic.
 
-        **Risk mitigation**
+        That is where lateral movement comes from. A container running an exposed application gets compromised, and instead of being confined to the ports its rules allow, it reaches every other guest on the bridge, the node's own management ports, the storage network, and any management interface that happens to share a VLAN. The other guests see a peer on their own segment, which is exactly what the firewall was supposed to prevent.
 
-        - **Defense in depth:** Per-interface filtering adds an enforcement point close to the workload, independent of upstream network controls.
-        - **Containment:** Enforced rules confine a breached container and limit the blast radius of an incident.
+        Mixed state across containers is the usual condition rather than a rare one, because the flag defaults off on interfaces added through some automation paths and is easy to drop when re-setting an interface for an unrelated reason.
+
+        Enabling the flag alone changes nothing unless the cluster firewall is on and rules exist; companion checks in this policy cover both. Enable filtering here so those rules have somewhere to land, and verify connectivity for the workload afterward, since traffic the rules do not permit now actually stops.
       audit: |
         ### Audit via Web UI
 
@@ -2383,18 +2378,17 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that LXC containers are configured without the `mknod=1` feature so they cannot create device nodes. Proxmox leaves the `mknod` feature off by default, and enabling it gives a container a primitive that can be used to escape unprivileged confinement.
+        This check verifies that no LXC container is granted the `mknod` feature.
+
+        The feature appears as `mknod=1` on the `features:` line of a container configuration in `/etc/pve/lxc`, and in the Features row of the container's Options panel. Proxmox leaves it off by default. Remove it with `pct set <ctid> --features` listing whatever should remain, or `pct set <ctid> --delete features` if it was the only one, then restart the container.
 
         **Why this matters**
 
-        - **Container escape:** The ability to create device nodes is a known path for breaking out of unprivileged container isolation.
-        - **Host device exposure:** A container that can craft device nodes may reach host block, character, or kernel devices it should never touch.
-        - **Excess privilege:** Most workloads never need `mknod`, so leaving it enabled grants capability with no operational benefit.
+        The feature lets processes inside the container create device nodes. A device node is a handle to a kernel driver, so being able to make one is being able to open a conversation with parts of the kernel that the container was never meant to reach. The classic escalation is to create a block device node matching the host's underlying disk and then read or write it directly, which reaches other guests' data without ever touching their filesystems, and to create character device nodes that talk to drivers with a weaker security history than the core syscall surface.
 
-        **Risk mitigation**
+        Unprivileged containers restrict which nodes can actually be used, but the feature still widens what the workload can attempt against a kernel that every guest on the node shares. Combined with a privileged container or an unconfined AppArmor profile, it becomes a direct path from inside the guest to the host.
 
-        - **Reduced attack surface:** Removing the feature eliminates a device-node escape vector from the container.
-        - **Least privilege:** Containers run with only the capabilities their workload actually requires.
+        Almost nothing needs it. Workloads that appear to require device creation usually need one specific device passed in from the host instead, which is done by binding that device into the container explicitly and leaves the rest of the device namespace out of reach. Prefer that arrangement, and where the feature genuinely must stay on, keep the container unprivileged and confined.
       audit: |
         ### Audit via Web UI
 
@@ -2528,18 +2522,17 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that LXC containers are configured without the `fuse=1` feature so they cannot load FUSE filesystems. Proxmox leaves the `fuse` feature off by default because mounting userspace filesystems inside a container weakens the isolation boundary between guest and host.
+        This check verifies that no LXC container is granted the `fuse` feature.
+
+        The feature appears as `fuse=1` on the `features:` line of a container configuration in `/etc/pve/lxc`, and in the Features row of the container's Options panel. Proxmox leaves it off by default. Remove it with `pct set <ctid> --features` listing the features that should stay, or `pct set <ctid> --delete features` if it was the only one, then restart the container.
 
         **Why this matters**
 
-        - **Weakened isolation:** FUSE mounts expand the kernel and filesystem surface a container can interact with, eroding confinement guarantees.
-        - **Privilege paths:** FUSE-related operations have been associated with container escape and privilege escalation techniques.
-        - **Unneeded capability:** Few workloads genuinely require FUSE, so enabling it adds risk without value.
+        FUSE lets a process in userspace implement a filesystem that the kernel then calls into. Granting it to a container means the guest can mount filesystems whose behavior it controls, and the kernel's VFS layer will follow that filesystem's answers about paths, symlinks, and file types. That is a useful primitive for an attacker: a hostile filesystem can answer differently on two consecutive lookups, which is how time-of-check to time-of-use races against privileged host processes are built, and it can present symlinks and special files designed to redirect an operation outside the container's own tree.
 
-        **Risk mitigation**
+        Because a container shares the host kernel, all of that lands against the same code that serves every other guest on the node. Success does not stop at the container boundary; it reaches the host, and from the host the disks of neighboring guests are ordinary files.
 
-        - **Reduced attack surface:** Disabling FUSE removes a class of filesystem-based escape and abuse vectors.
-        - **Stronger boundaries:** Containers stay confined to the filesystem semantics Proxmox provides by default.
+        Few workloads truly require it. The common ones are network filesystem clients such as sshfs and object-storage mounts, and those are better handled by mounting on the host and binding the resulting directory into the container, which keeps the FUSE implementation outside the guest's control. Where the feature must stay enabled, keep the container unprivileged, leave its AppArmor profile in place, and treat it as lower trust than its neighbors.
       audit: |
         ### Audit via Web UI
 
@@ -2676,18 +2669,19 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that every LXC container is configured with a `memory:` directive that caps how much host memory it can consume. A container without an explicit limit can let a runaway process starve the host and neighboring guests of memory.
+        This check verifies that every LXC container has an explicit memory cap.
+
+        The cap is the `memory:` line, expressed in MiB, in the container's configuration under `/etc/pve/lxc`. It is set from the container's Resources panel or with `pct set <ctid> --memory 1024`. A container whose config carries no such line has no limit of its own and can allocate until the host runs out.
 
         **Why this matters**
 
-        - **Resource exhaustion:** An unbounded container can consume all host memory and trigger the kernel out-of-memory killer against unrelated workloads.
-        - **Noisy neighbor:** One uncapped guest degrades the performance and stability of every other guest on the node.
-        - **Availability impact:** Memory starvation on the host can disrupt cluster services and management functions.
+        Memory on a hypervisor is a shared, finite resource with no natural backstop. An uncapped container that leaks or is deliberately driven to allocate consumes the node's free memory, and once it is exhausted the kernel out-of-memory killer starts choosing victims. It does not choose the container that caused the problem; it chooses by a score that frequently lands on large, well-behaved neighbors. A single misbehaving guest can therefore take down the QEMU process of an unrelated VM, or a cluster service on the node, without ever escaping its own container.
 
-        **Risk mitigation**
+        That is availability damage that a guest can inflict from inside its own boundary. When the workloads on a node belong to different teams or tenants, it is also a denial of service that one of them can aim at the others, deliberately or not, with nothing more than a memory allocation loop.
 
-        - **Fault containment:** A memory cap confines a runaway process to its own container rather than the whole node.
-        - **Predictable capacity:** Explicit limits make node capacity planning and density decisions reliable.
+        The node's own management path degrades in the same event. When memory pressure reaches the host, the tools you need to diagnose and stop the offender are competing for the memory it is consuming.
+
+        Size the limit from the workload's real usage with headroom, not from what is available, and set a swap value deliberately as well. A cap that is too tight relocates the out-of-memory kill inside the container, which is the correct place for it but still an outage for that workload.
       audit: |
         ### Audit via Web UI
 
@@ -2810,18 +2804,19 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that each QEMU VM is configured to expose Spectre and Meltdown CPU mitigations to the guest through the `+spec-ctrl` or `+ssbd` CPU flags. Unless these flags are present on the `cpu:` line, the guest kernel cannot detect the mitigation capability and cannot apply the matching software defenses.
+        This check verifies that each VM's CPU configuration exposes the speculative-execution mitigation features the guest needs to defend itself.
+
+        The `cpu:` line of a VM configuration under `/etc/pve/qemu-server` carries the CPU model and any extra flags. This check requires `+spec-ctrl` or `+ssbd` to be present, which is set from the VM's Hardware, then Processors entry, or with `qm set <vmid> --cpu '<existing-cpu-type>,flags=+spec-ctrl;+ssbd'`. Read the VM's current CPU type first and keep it; the flags are additions, not a replacement, and the VM needs a clean shutdown and start rather than a reset to pick them up.
 
         **Why this matters**
 
-        - **Speculative execution attacks:** Spectre and Meltdown class flaws allow code in one context to read memory it should not, including across guest boundaries.
-        - **Guest blindness:** Without the CPU flags the guest kernel believes the hardware lacks mitigation support and leaves itself unprotected.
-        - **Cross-tenant exposure:** On shared hosts, an unmitigated guest increases the risk of information leakage between tenants.
+        Spectre-class attacks work by training the processor's speculative machinery and then reading the traces it leaves in the cache, which allows code in one context to recover memory it was never permitted to read. Guest kernels defend against this, but only when they can see that the hardware offers the controls to do so. Those controls are advertised through CPU feature bits, and a virtualized CPU shows the guest only the bits the hypervisor exposes.
 
-        **Risk mitigation**
+        Omit them and the guest kernel concludes the processor has no mitigation support and disables its own defenses. The workload then runs unprotected on hardware that is perfectly capable of protecting it, and neither the guest's administrator nor the platform's shows anything wrong. On a node hosting workloads from different teams or customers, the memory that can leak includes theirs.
 
-        - **Defense activation:** Exposing the flags lets the guest enable kernel-level mitigations for known speculative side channels.
-        - **Tenant isolation:** Consistent mitigation reduces the chance of memory disclosure across VMs on the same processor.
+        `+spec-ctrl` exposes the indirect branch controls and `+ssbd` the speculative store bypass disable; a CPU model of `host` passes them through implicitly, but an explicit model such as `x86-64-v2-AES` or `kvm64` does not.
+
+        Enabling mitigations costs measurable performance, which is exactly why they get left off. Take that trade-off deliberately, and where a workload cannot afford it, keep that VM off nodes that host anything it does not already trust.
       audit: |
         ### Audit via Web UI
 
@@ -2961,18 +2956,19 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that every `netN` interface on a QEMU VM is configured to enforce the per-interface Proxmox firewall through the `firewall=1` flag. Proxmox does not filter a VM interface unless the flag is set, so traffic on that interface bypasses cluster, node, and per-VM rules.
+        This check verifies that every VM network interface has per-interface filtering turned on.
+
+        Each `netN:` line in a VM configuration under `/etc/pve/qemu-server` carries a `firewall=1` flag, shown as the Firewall checkbox on each Network Device in the VM's Hardware panel. Proxmox inserts its filter chain in front of a guest interface only when the flag is set. Re-set the interface with `qm set <vmid> -<netN>`, keeping the existing model, bridge, MAC address, and VLAN tag intact and adding the flag.
 
         **Why this matters**
 
-        - **Rule enforcement:** Without `firewall=1` the cluster, node, and per-guest firewall rules never apply to the VM's traffic.
-        - **Lateral movement:** An unfiltered interface lets a compromised VM reach other guests and host services unimpeded.
-        - **Inconsistent posture:** Mixed firewall states across VMs make the overall security stance hard to reason about and audit.
+        Without the flag the interface sits outside the enforcement path completely. The datacenter rules, the node rules, and the VM's own firewall tab all fail to apply to its traffic, so a configuration that reads correctly in the interface filters nothing. Operators looking at the VM's rule list have no indication that the rules are inert.
 
-        **Risk mitigation**
+        The consequence shows up during an incident. A VM running an internet-facing application is compromised, and instead of being held to the ports its rules allow, it can reach every other guest on the bridge, the host's management ports, the storage and migration networks, and any device that shares the segment. To its neighbors it looks like a legitimate peer on their own network, which is exactly the situation the per-guest firewall exists to prevent.
 
-        - **Defense in depth:** Per-interface filtering adds an enforcement point close to the workload, independent of upstream network controls.
-        - **Containment:** Enforced rules confine a breached VM and limit the blast radius of an incident.
+        The flag defaults off on interfaces created through some automation paths and is easy to lose when re-setting an interface for an unrelated reason, so mixed state across a fleet is common rather than exceptional.
+
+        Setting it has no effect unless the datacenter firewall is enabled and rules exist; companion checks in this policy cover both of those. Enable filtering so those rules have an attachment point, and verify the workload afterward, since traffic the rules do not permit now genuinely stops.
       audit: |
         ### Audit via Web UI
 
@@ -3093,18 +3089,17 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that QEMU VMs are configured without the `args:` directive, which injects raw command-line flags directly into the QEMU process. Proxmox does not validate the contents of `args:`, so it bypasses the platform's configuration controls and can quietly disable security features.
+        This check verifies that no VM passes raw arguments straight to the QEMU process.
+
+        The `args:` line in a VM configuration under `/etc/pve/qemu-server` is appended verbatim to the QEMU command line. Proxmox exposes it only as a manual override and does not parse or validate its contents. Remove it with `qm set <vmid> --delete args`, then shut the VM down and start it again so the process is rebuilt without the flags.
 
         **Why this matters**
 
-        - **Validation bypass:** Raw arguments skip the checks Proxmox normally applies to VM configuration.
-        - **Security regression:** Hand-passed flags can turn off hardening QEMU options or expose unsafe devices.
-        - **Hidden behavior:** Settings in `args:` are easy to overlook during review and drift from the documented configuration.
+        Everything Proxmox does to keep a guest inside its boundary is expressed as QEMU command-line arguments, and raw arguments are appended after the generated ones. That gives whoever wrote the line the ability to overrule the platform: to attach a host block device the VM was never assigned, to add a chardev or a network backend that reaches out of the intended segment, to enable a device model with a poor security history, or to turn off a hardening option the platform sets by default. None of it appears anywhere in the web interface, and none of it is checked when the VM is migrated to another node.
 
-        **Risk mitigation**
+        The result is a VM whose actual isolation does not match what the configuration appears to say. A reviewer reading the Hardware panel sees a normal guest; the running process has capabilities that were never approved. If the guest is compromised, the extra device or backend is what it uses to reach the host or a neighboring VM.
 
-        - **Managed configuration:** Keeping all settings in supported Proxmox options preserves validation and auditability.
-        - **Predictable VMs:** Removing raw arguments eliminates undocumented runtime behavior that can undermine isolation.
+        Raw arguments are usually added in good faith for a device or option Proxmox does not model, and sometimes there is no alternative. When that is the case, record what the line does and why, review it whenever the cluster is upgraded, since the generated arguments change between releases, and keep the VM off nodes hosting workloads it is not already trusted beside.
       audit: |
         ### Audit via Web UI
 
@@ -3217,18 +3212,19 @@ queries:
       file("/etc/pve/corosync.conf").content.contains("secauth: on")
     docs:
       desc: |
-        This check ensures that Corosync cluster communication is configured to use encrypted transport, either the `transport: knet` setting or legacy authenticated multicast via `secauth: on`. Corosync carries cluster membership and quorum traffic, and since Proxmox VE 6 the encrypted knet transport is the default.
+        This check verifies that cluster membership traffic runs over an authenticated, encrypted transport.
+
+        Corosync configuration lives in `/etc/pve/corosync.conf`. The check passes when the `totem` block declares `transport: knet`, the default since Proxmox VE 6, or the legacy `secauth: on`. The knet transport takes its protection from the `crypto_cipher` and `crypto_hash` settings alongside it, which Proxmox writes as aes256 and sha256 when it creates a cluster.
 
         **Why this matters**
 
-        - **Cleartext exposure:** Unencrypted cluster traffic lets a network observer read membership and quorum messages.
-        - **Spoofing risk:** Without authenticated transport, an attacker on the cluster network can inject or forge corosync messages.
-        - **Cluster integrity:** Tampered quorum traffic can disrupt fencing decisions and split-brain protection.
+        Corosync carries membership and quorum, which is the mechanism that decides which nodes are alive and therefore which node may run a given guest. An attacker who can inject messages into that conversation is not eavesdropping on data, they are voting. They can convince a node that it has lost quorum, which makes it stop its guests, or partition the cluster so that two nodes each believe the other is dead and both start the same VM against the same disk, corrupting it beyond repair.
 
-        **Risk mitigation**
+        Reading the traffic is useful to them as well. It reveals the node inventory, the ring addresses, and the timing of cluster events, which is the map you would want before attacking the management plane.
 
-        - **Confidentiality:** Encrypted transport keeps cluster control traffic unreadable on the wire.
-        - **Authenticity:** Cryptographic protection blocks injection and replay of forged corosync messages.
+        Because corosync traffic often rides a dedicated, physically separate network, it is easy to treat that network as trusted and skip the cryptography. That assumption fails the moment anything else lands on the same VLAN, including a guest whose interface was left untagged or unfiltered.
+
+        Editing `corosync.conf` on a live cluster is the riskiest operation in this policy. A malformed file, a stale `config_version`, or a node that fails to reload drops quorum and freezes the cluster. Change it only while the cluster is healthy and quorate, keep a backup, and confirm every node reloaded cleanly before you walk away.
       audit: |
         ### Audit via CLI
 
@@ -3425,18 +3421,19 @@ queries:
       file("/etc/pve/datacenter.cfg").content.contains("migration: secure")
     docs:
       desc: |
-        This check ensures that live migration is configured to send VM memory over an encrypted SSH tunnel by setting `migration: type=secure` in the datacenter configuration. Proxmox VE 8 and later use secure migration when the setting is absent, but earlier releases do not, so the value should be set explicitly for consistent behavior across versions.
+        This check verifies that live migration sends guest memory through an encrypted tunnel.
+
+        The setting lives in `/etc/pve/datacenter.cfg` as `migration: type=secure` and is applied under Datacenter, then Options, then Migration Settings, or with `pvesh set /cluster/options --migration type=secure`. Proxmox VE 8 and later default to secure when the value is absent, but earlier releases do not, so setting it explicitly makes the behavior identical everywhere.
 
         **Why this matters**
 
-        - **Memory in transit:** Live migration streams the full contents of guest RAM, which can include secrets and credentials.
-        - **Cleartext interception:** Insecure migration exposes that memory stream to anyone monitoring the migration network.
-        - **Version drift:** Relying on defaults leaves older nodes transmitting migration data unencrypted without obvious indication.
+        A live migration streams the entire contents of a guest's RAM from one node to another while the guest keeps running. That memory holds whatever the workload is holding: private keys in use by a web server, database contents in the page cache, session tokens, decrypted credentials, and the guest's own disk encryption keys. Insecure migration sends all of it over TCP in the clear.
 
-        **Risk mitigation**
+        Anyone with a capture point on the migration network therefore gets a complete memory image of a live production system without touching the guest, without authenticating to anything, and without leaving a trace in the guest's logs. Migrations are also predictable events, triggered by maintenance and by cluster rebalancing, so an attacker who is already positioned on that segment only has to wait.
 
-        - **Confidentiality:** Secure migration tunnels guest memory through SSH so it cannot be read on the wire.
-        - **Consistent enforcement:** An explicit setting guarantees the same protection regardless of the Proxmox VE version.
+        Insecure mode exists because it is faster, and it is commonly enabled to speed up evacuating a node during maintenance and then left that way. The performance argument also assumes the migration network is isolated, which stops being true as soon as a guest interface is placed on it by mistake.
+
+        Secure migration tunnels the stream over SSH, which costs CPU on both nodes. Where that cost matters, spend it anyway and give migration its own physically separate network rather than turning the encryption off.
       audit: |
         ### Audit via Web UI
 
@@ -3533,18 +3530,19 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that guest network interfaces are configured with VLAN tags so the underlying bridge enforces layer 2 segmentation. Proxmox places untagged guests on a flat network by default, which exposes every guest to every other guest at the link layer.
+        This check verifies that guest network interfaces are placed on tagged VLANs rather than all sharing one flat segment.
+
+        A VLAN tag appears as `tag=<vlan>` on a `netN:` line in a guest configuration under `/etc/pve/qemu-server` or `/etc/pve/lxc`, and as the VLAN Tag field on the network device in the guest's Hardware or Network panel. It is set with `qm set` or `pct set` while keeping the existing bridge, MAC address, and firewall flag intact, and it requires the underlying bridge to be VLAN-aware in `/etc/network/interfaces`.
 
         **Why this matters**
 
-        - **Flat network exposure:** Without VLAN tags all guests share a single broadcast domain and can reach one another directly.
-        - **Lateral movement:** A flat layer 2 network gives a compromised guest unrestricted reach to neighboring workloads.
-        - **Weak tenancy boundaries:** Workloads of differing trust levels are not separated when no segmentation is applied.
+        Untagged guests all land in the same broadcast domain on the bridge, which puts every workload on the node at layer 2 with every other one. That means a compromised guest does not need to route anywhere to reach its neighbors: it ARPs for them and talks to them directly. It can also poison those ARP caches and put itself in the middle of traffic between two other guests, and it sees their broadcast and multicast traffic, which leaks hostnames, service discovery announcements, and often authentication chatter.
 
-        **Risk mitigation**
+        The blast radius is what makes it serious on a hypervisor. Development and production workloads, a public-facing web server and the database it is not supposed to be able to reach directly, and workloads belonging to different tenants all sit on the same wire. One compromised guest is a foothold adjacent to everything else the node runs.
 
-        - **Segmentation:** VLAN tags isolate guests into separate broadcast domains enforced by the bridge.
-        - **Containment:** Layer 2 separation limits how far an attacker can pivot from a breached guest.
+        Tagging puts a boundary the bridge itself enforces between those groups, so reaching another segment requires passing through a router where policy can be applied.
+
+        Tagging alone does not filter anything within a segment; pair it with the per-interface firewall that companion checks in this policy cover. And plan the change carefully, since moving a running guest to a tagged interface breaks its connectivity until the corresponding VLAN exists on the physical switch.
       audit: |
         ### Audit via Web UI
 
@@ -3677,18 +3675,19 @@ queries:
       proxmox.storages.all( backups == empty || backups.all( encrypted == true ) )
     docs:
       desc: |
-        This check ensures that every backup archive stored on the cluster was written encrypted, by inspecting the encryption state of the actual backup volumes on each storage rather than only confirming that a client-side encryption key is present in the configuration. Proxmox does not encrypt a backup unless the storage it is written to has an encryption key assigned, and a key present in the configuration does not prove that the archives already on disk were captured with it. A storage with no backup archives passes, since there is nothing unencrypted to find.
+        This check verifies that the backup archives actually present on each storage were written encrypted.
+
+        It inspects the encryption state of the backup volumes themselves rather than only confirming that a key is configured, because a key added to a storage today does nothing for the archives written before it. Attach a client-side key with `pvesm set <storage> --encryption-key autogen`, which writes it to `/etc/pve/priv/storage/<storage>.enc` without a passphrase so unattended jobs can use it. A storage holding no backup archives passes, since there is nothing unencrypted to find.
 
         **Why this matters**
 
-        - **Data at rest:** Unencrypted backups expose guest disk and memory contents to anyone who can read the backup store.
-        - **Offsite risk:** PBS datastores are often remote or offsite, widening the set of parties who could access raw backup data.
-        - **Compliance exposure:** Backups frequently contain regulated data that must be protected with encryption.
+        A backup archive is a complete copy of a guest: its disks, its configuration, and for a snapshot with memory, its RAM. Everything the running workload protects with access controls is present in that file as ordinary bytes. Whoever can read the datastore reads the database, the private keys, and the credential files of every guest that has ever been backed up, without needing any access to the running systems.
 
-        **Risk mitigation**
+        Datastores are unusually exposed for something holding that much. They are frequently on a different host, at a different site, on shared or rented storage, or replicated offsite, which multiplies the number of administrators, providers, and physical locations that could reach the raw files. An attacker who cannot get into a hardened production cluster will happily settle for the backup server that copies it every night.
 
-        - **Confidentiality:** Client-side encryption renders backup contents unreadable without the key.
-        - **Reduced blast radius:** A compromised or stolen datastore yields only ciphertext, not usable data.
+        Encrypting client-side means the PVE node encrypts before the data leaves it, so the datastore and everyone with access to it hold ciphertext only.
+
+        The key becomes the single point of failure the moment you enable this. Back up every key under `/etc/pve/priv/storage/` to somewhere outside the cluster, and configure a master key as a companion check in this policy requires, so losing one key does not cost you the restore.
       audit: |
         ### Audit via Web UI
 
@@ -3802,18 +3801,19 @@ queries:
       files.find(from: "/etc/pve/priv/storage", regex: ".master.pem$", type: "file").list.length > 0
     docs:
       desc: |
-        This check ensures that when a Proxmox Backup Server datastore is attached, an RSA master key is configured so a backup operator can decrypt restored backups without the original client encryption key. The master public key is stored at `/etc/pve/priv/storage/<storage-id>.master.pem` and the private half belongs in offline storage.
+        This check verifies that every attached Proxmox Backup Server datastore has a master key registered.
+
+        When a PBS storage is defined in `/etc/pve/storage.cfg`, its master public key is stored as `/etc/pve/priv/storage/<storage-id>.master.pem` and is set from the storage's Encryption settings or with `pvesm set <storage> --master-pubkey`. The key pair is created by `proxmox-backup-client key create-master-key`; the public half stays on the cluster and the private half belongs in offline storage. A cluster with no PBS storage configured passes, since there is nothing to protect.
 
         **Why this matters**
 
-        - **Recovery dependency:** Without a master key, losing the client encryption key makes every encrypted backup permanently unrecoverable.
-        - **Operational continuity:** Restores must remain possible even when the original key holder is unavailable.
-        - **Key custody:** A master key separates day-to-day backup encryption from a safeguarded recovery path.
+        Client-side backup encryption is done with a key held on the PVE node. If that key is lost, the encrypted backups are mathematically unrecoverable, and the situations that destroy the key are exactly the situations where you need the backups: a node whose root filesystem is gone, a cluster rebuilt from scratch, or ransomware that encrypted or wiped `/etc/pve/priv` along with everything else.
 
-        **Risk mitigation**
+        Ransomware operators specifically target backup infrastructure and the credentials that reach it, because a victim who can restore does not pay. A backup set that only the compromised cluster can decrypt provides no leverage against that; deleting one key on a host they already own destroys every restore point at once.
 
-        - **Disaster recovery:** A master key provides an independent route to decrypt backups during incident response.
-        - **Resilience:** Backups stay restorable despite loss or corruption of the primary encryption key.
+        The master key breaks that dependency. Each backup's encryption key is additionally wrapped to the master public key, so an operator holding the offline private half can decrypt any archive without the original client key and without the cluster that made it.
+
+        The control only works if the private half genuinely lives offline. Generating the pair and leaving the private key on the node it protects satisfies the file check while providing none of the recovery value, so move it to offline custody, delete it from the node, and test a restore from it before you rely on it.
       audit: |
         ### Audit via Web UI
 
@@ -3949,18 +3949,17 @@ queries:
       file("/sys/kernel/mm/ksm/run").content.trim == "0"
     docs:
       desc: |
-        This check ensures that Kernel Samepage Merging is disabled on the hypervisor by confirming `/sys/kernel/mm/ksm/run` holds `0`. KSM deduplicates identical memory pages across VMs to save RAM, but that shared-page behavior creates a timing side channel that an attacker can use to infer the memory contents of other tenants.
+        This check verifies that Kernel Samepage Merging is not running on the hypervisor.
+
+        KSM scans guest memory for identical pages and collapses them into one shared, copy-on-write copy so that similar VMs consume less RAM. Its runtime state is `/sys/kernel/mm/ksm/run`, which this check requires to hold `0`. Writing `2` unmerges pages that are already shared and `0` leaves it stopped; on Proxmox the `ksmtuned` service is what turns it back on, so disable that unit as well or the setting returns at boot.
 
         **Why this matters**
 
-        - **Side-channel leakage:** Page-merge timing differences let one VM probe whether another VM holds specific data.
-        - **Cross-tenant exposure:** On multi-tenant hosts, KSM weakens the memory isolation between unrelated workloads.
-        - **Marginal benefit:** The memory savings rarely justify the information-disclosure risk on security-sensitive hosts.
+        Merging is a cross-VM operation, and it leaves a timing signature. When a page is shared, the first write to it triggers a copy-on-write fault that takes measurably longer than a write to a private page. A VM can exploit that: it fills a page with a guess at what another guest holds, waits for the merge, then times a write. A slow write means the guess was right and some other VM on this host has that exact page.
 
-        **Risk mitigation**
+        That turns into real disclosure. The technique has been used to determine which operating system and software versions a neighboring VM runs, to detect whether a specific file or library is loaded there, and in careful conditions to recover secrets a byte at a time. None of it requires escaping the VM or touching the network; the attacking guest stays entirely within its own boundary and still learns about its neighbors, which is precisely the isolation the hypervisor is supposed to provide.
 
-        - **Closed side channel:** Disabling KSM removes the memory deduplication timing channel between VMs.
-        - **Stronger isolation:** Each VM keeps its own memory pages, preserving tenant separation.
+        The memory saved is real, particularly on nodes running many similar VMs, and that is why KSM gets enabled. Weigh it against what the workloads are worth: on a node where all guests belong to one trust domain the trade may be acceptable, and on a node hosting different teams or customers it is not.
       audit: |
         ### Audit via CLI
 
@@ -4074,18 +4073,19 @@ queries:
       file("/proc/cmdline").content.contains("pcie_acs_override") == false
     docs:
       desc: |
-        This check ensures that the kernel command line is configured without the `pcie_acs_override` parameter. That option forces the kernel to treat PCI devices as isolated when the hardware does not actually support Access Control Services, breaking the IOMMU group boundaries that confine passthrough devices.
+        This check verifies that the kernel is not booted with the `pcie_acs_override` parameter.
+
+        The parameter appears on the running kernel command line in `/proc/cmdline` and is persisted in `/etc/default/grub` or `/etc/kernel/cmdline`. It tells the kernel to pretend PCI devices support Access Control Services when the hardware does not, which splits large IOMMU groups into smaller ones so that individual devices can be passed through to VMs. Remove it from both files, then run `update-grub` or `proxmox-boot-tool refresh` and reboot.
 
         **Why this matters**
 
-        - **Broken isolation:** The override splits IOMMU groups that the hardware cannot truly separate, defeating PCI passthrough isolation.
-        - **Cross-VM DMA:** A passthrough device in a falsely isolated group can perform DMA into memory belonging to other VMs or the host.
-        - **Silent risk:** The override is often added for convenience and then forgotten, leaving a serious gap in production.
+        IOMMU groups are not an administrative convenience, they are the hardware's statement about which devices can be isolated from one another. Devices land in the same group when the PCIe topology between them cannot enforce separation, typically because a switch or root port does not implement ACS and will route a transaction between two downstream devices without it ever reaching the IOMMU.
 
-        **Risk mitigation**
+        The override does not add the missing capability, it suppresses the kernel's objection to its absence. A device passed to a guest under a faked group can then issue DMA that reaches memory belonging to another VM or to the host itself, because nothing in the path is actually checking. A guest with a passed-through device it fully controls, or a device with attackable firmware, uses that to read or write memory outside its own VM. The victim guest has no visibility into it whatsoever, and no software control on the host can prevent it.
 
-        - **Hardware-enforced isolation:** Removing the override keeps IOMMU groups aligned with real hardware boundaries.
-        - **Memory protection:** Passthrough devices stay confined to their assigned VM, preventing cross-tenant DMA access.
+        The parameter is usually added by someone trying to pass a GPU or NIC through on consumer hardware where the vendor did not implement ACS, and then forgotten when the machine moves into production.
+
+        If passthrough is required, use hardware whose groups genuinely separate the device. Where the override cannot be avoided, treat every guest on that node as sharing one trust domain with the host.
       audit: |
         ### Audit via CLI
 
@@ -4204,18 +4204,19 @@ queries:
       file("/proc/cmdline").content.contains("iommu=pt")
     docs:
       desc: |
-        This check ensures that the kernel command line is configured to enable IOMMU through `intel_iommu=on`, `amd_iommu=on`, or `iommu=pt`. IOMMU places PCI passthrough devices into independent DMA groups, and without it a passthrough device can perform unrestricted direct memory access across VM and host memory.
+        This check verifies that the kernel is booted with the IOMMU turned on.
+
+        The check looks for `intel_iommu=on`, `amd_iommu=on`, or `iommu=pt` on the running kernel command line in `/proc/cmdline`. The parameter is added to `/etc/default/grub` for a GRUB boot or `/etc/kernel/cmdline` for the systemd-boot layout Proxmox uses with ZFS on UEFI, then applied with `update-grub` or `proxmox-boot-tool refresh` and a reboot. It must also be enabled in the system firmware, where it is usually labeled VT-d or AMD-Vi.
 
         **Why this matters**
 
-        - **DMA isolation:** IOMMU restricts a passthrough device to the memory of its assigned VM rather than the whole system.
-        - **Passthrough safety:** Without IOMMU, assigning a device to a guest exposes host and other-guest memory to that device.
-        - **Group integrity:** IOMMU groups are the foundation Proxmox relies on to validate safe passthrough configurations.
+        A PCI device that performs DMA writes directly into physical memory without the CPU mediating it. The IOMMU is the hardware unit that sits in that path and translates addresses, so that a device can only reach the memory its owner is permitted to touch. Without it, a device assigned to a VM is not confined to that VM at all: its DMA reaches host RAM and the memory of every other guest on the node, and no hypervisor software control intervenes, because the transaction never passes through software.
 
-        **Risk mitigation**
+        That matters most where a device is under guest control. A VM with a passed-through GPU or NIC programs that device's descriptors and can therefore aim its DMA anywhere, reading another tenant's memory or writing into the host kernel to take it over. Malicious or compromised device firmware on any add-in card does the same thing without a guest being involved.
 
-        - **Memory protection:** Hardware DMA remapping confines passthrough devices to their owning VM.
-        - **Tenant isolation:** Enabled IOMMU preserves the boundary between guests that share the same host hardware.
+        The IOMMU is also what makes the group boundaries meaningful that a companion check in this policy protects from being faked.
+
+        Enabling it can expose firmware bugs on older hardware and change device behavior, so test on one node before rolling it out. Where no passthrough is in use the exposure is smaller, but the setting is still the difference between an add-in card being confined and having the run of system memory.
       audit: |
         ### Audit via CLI
 
@@ -4364,18 +4365,19 @@ queries:
       props.mondooProxmoxSecurityAuditFiles.any(_.any(_ == /^\s*-w\s+\/etc\/pve/))
     docs:
       desc: |
-        This check ensures that the audit subsystem is configured with a watch rule that records every write and attribute change to `/etc/pve/`. This directory is the central configuration tree for the cluster, and without a watch rule any tampering with it goes unrecorded.
+        This check verifies that the audit subsystem records changes to the cluster configuration tree.
+
+        The rule is a watch on `/etc/pve/`, typically written as `-w /etc/pve/ -p wa -k pve-config` in a file under `/etc/audit/rules.d/`, loaded with `augenrules --load`, and confirmed with `auditctl -l`. The `wa` permissions record writes and attribute changes, and the key makes the events searchable afterward.
 
         **Why this matters**
 
-        - **Cluster integrity:** `/etc/pve/` defines storage, firewall, user, and virtual machine configuration for the entire cluster, so unauthorized edits can compromise every node.
-        - **Tamper evidence:** An audit watch produces a durable record of who changed cluster configuration and when, which is essential for investigating incidents.
-        - **Change accountability:** Recording configuration changes ties them to a user and process, deterring unsanctioned modification.
+        `/etc/pve/` is where the cluster keeps everything that decides who may do what and how guests are isolated: the user and access control database, the firewall rules, storage definitions, every VM and container configuration, and the private keys under `priv`. Changing a file there changes the security posture of the whole cluster, and because the cluster filesystem replicates, the change lands on every node.
 
-        **Risk mitigation**
+        An attacker who reaches root on one node works here rather than anywhere noisier. Adding an Administrator entry to the access control list, giving themselves an API token, removing an AppArmor confinement line from a container, adding `args:` to a VM, or clearing a firewall rule are all one-line edits that leave a running cluster looking entirely normal. Without a watch, the only record is the file's modification time, which they can adjust, and the difference between an authorized change and a hostile one becomes unrecoverable after the fact.
 
-        - **Detection of unauthorized changes:** Audit events let operators spot configuration drift or malicious edits that would otherwise pass silently.
-        - **Forensic support:** Retained audit logs give incident responders a timeline of cluster configuration activity.
+        The watch does not prevent the edit; root can also stop auditd. Its value is that the events are written as they happen and, if the audit log is shipped off the node, they land somewhere the attacker does not control before they can be removed.
+
+        Expect volume: Proxmox itself writes into this tree constantly, so tune what you keep and forward, and pair the rule with alerting on the changes that matter rather than reviewing the log by hand.
       audit: |
         ### Audit via CLI
 
@@ -4483,18 +4485,19 @@ queries:
       file("/etc/apt/sources.list.d/proxmox.sources").exists
     docs:
       desc: |
-        This check ensures that the node has a Proxmox VE apt source configured so that security updates for PVE packages can be installed. Without a PVE-specific repository the host cannot receive fixes for the hypervisor stack, and the enterprise repository is used with an active subscription while the no-subscription repository is used otherwise.
+        This check verifies that the node has a Proxmox VE package repository configured.
+
+        The repository is defined in `/etc/apt/sources.list.d/`, as `pve-enterprise.list` or `pve-no-subscription.list` in the one-line format used through Proxmox VE 8, or as `pve-enterprise.sources` or `proxmox.sources` in the deb822 format used from Proxmox VE 9. The enterprise repository requires an active subscription; the no-subscription repository does not. A node needs one of them.
 
         **Why this matters**
 
-        - **Patch availability:** PVE packages are not part of the standard Debian repositories, so a dedicated source is required to obtain them.
-        - **Vulnerability exposure:** A node with no PVE repository stays on the installed package versions indefinitely, including any known vulnerabilities.
-        - **Operational consistency:** A configured repository keeps every cluster node on the same supported package stream.
+        The packages that make this machine a hypervisor are not in Debian. The kernel with the Proxmox patch set, QEMU, the LXC toolchain, the cluster filesystem, and the API proxy that serves the web interface all come from a Proxmox repository. Without one, `apt-get upgrade` reports the system as up to date while every one of those components stays frozen at whatever version was installed.
 
-        **Risk mitigation**
+        The gap this leaves is the worst kind. Hypervisor vulnerabilities are the ones that break the boundary between guests, and QEMU device emulation flaws in particular have repeatedly allowed code in a guest to execute on the host. Those advisories are public the day they ship, so an attacker who has compromised any guest on an unpatched node has a documented, dated escape path to the host and, through it, to every other guest.
 
-        - **Timely remediation:** A working repository lets administrators apply security fixes as soon as they are released.
-        - **Reduced attack surface:** Keeping the hypervisor packages current closes publicly disclosed flaws before they can be exploited.
+        A node in this state also drifts away from its peers, so a live migration lands a guest on a host with a different QEMU version and behaves differently, which turns patch management into an availability problem as well.
+
+        Whichever repository you use, keep it the same across every node so the cluster stays on one package stream, and pair it with a companion check in this policy that makes security updates apply automatically.
       audit: |
         ### Audit via CLI
 
@@ -4676,18 +4679,19 @@ queries:
       package("unattended-upgrades").installed
     docs:
       desc: |
-        This check ensures that the `unattended-upgrades` package is installed so the node can apply Debian security updates without manual intervention. Automatic application of security updates limits how long the host remains exposed to known vulnerabilities.
+        This check verifies that the `unattended-upgrades` package is installed so security updates apply without waiting for a person.
+
+        The package is installed with apt and configured through `/etc/apt/apt.conf.d/20auto-upgrades`, where `APT::Periodic::Update-Package-Lists` and `APT::Periodic::Unattended-Upgrade` are both set to `1`. Confirm it is running with `systemctl is-enabled unattended-upgrades` as well, since installing the package without enabling the periodic settings changes nothing.
 
         **Why this matters**
 
-        - **Reduced exposure window:** Automated updates shorten the time between a fix being published and it being applied.
-        - **Consistent patching:** Unattended upgrades apply security fixes even when an administrator is unavailable to do so manually.
-        - **Operational reliability:** Routine, automated patching prevents nodes from drifting onto unsupported package versions.
+        The interval between a fix being published and being installed is the window an attacker works in, and for a hypervisor that window is measured against exploits that already exist. Advisories describe the flaw precisely enough for working exploit code to appear within days, and the components on this host that receive those advisories include QEMU, the kernel, and the API proxy that fronts the web interface.
 
-        **Risk mitigation**
+        Manual patching does not keep that window short in practice. It depends on someone reading the advisory, deciding it applies, and finding a maintenance slot, and hypervisor nodes are exactly the machines people postpone touching because rebooting them moves guests around. The node that is most disruptive to patch is the one whose compromise reaches the most workloads.
 
-        - **Faster vulnerability remediation:** Security updates are installed promptly rather than waiting for a maintenance window.
-        - **Lower human error:** Removing the manual step avoids missed or forgotten patch cycles.
+        Automatic updates take the routine security fixes off that critical path so the backlog is limited to changes that genuinely need coordination.
+
+        Unattended upgrades restart services, which briefly interrupts the API and can disturb a guest if a component it depends on is replaced, and a kernel update needs a reboot that the mechanism will not perform on its own. Configure the reboot window deliberately, exclude packages you must stage by hand, and stagger nodes so the whole cluster does not update at the same moment. This check confirms the package is present, not that a reboot policy exists, so verify the kernel is actually current afterward.
       audit: |
         ### Audit via CLI
 
@@ -4807,18 +4811,19 @@ queries:
       kernel.parameters["kernel.unprivileged_bpf_disabled"].inRange(1, 2)
     docs:
       desc: |
-        This check ensures that the kernel is configured to disable BPF for unprivileged users by setting `kernel.unprivileged_bpf_disabled` to `1` or `2`. Unprivileged BPF has been a recurring source of privilege-escalation flaws, and a value of `2` also makes the setting itself immutable until reboot.
+        This check verifies that unprivileged users cannot load BPF programs into the kernel.
+
+        The control is the `kernel.unprivileged_bpf_disabled` sysctl, which this check requires to be `1` or `2`. Set it at runtime with `sysctl -w` and persist it in a file under `/etc/sysctl.d/`. A value of `1` blocks unprivileged `bpf()` calls; `2` does the same and additionally locks the setting so it cannot be relaxed again until the machine reboots.
 
         **Why this matters**
 
-        - **Privilege escalation:** The unprivileged BPF interface has been exploited by CVE-2021-4204 and CVE-2022-23222 to gain root from a normal account.
-        - **Attack surface reduction:** Disabling the feature removes a complex kernel code path from reach of unprivileged callers.
-        - **Tenant isolation:** On a hypervisor hosting multiple workloads, blocking unprivileged BPF helps keep a compromised guest or user from escalating on the host.
+        BPF lets userspace hand a program to the kernel to run in kernel context. The verifier is what makes that safe, and it is one of the most complex pieces of code in the kernel: it has to prove, statically, that an arbitrary program cannot read out of bounds or loop forever. Bugs in that proof are exploitable by anyone allowed to submit a program, and they have been. CVE-2021-4204 and CVE-2022-23222 both let an ordinary local account obtain root by feeding the verifier pointers it mishandled.
 
-        **Risk mitigation**
+        On a hypervisor that path leads somewhere much worse than a normal server. Root on the node reads every guest disk on local storage, enters any container, and holds the cluster keys under `/etc/pve`. Any unprivileged foothold on the host, whether from a service account, a compromised container that partially escaped, or an operator with limited shell access, becomes total control of every workload the node runs.
 
-        - **Closes a known exploit class:** Unprivileged users can no longer load BPF programs that target kernel verifier bugs.
-        - **Hardens the host kernel:** A value of `2` prevents the protection from being weakened at runtime.
+        Disabling it removes the entire class from reach of unprivileged callers, and privileged tooling that legitimately needs BPF still works because it runs as root.
+
+        The value of `2` is the stronger choice on a hypervisor, where nothing unprivileged should be loading BPF at all. Check first whether any observability agent on the node relies on unprivileged BPF, since those will stop collecting when this is applied.
       audit: |
         ### Audit via CLI
 
@@ -4905,18 +4910,19 @@ queries:
       kernel.parameters["kernel.kexec_load_disabled"] == 1
     docs:
       desc: |
-        This check ensures that the kernel is configured to block loading a new kernel image at runtime by setting `kernel.kexec_load_disabled` to `1`. This setting prevents an attacker from booting an unsigned kernel without going through the normal boot process, and it is one-way and resets on reboot.
+        This check verifies that the kernel refuses to load a replacement kernel image at runtime.
+
+        The control is the `kernel.kexec_load_disabled` sysctl, which this check requires to be `1`. Set it with `sysctl -w` and persist it under `/etc/sysctl.d/`. The switch is one-way: once set to `1` it cannot be returned to `0` without rebooting, which is deliberate, since a setting an attacker could reverse at will would provide no protection.
 
         **Why this matters**
 
-        - **Boot integrity:** Allowing kexec lets a privileged attacker replace the running kernel and bypass Secure Boot or signed-kernel controls.
-        - **Persistence prevention:** Blocking kexec removes a path for loading a malicious kernel that survives normal protections.
-        - **Defense in depth:** The restriction limits what an attacker can do even after gaining elevated access.
+        The kexec interface loads a new kernel into memory and jumps into it, skipping the firmware and the bootloader entirely. That means it also skips everything those stages enforce: Secure Boot signature verification, the measured boot chain, and whatever policy the bootloader applies to kernel command lines and module signing.
 
-        **Risk mitigation**
+        For an attacker who has already reached root on a node, that is the step from control of the running system to control of the platform. They boot a kernel of their own with module signing off, lockdown disabled, and whatever instrumentation they want compiled in, and the machine keeps running with the guests apparently untouched. Nothing on the host can be trusted to report on itself afterward, because the code doing the reporting is theirs.
 
-        - **Prevents unsigned kernel loading:** No new kernel image can be staged through the kexec interface once the setting is applied.
-        - **Reduces post-compromise impact:** An attacker cannot pivot to a custom kernel to evade detection or controls.
+        For a hypervisor the consequence is every guest at once. A kernel the attacker wrote sits underneath the memory of every VM and the filesystem of every container, and none of them can detect a thing, because from inside a guest the hypervisor is not observable.
+
+        Blocking kexec does not stop someone who is already root from doing damage, but it forces a visible reboot to change what the machine is running, and a reboot is an event your monitoring notices and the firmware verifies. Note that crash-dump tooling that stages a capture kernel through kexec will stop working, so confirm nothing on the node depends on it.
       audit: |
         ### Audit via CLI
 
@@ -5003,18 +5009,19 @@ queries:
       kernel.parameters["kernel.perf_event_paranoid"] >= 2
     docs:
       desc: |
-        This check ensures that the kernel is configured to restrict access to performance monitoring by setting `kernel.perf_event_paranoid` to `2` or higher. Performance counters have been used to mount side-channel attacks, and a value of at least `2` keeps unprivileged users from accessing CPU performance data.
+        This check verifies that access to hardware performance counters is restricted to privileged users.
+
+        The control is the `kernel.perf_event_paranoid` sysctl, which this check requires to be `2` or higher. Set it with `sysctl -w` and persist it in a file under `/etc/sysctl.d/`. At `2`, unprivileged users lose access to CPU-level performance events and keep only limited per-process software counters; lower values progressively open up kernel and system-wide measurement.
 
         **Why this matters**
 
-        - **Side-channel exposure:** CPU performance counters can leak timing information that aids cache and speculative-execution attacks against co-located workloads.
-        - **Tenant isolation:** On a hypervisor running multiple guests, restricting `perf` reduces what one workload can infer about another.
-        - **Least privilege:** Performance monitoring is rarely needed by unprivileged users, so access should be limited by default.
+        Performance counters expose the processor's internal behavior at a resolution the security model never intended to publish: cache hits and misses, branch predictions, TLB activity, and cycle-accurate timing. That is the raw material for microarchitectural side-channel attacks. Cache-timing attacks against AES and RSA implementations, and the measurement half of Spectre-class attacks, all depend on being able to observe those events precisely, and the counters hand that observation over directly instead of making the attacker reconstruct it from timing loops.
 
-        **Risk mitigation**
+        A hypervisor is the environment where this matters most, because the hardware being observed is shared. Guests belonging to different teams or customers run on the same physical cores and the same caches, and an unprivileged process on the host that can read system-wide counters is watching the execution of all of them. The guests cannot see that they are being measured and have no way to defend against it.
 
-        - **Limits information leakage:** Unprivileged users can no longer read CPU performance counters usable for side-channel inference.
-        - **Hardens shared hosts:** The restriction reduces cross-workload observation on busy hypervisor nodes.
+        The interface itself is also historically fragile. `perf_event_open` has been the source of local privilege-escalation bugs, and restricting who may call it removes that surface from unprivileged reach along with the measurement capability.
+
+        Profiling still works for root and for processes granted the appropriate capability, so the cost falls on unprivileged developer workflows rather than on legitimate operations work. If a monitoring agent on the node profiles as a non-root user, give it the capability explicitly rather than lowering the value for everyone.
       audit: |
         ### Audit via CLI
 
@@ -5101,18 +5108,19 @@ queries:
       kernel.parameters["dev.tty.ldisc_autoload"] == 0
     docs:
       desc: |
-        This check ensures that the kernel is configured to block on-demand loading of TTY line-discipline modules by setting `dev.tty.ldisc_autoload` to `0`. Autoloading line-discipline modules has led to local privilege-escalation bugs, so unprivileged users should not be able to trigger it.
+        This check verifies that the kernel will not load TTY line-discipline modules on demand.
+
+        The control is the `dev.tty.ldisc_autoload` sysctl, which this check requires to be `0`. Set it with `sysctl -w` and persist it under `/etc/sysctl.d/`. At `1`, any user who opens a terminal device and requests a line discipline by number causes the kernel to load the matching module automatically; at `0`, only modules an administrator has already loaded are reachable.
 
         **Why this matters**
 
-        - **Privilege escalation:** Line-discipline modules loaded on demand have exposed local privilege-escalation flaws in the past.
-        - **Attack surface reduction:** Disabling autoload keeps rarely used kernel modules out of reach of unprivileged callers.
-        - **Module exposure:** Autoload lets any user pull additional kernel code into a running system without administrator intent.
+        Line disciplines are the kernel layers that sit between a terminal device and the process reading it, and the set of them includes a long tail of protocol implementations for hardware almost nobody runs any more: slip, ppp, ax25 for amateur radio, various serial bus protocols. That code is old, rarely exercised, and rarely audited, yet with autoload enabled an unprivileged user can pull any of it into the running kernel with a single ioctl.
 
-        **Risk mitigation**
+        That is a supply of attack surface on demand. The pattern has produced real local privilege escalations, most memorably a use-after-free in the n_hdlc discipline that gave a normal account root on any machine where autoload was on. The attacker never needed the hardware; the ability to make the kernel load the driver was the whole exploit.
 
-        - **Closes a known LPE vector:** Unprivileged users can no longer cause line-discipline modules to load automatically.
-        - **Reduces loadable code paths:** Only modules an administrator explicitly loads become reachable.
+        On a hypervisor, an unprivileged foothold on the host reaching root reaches every guest with it: the disks of local VMs, a shell in any container, and the cluster keys under `/etc/pve`. Whether that foothold came from a compromised service account or a partly successful container escape, this is the sysctl that decides whether it can go shopping for kernel modules.
+
+        Setting it to `0` costs nothing on a hypervisor, since nothing in the Proxmox stack needs an exotic line discipline. If a serial-attached device genuinely requires one, load that specific module at boot and leave autoload off.
       audit: |
         ### Audit via CLI
 
@@ -5196,18 +5204,19 @@ queries:
       kernel.parameters["net.ipv4.tcp_rfc1337"] == 1
     docs:
       desc: |
-        This check ensures that the kernel is configured to enable RFC 1337 protection by setting `net.ipv4.tcp_rfc1337` to `1`. This setting protects against TIME-WAIT assassination hazards, where old duplicate TCP segments can disrupt or corrupt new connections.
+        This check verifies that the TCP stack drops the stray segments that can assassinate a connection in TIME-WAIT.
+
+        The control is the `net.ipv4.tcp_rfc1337` sysctl, which this check requires to be `1`. Set it with `sysctl -w` and persist it in a file under `/etc/sysctl.d/`. The default of `0` leaves the behavior RFC 1337 describes as a hazard: a socket in TIME-WAIT that receives an RST leaves that state early.
 
         **Why this matters**
 
-        - **Connection integrity:** TIME-WAIT assassination can let stale segments interfere with freshly established TCP connections.
-        - **Network reliability:** The protection prevents old packets from prematurely tearing down or corrupting sockets.
-        - **Standards compliance:** Enabling the behavior aligns the TCP stack with the guidance in RFC 1337.
+        TIME-WAIT exists so that late segments from a finished connection cannot be mistaken for part of a new one that reuses the same port pair. Ending it early throws that guarantee away. A delayed duplicate then arrives after the port has been reused and is accepted into the fresh connection, where it corrupts the stream or tears it down.
 
-        **Risk mitigation**
+        An attacker who can inject packets, from anywhere on the path or by guessing sequence numbers on a predictable connection, uses this to kill connections at will. On a Proxmox node the connections worth killing are structural rather than incidental: corosync membership traffic, the API sessions between nodes, storage traffic to an iSCSI or NFS target, and live migration streams. Repeatedly resetting the right ones costs a node its quorum, which makes it stop the guests it was running, or fails a migration mid-flight.
 
-        - **Prevents connection disruption:** Old duplicate segments are dropped instead of assassinating an active connection.
-        - **Hardens the network stack:** The node becomes more resilient to crafted or stray TCP traffic.
+        Enabling the protection makes the socket ignore the RST and see out its TIME-WAIT properly, which is what stops the stray segment from ever meeting a new connection.
+
+        The cost is that sockets linger slightly longer under high connection churn. On a hypervisor node, whose connections are mostly long-lived cluster and storage sessions rather than short-lived web requests, that is not a meaningful trade, and the resilience of the cluster traffic is worth more.
       audit: |
         ### Audit via CLI
 
@@ -5294,18 +5303,17 @@ queries:
       file("/etc/sysctl.conf").content.lines.any(_ == /^\s*kernel\.unprivileged_userns_clone\s*=/)
     docs:
       desc: |
-        This check ensures that the policy decision around `kernel.unprivileged_userns_clone` is made explicit and persisted on the node. The value should be set to `1` when unprivileged LXC containers must create user namespaces, which is the Proxmox default, or `0` to disable user namespaces entirely, and persisting it stops the setting from silently changing.
+        This check verifies that the node makes a persisted, explicit decision about unprivileged user namespaces.
+
+        The knob is `kernel.unprivileged_userns_clone`, and the check requires it to be written into `/etc/sysctl.conf` or a file under `/etc/sysctl.d`, with a value of `1` to allow unprivileged user namespaces or `0` to deny them. Proxmox needs `1` for unprivileged LXC containers to work. Verify the key exists on your kernel first with `sysctl kernel.unprivileged_userns_clone`, because it is a Debian downstream addition that some kernels do not expose; those govern the same behavior through `user.max_user_namespaces` instead.
 
         **Why this matters**
 
-        - **Container functionality:** Unprivileged LXC containers rely on user namespaces, so an unset value risks breaking them or leaving the behavior undefined.
-        - **Attack surface control:** User namespaces broaden what unprivileged users can do, so the decision to allow or deny them should be deliberate.
-        - **Configuration drift:** An unpersisted value can change between kernels or boots, leaving the host in an unintended state.
+        This is the one setting in this policy where either value can be right, which is why the check asks for a written decision rather than a particular number. Unprivileged user namespaces are what let a container map its root to an ordinary host UID, and that mapping is the entire security benefit of an unprivileged container. Turning them off hardens the host and breaks unprivileged LXC at the same time.
 
-        **Risk mitigation**
+        Leaving it unset is the outcome that is wrong either way. The effective value then comes from whatever the current kernel package happens to default to, so a routine upgrade can silently flip it. If it flips to denied, unprivileged containers fail to start and the pressure in the moment is to recreate them privileged, which hands container root the host. If it flips to allowed on a node where someone deliberately denied it, an unprivileged local account regains the ability to create namespaces and reach subsystems that expect a privileged caller, a combination that has produced repeated local privilege escalations.
 
-        - **Predictable behavior:** A persisted, explicit value ensures the host behaves the same across reboots and upgrades.
-        - **Documented intent:** Setting the parameter records whether unprivileged user namespaces are an accepted risk on the node.
+        Write the value you intend, in a file with a name that says why, so the next person can see it was a choice. On a node running unprivileged containers that value is `1`, and the confinement work belongs to the AppArmor profile and feature flags that companion checks in this policy cover.
       audit: |
         ### Audit via CLI
 
@@ -5410,18 +5418,19 @@ queries:
       logindefs.params["PASS_MAX_DAYS"].trim == /^([1-9][0-9]?|[1-2][0-9]{2}|3[0-5][0-9]|36[0-5])$/
     docs:
       desc: |
-        This check ensures that `/etc/login.defs` is configured with a `PASS_MAX_DAYS` value between 1 and 365 so that passwords expire at least once a year. The Debian default of 99999 means passwords never expire, which lets stale credentials persist indefinitely.
+        This check verifies that local passwords on the node have a maximum lifetime of a year or less.
+
+        The setting is `PASS_MAX_DAYS` in `/etc/login.defs`, and this check requires a value between 1 and 365. The Debian default is 99999, which is a working lifetime rather than an expiry. Editing `login.defs` affects accounts created or aged after the change, so apply the new maximum to existing accounts with `chage --maxdays 365 <user>`.
 
         **Why this matters**
 
-        - **Credential staleness:** A password that never expires can remain valid for years after it should have been rotated.
-        - **Compromise window:** Bounded password lifetimes limit how long a leaked or guessed credential stays usable.
-        - **Account hygiene:** Periodic expiration prompts review of accounts that are still in use.
+        A password with no expiry stays valid until someone actively removes it, and the events that should invalidate one usually do not. A contractor finishes, a laptop with a saved credential is lost, a breach dump surfaces years later with a reused password in it, and the account on this node keeps working through all of it because nothing ever forced a change.
 
-        **Risk mitigation**
+        Local accounts on a hypervisor are worth breaking into. A shell on the node sits underneath every VM and container it runs, and depending on group membership and sudo rights it is a short step to root, from which guest disks, container shells, and the cluster keys under `/etc/pve` are all reachable. That value does not decay, so a credential that leaked three years ago is as useful to an attacker today as it was then.
 
-        - **Limits exposure of leaked credentials:** Expired passwords stop working even if the holder is unaware of a breach.
-        - **Enforces rotation:** A maximum age guarantees credentials are refreshed on a predictable schedule.
+        A maximum age puts a ceiling on how long any single leak stays exploitable, without depending on anyone noticing that it leaked.
+
+        Expiry is a blunt instrument and forced rotation can push people toward predictable variations, so treat this as a backstop rather than the primary control. The stronger measures are the ones that remove password authentication from the network path entirely, which companion checks in this policy cover for SSH, and taking care that service accounts which must not expire are excluded deliberately rather than by leaving the default in place for everyone.
       audit: |
         ### Audit via CLI
 
@@ -5528,18 +5537,19 @@ queries:
       logindefs.params["PASS_MIN_DAYS"].trim == /^[1-9][0-9]*$/
     docs:
       desc: |
-        This check ensures that `/etc/login.defs` is configured with a `PASS_MIN_DAYS` value of 1 or more so that a password cannot be changed again immediately after a change. Without a minimum age, a user can cycle through several password changes within minutes to defeat password history requirements.
+        This check verifies that a password cannot be changed again immediately after it has been changed.
+
+        The setting is `PASS_MIN_DAYS` in `/etc/login.defs`, and this check requires a value of 1 or more. The default of 0 places no floor on how often a password may change. As with the maximum age, the file governs accounts created or aged after the edit, so apply the value to existing accounts with `chage --mindays 1 <user>`.
 
         **Why this matters**
 
-        - **History bypass:** A minimum age stops users from rapidly rotating passwords to return to a previous favorite.
-        - **Policy enforcement:** It backs up reuse and history controls that would otherwise be trivial to circumvent.
-        - **Predictable rotation:** A floor on change frequency keeps password changes meaningful rather than cosmetic.
+        Password history controls only work if changing a password is slow. With no minimum age, a user who is told to pick a new password and does not want to can change it several times in a row until the history buffer has cycled, then set it back to the original. The system records a compliant sequence of changes; the credential in use is the same one it was before, including if it was the one that leaked.
 
-        **Risk mitigation**
+        That defeats the response to an incident as much as it defeats routine rotation. When a password is known or suspected to be exposed, forcing a change is the containment step, and an immediate revert leaves the attacker's copy working while the record shows the account was remediated. On a node whose local accounts lead to the guests, that gap is the difference between an incident that was closed and one that quietly was not.
 
-        - **Preserves password history:** Users can no longer churn through changes to revert to an old password.
-        - **Strengthens reuse controls:** The minimum age makes history-based reuse prevention effective.
+        A minimum age of one day makes the cycle take longer than anyone is willing to sit through, which is all it needs to do.
+
+        The trade-off is a real support cost: a user who mistypes a new password or whose credential is exposed the same day cannot change it again themselves, and an administrator has to reset it. Keep that path available, and exclude automation accounts whose credentials are rotated by tooling from the constraint rather than leaving it unset for everyone.
       audit: |
         ### Audit via CLI
 
@@ -5644,18 +5654,19 @@ queries:
       logindefs.params["ENCRYPT_METHOD"].trim.in(["SHA512", "YESCRYPT"])
     docs:
       desc: |
-        This check ensures that `/etc/login.defs` is configured with an `ENCRYPT_METHOD` of `SHA512` or `YESCRYPT` so that new password hashes use a strong algorithm. This setting controls the algorithm used by `passwd` and `chpasswd`, and weaker choices such as DES or MD5 must not be used. Existing hashes are not rewritten until each user changes their password.
+        This check verifies that new local password hashes are produced with a strong algorithm.
+
+        The setting is `ENCRYPT_METHOD` in `/etc/login.defs`, and this check requires `SHA512` or `YESCRYPT`. It governs what `passwd` and `chpasswd` use when a password is set. Changing it does not rewrite existing hashes; each account keeps its old one until its password is next changed, which can be forced with `chage --lastday 0 <user>`.
 
         **Why this matters**
 
-        - **Hash strength:** DES and MD5 hashes are fast to compute and can be cracked quickly once obtained.
-        - **Offline attack resistance:** SHA-512 and yescrypt impose far more work per guess, slowing brute-force and dictionary attacks.
-        - **Credential protection:** A strong algorithm limits the damage if `/etc/shadow` is ever exposed.
+        This setting decides what an attacker who obtains `/etc/shadow` is actually holding. That file is readable to root, so the moment it leaves the node, through a stolen backup, a snapshot of the root disk, a misconfigured archive, or root access from any other flaw, its contents become an offline cracking problem where the attacker has unlimited time and the node never sees an attempt.
 
-        **Risk mitigation**
+        Algorithm choice sets the cost of that problem. DES truncates the password to eight characters and falls to commodity hardware in seconds. MD5 hashes are computed by the billion per second on a modern GPU, so any password a person can remember is recovered in hours. SHA-512 iterates thousands of times per guess, and yescrypt additionally requires a substantial amount of memory per guess, which is what breaks GPU and ASIC parallelism. The same wordlist that clears an MD5 file in an afternoon runs for years against yescrypt.
 
-        - **Resists offline cracking:** Stolen password hashes are far harder to reverse with a modern algorithm.
-        - **Protects new credentials:** Every password set or changed after the update is hashed with a strong scheme.
+        What the recovered password buys is a login on a hypervisor node, and from there the guests: local VM disks, a shell in any container, and the keys under `/etc/pve`. It is also likely to work somewhere else, since people reuse.
+
+        Because the setting is forward-looking only, verify that existing hashes were actually migrated. A node that has carried the same accounts across several Debian upgrades can be configured for SHA-512 while still storing MD5 hashes that nobody has re-set.
       audit: |
         ### Audit via CLI
 
@@ -5767,18 +5778,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that `/etc/crontab` is owned by `root:root` and set to mode `0600` so that only the root account can read or modify it. This file schedules privileged jobs, and any user able to write to it can run commands as root.
+        This check verifies that `/etc/crontab` is owned by `root:root` and readable and writable only by root.
+
+        The required state is mode `0600` with root as both owner and group, applied with `chown root:root /etc/crontab` and `chmod 0600 /etc/crontab`. The check tests each bit separately: no read, write, or execute access for group or other.
 
         **Why this matters**
 
-        - **Privileged execution:** Entries in `/etc/crontab` run with root privileges on a fixed schedule.
-        - **Tampering risk:** A user with write access can insert a malicious job and escalate to root.
-        - **Information disclosure:** Read access reveals scheduled tasks and the commands they run, which aids reconnaissance.
+        Every command in `/etc/crontab` runs as root on a schedule the file itself sets. Write access to that file is therefore equivalent to root, delayed by at most a few minutes. An attacker holding an unprivileged shell on the node appends one line, waits for cron to fire, and their command runs with full privileges without any exploit being involved.
 
-        **Risk mitigation**
+        On a hypervisor that is the whole cluster. Root on the node reads and copies guest disks on local storage, enters any container with `pct enter`, and reads the cluster private keys under `/etc/pve/priv`. The guests running above see nothing, because the compromise happened at a layer they cannot observe.
 
-        - **Prevents unauthorized job injection:** Only root can add or alter scheduled commands.
-        - **Limits reconnaissance:** Unprivileged users cannot read the cron schedule to plan an attack.
+        Read access matters on its own. The file lists the maintenance jobs on the host, the scripts they call, and often the arguments those scripts take, which tells an attacker where the writable script paths are, when the node is busy, and which backup or monitoring jobs would notice them. Cron entries also commonly embed credentials in the command line.
+
+        Loose permissions here are rarely deliberate. They come from a configuration management run that copied the file with a default mode, or from an operator loosening it once to let a monitoring agent read it. Where a tool genuinely needs to see the schedule, give it a specific read path rather than opening the file to every account on the node.
       audit: |
         ### Audit via CLI
 
@@ -5863,18 +5875,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that `/etc/cron.d` is configured so the directory is not writable by group and is not readable, writable, or traversable by other. This directory holds crontab fragments that run as root, so loose permissions let an unprivileged user schedule privileged jobs.
+        This check verifies that `/etc/cron.d` is not writable by group and is not readable, writable, or traversable by other.
+
+        The directory holds crontab fragments that cron reads on every scan, and each fragment names the user its commands run as, which is nearly always root. The expected state is root ownership with mode `0700`, applied with `chown root:root /etc/cron.d` and `chmod 0700 /etc/cron.d`.
 
         **Why this matters**
 
-        - **Privileged execution:** Fragments placed in `/etc/cron.d` are executed with root privileges.
-        - **Tampering risk:** Group or other write access lets an unprivileged user drop a malicious crontab fragment.
-        - **Information disclosure:** Other read or traverse access exposes the scheduled tasks defined on the host.
+        Directory permissions decide who may add a file, and adding a file here is enough. Nobody needs to modify an existing entry: an attacker with a shell on the node drops a new fragment naming root as the user, and cron picks it up on its next scan with no service reload, no confirmation, and no interactive step. That converts an unprivileged foothold into root within minutes.
 
-        **Risk mitigation**
+        Root on a Proxmox node is not a single-machine outcome. It reads and copies the disks of every VM on local storage, opens a shell in any container, and reads the cluster private keys under `/etc/pve/priv`. Because the cluster filesystem replicates configuration, changes made from there reach the other nodes as well. None of the guests can observe any of it.
 
-        - **Prevents unauthorized job injection:** Only root can place crontab fragments in the directory.
-        - **Limits reconnaissance:** Unprivileged users cannot enumerate the cron fragments to plan an attack.
+        The traverse bit matters separately. Read and execute access on the directory lets any local account enumerate the fragments and read the scripts they call, which reveals the maintenance schedule, the credentials some jobs carry on their command lines, and which script paths might themselves be writable.
+
+        Loose modes here usually arrive from a package installed by hand or a configuration management run with a permissive default rather than from a deliberate decision. Check the individual fragments as well as the directory, since a world-writable file inside a correctly locked directory is the same escalation by another route.
       audit: |
         ### Audit via CLI
 
@@ -5960,18 +5973,21 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that `/etc/cron.hourly` is configured so the directory is not writable by group and is not readable, writable, or traversable by other. This directory holds scripts that run every hour as root, so loose permissions let an unprivileged user schedule privileged execution.
+        This check verifies that `/etc/cron.hourly` is not writable by group and is not readable, writable, or traversable by other.
+
+        Anything executable placed in this directory is run as root once an hour by the run-parts job that `/etc/crontab` schedules. The expected state is root ownership with mode `0700`, applied with `chown root:root /etc/cron.hourly` and `chmod 0700 /etc/cron.hourly`.
 
         **Why this matters**
 
-        - **Privileged execution:** Scripts in `/etc/cron.hourly` run with root privileges every hour.
-        - **Tampering risk:** Group or other write access lets an unprivileged user drop a malicious script.
-        - **Information disclosure:** Other read or traverse access exposes the hourly tasks defined on the host.
+        There is no configuration step between dropping a file here and running code as root. An attacker with any unprivileged shell on the node writes an executable script into the directory and waits at most an hour; run-parts executes it with full privileges. No exploit, no service restart, and nothing that looks unusual in the process table when it happens.
 
-        **Risk mitigation**
+        What that root shell reaches is every workload the node carries. It reads and copies guest disks from local storage, enters any container, and reads the cluster private keys under `/etc/pve/priv`, and configuration it changes there replicates to the rest of the cluster. The guests have no visibility into the layer where it happened.
 
-        - **Prevents unauthorized job injection:** Only root can place scripts in the directory.
-        - **Limits reconnaissance:** Unprivileged users cannot enumerate the hourly scripts to plan an attack.
+        The hourly cadence also makes it a comfortable persistence mechanism rather than a one-shot. A script that re-establishes a removed account or re-adds a deleted SSH key every hour survives the obvious cleanup steps, and responders who fix the symptom without finding the script watch the compromise come back on the hour.
+
+        Read and traverse access is worth closing for its own sake, since listing the directory tells an unprivileged account exactly what runs on the host and which script paths are worth attacking.
+
+        Apply the same review to the sibling `cron.daily`, `cron.weekly`, and `cron.monthly` directories, which carry identical authority on a longer schedule.
       audit: |
         ### Audit via CLI
 
