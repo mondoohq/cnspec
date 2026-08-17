@@ -49,12 +49,15 @@ import (
 // connection lives in the os provider); the rest back the non-cloud policies in
 // tfVariantPolicies. The base list (terraform/k8s/aws/azure/gcp/cloudformation)
 // lives in main_test.go.
+//
+// Every policy in tfVariantPolicies needs its runtime provider here.
 func init() {
 	extraProviders = append(extraProviders,
 		"bicep", "os",
 		"alicloud", "oci", "vsphere", "okta", "openstack", "gitlab", "cloudflare",
 		"github", "digitalocean", "unifi", "portainer", "snowflake",
-		"hetzner", "tailscale", "ms365", "databricks",
+		"hetzner", "tailscale", "ms365", "databricks", "vercel",
+		"clickhousecloud", "hcp", "neon", "netlify",
 	)
 }
 
