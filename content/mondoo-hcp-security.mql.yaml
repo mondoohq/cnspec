@@ -66,19 +66,20 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that no HCP Vault cluster exposes an unrestricted public endpoint. A cluster may keep its public endpoint enabled only when an IP allowlist restricts which source addresses can reach it; a public endpoint with no allowlist puts the secrets engine on the open internet.
+      desc: |
+        This check verifies that an HCP Vault cluster is not reachable from the whole internet.
+
+        A cluster satisfies this in either of two ways. Its public endpoint can be off, leaving the cluster reachable only across the HashiCorp Virtual Network peered with your own infrastructure. Or the public endpoint can stay on while an IP allowlist names the CIDR ranges permitted to reach it. Both are edited in the HCP portal by opening Vault, selecting the cluster, and opening its networking configuration, and both appear on the `hcp_vault_cluster` Terraform resource as `public_endpoint` and an `ip_allowlist` block taking an `address` and a `description`. A cluster with a public endpoint and no allowlist fails.
 
         **Why this matters**
 
-        - **Reduced attack surface:** A publicly reachable Vault API is exposed to internet-wide scanning, credential-stuffing, and exploitation attempts around the clock.
-        - **Network-layer control:** An IP allowlist limits reachability to known operator and application networks, keeping everyone else from ever completing a connection.
-        - **Defense in depth:** Restricting the network path complements Vault's own authentication and policy controls rather than relying on them alone.
+        Vault holds the credentials for everything else, which makes an internet-facing Vault API a single address worth an attacker's sustained attention. The endpoint answers on a predictable hostname and returns a recognizable response, so it is found by scanning rather than by anyone disclosing where it is.
 
-        **Risk mitigation**
+        What follows is quiet and unlimited. An attacker works leaked tokens against the login endpoints for as long as they like, at whatever rate they choose, from anywhere. A token that turned up in a CI log, in an environment file committed to a repository, or in a developer's shell history is tried against the open endpoint the moment it is found, from an address that has no relationship to your infrastructure. Once one authenticates, the holder reads secrets and, depending on the policy attached to that token, mints fresh credentials for the databases and cloud accounts Vault brokers, which are then usable long after the original token is revoked.
 
-        - **Blast-radius containment:** Even with a leaked token, an attacker outside the allowlisted ranges cannot reach the cluster to use it.
-        - **Fewer exposure paths:** Disabling the public endpoint entirely, where a private path exists, removes the internet-facing surface completely.
+        An allowlist takes all of that away from anyone outside your ranges. The leaked token is still leaked, but it cannot be presented from where the attacker is standing.
+
+        An allowlist is not a replacement for Vault's own controls, since a compromised host inside an allowlisted range reaches the cluster as normally as any other client. Keep token lifetimes short and policies narrow, and pair this with the companion check in this policy that streams audit logs off the cluster, so that use of the endpoint leaves a record you still hold afterwards.
       audit: |-
         ### Audit via the HCP portal
 
@@ -187,19 +188,20 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that every HCP Vault cluster streams its audit logs to an external destination. Audit logs record authentication events and every secret access, so exporting them off the cluster preserves the trail even if the cluster itself is tampered with or destroyed.
+      desc: |
+        This check verifies that an HCP Vault cluster streams its audit log to a destination outside the cluster.
+
+        Streaming is configured in the HCP portal by opening Vault, selecting the cluster, and opening its audit log configuration, and on the `hcp_vault_cluster` Terraform resource as an `audit_log_config` block. That block names one destination through its own set of arguments, so a CloudWatch destination is given as a region, a group name, a stream name, and credentials, while Datadog, Elasticsearch, Grafana, New Relic, Splunk, and a generic HTTP endpoint each take a different set. This check requires some destination to be configured.
 
         **Why this matters**
 
-        - **Attributable access:** Vault audit logs tie every request to an identity, token, and path, which is essential for investigating misuse of secrets.
-        - **Tamper resistance:** Streaming logs to an external destination keeps a copy beyond the reach of anyone who compromises the cluster.
-        - **Compliance evidence:** Audit frameworks require retained, reviewable access logs for systems that broker sensitive credentials.
+        The Vault audit log is the only record of which token read which secret at what time, which makes it the record an attacker most wants gone. Someone who reaches the cluster with enough privilege can disable an audit device or stop the export, and from that moment their reads leave nothing behind. Streaming continuously into a different trust boundary means the entries written before that point are already elsewhere and beyond reach, so the attempt to cover the tracks shows up as a gap in a record you still hold rather than as an absence of evidence.
 
-        **Risk mitigation**
+        The record also decides how large an incident turns out to be. When a token is found to have leaked, the audit log answers which paths it actually read, and that answer is the difference between rotating a handful of secrets and rotating every credential the token's policy allowed. With no exported log the safe assumption is the second, which for a Vault cluster means rotating the database and cloud credentials of everything downstream of it.
 
-        - **Faster incident response:** An off-cluster record of authentication and secret access narrows the source and timeline of suspicious activity.
-        - **Detection coverage:** Exported logs can feed a SIEM to alert on anomalous secret reads, failed authentication bursts, and off-hours access.
+        Exported entries are what detection runs on as well. A collector holding them can alert on a burst of failed logins, on a token reading paths it has never touched before, and on secret access outside working hours, none of which is visible from inside the cluster alone.
+
+        Send the stream somewhere the Vault operators do not administer, because a destination reached with the same credentials and controlled by the same people as the cluster inherits the cluster's compromise along with its logs.
       audit: |-
         ### Audit via the HCP portal
 
