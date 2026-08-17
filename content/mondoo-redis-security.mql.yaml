@@ -63,19 +63,20 @@ queries:
     mql: |
       redisdb.instance.tlsEnabled == true
     docs:
-      desc: |-
-        This check ensures that the server has a TLS listener enabled so that client connections can be encrypted in transit. Without TLS, the `AUTH` password and every command and result crosses the network in cleartext.
+      desc: |
+        This check verifies that the server has a TLS listener bound so clients can connect over an encrypted channel.
+
+        TLS is configured in `redis.conf` by setting a nonzero TLS port and pointing the server at a certificate, a private key, and a certificate authority file that only the Redis account can read. Operators normally disable the plaintext listener at the same time by setting the ordinary port to zero. The certificate files must be present before the listener can bind, so this is a restart rather than a runtime change, and a value set with `CONFIG SET` is lost unless `CONFIG REWRITE` persists it.
 
         **Why this matters**
 
-        - **Confidentiality in transit:** TLS protects credentials, command text, keys, and values from anyone able to observe the network path.
-        - **Integrity in transit:** It prevents tampering with commands and responses on the wire.
-        - **Compliance:** Many frameworks require encryption of sensitive data in transit for database traffic.
+        Without a TLS listener, the protocol runs in cleartext and Redis makes no attempt to hide anything. The password presented with `AUTH` is sent as an argument in the same plain form as every other command, so a single captured packet gives an attacker the credential outright, with no hash to crack and no exchange to replay.
 
-        **Risk mitigation**
+        Everything after that is equally readable. Keys, values, and the commands themselves cross the network in the clear, and Redis is usually holding exactly the material worth reading: session identifiers, cached user records, queued jobs, and rate-limit state. An attacker with a copy of the traffic collects live session tokens and replays them against the application without ever touching Redis again.
 
-        - **No cleartext credentials:** The password sent during `AUTH` is no longer exposed to a network eavesdropper.
-        - **Man-in-the-middle resistance:** Combined with certificate verification on the client, TLS prevents interception and impersonation.
+        A cleartext connection also lets an active attacker write. They can inject a command into an established session, so a stream they can reach is a stream they can modify.
+
+        Configure the clients to verify the server certificate as well. Encryption without verification stops a passive listener but not someone who terminates the connection themselves and passes the traffic through.
       audit: |-
         ### Audit via redis-cli
 
@@ -137,19 +138,20 @@ queries:
     mql: |
       redisdb.instance.users.where(enabled == true).all(nopass == false)
     docs:
-      desc: |-
-        This check ensures that no enabled access-control (ACL) user carries the `nopass` flag. A `nopass`, enabled user, especially the built-in `default` user, lets anyone who can reach the port authenticate as that user with whatever access its rules grant.
+      desc: |
+        This check verifies that every enabled access-control user has to present a password.
+
+        Access-control users are defined by `user` directives in `redis.conf` or in the external ACL file, and each carries flags describing its rules. The `nopass` flag means the user authenticates with anything at all. The check fails when any enabled user carries it, including the built-in `default` user, which is where it usually appears. A password set at runtime is not persisted unless `CONFIG REWRITE` writes the configuration back out.
 
         **Why this matters**
 
-        - **No anonymous access:** A `nopass` default user means possession of a network path is enough to run commands, defeating authentication entirely.
-        - **Blast radius:** A passwordless user with `~* +@all` hands full control of every key and administrative command to any client that connects.
-        - **Least privilege of authentication:** Every enabled identity should prove itself with a credential before it can issue commands.
+        An enabled user with that flag makes network reachability the only requirement. There is nothing to guess, nothing to steal, and no failed attempt for anyone to notice: a client opens a socket and is authenticated.
 
-        **Risk mitigation**
+        The `default` user is the one that matters, because a client that sends no credentials is treated as that user, and its shipped rule set is `~* +@all`, meaning every key and every command. So an attacker who reaches the port reads and rewrites the entire keyspace, flushes it, and reaches the administrative commands as well. They read the configuration to learn where the data files are written, use the server's own persistence commands to write a file of their choosing to a path they control, and turn a cache into code execution on the host.
 
-        - **Credential enforcement:** Requiring a password on every enabled user forces each client to authenticate.
-        - **Reduced exposure:** Combined with protected mode and tight bind rules, this prevents unauthenticated connections from the network.
+        Because the flag lives on the user rather than on the network, no firewall change repairs it. Any workload that can route to the port inherits full control.
+
+        Give every enabled user a password and remove the flag, or disable the users that are not needed. Combine that with protected mode and an explicit bind list so the server does not answer clients it was never meant to serve.
       audit: |-
         ### Audit via redis-cli
 
@@ -203,19 +205,20 @@ queries:
     mql: |
       redisdb.instance.protectedMode == true
     docs:
-      desc: |-
-        This check ensures that protected mode is turned on. Protected mode refuses connections from non-loopback clients when no password and no explicit `bind` address are configured, so turning it off on an exposed server removes a key safety net that guards an otherwise open instance.
+      desc: |
+        This check verifies that the server's last-resort guard against answering anonymous remote clients is left in place.
+
+        Protected mode is set in `redis.conf` and also with `CONFIG SET`, where a `CONFIG REWRITE` is needed to make the change survive a restart. When it is on and the server has neither a password nor an explicit `bind` list, connections from anything other than the loopback interface are refused with an explanatory error. It is on by default, and the check fails only when it has been turned off.
 
         **Why this matters**
 
-        - **Default safety net:** Protected mode is the guard that stops a freshly started, unconfigured server from answering remote clients with no credentials.
-        - **Defense in depth:** It backs up the authentication and bind controls, so a misconfiguration in one does not immediately expose the server.
-        - **Reduced attack surface:** With protected mode on, an accidentally exposed instance still rejects remote unauthenticated connections.
+        The guard exists because of what happened without it. Redis has no authentication until an operator configures some, and for years the default configuration answered every interface, which put tens of thousands of unauthenticated instances on the public internet. Automated campaigns swept them continuously, and reaching one meant reading the entire keyspace, so session tokens, cached credentials, and personal records were collected wholesale, and the same access was used to write attacker-controlled content into the data directory and take the host.
 
-        **Risk mitigation**
+        Protected mode is what stops a freshly started or half-configured server from repeating that. It catches exactly the combination that produces the incident, a server listening beyond loopback with no credential set, and refuses the remote client rather than serving it.
 
-        - **No accidental exposure:** A server bound to all interfaces without a password still refuses remote clients while protected mode is on.
-        - **Contained misconfiguration:** Turning it off should be a deliberate act paired with authentication and bind rules, not a silent default.
+        Turning it off removes the safety net at the moment it would have mattered, because it only ever engages when the other controls are missing. A server with a password and a narrow bind list is unaffected by it either way, so switching it off buys nothing and costs the one protection that covers a mistake in the other two.
+
+        Leave it on and rely on a password and an explicit bind list as the actual controls.
       audit: |-
         ### Audit via redis-cli
 

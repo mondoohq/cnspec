@@ -66,19 +66,20 @@ queries:
     mql: |
       mongo.instance.authenticationEnabled == true
     docs:
-      desc: |-
-        This check ensures that the server is started with authorization enabled (`security.authorization: enabled` or `--auth`), so that clients must authenticate before they can run commands. Without it, anyone who can reach the MongoDB port connects with full access and no credentials.
+      desc: |
+        This check verifies that clients must prove who they are before the server will run a command for them.
+
+        Access control is turned on with `security.authorization: enabled` in `mongod.conf`, or with `--auth` on the command line, and the `mongod` service has to be restarted for it to take effect. Create an administrative user while access is still open, before enabling it, or the restart leaves nobody able to log in.
 
         **Why this matters**
 
-        - **No anonymous access:** Requiring authentication ties every connection to a known user rather than allowing open access to anyone on the network.
-        - **Credential enforcement:** Clients must present a valid username and password (or another configured mechanism) before a session is granted.
-        - **Foundation for authorization:** Role-based access control is meaningless without an authenticated identity to enforce it against.
+        Until it is on, reaching the port is the whole attack. There is no credential to steal or guess: a client connects and issues commands with full authority, which means reading every collection in every database, writing to them, and dropping them.
 
-        **Risk mitigation**
+        This is not hypothetical exposure. Automated campaigns scan for MongoDB deployments that answer without credentials, and the pattern that follows is well established: enumerate the databases, copy what is worth copying, drop the collections, and leave a document demanding payment for their return. Deployments have been found and emptied within hours of first becoming reachable, and the operators frequently learn of it from the ransom note rather than from any alert.
 
-        - **Reduced exposure:** An attacker who reaches the MongoDB port can no longer connect without stealing or guessing a credential.
-        - **Attributable access:** Authenticated sessions can be tied to a user for logging and investigation.
+        The path in is usually not the public internet but the network the deployment already sits on. A compromised application container, a build agent, or a developer laptop on the same segment is enough, and an unauthenticated server draws no distinction between it and the application that is supposed to connect.
+
+        Every other access control depends on this one. Roles, privileges, and per-database grants describe what an identity may do, and none of it is enforced while there is no identity. Turning it on is the point at which the rest of the security configuration starts to mean anything.
       audit: |-
         ### Audit via mongosh
 
@@ -154,19 +155,20 @@ queries:
     mql: |
       mongo.instance.authorizationEnabled == true
     docs:
-      desc: |-
-        This check ensures that role-based access control is enforced, so that users receive only the privileges their roles grant. Without it, every authenticated client has full access to every database, defeating least privilege.
+      desc: |
+        This check verifies that the privileges attached to a user's roles are what bound what that user can do.
+
+        Role-based access control is activated by the same authorization setting in the `security` section of `mongod.conf`, and it applies once the `mongod` service is restarted. With it active, each user gets only the built-in or custom roles granted to them, scoped to the databases named in the grant.
 
         **Why this matters**
 
-        - **Least privilege:** Role-based access control lets you grant each user only the permissions it needs rather than full access to everything.
-        - **Separation of duties:** Distinct roles for application access and administration limit what a single credential can do.
-        - **Enforced permissions:** Built-in and custom roles have effect only when access control is active.
+        Without enforcement, every user that connects holds the same authority as every other one, so the roles recorded against them are documentation rather than a control. The account an application uses to read one collection can read all of them, write to any of them, and drop a database.
 
-        **Risk mitigation**
+        That turns any credential leak into a full compromise. Application credentials are the ones that leak, because they live in environment variables, container images, configuration repositories, and the logs of a deployment tool. When the credential is bounded by a role, an attacker who takes it gets exactly the collection that application reads. When it is not, the same leak hands over the entire deployment, including the collections holding the data the application was never meant to see.
 
-        - **Contained credentials:** A leaked application credential cannot read or alter data outside the permissions granted to its role.
-        - **Blast radius:** Compromise of one user no longer implies control of the entire deployment.
+        Scoped roles also contain a compromised application. An injection flaw or a deserialization bug in one service lets an attacker issue commands as that service; whether that ends at one collection or at the whole cluster is decided here.
+
+        Grant each user the narrowest built-in role that covers its work, scoped to the specific database, and give administrative roles only to accounts used for administration. A deployment where every user holds a cluster-wide role is enforcing nothing in practice even with the setting active.
       audit: |-
         ### Audit via mongosh
 
@@ -224,19 +226,20 @@ queries:
     mql: |
       mongo.instance.tlsMode == "requireTLS"
     docs:
-      desc: |-
-        This check ensures that the server's `net.tls.mode` is `requireTLS`, so that all client and intra-cluster connections are encrypted in transit. Weaker modes such as `allowTLS` and `preferTLS` still accept plaintext connections, leaving credentials and query data exposed on the network.
+      desc: |
+        This check verifies that the server refuses any connection that is not encrypted.
+
+        The TLS posture is set with `net.tls.mode` in `mongod.conf` and needs a certificate and key file the `mongod` user can read. This check requires `requireTLS`. The permissive modes `allowTLS` and `preferTLS` still accept plaintext connections, and a disabled setting accepts nothing else. Restart the `mongod` service after changing it.
 
         **Why this matters**
 
-        - **Confidentiality in transit:** TLS protects credentials, commands, and result sets from network eavesdropping.
-        - **Integrity in transit:** It prevents tampering with statements and responses on the wire.
-        - **No plaintext fallback:** `requireTLS` rejects unencrypted connections outright, unlike the permissive modes that still allow them.
+        The permissive modes are the trap. They report that TLS is configured, they show encrypted sessions when a client asks for one, and they quietly accept every client that does not. Clients do not ask constantly: a connection string that omits the option, a driver upgraded across a release where the default changed, a retry path that falls back when a handshake fails. Each of those sessions carries its authentication exchange, its commands, and its result documents in the clear, and neither end reports anything wrong.
 
-        **Risk mitigation**
+        An attacker on the path exploits that deliberately. They disrupt the handshake until the client retries without encryption, the server accepts because the mode permits it, and they read the credential out of the authentication exchange and the documents out of the responses. They then connect as that user themselves from wherever they like.
 
-        - **No cleartext credentials:** Passwords exchanged during authentication are no longer exposed to anyone on the network path.
-        - **Man-in-the-middle resistance:** Combined with certificate verification on the client, TLS prevents interception and impersonation.
+        The same applies between cluster members. Replication and shard traffic carries the same documents, so a permissive mode leaves the internal network exposed even when application clients happen to be well behaved.
+
+        Verify certificates and client configuration before switching, because the strict mode rejects every client that cannot negotiate, and a partial rollout takes the application down rather than protecting it.
       audit: |-
         ### Audit via mongosh
 
@@ -291,19 +294,20 @@ queries:
     mql: |
       mongo.instance.javascriptEnabled == false
     docs:
-      desc: |-
-        This check ensures that server-side JavaScript execution (`security.javascriptEnabled`) is disabled, removing the `$where`, `mapReduce`, and `$function` attack surface when the application does not need it. Server-side JavaScript lets a query run arbitrary code inside the database process.
+      desc: |
+        This check verifies that the server will not execute JavaScript submitted with a query.
+
+        Server-side execution is controlled by `security.javascriptEnabled` in `mongod.conf`. It is on by default, so the check fails when the setting is absent as well as when it is explicitly true. Restart the `mongod` service after disabling it.
 
         **Why this matters**
 
-        - **Reduced attack surface:** Disabling server-side JavaScript removes operators that can execute arbitrary code, closing an injection path.
-        - **Hardened defaults:** Most applications never use `$where`, `mapReduce`, or `$function`, so the feature is pure exposure when left on.
-        - **Defense in depth:** It limits what an attacker can do even if a malicious query reaches the server.
+        While it is on, several operators accept code rather than data. The `$where` operator takes a JavaScript expression evaluated per document, `$function` runs a supplied function body inside an aggregation pipeline, and `mapReduce` executes both of its stages as JavaScript. In each case the code runs inside the database process.
 
-        **Risk mitigation**
+        That gives query injection somewhere to go. An application that builds a filter from user input and passes it through without validation lets an attacker replace a comparison with an expression of their choosing. Instead of returning the one document the application intended, the expression walks the collection, tests characters of a field one at a time, and leaks the contents through the true and false answers it produces. The same expression can be written to loop, which stalls the query thread and takes the deployment down.
 
-        - **No arbitrary code execution:** A crafted `$where` or `$function` payload can no longer run JavaScript inside the database.
-        - **Contained injection:** Query injection that relies on server-side JavaScript is neutralized.
+        Turning the feature off closes the whole class at once. The operators are refused outright, so an injected expression is an error rather than an execution, and the application's own queries are unaffected because they never used them.
+
+        Confirm before disabling that nothing in the workload depends on those operators. Most applications never touch them, and aggregation stages cover almost everything the older map-reduce pipelines were written for.
       audit: |-
         ### Audit via mongosh
 

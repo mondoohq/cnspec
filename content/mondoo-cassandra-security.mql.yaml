@@ -66,19 +66,20 @@ queries:
     mql: |
       cassandra.cluster.security.authenticationEnabled == true
     docs:
-      desc: |-
-        This check ensures that the configured authenticator is not `AllowAllAuthenticator`, so clients must present valid credentials before they can connect. With `AllowAllAuthenticator`, any client that reaches the cluster connects with no credentials at all.
+      desc: |
+        This check verifies that a client must present credentials before the cluster will open a session.
+
+        The `authenticator` setting in `cassandra.yaml` names the class that validates connections. The check fails on `AllowAllAuthenticator`, which is the shipped default and accepts anyone, and passes on a real implementation such as `PasswordAuthenticator`. Changing it needs a rolling restart so every node picks it up, and roles with passwords have to exist before authorized clients can reconnect.
 
         **Why this matters**
 
-        - **No anonymous access:** Requiring authentication ties every connection to a known role rather than allowing open access to anyone on the network.
-        - **Credential enforcement:** `PasswordAuthenticator` validates a username and password before granting a session.
-        - **Foundation for authorization:** Permission enforcement is meaningless without an authenticated identity to enforce it against.
+        With the permissive class in place, reaching the client port is the entire attack. There is nothing to guess and nothing to steal: an attacker points a driver or the interactive shell at a node and holds a session. From there they list the keyspaces, read every table in them, and issue writes and deletes, all of it indistinguishable from legitimate traffic.
 
-        **Risk mitigation**
+        Clusters get reached this way more often than their operators expect, because Cassandra is usually deployed on an internal network with the assumption that the network is the control. A compromised application host, a container on the same overlay, or a monitoring box with broader reach than anyone intended is enough, and an open cluster treats each of them exactly as it treats the application.
 
-        - **Reduced exposure:** An attacker who reaches the CQL port can no longer connect without stealing or guessing a credential.
-        - **Attributable access:** Authenticated sessions can be tied to a role for logging and investigation.
+        The absence of authentication also leaves nothing to investigate with. Sessions are anonymous, so a log or an audit record cannot say which client did what, and there is no failed attempt to alert on because nothing can fail.
+
+        Enabling it is also what makes permissions possible. Grants are evaluated against an authenticated role, so there is no way to limit what a session can reach until each session is tied to one. A companion check in this policy covers the permission side.
       audit: |-
         ### Audit via cqlsh
 
@@ -132,19 +133,20 @@ queries:
     mql: |
       cassandra.cluster.security.authorizationEnabled == true
     docs:
-      desc: |-
-        This check ensures that the configured authorizer is not `AllowAllAuthorizer`, so that `GRANT` and `REVOKE` permissions are actually enforced. With `AllowAllAuthorizer`, every authenticated role has full access to every keyspace and table, defeating least privilege.
+      desc: |
+        This check verifies that the permissions granted to a role actually constrain what that role can reach.
+
+        The `authorizer` setting in `cassandra.yaml` names the class that evaluates permissions, and it is separate from the authenticator. The check fails on `AllowAllAuthorizer`, the shipped default, and passes on `CassandraAuthorizer`. A rolling restart applies the change, after which each role needs explicit grants for the keyspaces and tables it uses.
 
         **Why this matters**
 
-        - **Least privilege:** `CassandraAuthorizer` lets you grant each role only the permissions it needs rather than full access to everything.
-        - **Separation of duties:** Distinct roles for application access and administration limit what a single credential can do.
-        - **Enforced permissions:** `GRANT` and `REVOKE` statements have no effect unless a real authorizer evaluates them.
+        Under the permissive class, `GRANT` and `REVOKE` statements are accepted and then ignored. That is worse than having no permission model at all, because the cluster reports a least-privilege configuration that it does not enforce, and a review of the grants produces a clean answer while every authenticated role holds full access to every keyspace and table.
 
-        **Risk mitigation**
+        The consequence shows up the moment any credential is exposed. Application credentials live in configuration files, container images, and deployment pipelines, so they are the ones that get out. A role scoped to the one keyspace its service uses limits an attacker to that keyspace; the same role with unenforced grants hands them everything the cluster stores, including the keyspaces belonging to other services and the system tables that describe the topology.
 
-        - **Contained credentials:** A leaked application credential cannot read or alter data outside the permissions granted to its role.
-        - **Blast radius:** Compromise of one role no longer implies control of the entire cluster.
+        The same boundary contains a compromised application. An injection flaw lets an attacker run statements as that service, and whether that ends at one table or at the entire cluster is decided by this setting.
+
+        Grant each role only the operations it performs on the keyspaces it owns, keep administrative capability on separate roles that applications never use, and confirm the grants are enforced after the restart rather than assuming the statements took effect.
       audit: |-
         ### Audit via cqlsh
 
@@ -196,19 +198,20 @@ queries:
     mql: |
       cassandra.cluster.security.clientEncryptionEnabled == true
     docs:
-      desc: |-
-        This check ensures that client-to-node TLS is enabled so that credentials and query data are encrypted in transit between drivers and nodes. Without it, everything a client sends and receives crosses the network in cleartext.
+      desc: |
+        This check verifies that traffic between drivers and nodes is encrypted.
+
+        Client-to-node encryption is configured through the `client_encryption_options` block in `cassandra.yaml`. Set its enabled flag and point it at a keystore holding the node's certificate and key and a truststore holding the authorities the node should accept. A rolling restart applies the change across the cluster.
 
         **Why this matters**
 
-        - **Confidentiality in transit:** TLS protects credentials, CQL statements, and result sets from network eavesdropping.
-        - **Integrity in transit:** It prevents tampering with statements and responses on the wire.
-        - **Compliance:** Many frameworks require encryption of sensitive data in transit for database traffic.
+        Without it, everything a driver sends and everything a node returns crosses the network in cleartext. In a database that traffic is the data: the statements name the tables and the partition keys, and the responses carry the rows themselves. Anyone with a position on the path reads it without authenticating to anything.
 
-        **Risk mitigation**
+        That position is easier to obtain than it sounds for a cluster on an internal network. A compromised host on the same segment, a monitoring appliance with a span port, an overlay network shared with other workloads, or a link between two data centers all give an attacker a copy of the traffic. The capture is passive, so nothing on the cluster records it and nothing about the cluster's behavior changes.
 
-        - **No cleartext credentials:** Passwords exchanged during authentication are no longer exposed to anyone on the network path.
-        - **Man-in-the-middle resistance:** Combined with certificate verification on the client, TLS prevents interception and impersonation.
+        The authentication exchange travels the same way. A password validated at connection time is observable in transit, so an attacker who captures one session can then open their own, as that role, from anywhere the cluster accepts connections. Encrypting the transport is what stops a network foothold from becoming a credential.
+
+        Roll the change out node by node and confirm the drivers trust the issuing authority before requiring encryption everywhere, since a client that cannot complete the handshake is refused rather than downgraded. Internode traffic is configured separately and carries the same data.
       audit: |-
         ### Audit via cqlsh
 
@@ -263,19 +266,20 @@ queries:
     mql: |
       cassandra.cluster.security.auditLoggingEnabled == true
     docs:
-      desc: |-
-        This check ensures that audit logging is on, producing a trail of authentication, DML, and DDL events for detection and investigation. Without it, there is no record of who connected, what they queried, or what schema changes were made.
+      desc: |
+        This check verifies that the cluster keeps a record of who connected and what they ran.
+
+        Audit logging is configured through the `audit_logging_options` block in `cassandra.yaml`, where the enabled flag and a logger class such as the binary audit logger are set. A rolling restart applies it, and it can also be switched on for a single node at runtime with the `nodetool` audit log command, which does not survive a restart.
 
         **Why this matters**
 
-        - **Attributable activity:** Audit records tie authentication, queries, and schema changes to a role and source, which is essential for investigating misuse.
-        - **Detection:** A log of login and query activity supports alerting on anomalous or unauthorized behavior.
-        - **Compliance evidence:** Audit frameworks require logging of access to systems that hold sensitive data.
+        With it off, the cluster keeps no record of authentication, of the statements that read data, or of the schema and permission changes made against it. An attacker holding a valid credential then operates entirely without trace: they connect, read the tables that role can reach, grant themselves more, and disconnect, and the cluster retains nothing that would show any of it happened.
 
-        **Risk mitigation**
+        That absence is felt hardest after the fact. When an exposure is discovered through some other route, the first questions are when the access began, which role was used, which tables were read, and whether anything was altered. Audit records answer all four directly. Without them the investigation cannot bound the incident, so every table the compromised role could reach has to be treated as taken.
 
-        - **Faster incident response:** A trail of events narrows down the source and timeline of suspicious activity.
-        - **Deterrence:** Logged, attributable access discourages misuse by authorized users.
+        Records also make ongoing detection possible. A role that suddenly reads a keyspace it has never touched, or a burst of failed authentications against one role name, is visible only if the events are written down somewhere.
+
+        Audit logging is not free. It adds write volume and disk usage on every node, so scope it to the categories and keyspaces that warrant it and ship the output off the nodes, where an attacker who reaches one of them cannot edit it.
       audit: |-
         ### Audit via cqlsh
 

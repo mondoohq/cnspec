@@ -66,19 +66,20 @@ queries:
     mql: |
       mssql.server.forceEncryption == true
     docs:
-      desc: |-
-        This check ensures that the SQL Server instance has Force Encryption enabled, so the server requires an encrypted TLS channel for all client connections rather than leaving encryption to each client's discretion.
+      desc: |
+        This check verifies that the instance requires an encrypted channel for every client connection instead of leaving the decision to each client.
+
+        Force Encryption is a server-level protocol setting. Open SQL Server Configuration Manager, expand SQL Server Network Configuration, open the properties of the protocols for the instance, and set the flag on the Flags tab. It works only once a trusted server certificate has been installed and selected on the Certificate tab and the service account can read that certificate's private key, and the SQL Server service must be restarted before the change takes effect.
 
         **Why this matters**
 
-        - **Confidentiality in transit:** TLS protects credentials, query text, and result sets from network eavesdropping.
-        - **No opportunistic downgrade:** Forcing encryption at the server prevents a client from negotiating an unencrypted session.
-        - **Compliance:** Frameworks require sensitive database traffic to be encrypted in transit.
+        Without it the server accepts whatever the client asks for, and clients ask for plaintext constantly. A connection string that omits the encryption setting, an older driver whose default was permissive, a linked server configured years ago: each produces a session that carries the login and the traffic in the clear.
 
-        **Risk mitigation**
+        What crosses that wire is the whole point of the database. An attacker with a position on the network path, a mirrored switch port, a compromised jump host, or a hypervisor under someone else's control, reads the login credentials as they are presented and then the statement text and the result rows behind them. They do not need to authenticate, they do not appear in any login record, and the capture keeps working until someone notices the tap.
 
-        - **No cleartext credentials:** Login credentials are no longer exposed to anyone on the network path.
-        - **Man-in-the-middle resistance:** Combined with a trusted server certificate, TLS prevents interception and impersonation.
+        Forcing encryption at the server also removes the downgrade. An attacker who can interfere with the connection cannot push a client onto an unencrypted session, because the server refuses it outright rather than accommodating the request.
+
+        Pair this with a certificate the clients actually trust. When clients fall back to trusting the self-signed certificate the instance generates, the session is encrypted but unauthenticated, and an interceptor can still present themselves as the server.
       audit: |-
         ### Audit via SQL Server Configuration Manager
 
@@ -121,19 +122,20 @@ queries:
     mql: |
       mssql.server.isMixedModeAuthEnabled == false
     docs:
-      desc: |-
-        This check ensures that the instance uses Windows Authentication mode rather than mixed mode. In mixed mode, SQL logins authenticate with a username and password managed by SQL Server; in Windows Authentication mode, only Windows and Active Directory principals may connect, so identity is centralized in the directory.
+      desc: |
+        This check verifies that only directory principals can log in to the instance, rather than accounts whose passwords the database itself holds.
+
+        Server authentication is set in SQL Server Management Studio through the server's properties on the Security page, or through the `LoginMode` server registry value, where `1` selects Windows Authentication and `2` selects mixed mode. Either way the SQL Server service must be restarted. Confirm a Windows login with administrative rights exists before switching, or the change locks everyone out.
 
         **Why this matters**
 
-        - **Centralized identity:** Windows Authentication delegates authentication to Active Directory, which enforces password policy, lockout, and Kerberos protections that SQL logins do not receive by default.
-        - **Smaller credential surface:** SQL logins add a separate set of passwords that can be brute-forced against the database endpoint directly.
-        - **Stronger protocols:** Windows Authentication uses Kerberos or NTLM rather than passing SQL-login credentials to the server.
+        In mixed mode the instance carries its own set of usernames and passwords, and those accounts are reachable from anywhere the port is. An attacker who can open a socket guesses against them directly, and the well-known administrative login is on every wordlist in use. There is no directory in the path to apply a lockout threshold or a complexity rule, so the attempts continue at whatever rate the network allows.
 
-        **Risk mitigation**
+        Those passwords are also the ones that end up in configuration files, deployment scripts, and repositories, because an application needs to present them. One leaked file yields a credential that works from any host that can route to the instance, with nothing else required.
 
-        - **No standalone SQL passwords:** Removing SQL logins eliminates a common brute-force and credential-stuffing target.
-        - **Policy enforcement:** Directory-managed accounts inherit enterprise password and lockout policy.
+        Directory authentication removes the standalone secret. The exchange uses Kerberos or the older challenge-response protocol rather than sending a password the server stores, account policy and lockout are enforced centrally, and disabling a person's directory account removes their database access at the same moment rather than whenever someone remembers to drop the login.
+
+        Applications that genuinely cannot use a directory identity are the reason to keep mixed mode. Where that is the case, restrict the accounts to the minimum privileges, rotate them, and keep the administrative login disabled.
       audit: |-
         ### Audit via T-SQL
 
@@ -187,19 +189,20 @@ queries:
     mql: |
       mssql.server.configurations.where(name == "xp_cmdshell").all(valueInUse == 0)
     docs:
-      desc: |-
-        This check ensures that the `xp_cmdshell` server configuration option is disabled. When enabled, `xp_cmdshell` lets a sufficiently privileged database session run arbitrary operating-system commands under the SQL Server service account.
+      desc: |
+        This check verifies that the instance cannot be used to run operating system commands on the host.
+
+        `xp_cmdshell` is a surface-area option in the server configuration. It is disabled by default and is turned on and off with `sp_configure`, which requires `show advanced options` to be enabled first and a `RECONFIGURE` afterwards for the change to become the running value. The same setting is exposed in Management Studio through the Surface Area Configuration facet on the server. This check reads the running value rather than the configured one, so a pending change that was never reconfigured does not count.
 
         **Why this matters**
 
-        - **Blocks OS command execution from SQL:** With `xp_cmdshell` off, a compromised database login or a SQL injection flaw cannot pivot into shell commands on the host.
-        - **Reduces surface area:** It is disabled by default; leaving it on keeps a powerful, rarely needed capability available to attackers.
-        - **Limits blast radius:** Commands would otherwise run with the privileges of the SQL Server service account, not the caller.
+        When it is on, the database stops being a boundary. A session with sufficient privilege runs shell commands on the host, and those commands execute as the SQL Server service account rather than as the caller, so the caller's operating system privileges are irrelevant.
 
-        **Risk mitigation**
+        That is the step an attacker is looking for. An injection flaw in an application, or a login they obtained from a configuration file, becomes command execution on a Windows server that usually sits inside the network rather than at its edge. From there they read files the service account can reach, add a local account, dump credentials from memory, and move to the next host. A database compromise turns into a foothold on the domain.
 
-        - **Injection containment:** A SQL injection vulnerability can no longer escalate to host command execution through this path.
-        - **Least functionality:** Removing unused capabilities shrinks the attack surface of the instance.
+        The capability is rarely needed. Most instances that have it enabled did so once for a scheduled task that has since been replaced by an agent job or a service.
+
+        Where a job genuinely requires it, enable it for the duration of that job and turn it off again, rather than leaving it on permanently for a task that runs once a week.
       audit: |-
         ### Audit via T-SQL
 
@@ -253,19 +256,20 @@ queries:
     mql: |
       ["Failed", "All"].contains( mssql.server.loginAuditLevel )
     docs:
-      desc: |-
-        This check ensures that the instance's login auditing level records failed login attempts (a level of `Failed` or `All`). SQL Server writes these records to the SQL Server error log, producing an audit trail of authentication activity.
+      desc: |
+        This check verifies that the instance records login attempts that fail.
+
+        Login auditing is a server-level setting, configured in Management Studio through the server's properties on the Security page under Login auditing. This check requires the level to be `Failed` or `All`; recording only successful logins, or nothing at all, fails it. The SQL Server service must be restarted before a change takes effect. Records are written to the SQL Server error log.
 
         **Why this matters**
 
-        - **Brute-force detection:** A record of failed logins is the primary signal for password-guessing and credential-stuffing against SQL logins.
-        - **Attributable access:** Login records tie authentication attempts to accounts and times, supporting investigations.
-        - **Compliance evidence:** Audit frameworks require logging of access attempts to systems holding sensitive data.
+        A run of failed logins is the clearest signal a database produces. Password guessing against the administrative login, credential stuffing with pairs from an unrelated breach, and an attacker working through the account names they found in a configuration file all look the same from inside the instance: many attempts, few accounts, one source. With the level set to record nothing, all of that happens in silence and the first evidence of the campaign is the session that finally succeeded.
 
-        **Risk mitigation**
+        The absence also removes the timeline. When a compromise is found later, failed attempts are what establish when the attacker started, which accounts they knew about, and where they were connecting from, and none of that can be reconstructed after the fact if it was never written.
 
-        - **Faster incident response:** A trail of failed logins narrows down the source and timeline of an attack.
-        - **Alerting:** Logged failures can drive alerts on repeated or off-hours attempts.
+        Recording failures rather than successes keeps the volume low, since a healthy instance produces very few, which in turn makes an alert on a sudden burst practical rather than noisy.
+
+        Recording both is better where the error log is shipped to a collector that can hold the volume, since successful logins are what let a suspicious source address be traced through to what it actually did.
       audit: |-
         ### Audit via T-SQL
 
