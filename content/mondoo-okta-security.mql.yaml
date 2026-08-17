@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-okta-security
     name: Mondoo Okta Organization Security
-    version: 2.3.5
+    version: 2.3.6
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -119,22 +119,19 @@ queries:
           mondoo.com/filter-icon: okta
     docs:
       desc: |
-        This check ensures that the number of super admins in your Okta org is kept to the minimum required for operations. The super admin role holds the highest permissions of any admin role, so a large pool of super admins greatly widens the blast radius of a compromised account.
+        This check verifies that super administrator access is confined to a small, deliberate set of people and that no group carrying the role can be quietly widened by a group owner.
 
-        The check also confirms that groups carrying the super admin role have no group owners. Group ownership is an indirect grant: an owner can add members, and those members inherit every administrator role the group carries. A super admin group with owners therefore has a hidden set of principals who can expand super admin access at will, which the member count alone does not capture.
+        The Super Administrator role is the highest privilege level in an Okta org. It can create and delete users, reset any authenticator, assign any other administrator role, register identity providers, and issue API tokens. Administrators are listed in the Admin Console under Security > Administrators, and the role can also be attached to a group through that group's administrator role assignment. This check requires that each group holding the role has fewer members than the configured maximum and has no group owners.
 
         **Why this matters**
 
-        - **Least privilege:** Restricting super admin assignments keeps broad control of the org in the hands of only those who genuinely need it.
-        - **Reduced attack surface:** Fewer super admin accounts means fewer high-value targets for attackers to phish or take over.
-        - **Clear accountability:** A small, well-defined set of super admins makes it easier to audit who can change critical org settings.
-        - **No hidden expansion:** Blocking owners on super admin groups stops principals outside the counted membership from silently granting themselves or others super admin.
-        - **Containment:** Most administrative tasks can be performed with scoped roles, leaving super admin access reserved for exceptional needs.
+        Okta is the front door to every application federated behind it, and a super administrator holds the key to that door. An attacker who phishes one super admin never has to attack a downstream system directly. They can enroll their own authenticator on a target account, assign themselves an application, or mint an API token that keeps working after the phished session is revoked and the password is rotated.
 
-        **Risk mitigation**
+        Group owners make the count misleading. An owner can add members to a group, and every member inherits whatever administrator roles that group carries, so an owned group holds a set of principals who can grant themselves super admin without ever appearing in the membership list a reviewer counts. In the System Log the grant looks like ordinary group maintenance rather than a role assignment.
 
-        - **Limit super admin assignments:** Grant super admin only to users who require it, and assign all other admins the narrowest role their job demands.
-        - **Review regularly:** Run a recurring assessment of all admin privileges so unneeded super admin grants are revoked promptly.
+        A large pool of super admins also destroys attribution. When twenty people can change the org's authentication policy, an unexplained policy change cannot be traced to an individual, and an attacker operating inside a stolen super admin session blends into normal administrative traffic.
+
+        Keep at least two super administrators so a lost authenticator cannot lock the org out entirely, and give everyone else the narrowest scoped administrator role their work requires. Raise the configured maximum only when a genuinely larger group needs unrestricted access, and pair the limit with phishing-resistant authentication on every administrator account.
       audit: |
         ### Audit via Admin Console
 
@@ -220,18 +217,19 @@ queries:
           mondoo.com/filter-icon: okta
     docs:
       desc: |
-        This check ensures that your Okta org has at least one network zone configured as a blocklist with defined IP gateways. Okta evaluates blocklisted addresses before any policy runs, so requests from those addresses are rejected before they reach an authentication flow.
+        This check verifies that the org denies traffic from known-hostile networks at the edge, before any authentication policy runs.
+
+        Okta network zones classify inbound requests by IP address, and a zone marked as blocked rejects every request from the addresses it lists. Zones are managed in the Admin Console under Security > Network, where a blocked zone must carry at least one gateway IP address or range to have any effect. This check requires the org to have at least one blocked zone with gateways populated.
 
         **Why this matters**
 
-        - **Early enforcement:** Blocklisted IP addresses are denied before policy evaluation, stopping malicious traffic at the edge of your org.
-        - **Reduced exposure:** Known untrusted networks, locations, and proxy servers lose the ability to reach any of your org's URLs.
-        - **Defense in depth:** Network blocklisting complements MFA and sign-on policies by removing hostile sources from the picture entirely.
+        Blocked zones are evaluated ahead of the sign-in flow, so a request from a listed address never reaches a password prompt or an authenticator challenge. Everything after that point, including global session policy, enrollment, and lockout counters, is skipped. That ordering is what makes the control useful against volume attacks.
 
-        **Risk mitigation**
+        Without a blocked zone, credential stuffing traffic from anonymizing proxies, residential proxy networks, and bulletproof hosting reaches the credential check on every attempt. Each attempt is a chance to hit a reused password, and each failure increments a lockout counter, so an attacker who cannot break in can still lock a whole department out of every federated application simply by spraying their usernames.
 
-        - **Maintain a blocklist zone:** Configure a network zone with `usage` set to blocklist and populate it with known malicious IP ranges.
-        - **Block anonymizing infrastructure:** Add Tor anonymizer proxies and other untrusted locations so attackers cannot hide their origin.
+        A blocked zone also removes an attacker's cheapest evasion. Attackers rotate source addresses to stay under rate limits and out of behavioral detection, and a zone that lists the anonymizing infrastructure they rent takes that rotation away instead of merely logging it.
+
+        Blocklists are a coarse instrument and should not be the only network control. Pair a blocked zone with allow-listed zones for administrative access, and keep the gateway list current, since a stale list of addresses since reassigned to a legitimate provider will lock out real users.
       audit: |
         ### Audit via Admin Console
 
@@ -338,18 +336,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that weaker authentication factors such as email, SMS, and voice are not available for self-enrollment in factor enrollment policies. These factors are vulnerable to phishing and adversary-in-the-middle attacks, so stronger factors should be used instead.
+        This check verifies that phishable authentication factors are not offered to users when they enroll in multifactor authentication.
+
+        Email, SMS, and voice call all deliver a one-time code over a channel the user simply reads and retypes. Their availability is set per enrollment policy in the Admin Console under Security > Authenticators, on the enrollment tab, where each authenticator is required, optional, or disallowed for the people the policy covers. This check requires that email, SMS, and phone are neither required nor optional in any enrollment policy.
 
         **Why this matters**
 
-        - **Phishing resistance:** Removing email, SMS, and voice factors steers users toward factors that resist credential interception.
-        - **Stronger assurance:** Push-based and hardware-backed factors provide far higher confidence in a user's identity than one-time codes sent over insecure channels.
-        - **Consistent posture:** Disabling weak factors org-wide prevents users from quietly choosing a weaker option during enrollment.
+        A code a user can read and retype is a code a user can be talked into retyping somewhere else. Adversary-in-the-middle phishing kits proxy the real Okta sign-in page, capture the password, prompt for the one-time code, and replay it to Okta inside its validity window. The user reaches the application they expected and the attacker walks away with a live session cookie for the org and everything behind it.
 
-        **Risk mitigation**
+        SMS and voice add a delivery channel the org does not control. An attacker who convinces a mobile carrier to port a number, or who intercepts messages in transit, receives the code without touching the user at all. Email is worse when the mailbox is itself federated through Okta, because an attacker who already holds the mailbox can enroll a factor and complete a recovery in the same session.
 
-        - **Disable weak factors:** Set email, SMS, and phone factors so they cannot be self-enrolled in any factor enrollment policy.
-        - **Promote strong factors:** Enable Okta Verify with push, Google Authenticator, and WebAuthn as the primary enrollment options.
+        Leaving these factors merely optional does not help. Users pick the fastest option during enrollment, so an optional weak factor becomes the factor most of the org actually holds, and an attacker only needs the weakest one their target enrolled.
+
+        Disallow these factors and enroll users in Okta Verify or a WebAuthn security key instead. If a population genuinely cannot hold an authenticator app or a key, scope a separate enrollment policy to that group rather than weakening the policy that covers everyone.
       audit: |
         ### Audit via Admin Console
 
@@ -490,18 +489,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Okta Verify is enabled as a factor in at least one factor enrollment policy. Okta Verify lets users confirm their identity with a push notification or one-time code, making account takeover significantly harder.
+        This check verifies that Okta Verify is available for enrollment in at least one multifactor enrollment policy.
+
+        Okta Verify is Okta's own authenticator app. It proves possession of a registered device through a push approval or a time-based code, and on supported platforms it binds the approval to that device. Its availability is set in the Admin Console under Security > Authenticators, where Okta Verify must be required or optional on the enrollment tab of a policy. This check requires at least one enrollment policy to offer it.
 
         **Why this matters**
 
-        - **Strong authentication:** Okta Verify provides a phishing-resistant alternative to passwords and weaker one-time-code channels.
-        - **Push convenience:** Approving a push notification is fast for users while still requiring possession of an enrolled device.
-        - **Account takeover defense:** An attacker with only a stolen password cannot complete sign-in without the user's Okta Verify device.
+        Without a strong authenticator available, the org's multifactor story falls back to whatever weak factor remains, and an attacker holding a password from a breach reuse list or a phishing page meets a challenge the same page can defeat. Okta Verify moves the second factor onto hardware the attacker does not have.
 
-        **Risk mitigation**
+        Number challenge closes the gap that plain push leaves open. Plain push approvals can be defeated by volume: an attacker with a valid password fires request after request until a tired or confused user taps approve, a pattern that has produced real breaches at large organizations. Requiring the user to select a number displayed on the sign-in screen means an approval cannot be harvested from someone who is not looking at the attacker's session.
 
-        - **Enable Okta Verify:** Configure Okta Verify as an available factor so users can enroll a trusted device.
-        - **Prefer push when available:** Use push-based verification to reduce reliance on codes that can be relayed by an attacker.
+        Device binding matters for the same reason. An Okta Verify enrollment ties the factor to a device the user carries, so an attacker with a stolen password and no device has no way to satisfy the challenge from their own machine.
+
+        Okta Verify raises the bar but is not phishing resistant on its own, since a proxy kit can still relay a plain push or a typed code. Where the risk warrants it, add a WebAuthn security key or platform authenticator for administrators, and pair enrollment with a sign-on rule that actually requires a factor at sign-in.
       audit: |
         ### Audit via Admin Console
 
@@ -622,18 +622,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that at least one active factor enrollment policy applies to the Everyone group with a required factor. Requiring a factor for all users guarantees that every end user is enrolled in MFA before they can sign in.
+        This check verifies that multifactor enrollment reaches every user in the org rather than a self-selected subset.
+
+        Enrollment policies decide which authenticators a population must register and which people they apply to. They are configured in the Admin Console under Security > Authenticators, on the enrollment tab, where each policy is assigned to one or more groups and each authenticator within it is required, optional, or disallowed. This check requires an active enrollment policy that covers the built-in Everyone group with at least one authenticator set to required.
 
         **Why this matters**
 
-        - **Universal coverage:** Applying a required factor to the Everyone group leaves no user without MFA.
-        - **No gaps:** A required factor must be enrolled before sign-in, so users cannot defer or skip MFA setup.
-        - **Baseline assurance:** Mandatory MFA establishes a consistent minimum authentication standard across the org.
+        Coverage gaps in enrollment are invisible from the outside and obvious from the inside. When a policy is scoped to the engineering group and the finance group, then contractors, accounts used for interactive service sign-in, and anyone hired into a group nobody remembered to add hold a password and nothing else. An attacker looking for a way into the org does not need to defeat multifactor authentication; they need to find the one person who never had to enroll.
 
-        **Risk mitigation**
+        Assigning a policy to Everyone removes that search. New users inherit coverage on their first sign-in rather than at whatever point someone notices the omission, and a group reorganization cannot silently drop a population out of scope.
 
-        - **Require a factor:** Set at least one factor to required in an active factor enrollment policy that includes the Everyone group.
-        - **Prompt for enrollment:** Use a sign-on policy rule to prompt users to enroll in the required factor at next sign-in.
+        Making an authenticator required rather than optional is what turns coverage into enrollment. An optional authenticator leaves the choice with the user, and users deferring enrollment indefinitely produces the same password-only accounts a missing policy would.
+
+        Enrollment is not enforcement. A user can hold a registered authenticator and still sign in without ever being challenged for it, so pair this with the companion check in this policy that requires a factor at sign-in.
       audit: |
         ### Audit via Admin Console
 
@@ -743,18 +744,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every active sign-on policy rule enforces a limited session idle time and session lifetime. The Okta default session lifetime is two hours, and shorter limits reduce the window in which a hijacked session can be abused.
+        This check verifies that Okta sessions expire on a bounded schedule instead of staying valid indefinitely.
+
+        The global session policy sets how long a signed-in session survives and how long it may sit unused before Okta ends it. Its rules are written in the Admin Console under Security > Global Session Policy, where each rule carries a maximum global session lifetime and a maximum global session idle time. This check requires every active rule to set both within the configured maximums, which default to 120 minutes idle and 1440 minutes total.
 
         **Why this matters**
 
-        - **Reduced exposure:** Shorter session lifetimes shrink the time an attacker can use a stolen or abandoned session.
-        - **Reauthentication:** Idle and lifetime limits force users to sign in again, re-verifying their identity periodically.
-        - **Consistent enforcement:** Applying limits to every active rule ensures no policy leaves sessions open indefinitely.
+        An Okta session cookie is a bearer credential. Anything that can read it, including infostealer malware on the user's laptop, a malicious browser extension, or someone with brief physical access to an unlocked machine, can replay it elsewhere and be authenticated as that user with no password and no authenticator challenge. Multifactor authentication happens before the cookie is issued and does nothing once it exists.
 
-        **Risk mitigation**
+        Session lifetime is the timer on that stolen cookie. A short lifetime gives the attacker a window measured in hours before the credential is worthless and they have to defeat the sign-in flow again. An unbounded lifetime makes the theft effectively permanent access to every application the user can open through Okta, with no signal to the org that anything happened.
 
-        - **Bound session lifetime:** Set session lifetime to two hours or less in every active sign-on policy rule.
-        - **Limit idle time:** Configure a session idle timeout so unattended sessions expire without user action.
+        The idle timeout covers a different case. Sessions abandoned on shared workstations, kiosks, and conference room machines stay live for whoever sits down next, and only an idle timer ends them, because the user who walked away is never coming back to sign out.
+
+        Choose limits the workforce can live with, since sessions that expire during routine work push users toward leaving tabs open and machines unlocked. Where a population needs longer sessions, write a scoped rule for it rather than raising the limit on the rule that covers everyone.
       audit: |
         ### Audit via Admin Console
 
@@ -869,18 +871,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that active applications using a supported sign-on mode are configured to authenticate with SAML or OIDC rather than password-based methods such as SWA. With SAML and OIDC, user credentials never leave Okta, unlike SWA where the username and password are passed to the third-party app.
+        This check verifies that applications authenticate through federation rather than by having Okta replay a stored password on the user's behalf.
+
+        Okta supports several sign-on methods per application, selected in the Admin Console under Applications, on an application's sign-on tab. SAML 2.0 and OpenID Connect federate: Okta asserts who the user is and the application trusts the assertion, so no password for that application exists. Secure Web Authentication does the opposite, storing a username and password and filling them into the vendor's own login form. This check requires every active application capable of federation to use SAML or OIDC.
 
         **Why this matters**
 
-        - **Credential isolation:** SAML and OIDC keep user credentials within Okta instead of forwarding them to third-party apps.
-        - **Federated trust:** Standard protocols let otherwise different systems share authentication state securely.
-        - **Reduced password risk:** Moving away from SWA lowers reliance on stored passwords that can be leaked or reused.
+        With Secure Web Authentication the org holds a working password for the downstream application and hands it over on every sign-in. That password can be recovered from the browser at fill time, it survives an Okta deactivation because the credential is still valid at the vendor, and it can be used from anywhere with no reference to the org's sign-on policy. Deprovisioning a user in Okta removes the tile, not the account.
 
-        **Risk mitigation**
+        Federation removes the credential entirely. A SAML or OIDC application has nothing to steal, phish, or reuse, because access depends on an assertion Okta mints per sign-in and can stop minting the moment an account is suspended. Session revocation, sign-on rules, and factor requirements all apply, which is not true of a password the vendor keeps.
 
-        - **Adopt SAML or OIDC:** Configure supported applications to use SAML 2.0 or OpenID Connect for sign-on.
-        - **Retire SWA where possible:** Replace SWA integrations with federated sign-on so credentials are not passed to external apps.
+        Federation also restores visibility. A SAML or OIDC sign-in is an event in the System Log tied to a user, a device, and a policy decision, while a form-filled password produces a login the vendor sees and the org does not.
+
+        Not every application can federate. Bookmark applications and the Active Directory integration have no sign-on protocol to configure and are out of scope here, and a vendor that sells federation only on a higher tier may leave Secure Web Authentication as the only option. Where that is the case, assign the application to a narrow group and treat its stored password as a credential that needs rotation.
       audit: |
         ### Audit via Admin Console
 
@@ -954,7 +957,17 @@ queries:
       okta.applications.where(signOnMode != "BOOKMARK" && name != "active_directory" && status == "ACTIVE").all(_.signOnMode.in(["OPENID_CONNECT", "SAML_2_0"]))
     docs:
       desc: |
-        This check explicitly skips Okta Bookmark apps and Active Directory integration apps, which cannot be configured with SAML or OIDC authentication by design.
+        This check verifies that every application in the live org uses SAML or OpenID Connect for sign-on, as read from the org itself rather than from infrastructure code.
+
+        Applications and their sign-on methods are listed in the Admin Console under Applications. The live org is the only place that shows applications added by hand, pulled from the Okta Integration Network catalog, or created outside the org's Terraform, so it is where drift from the intended configuration becomes visible. Bookmark applications and the Active Directory integration are excluded, because neither has a sign-on protocol to configure.
+
+        **Why this matters**
+
+        Applications accumulate outside code. An administrator adding a vendor from the catalog in a hurry takes whatever sign-on method that catalog entry offers, and for a vendor without federation support that method is Secure Web Authentication, which stores the user's password and fills it into the vendor's login form. None of this appears in a Terraform plan, so a review of the repository reports a clean federated estate the org does not actually have.
+
+        Each of those stored passwords is a credential that keeps working at the vendor after the user is suspended in Okta, that no sign-on rule or factor requirement applies to, and that produces no assertion the org can revoke. Reading the live org is what finds them.
+
+        Treat a failure here as a scoping question first. An application that genuinely cannot federate should be assigned to a narrow group or deactivated rather than left active for the whole workforce with a password behind it.
   - uid: mondoo-okta-security-okta-auth-openid-saml-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.providers.any( nameLabel == "okta" )
     mql: |
@@ -1000,18 +1013,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Suspicious Activity Reporting is enabled so end users can flag unrecognized account activity. When a user reports suspicious activity, admins gain additional System Log events and actions to investigate the incident.
+        This check verifies that end users can report account activity they do not recognize.
+
+        Suspicious activity reporting adds a report link to the security notification emails Okta sends a user, so someone who receives notice of a sign-in or an authenticator change they did not perform can flag it in one click. It is turned on in the Admin Console under Security > General, in the security notification emails section, and reports raise a dedicated System Log event that monitoring can alert on.
 
         **Why this matters**
 
-        - **Early detection:** End users often notice unfamiliar sign-ins before automated systems, and reporting turns that awareness into actionable signal.
-        - **Richer telemetry:** Reports generate System Log events that give admins detail needed to investigate.
-        - **Faster response:** Surfacing suspicious activity quickly lets security teams contain account compromise sooner.
+        The user is often the only party who knows an event was not theirs. A sign-in from a new device in a plausible location, an authenticator enrolled during working hours, or a password reset following a help desk call all look ordinary in the log, and no detection rule can separate them from the same actions performed legitimately. The person whose account it is can.
 
-        **Risk mitigation**
+        Without a reporting path that knowledge goes nowhere useful. A user who notices something wrong emails a manager, mentions it in a chat channel, or decides it was probably fine, and the security team learns about the compromise days later from its consequences. A report link turns a vague suspicion into a timestamped event attached to the exact sign-in or authenticator change the user saw.
 
-        - **Enable reporting:** Turn on Suspicious Activity Reporting so users have a built-in channel to flag unrecognized activity.
-        - **Act on reports:** Review reported events in the System Log and respond to potential account takeover.
+        Speed is the whole value. Account takeover through Okta is followed quickly by authenticator enrollment, application access, and sometimes an API token that outlives the session, so the difference between a report in minutes and a discovery in days is the difference between revoking a session and running an incident.
+
+        Reporting only helps if someone is listening. Route the report event to the team that can suspend an account and revoke sessions, and tell users what the link does, because a channel nobody has heard of is a channel nobody uses.
       audit: |
         ### Audit via Admin Console
 
@@ -1109,18 +1123,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that sign-on notifications are enabled so end users receive an email when their account is used from a new or unrecognized client. The email includes the browser, operating system, time, and location of the sign-in.
+        This check verifies that users are told when their account signs in from a device Okta has not seen before.
+
+        New device notifications send the account owner an email describing the sign-in, including the browser, operating system, approximate location, and time. The setting is in the Admin Console under Security > General, in the security notification emails section, and applies across the org.
 
         **Why this matters**
 
-        - **User awareness:** End users are informed of new sign-in activity and can recognize a login they did not perform.
-        - **Detailed context:** The notification includes client and location details that help users judge whether activity is legitimate.
-        - **Crowdsourced detection:** Notifying every user turns the whole org into a sensor for unauthorized access.
+        A successful sign-in by an attacker is indistinguishable from a successful sign-in by the user in almost every field the log records. What separates them is knowledge only the account owner has, and a notification is how that knowledge gets applied. A user who reads that their account signed in from a browser and a city they have never used knows immediately what a detection rule can only guess at.
 
-        **Risk mitigation**
+        This is often the only signal a phished user gets. Adversary-in-the-middle kits complete the real sign-in on the victim's behalf, so the victim lands on the application they expected and has no reason to think anything went wrong. The notification arrives for the attacker's session, from a device the user does not own, and is the one artifact that contradicts the story the phishing page told.
 
-        - **Enable sign-on notifications:** Turn on new device email notifications so users learn of unfamiliar sign-ins.
-        - **Encourage reporting:** Pair notifications with a clear process for users to report sign-ins they do not recognize.
+        Session theft produces the same signal. A stolen session cookie replayed from the attacker's machine presents as a new device, and the user learns their live session is being used elsewhere while the attacker still believes the theft went unnoticed.
+
+        Notifications are only worth sending if the user can act on them. Pair this with suspicious activity reporting so the response is a single click into the System Log rather than an email to a support address, and make sure the workforce knows that reporting one is expected rather than an overreaction.
       audit: |
         ### Audit via Admin Console
 
@@ -1214,18 +1229,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that factor enrollment notifications are enabled so end users receive an email when a new MFA factor is enrolled on their account. The notification covers enrollments performed by the user or by an admin.
+        This check verifies that users are told when a new authentication factor is added to their account.
+
+        Factor enrollment notifications email the account owner whenever an authenticator is registered, whether the user registered it or an administrator did it for them. The setting is in the Admin Console under Security > General, in the security notification emails section.
 
         **Why this matters**
 
-        - **User awareness:** Users are alerted when a factor is added, so an unexpected enrollment stands out immediately.
-        - **Tamper detection:** An attacker who enrolls a new factor to maintain access cannot do so silently.
-        - **Account integrity:** Notifications give users a chance to challenge factor changes they did not authorize.
+        Enrolling an authenticator is the standard persistence move after an account takeover. An attacker holding a live session or a working password registers their own authenticator, and from that point the account is theirs even after the victim changes the password, because the attacker can satisfy the challenge on their own device. Nothing about the enrollment looks unusual in the log, since users legitimately add authenticators all the time.
 
-        **Risk mitigation**
+        The notification is what makes the move noisy. The account owner receives mail about an authenticator they did not register, at a moment when the attacker's foothold is still a session rather than an entrenched second identity, and removing it is a matter of resetting authenticators rather than running an investigation.
 
-        - **Enable enrollment notifications:** Turn on factor enrollment emails so users are informed of every new factor.
-        - **Investigate unexpected enrollments:** Treat unrecognized enrollment notices as a possible account compromise.
+        Administrator-initiated enrollments carry the same risk from a different direction. Help desk social engineering works by persuading support staff to add an authenticator for a caller impersonating an employee, and the employee learns nothing about it unless a notification reaches them. Covering admin-initiated enrollment means the impersonated user hears about the change made in their name.
+
+        Notifications catch the enrollment after it happens, so pair them with controls that make it harder in the first place, such as identity verification before help desk authenticator changes and a short list of administrators able to perform them.
       audit: |
         ### Audit via Admin Console
 
@@ -1319,18 +1335,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that factor reset notifications are enabled so end users receive an email when one or more MFA factors are reset or removed from their account. The notification covers resets performed by the user or by an admin.
+        This check verifies that users are told when their authentication factors are reset or removed.
+
+        Factor reset notifications email the account owner whenever a registered authenticator is cleared, whether the user did it or an administrator did it on their behalf. The setting is in the Admin Console under Security > General, in the security notification emails section.
 
         **Why this matters**
 
-        - **User awareness:** Users are alerted when a factor is reset, so an unexpected change is noticed quickly.
-        - **Tamper detection:** An attacker resetting a factor to substitute their own device cannot do so without the user being informed.
-        - **Account integrity:** Notifications give users a chance to challenge factor resets they did not request.
+        An authenticator reset is the step that turns a phone call into an account takeover. The attacker calls the help desk claiming a lost phone, the agent clears the existing authenticator so the caller can enroll a new one, and the attacker enrolls their own device. The account now satisfies every multifactor policy in the org and none of the trust those policies were meant to represent. This pattern has driven several widely reported intrusions at large organizations.
 
-        **Risk mitigation**
+        The legitimate owner is the one person who knows the reset was never requested. Telling them the moment it happens gives the org a chance to catch the takeover in the minutes between the reset and the attacker's first use of the account, rather than after applications have been assigned and tokens created.
 
-        - **Enable reset notifications:** Turn on factor reset emails so users are informed whenever a factor is reset or removed.
-        - **Investigate unexpected resets:** Treat unrecognized reset notices as a possible account compromise.
+        Resets are also how an attacker already inside an account locks the owner out. Clearing the owner's authenticator while enrolling their own removes the victim's ability to sign in and look around, and without a notification the victim experiences it as an outage rather than an attack.
+
+        The notification is a detection control, not a preventive one. Pair it with verification requirements on help desk resets and with a reporting path users can reach the moment the mail arrives.
       audit: |
         ### Audit via Admin Console
 
@@ -1424,18 +1441,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that password changed notifications are enabled so end users receive an email when the password on their account is changed or reset. The notification includes the time and location of the change.
+        This check verifies that users are told when the password on their account is changed or reset.
+
+        Password changed notifications email the account owner after any password change or reset, including one performed by an administrator, and record when it happened. The setting is in the Admin Console under Security > General, in the security notification emails section.
 
         **Why this matters**
 
-        - **User awareness:** Users learn immediately when their password changes and can recognize a change they did not make.
-        - **Detailed context:** The notification includes time and location details that help users assess legitimacy.
-        - **Account takeover detection:** An attacker who changes a password to lock out the owner cannot do so without alerting them.
+        Changing the password is what an attacker does once they no longer need to be quiet. It evicts the legitimate owner, converts a session-based foothold into durable credentialed access, and buys the attacker however long the victim's recovery process takes. Without a notification, the victim's first signal is a failed sign-in they will reasonably blame on their own memory.
 
-        **Risk mitigation**
+        The notification also catches the reset an attacker asked someone else to perform. Help desk resets driven by a convincing caller look identical to routine support in the log, and the impersonated employee is the only person positioned to say that no reset was requested.
 
-        - **Enable change notifications:** Turn on password changed emails so users are informed of every password change or reset.
-        - **Investigate unexpected changes:** Treat unrecognized password change notices as a possible account compromise.
+        For an ordinary user the mail costs nothing and is ignored, which is the point. It demands attention on the one occasion it describes a change the reader did not make, and on that occasion it is the earliest warning the org will get.
+
+        A notification does not stop the change, so route it alongside a reporting path and keep account recovery fast enough that a user who reports a password they did not set is back in control quickly.
       audit: |
         ### Audit via Admin Console
 
@@ -1532,18 +1550,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every password policy enforces a strong minimum password length. Longer passwords are substantially harder to crack through brute force, and current industry guidance favors length over short but complex passwords.
+        This check verifies that every password policy sets a minimum password length long enough to resist offline cracking.
+
+        Minimum length is set per policy in the Admin Console under Security > Authentication, among a password policy's complexity requirements. This check requires at least 15 characters in every policy the org defines.
 
         **Why this matters**
 
-        - **Brute-force resistance:** Each additional character increases the effort an attacker needs to guess a password.
-        - **Memorable strength:** Longer phrase-like passwords can be both strong and easier for users to remember.
-        - **Consistent baseline:** Applying the requirement to every policy ensures no group of users is allowed weak passwords.
+        Length is the only password property that reliably costs an attacker time. Cracking rigs work through short passwords exhaustively whatever character classes they contain, so an eight character password with a symbol and a digit falls in the same session as an eight character word. Each additional character multiplies the search space, and around fifteen characters brute force stops being the cheap path.
 
-        **Risk mitigation**
+        That matters because Okta credentials rarely stay inside Okta. Users reuse them, and the copy that leaks is usually held by a smaller service with weaker hashing. Once an attacker has a hash from somewhere else, the org's lockout thresholds and rate limits do not apply, because the guessing happens offline against a file. Length is what remains.
 
-        - **Set a strong minimum length:** Configure each password policy to require a long minimum password length.
-        - **Align with standards:** Adjust the length requirement to satisfy the cybersecurity standard your organization follows.
+        A long minimum also pushes users away from the patterns attackers model. Wordlist and rule-based attacks target the shapes people produce under short limits, a capitalized word followed by a year and a punctuation mark, and those shapes do not stretch to fifteen characters without becoming a passphrase.
+
+        Set the requirement alongside a check against common passwords, since length alone does not stop a user from choosing a long phrase that already sits in a wordlist. Where a legacy integration cannot accept long passwords, scope a separate policy to it rather than lowering the minimum for the whole org.
       audit: |
         ### Audit via Admin Console
 
@@ -1642,18 +1661,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every password policy limits the number of invalid password attempts before an account is locked. Capping failed attempts protects accounts against brute-force and password-spraying attacks.
+        This check verifies that every password policy locks an account after a small number of consecutive failed sign-in attempts.
+
+        The lockout threshold is set per policy in the Admin Console under Security > Authentication, where a password policy states how many unsuccessful attempts are allowed before the account is locked. This check requires a threshold that is actually set and no higher than five, since a value of zero means no lockout at all.
 
         **Why this matters**
 
-        - **Brute-force defense:** Locking accounts after a few failed attempts stops automated password guessing.
-        - **Spraying resistance:** A lockout threshold limits how many guesses an attacker can make against each account.
-        - **Consistent baseline:** Applying the limit to every policy ensures no group of users is left without lockout protection.
+        Without a lockout, an attacker can guess against a single account until they succeed. Rate limiting slows that down, but an attacker working from a wordlist ordered by real-world frequency does not need many guesses, and a password chosen from the shapes people actually use falls well inside what an unlimited attempt budget allows.
 
-        **Risk mitigation**
+        A low threshold is what makes password spraying expensive. Spraying works by trying one common password against every account rather than many passwords against one, precisely to stay under lockout thresholds, and a limit of five leaves an attacker very few passes across the directory before locked accounts start appearing in the log as an obvious signal.
 
-        - **Set a lockout threshold:** Configure each password policy to lock accounts after a small number of invalid attempts.
-        - **Balance usability:** Choose a threshold that blocks attacks while allowing for occasional legitimate mistyped passwords.
+        Lockouts also convert a silent attack into a visible one. An account that locks itself repeatedly is a report a security team can act on, and it arrives while the attacker is still guessing rather than after they have found a working credential.
+
+        Lockouts can be turned against the org, since an attacker who knows usernames can lock people out deliberately. Pair the threshold with an automatic unlock interval so a denial-of-service attempt expires on its own, and with a network blocklist so the traffic driving those lockouts is stopped before it reaches the credential check.
       audit: |
         ### Audit via Admin Console
 
@@ -1750,18 +1770,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every password policy requires at least one lowercase character. Character-class requirements increase password complexity and make passwords harder to guess.
+        This check verifies that every password policy requires at least one lowercase letter.
+
+        Character class requirements are set per policy in the Admin Console under Security > Authentication, where a password policy can demand lowercase letters, uppercase letters, numbers, and symbols. This check requires at least one lowercase letter in every policy.
 
         **Why this matters**
 
-        - **Increased complexity:** Requiring a lowercase character expands the keyspace an attacker must search.
-        - **Guessing resistance:** Complexity rules reduce the chance that a password matches a common predictable pattern.
-        - **Consistent baseline:** Applying the requirement to every policy ensures all users meet the same complexity standard.
+        Cracking tools attack the smallest plausible keyspace first. A password drawn only from uppercase letters and digits is found from a much shorter candidate list than one that mixes cases, and attackers order their work exactly that way, exhausting the cheap character sets before spending time on the expensive ones.
 
-        **Risk mitigation**
+        Requiring a lowercase letter takes the cheapest of those sets out of the space of valid passwords. It does not make a short password strong, but it stops the org from accepting the passwords that fall fastest, and it costs users nothing because lowercase is what people type by default.
 
-        - **Require lowercase characters:** Configure each password policy to mandate at least one lowercase character.
-        - **Combine with other rules:** Pair this requirement with length and other character-class rules for stronger passwords.
+        The requirement matters most for passwords produced under pressure, at a forced reset or during onboarding, where the shortest thing that satisfies the rules is what gets typed. Raising the floor on what satisfies the rules raises the floor on those passwords.
+
+        Character class rules are weak on their own and are no substitute for length. Combine this with a long minimum length and a common password check, which do far more to keep guessable credentials out of the org.
       audit: |
         ### Audit via Admin Console
 
@@ -1858,18 +1879,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every password policy requires at least one numeric character. Character-class requirements increase password complexity and make passwords harder to guess.
+        This check verifies that every password policy requires at least one number.
+
+        Character class requirements are set per policy in the Admin Console under Security > Authentication, where a password policy can demand numbers alongside letters and symbols. This check requires at least one number in every policy.
 
         **Why this matters**
 
-        - **Increased complexity:** Requiring a numeric character expands the keyspace an attacker must search.
-        - **Guessing resistance:** Complexity rules reduce the chance that a password matches a common predictable pattern.
-        - **Consistent baseline:** Applying the requirement to every policy ensures all users meet the same complexity standard.
+        A purely alphabetic password lives in a keyspace an attacker can search quickly, because letters alone are where dictionary and rule-based attacks begin. Requiring a digit forces every accepted password out of the pure word space those attacks cover first, which is the space where the fastest results come from.
 
-        **Risk mitigation**
+        The gain is modest and specific. A digit does not rescue a short password, and attackers know that people told to add a number append a year or a single trailing digit, patterns that mangling rules generate automatically. What the requirement does is stop the org from accepting the unmodified dictionary word, which is the cheapest guess of all.
 
-        - **Require numeric characters:** Configure each password policy to mandate at least one numeric character.
-        - **Combine with other rules:** Pair this requirement with length and other character-class rules for stronger passwords.
+        It also costs nothing to satisfy. Users add a digit without difficulty, so this is one of the few complexity rules that does not push people toward writing passwords down or reusing them from another service.
+
+        Treat this as a floor rather than a strategy. Length and a check against common passwords do the real work, and a policy that leans on character classes while allowing short passwords is weaker than it looks.
       audit: |
         ### Audit via Admin Console
 
@@ -1966,18 +1988,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every password policy requires at least one symbol character. Character-class requirements increase password complexity and make passwords harder to guess.
+        This check verifies that every password policy requires at least one symbol.
+
+        Character class requirements are set per policy in the Admin Console under Security > Authentication, where a password policy can demand symbols alongside letters and numbers. This check requires at least one symbol in every policy.
 
         **Why this matters**
 
-        - **Increased complexity:** Requiring a symbol character expands the keyspace an attacker must search.
-        - **Guessing resistance:** Complexity rules reduce the chance that a password matches a common predictable pattern.
-        - **Consistent baseline:** Applying the requirement to every policy ensures all users meet the same complexity standard.
+        Symbols are the character class attackers try last, because including them multiplies the work of an exhaustive search at every length. A password guaranteed to contain one cannot be found in the alphanumeric pass that covers most cracking attempts, so the attacker either spends far longer or moves on to an easier account.
 
-        **Risk mitigation**
+        The effect is real but bounded. People satisfy a symbol requirement predictably, with an exclamation mark at the end or an at sign standing in for a letter, and cracking rules apply those substitutions automatically. The requirement raises the cost of brute force considerably more than it raises the cost of a rule-based attack.
 
-        - **Require symbol characters:** Configure each password policy to mandate at least one symbol character.
-        - **Combine with other rules:** Pair this requirement with length and other character-class rules for stronger passwords.
+        Where it helps most is against the reused credential. A password that must contain a symbol is less likely to be one the user also typed into a consumer service that later leaked, simply because fewer sites demand it.
+
+        Symbol requirements irritate users and push them toward patterns and password reuse when stacked with short length limits and frequent expiry. Keep a long minimum length and a common password check as the primary controls, and treat this as a supporting rule.
       audit: |
         ### Audit via Admin Console
 
@@ -2075,18 +2098,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that password policies enforce a minimum interval between password changes of at least 60 minutes. Okta sets no minimum age by default, which lets users change a password repeatedly in quick succession.
+        This check verifies that every password policy makes a user wait before they can change their password again.
+
+        Minimum password age is set per policy in the Admin Console under Security > Authentication, where a password policy states how long a new password must be kept before another change is allowed. Okta enforces no waiting period unless one is configured. This check requires at least 60 minutes in every policy.
 
         **Why this matters**
 
-        - **History enforcement:** A minimum age stops users from cycling rapidly through several password changes to defeat password history rules and return to a familiar password.
-        - **Credential stability:** Requiring a wait period keeps accounts on a deliberately chosen password rather than a throwaway value used only to satisfy a rotation prompt.
-        - **Defense against rapid abuse:** A waiting period limits how quickly a password can be churned after a reset, reducing the value of a single compromised reset action.
+        Without a waiting period, password history is decorative. A user required to pick something new and unwilling to do so can change the password as many times as the history depth demands, in a single sitting, and then set it back to the value they started with. The org's records show a rotation that never happened and a history buffer full of throwaway values.
 
-        **Risk mitigation**
+        That matters after a compromise, not only at routine rotation. When an incident forces a password change, the whole point is that the old credential stops working, and a user who cycles straight back to it hands the attacker a credential the org believes it retired.
 
-        - **Brute force resilience:** Preventing instant repeated changes keeps reused passwords out of circulation, which slows attackers who rely on predictable credential patterns.
-        - **Policy integrity:** Enforcing a minimum age preserves the intent of password history and rotation controls so they cannot be trivially bypassed.
+        A waiting period also blunts a specific attack. An attacker holding a session but not the password can change it to a value they choose, and an owner who changes it back immediately produces a race the attacker can simply rerun. A minimum age gives the org's revocation and reset processes time to act rather than trading changes with an intruder.
+
+        Set the interval long enough to break the cycling loop and short enough that a user who mistypes a new password into a password manager, or genuinely needs a second change, is not blocked for a working day.
       audit: |
         ### Audit via Admin Console
 
@@ -2184,18 +2208,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that password policies are configured to forbid a user's username from appearing in their password. Excluding the username removes a value that an attacker can easily guess or derive.
+        This check verifies that every password policy forbids a user's own username from appearing in their password.
+
+        Okta can reject a password containing the account's username, a rule set per policy in the Admin Console under Security > Authentication among the password complexity requirements. This check requires the rule to be on in every policy.
 
         **Why this matters**
 
-        - **Predictability:** A username is public or easily discovered, so a password built around it offers little real entropy.
-        - **Targeted guessing:** Attackers routinely try the username as a password component, making such passwords a low-effort first guess.
-        - **Stronger credentials:** Forcing the username out of the password pushes users toward values that are harder to relate to their identity.
+        The username is the half of the credential pair the attacker already has. It appears in email addresses, in directory listings, in the headers of every message the user sends, and in the breach dumps attackers use to build target lists, so a password derived from it adds no secret the attacker has to discover.
 
-        **Risk mitigation**
+        Guessing tools exploit this directly. Standard cracking rulesets take the username as a candidate and apply the same mangling they apply to dictionary words, capitalizing it, appending a year, and substituting characters, so a password shaped like the username with a digit on the end is found in the opening seconds of an attack rather than at the end of an exhaustive search.
 
-        - **Credential stuffing resilience:** Passwords unrelated to the username are harder to derive from leaked account lists.
-        - **Brute force resilience:** Removing a known string from allowed passwords increases the effective search space an attacker must cover.
+        The rule also catches the specific failure mode of bulk onboarding, where an administrator sets an initial password derived from the account name for a batch of new users and the pattern survives for everyone who never changed it.
+
+        This is a narrow rule with no cost to users, but it blocks only one predictable value. Combine it with rules excluding the user's name, a common password check, and a minimum length long enough that name-based passwords cannot satisfy the policy in the first place.
       audit: |
         ### Audit via Admin Console
 
@@ -2293,18 +2318,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that password policies are configured to forbid a user's first name from appearing in their password. Excluding personal attributes removes values that an attacker can easily learn and guess.
+        This check verifies that every password policy forbids a user's first name from appearing in their password.
+
+        Okta can reject passwords containing attributes from the user's own profile, and the first name exclusion is set per policy in the Admin Console under Security > Authentication among the password complexity requirements. This check requires the rule to be on in every policy.
 
         **Why this matters**
 
-        - **Predictability:** A first name is widely known and trivial to look up, so a password containing it carries little real strength.
-        - **Targeted guessing:** Attackers commonly try personal names when guessing passwords for a specific user.
-        - **Stronger credentials:** Blocking the first name steers users toward passwords that are not tied to their personal identity.
+        Targeted password guessing starts with what the attacker can look up. A first name is on the corporate website, in the email address, in a public profile, and in the signature block of every message the person sends, so a password built around it is a password the attacker can produce with no research beyond reading a directory.
 
-        **Risk mitigation**
+        Cracking tools automate exactly that step. Given a target list with names attached, a ruleset generates the name capitalized, the name with a birth year, the name with a trailing symbol, and dozens of similar forms, and tries them ahead of any exhaustive search. A password of that shape falls in the opening moments of an attack aimed at that specific person.
 
-        - **Social engineering resilience:** Passwords free of personal details resist guesses informed by public profiles and social media.
-        - **Brute force resilience:** Removing a known name from allowed passwords widens the search space an attacker must cover.
+        Blocking the value where it is set is the only reliable way to stop it, because guidance about avoiding personal information in passwords is advice people follow until they are in a hurry at a forced reset.
+
+        The rule blocks one string out of many that are equally guessable from a public profile, so treat it as part of a set alongside the last name and username exclusions, a common password check, and a length requirement long enough that name-based passwords cannot satisfy the policy anyway.
       audit: |
         ### Audit via Admin Console
 
@@ -2402,18 +2428,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that password policies are configured to forbid a user's last name from appearing in their password. Excluding personal attributes removes values that an attacker can easily learn and guess.
+        This check verifies that every password policy forbids a user's last name from appearing in their password.
+
+        Okta can reject passwords containing attributes from the user's own profile, and the last name exclusion is set per policy in the Admin Console under Security > Authentication among the password complexity requirements. This check requires the rule to be on in every policy.
 
         **Why this matters**
 
-        - **Predictability:** A last name is widely known and trivial to look up, so a password containing it carries little real strength.
-        - **Targeted guessing:** Attackers commonly try personal names when guessing passwords for a specific user.
-        - **Stronger credentials:** Blocking the last name steers users toward passwords that are not tied to their personal identity.
+        A surname is public knowledge attached to a specific account, which is what makes it worth blocking. An attacker who has decided to target one employee already knows it from the email address alone, so a password containing it is a password the attacker can guess from information the org publishes about itself.
 
-        **Risk mitigation**
+        Surnames are also a common building block in the passwords people generate for accounts they do not think about, combined with a birth year, a partner's initials, or a memorable number. Cracking rulesets model these combinations because they are so widespread, and a surname-based password is found by the same pass that finds dictionary words rather than by an exhaustive search.
 
-        - **Social engineering resilience:** Passwords free of personal details resist guesses informed by public profiles and social media.
-        - **Brute force resilience:** Removing a known name from allowed passwords widens the search space an attacker must cover.
+        Enforcing the rule at the moment the password is set is what makes it stick. Users choose passwords under time pressure and reach for the values easiest to remember, and only the policy is present at that moment.
+
+        Like the other profile exclusions, this narrows the space of bad choices without making the remaining choices good. Pair it with a long minimum length and a check against common passwords, which cover the far larger set of guessable values the profile rules cannot see.
       audit: |
         ### Audit via Admin Console
 
@@ -2511,18 +2538,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that password policies are configured to screen new passwords against a dictionary of common passwords and reject any match. Okta can compare passwords against a known list of widely used values during enrollment and reset.
+        This check verifies that every password policy screens new passwords against a list of commonly used passwords and rejects a match.
+
+        Okta compares a proposed password against a dictionary of widely used values at the moment it is set, during enrollment, a change, or a reset. The rule is enabled per policy in the Admin Console under Security > Authentication among the password complexity requirements. This check requires it to be on in every policy.
 
         **Why this matters**
 
-        - **Common password risk:** Widely used passwords appear at the top of every attacker wordlist and are cracked almost instantly.
-        - **Enrollment-time defense:** Screening at the moment a password is set blocks weak choices before they ever protect an account.
-        - **Stronger credentials:** Rejecting dictionary matches forces users toward passwords that are not already public knowledge.
+        Attackers do not guess passwords at random. They guess from ordered lists built out of previous breaches, and the top of those lists covers a startling share of real accounts, which is why password spraying works at all. A password on that list is not weak in some abstract sense; it is a password the attacker will try in their first few attempts against every account in the org.
 
-        **Risk mitigation**
+        Length and character class rules do not catch these. A common password can be fifteen characters long and contain every character class the policy demands and still sit near the top of every wordlist, because people converge on the same memorable phrases and the same substitutions. Only a comparison against the list itself finds them.
 
-        - **Credential stuffing resilience:** Passwords absent from common wordlists are far less likely to match values from public breach data.
-        - **Brute force resilience:** Eliminating predictable passwords removes the fast wins that dictionary attacks depend on.
+        Screening at the moment the password is set is what makes the control cheap. The user picks something else immediately, before the credential ever protects an account, rather than the org discovering the problem when the account is taken over.
+
+        Okta's dictionary covers common passwords, not every credential exposed in a breach, so a password unique to the user but reused from a service that leaked will still pass. Where the org needs that coverage, pair the setting with a breached credential feed and with a length requirement that keeps short memorable choices out.
       audit: |
         ### Audit via Admin Console
 
@@ -2620,18 +2648,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that password policies set a maximum password age so passwords expire within 90 days. Okta does not expire passwords by default, which lets a single credential remain valid indefinitely.
+        This check verifies that every password policy expires passwords rather than letting one credential remain valid forever.
+
+        Password expiry is set per policy in the Admin Console under Security > Authentication, where a password policy states how many days a password stays valid. Okta does not expire passwords unless a maximum age is configured. This check requires an expiry that is set and no longer than 90 days.
 
         **Why this matters**
 
-        - **Exposure window:** A password that never expires gives an attacker who steals it unlimited time to use it.
-        - **Breach containment:** Regular expiry forces a credential change that can quietly evict an attacker holding an old password.
-        - **Hygiene enforcement:** A maximum age prompts users to refresh credentials that may have been shared, reused, or written down over time.
+        A credential that never expires is a credential whose compromise never ends. Passwords leak in ways the org never learns about, through a reused copy at a service that was breached, an infostealer on a home machine, or a phishing harvest sold on months later, and none of those events produce an alert in the org's own logs. Expiry is the only mechanism that invalidates a quietly stolen password without anyone knowing it was stolen.
 
-        **Risk mitigation**
+        The same argument covers accounts nobody is watching. Dormant accounts, contractors whose engagement ended without an offboarding ticket, and shared service identities keep working indefinitely on a password set years earlier, and an expiry cycle either forces attention to them or takes them out of service.
 
-        - **Stolen credential limitation:** Bounding password lifetime caps how long compromised credentials from breaches or phishing stay useful.
-        - **Stale account defense:** Expiry surfaces dormant or forgotten accounts that would otherwise keep working with an unchanged password.
+        Expiry is contested guidance and the objection is real: forced rotation on a short cycle pushes users toward incremental passwords and toward writing them down, which can cost more than it buys. That objection lands against short cycles combined with weak length and history rules, not against a bounded lifetime as such.
+
+        Choose an interval long enough that users treat each change as a real choice, and support it with a deep password history and a minimum age so the new password cannot be the old one. Where the org has phishing-resistant authentication and monitors for breached credentials, a longer interval is a defensible tradeoff, but an unbounded lifetime is not.
       audit: |
         ### Audit via Admin Console
 
@@ -2729,18 +2758,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that password policies warn users 15 days before their password expires. An expiration warning gives users advance notice to change their password on their own schedule.
+        This check verifies that every password policy warns users before their password expires.
+
+        The expiration warning tells a user how many days remain on their current password and prompts them to change it before it lapses. It is set per policy in the Admin Console under Security > Authentication, alongside the password expiry interval. This check requires a warning period of 15 days.
 
         **Why this matters**
 
-        - **Advance notice:** A warning period lets users update their password before it lapses rather than discovering the change at a critical moment.
-        - **Lockout avoidance:** Users who act on the warning avoid being locked out by an unexpected expiry.
-        - **Smoother rotation:** Predictable reminders make password expiry a routine task instead of a disruptive surprise.
+        The security value of a warning lies in what it stops users from doing. A password that expires without notice strands the user at whatever moment they next try to sign in, often the moment they most need access, and the resulting change is made in a hurry. Passwords chosen in a hurry are incremental variations on the previous one, which is exactly what password history and rotation exist to prevent.
 
-        **Risk mitigation**
+        An unwarned expiry also pushes the user to the help desk. Help desk password resets are a target, because that is the process an attacker impersonates when calling support as a locked-out employee, and every legitimate reset in the queue makes the fraudulent one harder to spot. Cutting the volume of urgent resets makes the remaining ones easier to scrutinize.
 
-        - **Reduced reset pressure:** Early warnings cut the volume of urgent help desk resets, which lowers the chance of rushed and weak password choices.
-        - **Sustained policy adoption:** Clear notice keeps users cooperating with expiry rules instead of seeking ways around them.
+        A warning period protects the rotation policy itself. Users who repeatedly experience expiry as an ambush lobby to have it relaxed or find ways around it, while users given two weeks of notice treat it as routine.
+
+        Set a warning long enough to cover a normal absence, since a user on leave when the notice fires should still see it before coming back to a locked account.
       audit: |
         ### Audit via Admin Console
 
@@ -2838,18 +2868,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that password policies remember the last 24 passwords and prevent their reuse. Okta tracks recent passwords so users must choose a genuinely new value at each change.
+        This check verifies that every password policy remembers previous passwords and refuses to let a user set one again.
+
+        Password history is set per policy in the Admin Console under Security > Authentication, where a policy states how many previous passwords Okta retains and rejects on reuse. This check requires a history of at least 24 passwords.
 
         **Why this matters**
 
-        - **Reuse prevention:** A deep history stops users from alternating between a small set of familiar passwords.
-        - **Rotation effectiveness:** Password expiry only improves security if the replacement is actually different from prior ones.
-        - **Stronger credentials:** Requiring 24 distinct passwords pushes users away from minor variations of an old favorite.
+        Without history, rotation is a formality. A user prompted to change their password sets it to the one they used last time, and the credential an attacker may already hold comes straight back into service. The org's records show a change; the attacker sees no difference.
 
-        **Risk mitigation**
+        History is what gives an incident response a durable result. When a password is known to be compromised and the account is forced to reset, a shallow history lets the user return to the compromised value within a cycle or two, so the reset buys weeks rather than permanence. A deep history takes that value out of circulation for the life of the account.
 
-        - **Compromised credential containment:** A wide history keeps a previously breached password from being reinstated on the account.
-        - **Predictability reduction:** Blocking reuse limits the value of credentials an attacker may have observed in the past.
+        The depth also decides whether users can cycle deliberately. Anyone willing to change their password a few times in a row can flush a short history and return to a favorite, which is why history depth and a minimum password age only work as a pair.
+
+        History cannot see across services. It stops reuse of a password within this org, not reuse of a password the user also types into a consumer site, so combine it with a common password check and with authentication factors that make a stolen password insufficient on its own.
       audit: |
         ### Audit via Admin Console
 
@@ -2947,18 +2978,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that password policies keep a locked account locked for at least 30 minutes before it unlocks automatically. The automatic unlock delay controls how long a user must wait after exceeding the failed sign-in limit.
+        This check verifies that an account locked by failed sign-in attempts stays locked long enough to slow an attacker down.
+
+        Automatic unlock controls how many minutes pass after a lockout before Okta restores the account without administrator action. It is set per policy in the Admin Console under Security > Authentication, alongside the failed attempt threshold. This check requires at least 30 minutes in every policy.
 
         **Why this matters**
 
-        - **Attack slowdown:** A long lockout window forces an attacker to pause between rounds of guessing, sharply reducing their attempt rate.
-        - **Detection time:** Extended lockouts give security teams a wider window to notice and respond to an account under attack.
-        - **Deterrence:** A meaningful delay makes automated guessing too slow to be worthwhile.
+        The unlock interval, not the attempt threshold, is what sets an attacker's guessing rate. A policy that locks after five attempts and unlocks after one minute grants roughly three hundred guesses an hour against a single account, which is a workable budget for an attacker with an ordered wordlist. The same threshold with a 30 minute interval grants ten, which is not.
 
-        **Risk mitigation**
+        The interval matters even more against spraying, where the attacker walks the whole directory one password at a time. A short unlock lets them come back around to each account almost immediately and keep the campaign inside a single session. A long one stretches the same campaign across days, which is long enough for repeated lockouts to surface in monitoring and for someone to act on them.
 
-        - **Brute force resilience:** A 30 minute minimum caps how many password guesses an attacker can make per hour against an account.
-        - **Credential stuffing resilience:** Sustained lockouts blunt high-volume attacks that replay stolen credentials across many accounts.
+        Locked accounts are also a detection signal, and the signal only exists while the lock does. Accounts that unlock in seconds produce a scatter of failed attempts that reads as ordinary user error rather than a pattern anyone investigates.
+
+        A long interval does make a user who genuinely mistyped their password wait, so pair it with a self-service recovery path that works and with a network blocklist, so a deliberate lockout attack against known usernames does not turn into an outage.
       audit: |
         ### Audit via Admin Console
 
@@ -3056,18 +3088,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that password policies notify users when their account is locked after too many failed sign-in attempts. A lockout message tells the user why they cannot sign in instead of leaving them guessing.
+        This check verifies that a user who has been locked out is told that their account is locked.
+
+        The lockout message controls whether Okta tells a signing-in user that the account is locked rather than returning a generic failure. It is set per policy in the Admin Console under Security > Authentication, alongside the lockout threshold and the unlock interval. This check requires the message to be shown in every policy.
 
         **Why this matters**
 
-        - **User awareness:** A clear lockout message tells a legitimate user their account is locked rather than appearing simply broken.
-        - **Attack visibility:** An unexpected lockout notice can alert a user that someone is trying to guess their password.
-        - **Faster resolution:** Knowing the cause lets users follow the recovery path or contact support without delay.
+        A lockout the user does not understand is a lockout the org never hears about. Told only that sign-in failed, a user assumes they mistyped, tries again, waits, and eventually calls the help desk with a vague complaint. Told that the account is locked after too many failed attempts, a user who knows they made no failed attempts has been handed direct evidence that someone else is guessing their password.
 
-        **Risk mitigation**
+        That evidence is often the only warning an org gets about a spraying campaign in progress. Failed attempt volume shows up in the System Log, but a security team has to be looking; the locked-out user is looking already, and the message tells them what they are looking at.
 
-        - **Early breach detection:** Users who see unexplained lockouts can report suspicious activity that points to an attack in progress.
-        - **Reduced support load:** Informed users resolve lockouts through self-service or targeted help rather than generic troubleshooting.
+        The message also shortens recovery. A user who knows the cause follows the unlock or reset path directly instead of opening a support ticket that has to diagnose the state first, which keeps the help desk queue small enough that a fraudulent reset request stands out.
+
+        The usual objection is that the message confirms an account exists. An attacker who has already triggered a lockout has established that much by definition, so the message tells them nothing they did not know while telling the account owner something they could not otherwise learn.
       audit: |
         ### Audit via Admin Console
 
@@ -3165,18 +3198,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that password policies keep email enabled as a self-service password recovery factor. Email recovery lets users reset a forgotten password through a verified link sent to their inbox.
+        This check verifies that users have a self-service path to recover a forgotten password through their verified email address.
+
+        Recovery factors are set per policy in the Admin Console under Security > Authentication, where a password policy lists which methods a user may use to reset a forgotten password. This check requires the email recovery factor to be active in every policy.
 
         **Why this matters**
 
-        - **Self-service recovery:** An active email factor lets users regain access without waiting on an administrator.
-        - **Verified channel:** Recovery email is sent to the address on the account, tying the reset to a controlled mailbox.
-        - **Operational continuity:** A working recovery path keeps users productive when they forget a password.
+        The alternative to self-service recovery is the help desk, and the help desk is the softest identity control most organizations have. Resetting an account for a caller means a human judging whether the voice on the phone belongs to the employee whose name it claims, under time pressure, with no strong evidence available. Attackers target that judgment directly, and several large intrusions have begun with a convincing call rather than any technical exploit.
 
-        **Risk mitigation**
+        Every reset a user completes themselves is a call that never reaches that queue. Cutting the volume of legitimate reset traffic also makes the fraudulent request easier to notice, because a support team handling a handful of resets a week can scrutinize each one in a way a team handling dozens a day cannot.
 
-        - **Reduced help desk exposure:** Self-service recovery cuts manual reset requests, which are a common target for social engineering.
-        - **Account lockout relief:** A reliable email path prevents legitimate users from being permanently locked out of their accounts.
+        Email recovery ties the reset to a mailbox the org controls and can audit, and it leaves an artifact in the user's own inbox, so an attacker who triggers a reset the user did not request cannot do it silently.
+
+        Email is a recovery path, not a strong authenticator, so it should not stand alone for accounts that matter. Require an additional factor during recovery for administrators, and make sure the recovery mailbox is not itself an account that can be reset through the same flow.
       audit: |
         ### Audit via Admin Console
 
@@ -3274,18 +3308,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that password policies keep SMS disabled as a password recovery factor. SMS messages travel over a channel that is exposed to interception and SIM-swap attacks.
+        This check verifies that text messages cannot be used to recover a forgotten password.
+
+        Recovery factors are set per policy in the Admin Console under Security > Authentication, where a password policy lists which methods a user may use to reset a forgotten password. This check requires the SMS recovery factor to be inactive in every policy.
 
         **Why this matters**
 
-        - **Channel weakness:** SMS lacks end-to-end protection and can be intercepted or redirected by an attacker.
-        - **SIM-swap risk:** An attacker who hijacks a phone number can receive recovery codes meant for the legitimate user.
-        - **Stronger alternatives:** Email and app-based recovery factors offer better assurance than text messages.
+        A recovery factor is a bypass around the password, so its strength sets the real strength of the account. SMS is the weakest option on offer, because the code travels to a phone number rather than to a device, and phone numbers can be taken.
 
-        **Risk mitigation**
+        SIM swapping is the practical attack. An attacker who persuades a mobile carrier to move a target's number onto a SIM they control receives the recovery code without ever touching the target's phone, mailbox, or password. The victim typically notices when their handset loses service, by which point the reset is done. Carrier support staff face the same social engineering as any help desk, and the attacker only has to succeed once.
 
-        - **Account takeover resilience:** Disabling SMS recovery removes a path attackers exploit through SIM swaps and number porting.
-        - **Reduced interception risk:** Recovery that avoids SMS keeps reset codes off a network channel known to leak.
+        Interception is the other path. Messages cross carrier networks the org has no visibility into, can be redirected through signaling attacks, and are routinely displayed on a locked phone's screen where anyone nearby can read the code.
+
+        Turning SMS off is only safe when a working alternative exists, so pair this with an active email recovery factor or an app-based recovery method. Users left with no self-service path fall back on the help desk, which trades a technical weakness for a human one.
       audit: |
         ### Audit via Admin Console
 
@@ -3384,18 +3419,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that password policies keep security questions disabled as a password recovery factor. Security question answers are often guessable or discoverable from public information.
+        This check verifies that security questions cannot be used to recover a forgotten password.
+
+        Recovery factors are set per policy in the Admin Console under Security > Authentication, where a password policy lists which methods a user may use to reset a forgotten password. This check requires the security question factor to be inactive in every policy.
 
         **Why this matters**
 
-        - **Weak secrets:** Answers to common security questions can be researched, guessed, or found on social media.
-        - **Static values:** Question answers rarely change and cannot be rotated like a password.
-        - **Stronger alternatives:** Email and app-based recovery factors provide far better assurance than knowledge questions.
+        A security question is a second password with none of a password's protections. It is chosen from a short menu, answered with a value the user did not invent, never rotated, and shared verbatim with every other service that asks the same question. An answer leaked from any one of those services works here indefinitely.
 
-        **Risk mitigation**
+        The answers are also researchable. Mother's maiden name, first school, first pet, and hometown are exactly the facts people publish about themselves, and an attacker preparing to take over a specific account can often assemble them from a social media profile and a public records search in an afternoon. Where the answer cannot be researched it is usually guessable, because the set of plausible answers to most of these questions is small.
 
-        - **Account takeover resilience:** Disabling question recovery removes a path attackers exploit through open-source research on a target.
-        - **Social engineering resilience:** Recovery that avoids personal questions resists guesses based on publicly known facts.
+        Because recovery bypasses the password entirely, a weak question is not a weak second factor but a weak first one. An attacker who answers it resets the credential and owns the account without ever learning the password or defeating an authenticator.
+
+        Turning questions off requires an alternative that works, so keep email or app-based recovery active. For high-value accounts, require an additional authenticator during recovery rather than any knowledge-based answer.
       audit: |
         ### Audit via Admin Console
 
@@ -3490,18 +3526,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Okta ThreatInsight is configured to actively block suspicious login attempts rather than only auditing or ignoring them. ThreatInsight evaluates sign-in requests against a database of known malicious IP addresses maintained by Okta, and the action setting decides what happens when a suspicious IP is seen.
+        This check verifies that Okta ThreatInsight enforces against traffic from known-malicious IP addresses instead of only recording it.
+
+        ThreatInsight scores inbound authentication requests using threat intelligence Okta gathers across its customer base, and its action setting decides what happens to a request from an address that scores badly. The setting is in the Admin Console under Security > General, in the ThreatInsight section, with options to log and enforce, to log only, or to do nothing. This check requires the enforcing option.
 
         **Why this matters**
 
-        - **Perimeter blocking:** With the block action, suspicious IP addresses are stopped before credentials are evaluated, halting attacks at the edge.
-        - **Audit-only gap:** The audit action records suspicious attempts but still lets attackers continue trying credentials against accounts.
-        - **Disabled by inaction:** The none action leaves ThreatInsight effectively off, providing no protection at all.
+        The difference between logging and enforcing is whether the attacker's guesses reach a password check at all. Set to log only, ThreatInsight writes an entry and passes the request through, so a credential stuffing run against the org proceeds at full speed with a running commentary in the System Log. Every attempt is still a chance to hit a reused password, and the log only helps if someone is reading it while the attack is happening.
 
-        **Risk mitigation**
+        Enforcement also protects the users who are not compromised. Requests stopped before credential evaluation do not increment lockout counters, so an attacker spraying the directory cannot lock the workforce out of every federated application as a side effect of failing. In log-only mode that denial of service happens whether or not the attacker guesses anything correctly.
 
-        - **Credential stuffing resilience:** Blocking malicious IPs before password evaluation stops attackers from validating stolen credentials.
-        - **Lockout protection:** Requests blocked at the perimeter do not increment a user's failed attempt count, sparing legitimate users from malicious lockouts.
+        The intelligence is what makes this cheap to run. The addresses ThreatInsight scores are those seen attacking other Okta orgs, so the org gets enforcement against infrastructure already burned elsewhere without building or maintaining a list of its own.
+
+        Enforcement can catch a legitimate user behind a shared or previously abused address, so exempt the network zones the org trusts rather than dropping the whole org back to log-only mode.
       audit: |
         ### Audit via Admin Console
 
@@ -3595,18 +3632,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that all active trusted origins in Okta are configured to use HTTPS rather than HTTP. Trusted origins define which URLs are allowed for cross-origin resource sharing requests and redirect URIs, and these origins handle sensitive authentication tokens, session cookies, and authorization codes.
+        This check verifies that every active trusted origin is an HTTPS URL.
+
+        Trusted origins tell Okta which external sites may make cross-origin calls to the org's API and which URLs the sign-in flow may redirect back to. They are managed in the Admin Console under Security > API, on the trusted origins tab, where each entry names a scheme and host and is enabled for cross-origin resource sharing, redirect, or both. This check requires every active origin to use HTTPS.
 
         **Why this matters**
 
-        - **Token interception:** HTTP origins transmit authentication tokens in plaintext, allowing network attackers to capture OAuth tokens, session identifiers, and authorization codes.
-        - **Session hijacking:** Cookies sent to HTTP origins can be captured and replayed, giving attackers access to authenticated sessions.
-        - **Credential exposure:** Cross-origin requests to HTTP endpoints can leak sensitive authentication data to anyone observing the network path.
+        A trusted origin enabled for redirect is a destination Okta will hand an authorization code or token to at the end of a sign-in. When that destination is plain HTTP, the credential completing the sign-in crosses the network in the clear, and anyone on the path, on a shared wireless network, at a compromised router, or inside a hostile transit provider, can read it and use it before the legitimate application does.
 
-        **Risk mitigation**
+        A trusted origin enabled for cross-origin access is worse in a different way. It permits a page served over HTTP to call the org's API with the user's session, and an HTTP page is one an attacker can rewrite in transit. Injecting script into a page the org has explicitly told Okta to trust turns a passive eavesdropping position into an active one with the user's session behind it.
 
-        - **Man-in-the-middle resilience:** Requiring HTTPS encrypts authentication traffic so attackers cannot read or alter tokens in transit.
-        - **Replay attack defense:** Encrypted transport keeps session cookies and authorization codes from being intercepted and reused.
+        HTTP origins also strip away any guarantee that the origin is who it claims to be. Without a certificate, nothing distinguishes the real host from an attacker answering for the same name on a network they control, so the trust the entry expresses is placed in a name rather than in a party.
+
+        Remove HTTP entries rather than leaving them inactive for later, and keep local development hosts that need cross-origin access in a development org rather than in the org that holds production identities.
       audit: |
         ### Audit via Admin Console
 
@@ -3703,18 +3741,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that active sign-on policy rules require multi-factor authentication for user sign-in. Sign-on policies control the authentication requirements when users access Okta, and each rule can independently enable or disable the MFA requirement, so MFA enrollment alone does not guarantee it is enforced.
+        This check verifies that signing in to the org actually requires a second factor, not merely that users have one enrolled.
+
+        Global session policy rules decide what a user must present to establish an Okta session. Each rule is written in the Admin Console under Security > Global Session Policy and independently states whether multifactor authentication is required for the people and conditions it matches. This check requires every active rule other than the catch-all to demand a factor.
 
         **Why this matters**
 
-        - **Password-only access:** Without MFA enforced in sign-on rules, a compromised password grants full access to Okta and every connected application.
-        - **Enrollment is not enforcement:** Enrollment policies make users register factors, but only sign-on rules require those factors at sign-in.
-        - **Per-rule gaps:** A single rule that omits the factor requirement creates an authentication path that bypasses MFA entirely.
+        Enrollment and enforcement are separate settings, and the gap between them is invisible in the place people look for reassurance. An org can show that every user holds a registered authenticator and still issue sessions on a password alone, because nothing challenges for that authenticator unless a sign-on rule says so. The security team believes the org has multifactor authentication; an attacker with a password finds out otherwise.
 
-        **Risk mitigation**
+        Rules are evaluated in order and the first match wins, so a single permissive rule undoes the rest. A rule written for a legacy integration, a contractor population, or an office IP range that no longer means what it did will match real sign-ins and issue a session with no challenge, and an attacker who finds it does not need to defeat anything else.
 
-        - **Account takeover resilience:** Requiring a second factor blocks attackers who hold only a stolen or guessed password.
-        - **Phishing resilience:** MFA at sign-in stops credential phishing from converting directly into account access.
+        Without enforcement, a password is the whole of the org's authentication, and passwords reach attackers through channels the org cannot see: breach reuse, infostealer logs, and phishing pages. Okta federates access to everything behind it, so that single stolen string is not access to one application but to the workforce's entire application estate.
+
+        Where a population truly cannot present a factor, scope a narrow rule to it with tight network and application conditions and review it on a schedule, rather than relaxing the rule that covers the org.
       audit: |
         ### Audit via Admin Console
 
@@ -3820,21 +3859,19 @@ queries:
           mondoo.com/filter-icon: okta
     docs:
       desc: |
-        This check ensures that the number of users holding the Organization Administrator role stays within a safe threshold. The Organization Administrator role grants nearly the same access as the Super Administrator, covering management of users, groups, applications, and most organizational settings.
+        This check verifies that the organization administrator role is held by a limited number of people and that no group carrying it can be widened by a group owner.
 
-        The check also confirms that groups carrying the org admin role have no group owners. Group ownership is an indirect grant: an owner can add members, and those members inherit every administrator role the group carries. An org admin group with owners therefore has a hidden set of principals who can expand org admin access beyond the counted membership.
+        The Organization Administrator role covers nearly everything the super administrator role does short of the org's own security configuration, including creating and deactivating users, resetting passwords and authenticators, managing groups, and assigning applications. Assignments are listed in the Admin Console under Security > Administrators, and the role can be attached to a group through that group's administrator role assignment. This check requires each group holding the role to have fewer members than the configured maximum and no group owners.
 
         **Why this matters**
 
-        - **Broad access:** Org admins can modify user accounts, reset credentials, assign applications, and change group memberships across the whole organization.
-        - **High-value targets:** The breadth of org admin access makes these accounts attractive targets for attackers seeking maximum impact.
-        - **Lateral movement:** A compromised org admin account lets an attacker escalate privileges and create backdoor accounts.
-        - **No hidden expansion:** Blocking owners on org admin groups stops principals outside the counted membership from silently granting org admin.
+        An org admin does not need to attack an account to become it. The role can reset another user's authenticators and password, which is the complete takeover sequence for any non-administrator in the org, and it can assign applications, which is how an attacker reaches the systems behind Okta without touching them directly. A compromised org admin is therefore a compromise of the workforce, not of one account.
 
-        **Risk mitigation**
+        Group owners hide part of the population that holds the role. An owner can add members, members inherit whatever administrator role the group carries, and the addition reads as ordinary group maintenance rather than a privilege grant. A review that counts the members of an owned group is counting the wrong set.
 
-        - **Reduced attack surface:** Keeping the count of org admins low limits the number of accounts that can grant an attacker far-reaching control.
-        - **Least privilege enforcement:** Restricting the role to those who genuinely need it contains the blast radius of any single compromised account.
+        Size erodes accountability as well. When the role is spread widely, the routine administrative traffic it generates is large enough that an attacker working inside a stolen session is indistinguishable from a busy help desk, and a change nobody claims cannot be traced to a person.
+
+        Most of what people use this role for is covered by narrower scoped roles that confine an administrator to specific groups or applications. Assign those instead, keep org admin for the small set of tasks that genuinely need it, and require phishing-resistant authentication on every account that holds it.
       audit: |
         ### Audit via Admin Console
 
