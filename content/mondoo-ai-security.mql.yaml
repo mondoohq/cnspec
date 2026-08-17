@@ -4,7 +4,7 @@
 policies:
   - uid: mondoo-ai-security
     name: Mondoo AI Security
-    version: 2.1.0
+    version: 2.1.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -122,14 +122,19 @@ queries:
       ).none()
     docs:
       desc: |
-        Unapproved AI coding agents and local LLM runtimes running as live processes can transmit proprietary source code, customer data, or secrets to untrusted model providers. Only AI tools reviewed and approved by the security team should be permitted to execute on corporate endpoints. The `mondooAiSecurityApprovedProcesses` property defines the allow-list and can be customized for your environment.
+        This check verifies that no unapproved AI agent or local model runtime is currently running.
+
+        The check reads the process table for executables matching a set of known AI agent and local inference tool names, and excludes anything named in this policy's approved-process property. A process is only visible while it runs, so this catches tools in active use rather than merely installed.
 
         **Why this matters**
 
-        - **Data egress:** A running AI agent can stream open files and repository contents to a third-party API without the user explicitly authorizing each transfer.
-        - **Credential exposure:** Agents often read environment variables and configuration files that contain tokens, leaking them to the model provider.
-        - **Bypassed review:** Code generated or modified by an unsanctioned agent skips the controls that govern approved tooling.
-        - **Reduced visibility:** Security teams cannot account for data handled by tools they have not inventoried.
+        A running process is the state in which an AI tool is actually moving data. It has files open, it has a network connection to a model provider, and it is answering completions with whatever context it gathered.
+
+        That distinguishes this from the companion checks on installed packages. A tool that is installed but never launched has transferred nothing; one that is running has a live path from the endpoint's filesystem to a third party, and the traffic is HTTPS to a vendor API rather than anything a data loss control would recognize.
+
+        The approval question is what makes this actionable rather than a survey. The concern is not that developers use AI tooling, it is that a tool nobody reviewed has been granted access to source code and credentials, under terms nobody read, sending data to a provider nobody assessed.
+
+        Maintain the approved-process property as the list of tools that have been through that review. A failure names a tool that has not been, which is a conversation with the developer rather than automatically an incident.
       audit: |-
         To verify that no unapproved AI agent processes are running:
 
@@ -257,14 +262,19 @@ queries:
       ).none()
     docs:
       desc: |
-        Unapproved AI tools installed through system package managers such as apt, dnf, rpm, or the Windows uninstall registry remain available even when not actively running. Only AI tools reviewed and approved by the security team should be present on corporate endpoints. The `mondooAiSecurityApprovedPackages` property defines the allow-list and can be customized for your environment.
+        This check verifies that no unapproved AI tool is installed through a system package manager.
+
+        The check reads the installed package inventory, which covers `apt`, `dnf`, `rpm`, and the Windows uninstall registry, matching known AI agent and local inference tool names and excluding anything named in this policy's approved-package property.
 
         **Why this matters**
 
-        - **Latent risk:** An installed but idle AI tool can be launched at any time, reintroducing data-egress exposure on demand.
-        - **Cached state:** Package installations often retain credentials and configuration from prior use that survive between sessions.
-        - **Inventory gaps:** Tools installed outside the approved set leave security teams without an accurate picture of endpoint software.
-        - **Update channels:** Unsanctioned packages pull updates from third-party repositories that are not part of the organization's supply chain.
+        An installed tool is available whether or not anyone is currently using it. It survives reboots, it is present for any user of the machine, and it can be launched at any time, so the window of exposure is the life of the installation rather than the duration of a session.
+
+        Package-manager installs matter more than they first appear because they are the ones that persist through the endpoint's normal lifecycle. They are captured in images, restored by configuration management, and reinstalled when a machine is rebuilt, so a tool that arrived once tends to keep arriving.
+
+        They are also the installs that are easiest to inventory and hardest for a user to hide, which makes this the most reliable of the three detection paths in this policy.
+
+        Maintain the approved-package property to reflect what has actually been reviewed. Where a failure names a tool a team genuinely needs, the outcome should be a review and an addition to the property rather than an exception on the endpoint.
       audit: |-
         To verify that no unapproved AI tools are installed via package managers:
 
@@ -365,14 +375,19 @@ queries:
       ).none()
     docs:
       desc: |
-        Homebrew is a common installation path for desktop AI applications on macOS, and packages installed this way persist outside the approved software set. Only AI tools reviewed and approved by the security team should be present on corporate endpoints. The `mondooAiSecurityApprovedHomebrewPackages` property defines the allow-list and can be customized for your environment.
+        This check verifies that no unapproved AI tool is installed through Homebrew.
+
+        The check reads the Homebrew package list, matching known AI agent and local inference tool names and excluding anything named in this policy's approved-Homebrew property. It complements the system package check, which does not see Homebrew.
 
         **Why this matters**
 
-        - **Unmanaged installs:** Homebrew lets users install AI tools without administrator review or change control.
-        - **Latent risk:** A package that is installed but idle can be launched at any time, reintroducing data-egress exposure.
-        - **Inventory gaps:** Tools installed outside the approved set leave security teams without an accurate picture of endpoint software.
-        - **Third-party taps:** Homebrew casks can pull from community taps that are not part of the organization's supply chain.
+        Homebrew is where desktop AI tooling actually arrives on macOS. It installs into a user-writable prefix and needs no administrative privilege, so a developer can add a tool without a request, a ticket, or any event that management tooling observes.
+
+        That is the reason this needs its own check rather than being folded into the package inventory. An endpoint can look clean to a system package audit while carrying a full set of AI agents under Homebrew, and on a developer fleet that is the likely arrangement rather than an edge case.
+
+        Homebrew installs are also the least likely to be captured by an organization's software inventory, so they persist unnoticed and outlive the project that prompted them.
+
+        Keep the approved-Homebrew property aligned with the system approved-package property, since a tool approved through one path and not the other produces a confusing split result on a machine that has both.
       audit: |-
         To verify that no unapproved AI tools are installed via Homebrew:
 
@@ -444,14 +459,17 @@ queries:
       cursor.rules.none()
     docs:
       desc: |
-        Cursor is an AI-native code editor that sends code to cloud AI models for completion and chat. When it is configured on an endpoint, proprietary source code can be transmitted to third-party services as part of normal editing. Endpoints should carry only the editors approved by the security team.
+        This check verifies that the Cursor editor is not configured on this endpoint.
+
+        Cursor is an AI-native editor built on the VS Code codebase. The check reads its configuration for three separate signals: stored skills, registered MCP servers, and rule files. Any one of them present means Cursor was configured here, not merely installed.
 
         **Why this matters**
 
-        - **Source code exposure:** Editing files in Cursor routinely uploads code context to a cloud model provider.
-        - **Credential leakage:** Repository files opened in the editor may contain tokens and secrets that are sent alongside code context.
-        - **Bypassed review:** AI-generated edits applied through Cursor skip the controls that govern approved tooling.
-        - **Inventory gaps:** An unsanctioned editor leaves security teams without an accurate picture of how code leaves the endpoint.
+        The three signals mean different things and that is why all are read. A skill is a saved instruction set. A rule file is persistent context injected into every request, which frequently encodes internal architecture and conventions. A registered MCP server is tool access, meaning the editor can reach whatever that server exposes.
+
+        The exposure is not the editing, it is what leaves with it. These agents send file contents, surrounding code, and frequently the whole repository index to a model provider to answer a completion. That traffic looks like ordinary HTTPS to a vendor API, so it does not appear as data loss to a network monitor, and the provider's retention and training terms govern what happens to it afterward. Cursor's codebase indexing makes the volume larger than a completion tool's: it embeds the repository so that retrieval can pull relevant files into context, so the material that reaches the provider is not limited to the file on screen.
+
+        Removing the binary is not sufficient on its own. The configuration this check reads persists after an uninstall, so clear it as part of removal, and expect the check to keep failing until you do.
       audit: |-
         To verify that Cursor is not configured on the endpoint:
 
@@ -542,14 +560,17 @@ queries:
       windsurf.rules.none()
     docs:
       desc: |
-        Windsurf is an AI-native code editor from Codeium that sends code to cloud AI models for completion and chat. When it is configured on an endpoint, proprietary source code can be transmitted to third-party services as part of normal editing. Endpoints should carry only the editors approved by the security team.
+        This check verifies that the Windsurf editor is not configured on this endpoint.
+
+        Windsurf is an AI-native editor from the Codeium team, built on the VS Code codebase. The check reads its configuration for stored skills, registered MCP servers, and rule files. Any one present means Windsurf was configured here.
 
         **Why this matters**
 
-        - **Source code exposure:** Editing files in Windsurf routinely uploads code context to a cloud model provider.
-        - **Credential leakage:** Repository files opened in the editor may contain tokens and secrets that are sent alongside code context.
-        - **Bypassed review:** AI-generated edits applied through Windsurf skip the controls that govern approved tooling.
-        - **Inventory gaps:** An unsanctioned editor leaves security teams without an accurate picture of how code leaves the endpoint.
+        Reading three signals rather than one matters because they persist independently. An organization that removed the application may still have rule files and MCP registrations on disk, and those describe the internal systems the editor was pointed at even after the editor is gone.
+
+        The exposure is not the editing, it is what leaves with it. These agents send file contents, surrounding code, and frequently the whole repository index to a model provider to answer a completion. That traffic looks like ordinary HTTPS to a vendor API, so it does not appear as data loss to a network monitor, and the provider's retention and training terms govern what happens to it afterward.
+
+        Removing the binary is not sufficient on its own. The configuration this check reads persists after an uninstall, so clear it as part of removal, and expect the check to keep failing until you do.
       audit: |-
         To verify that Windsurf is not configured on the endpoint:
 
@@ -639,14 +660,17 @@ queries:
       goose.extensions.none()
     docs:
       desc: |
-        Goose is an open-source AI agent from Block that connects to multiple model providers and executes code with full system access through extensions. When it is configured on an endpoint, it can act autonomously on local files and systems. Endpoints should carry only the AI agents approved by the security team.
+        This check verifies that the Goose agent is not configured on this endpoint.
+
+        Goose is an open-source agent from Block that connects to a range of model providers and gains capability through extensions. The check reads its configuration for stored skills and installed extensions.
 
         **Why this matters**
 
-        - **Autonomous execution:** Goose extensions can run commands and modify files with the user's full privileges.
-        - **Source code exposure:** The agent sends file and repository context to whichever model provider it is connected to.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+        Extensions are the significant half. Goose's model is that capability comes from what you attach to it, so an extension list is a description of what the agent can reach on this machine and beyond it.
+
+        The exposure is execution, not just disclosure. An agent that can run commands and edit files acts with the developer's full local privileges: their SSH keys, their cloud credentials, their access to internal services. A prompt that reaches it, whether from a user, a fetched web page, or a file in the repository, becomes an instruction it may act on, and the resulting commands are indistinguishable from the developer's own. Goose is designed to run autonomously rather than to suggest, so the gap between a prompt and an executed command is smaller than with a completion tool.
+
+        Where this tool is on the approved list, exempt it deliberately rather than suppressing the check, so the exemption is recorded and reviewed when the approval changes.
       audit: |-
         To verify that Goose is not configured on the endpoint:
 
@@ -723,14 +747,17 @@ queries:
       zed.extensions.none()
     docs:
       desc: |
-        Zed is a code editor with built-in AI assistant features that send code to cloud model providers for completion and chat. When it is configured on an endpoint, proprietary source code can be transmitted to third-party services as part of normal editing. Endpoints should carry only the editors approved by the security team.
+        This check verifies that the Zed editor is not configured on this endpoint.
+
+        Zed is a code editor with built-in AI assistant features. The check reads its installed extension list.
 
         **Why this matters**
 
-        - **Source code exposure:** Zed's AI features upload code context to a cloud model provider during editing.
-        - **Credential leakage:** Repository files opened in the editor may contain tokens and secrets that are sent alongside code context.
-        - **Bypassed review:** AI-generated edits applied through Zed skip the controls that govern approved tooling.
-        - **Inventory gaps:** An unsanctioned editor leaves security teams without an accurate picture of how code leaves the endpoint.
+        This check reads extensions only, which is a narrower signal than the editors assessed elsewhere in this policy. It establishes that Zed was set up and extended on this endpoint; it does not by itself establish that the AI features were used.
+
+        The exposure is not the editing, it is what leaves with it. These agents send file contents, surrounding code, and frequently the whole repository index to a model provider to answer a completion. That traffic looks like ordinary HTTPS to a vendor API, so it does not appear as data loss to a network monitor, and the provider's retention and training terms govern what happens to it afterward.
+
+        Because the signal is narrower, treat a failure as a prompt to ask what the editor is configured to do rather than as evidence that code has left. Zed's assistant features are opt-in and provider-configurable, so the answer varies by installation.
       audit: |-
         To verify that Zed is not configured on the endpoint:
 
@@ -810,14 +837,17 @@ queries:
       cline.skills.none()
     docs:
       desc: |
-        Cline is an autonomous AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+        This check verifies that the Cline agent is not configured on this endpoint.
+
+        Cline is an autonomous coding agent that runs inside a VS Code-compatible editor and can execute terminal commands and modify files. The check reads the agent's own configuration for stored skills. A skill is a saved instruction set the agent loads and acts on, so its presence means the agent was set up on this machine rather than merely downloaded.
 
         **Why this matters**
 
-        - **Autonomous execution:** Cline can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+        Cline is one of the agents in this policy that acts rather than suggests. It plans a change, edits files, runs commands, reads the output, and iterates, with the developer approving steps rather than writing them.
+
+        The exposure is execution, not just disclosure. An agent that can run commands and edit files acts with the developer's full local privileges: their SSH keys, their cloud credentials, their access to internal services. A prompt that reaches it, whether from a user, a fetched web page, or a file in the repository, becomes an instruction it may act on, and the resulting commands are indistinguishable from the developer's own.
+
+        Where this tool is on the approved list, exempt it deliberately rather than suppressing the check, so the exemption is recorded and reviewed when the approval changes.
       audit: |-
         To verify that Cline is not configured on the endpoint:
 
@@ -900,14 +930,17 @@ queries:
       roo.skills.none()
     docs:
       desc: |
-        Roo Code is an autonomous AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+        This check verifies that the Roo Code agent is not configured on this endpoint.
+
+        Roo Code is an autonomous coding agent forked from Cline, running inside a VS Code-compatible editor with the ability to execute commands and modify files. The check reads the agent's own configuration for stored skills. A skill is a saved instruction set the agent loads and acts on, so its presence means the agent was set up on this machine rather than merely downloaded.
 
         **Why this matters**
 
-        - **Autonomous execution:** Roo Code can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+        Its shared origin with Cline matters for inventory: an organization that reviewed and approved one may have the other present without noticing, because they behave similarly and are configured separately. A companion check in this policy reads its VS Code extension identifier, which is the other place it appears.
+
+        The exposure is execution, not just disclosure. An agent that can run commands and edit files acts with the developer's full local privileges: their SSH keys, their cloud credentials, their access to internal services. A prompt that reaches it, whether from a user, a fetched web page, or a file in the repository, becomes an instruction it may act on, and the resulting commands are indistinguishable from the developer's own.
+
+        Where this tool is on the approved list, exempt it deliberately rather than suppressing the check, so the exemption is recorded and reviewed when the approval changes.
       audit: |-
         To verify that Roo Code is not configured on the endpoint:
 
@@ -987,14 +1020,17 @@ queries:
       continuedev.skills.none()
     docs:
       desc: |
-        Continue is an open-source AI coding assistant that connects to a range of cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+        This check verifies that the Continue assistant is not configured on this endpoint.
+
+        Continue is an open-source coding assistant that can be pointed at a wide range of model providers, including self-hosted ones. The check reads the agent's own configuration for stored skills. A skill is a saved instruction set the agent loads and acts on, so its presence means the agent was set up on this machine rather than merely downloaded.
 
         **Why this matters**
 
-        - **Autonomous execution:** Continue can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent sends file and repository context to whichever model provider it is connected to.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+        Its provider flexibility is the reason it needs assessing rather than assuming. The same tool can be configured against a vendor API, an internal inference endpoint, or a developer's own machine, and those have entirely different data paths. The tool's presence does not tell you which one is in use.
+
+        The exposure therefore depends on configuration in a way it does not for a single-provider tool. Continue pointed at an approved internal endpoint may be entirely acceptable; the same binary pointed at a public API is an unreviewed data path. Neither is distinguishable from the presence of the tool alone.
+
+        A failure here is a prompt to read the configuration rather than to remove the tool. Establish which provider it targets, then either approve that configuration explicitly or change it.
       audit: |-
         To verify that Continue is not configured on the endpoint:
 
@@ -1074,14 +1110,17 @@ queries:
       trae.skills.none()
     docs:
       desc: |
-        Trae is an AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+        This check verifies that the Trae agent is not configured on this endpoint.
+
+        Trae is an AI coding agent that connects to cloud model providers and can execute commands and modify files. The check reads the agent's own configuration for stored skills. A skill is a saved instruction set the agent loads and acts on, so its presence means the agent was set up on this machine rather than merely downloaded.
 
         **Why this matters**
 
-        - **Autonomous execution:** Trae can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+        This check establishes only that the agent holds stored skills on this endpoint. It does not read which model provider is configured, so the destination of any data it sends is not determined here.
+
+        The exposure is execution, not just disclosure. An agent that can run commands and edit files acts with the developer's full local privileges: their SSH keys, their cloud credentials, their access to internal services. A prompt that reaches it, whether from a user, a fetched web page, or a file in the repository, becomes an instruction it may act on, and the resulting commands are indistinguishable from the developer's own.
+
+        Where this tool is on the approved list, exempt it deliberately rather than suppressing the check, so the exemption is recorded and reviewed when the approval changes.
       audit: |-
         To verify that Trae is not configured on the endpoint:
 
@@ -1155,14 +1194,17 @@ queries:
       opencode.skills.none()
     docs:
       desc: |
-        OpenCode is an AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+        This check verifies that the OpenCode agent is not configured on this endpoint.
+
+        OpenCode is a terminal-based AI coding agent. The check reads the agent's own configuration for stored skills. A skill is a saved instruction set the agent loads and acts on, so its presence means the agent was set up on this machine rather than merely downloaded.
 
         **Why this matters**
 
-        - **Autonomous execution:** OpenCode can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+        A terminal agent is worth separating from an editor-based one. It runs where the developer's shell environment already is, so the credentials, cloud profiles, and SSH configuration available to that shell are available to it without any further grant.
+
+        The exposure is execution, not just disclosure. An agent that can run commands and edit files acts with the developer's full local privileges: their SSH keys, their cloud credentials, their access to internal services. A prompt that reaches it, whether from a user, a fetched web page, or a file in the repository, becomes an instruction it may act on, and the resulting commands are indistinguishable from the developer's own.
+
+        Where this tool is on the approved list, exempt it deliberately rather than suppressing the check, so the exemption is recorded and reviewed when the approval changes.
       audit: |-
         To verify that OpenCode is not configured on the endpoint:
 
@@ -1236,14 +1278,17 @@ queries:
       kiro.skills.none()
     docs:
       desc: |
-        Kiro is an AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+        This check verifies that the Kiro agent is not configured on this endpoint.
+
+        Kiro is an AI coding agent that connects to cloud model providers and can execute commands and modify files. The check reads the agent's own configuration for stored skills. A skill is a saved instruction set the agent loads and acts on, so its presence means the agent was set up on this machine rather than merely downloaded.
 
         **Why this matters**
 
-        - **Autonomous execution:** Kiro can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+        The stored skills this check reads are themselves worth inspecting when it fails. A skill is an instruction set someone wrote and saved, so it frequently records what the agent was being used for and against which systems.
+
+        The exposure is execution, not just disclosure. An agent that can run commands and edit files acts with the developer's full local privileges: their SSH keys, their cloud credentials, their access to internal services. A prompt that reaches it, whether from a user, a fetched web page, or a file in the repository, becomes an instruction it may act on, and the resulting commands are indistinguishable from the developer's own.
+
+        Where this tool is on the approved list, exempt it deliberately rather than suppressing the check, so the exemption is recorded and reviewed when the approval changes.
       audit: |-
         To verify that Kiro is not configured on the endpoint:
 
@@ -1317,14 +1362,17 @@ queries:
       pi.skills.none()
     docs:
       desc: |
-        Pi is an AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+        This check verifies that the Pi agent is not configured on this endpoint.
+
+        Pi is an AI coding agent that connects to model providers and can execute commands and modify files. The check reads the agent's own configuration for stored skills. A skill is a saved instruction set the agent loads and acts on, so its presence means the agent was set up on this machine rather than merely downloaded.
 
         **Why this matters**
 
-        - **Autonomous execution:** Pi can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+        This check reads configuration rather than activity, so it answers whether the agent was set up here and not how much it was used. Both matter, but only the first is available from the endpoint's state.
+
+        The exposure is execution, not just disclosure. An agent that can run commands and edit files acts with the developer's full local privileges: their SSH keys, their cloud credentials, their access to internal services. A prompt that reaches it, whether from a user, a fetched web page, or a file in the repository, becomes an instruction it may act on, and the resulting commands are indistinguishable from the developer's own.
+
+        Where this tool is on the approved list, exempt it deliberately rather than suppressing the check, so the exemption is recorded and reviewed when the approval changes.
       audit: |-
         To verify that Pi is not configured on the endpoint:
 
@@ -1396,14 +1444,17 @@ queries:
       mistral.vibe.skills.none()
     docs:
       desc: |
-        Mistral Vibe is an AI coding agent from Mistral that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+        This check verifies that the Mistral Vibe agent is not configured on this endpoint.
+
+        Mistral Vibe is an AI coding agent from Mistral that connects to model providers and can execute commands and modify files. The check reads the agent's own configuration for stored skills. A skill is a saved instruction set the agent loads and acts on, so its presence means the agent was set up on this machine rather than merely downloaded.
 
         **Why this matters**
 
-        - **Autonomous execution:** Mistral Vibe can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+        Provider identity matters for the questions a review has to answer: where the data is processed, under which jurisdiction, and on what retention and training terms. Those differ between vendors and are the substance of an approval decision.
+
+        The exposure is execution, not just disclosure. An agent that can run commands and edit files acts with the developer's full local privileges: their SSH keys, their cloud credentials, their access to internal services. A prompt that reaches it, whether from a user, a fetched web page, or a file in the repository, becomes an instruction it may act on, and the resulting commands are indistinguishable from the developer's own.
+
+        Where this tool is on the approved list, exempt it deliberately rather than suppressing the check, so the exemption is recorded and reviewed when the approval changes.
       audit: |-
         To verify that Mistral Vibe is not configured on the endpoint:
 
@@ -1475,14 +1526,17 @@ queries:
       antigravity.skills.none()
     docs:
       desc: |
-        Antigravity is an AI coding agent from Google that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+        This check verifies that the Antigravity agent is not configured on this endpoint.
+
+        Antigravity is an AI coding agent from Google that connects to model providers and can execute commands and modify files. The check reads the agent's own configuration for stored skills. A skill is a saved instruction set the agent loads and acts on, so its presence means the agent was set up on this machine rather than merely downloaded.
 
         **Why this matters**
 
-        - **Autonomous execution:** Antigravity can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+        An organization that has approved a vendor's cloud services has not thereby approved that vendor's coding agent. The data path is different, the terms are usually different, and the material involved is source code rather than the workloads covered by an existing agreement.
+
+        The exposure is execution, not just disclosure. An agent that can run commands and edit files acts with the developer's full local privileges: their SSH keys, their cloud credentials, their access to internal services. A prompt that reaches it, whether from a user, a fetched web page, or a file in the repository, becomes an instruction it may act on, and the resulting commands are indistinguishable from the developer's own.
+
+        Where this tool is on the approved list, exempt it deliberately rather than suppressing the check, so the exemption is recorded and reviewed when the approval changes.
       audit: |-
         To verify that Antigravity is not configured on the endpoint:
 
@@ -1556,14 +1610,17 @@ queries:
       ibm.bob.skills.none()
     docs:
       desc: |
-        IBM Bob is an AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+        This check verifies that the IBM Bob agent is not configured on this endpoint.
+
+        IBM Bob is an AI coding agent that connects to model providers and can execute commands and modify files. The check reads the agent's own configuration for stored skills. A skill is a saved instruction set the agent loads and acts on, so its presence means the agent was set up on this machine rather than merely downloaded.
 
         **Why this matters**
 
-        - **Autonomous execution:** IBM Bob can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+        Enterprise-vendor agents are the ones most likely to be adopted informally on the strength of an existing relationship, without the separate review the data path warrants.
+
+        The exposure is execution, not just disclosure. An agent that can run commands and edit files acts with the developer's full local privileges: their SSH keys, their cloud credentials, their access to internal services. A prompt that reaches it, whether from a user, a fetched web page, or a file in the repository, becomes an instruction it may act on, and the resulting commands are indistinguishable from the developer's own.
+
+        Where this tool is on the approved list, exempt it deliberately rather than suppressing the check, so the exemption is recorded and reviewed when the approval changes.
       audit: |-
         To verify that IBM Bob is not configured on the endpoint:
 
@@ -1635,14 +1692,17 @@ queries:
       openclaw.skills.none()
     docs:
       desc: |
-        OpenClaw is an AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+        This check verifies that the OpenClaw agent is not configured on this endpoint.
+
+        OpenClaw is an AI coding agent that connects to model providers and can execute commands and modify files. The check reads the agent's own configuration for stored skills. A skill is a saved instruction set the agent loads and acts on, so its presence means the agent was set up on this machine rather than merely downloaded.
 
         **Why this matters**
 
-        - **Autonomous execution:** OpenClaw can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+        Open-source agents are typically installed directly from a repository rather than through a package manager, which is why this policy reads agent configuration as well as package inventories. A tool installed that way is invisible to a software audit.
+
+        The exposure is execution, not just disclosure. An agent that can run commands and edit files acts with the developer's full local privileges: their SSH keys, their cloud credentials, their access to internal services. A prompt that reaches it, whether from a user, a fetched web page, or a file in the repository, becomes an instruction it may act on, and the resulting commands are indistinguishable from the developer's own.
+
+        Where this tool is on the approved list, exempt it deliberately rather than suppressing the check, so the exemption is recorded and reviewed when the approval changes.
       audit: |-
         To verify that OpenClaw is not configured on the endpoint:
 
@@ -1714,14 +1774,17 @@ queries:
       snowflake.cortex.skills.none()
     docs:
       desc: |
-        Snowflake Cortex Code is an AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+        This check verifies that the Snowflake Cortex Code agent is not configured on this endpoint.
+
+        Snowflake Cortex Code is an AI coding agent that connects to model providers and can execute commands and modify files. The check reads the agent's own configuration for stored skills. A skill is a saved instruction set the agent loads and acts on, so its presence means the agent was set up on this machine rather than merely downloaded.
 
         **Why this matters**
 
-        - **Autonomous execution:** Snowflake Cortex Code can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+        An agent from a data platform vendor deserves particular attention on a machine that also holds credentials for that platform, since the agent's local privileges include whatever the developer's session can reach.
+
+        The exposure is execution, not just disclosure. An agent that can run commands and edit files acts with the developer's full local privileges: their SSH keys, their cloud credentials, their access to internal services. A prompt that reaches it, whether from a user, a fetched web page, or a file in the repository, becomes an instruction it may act on, and the resulting commands are indistinguishable from the developer's own.
+
+        Where this tool is on the approved list, exempt it deliberately rather than suppressing the check, so the exemption is recorded and reviewed when the approval changes.
       audit: |-
         To verify that Snowflake Cortex Code is not configured on the endpoint:
 
@@ -1793,14 +1856,17 @@ queries:
       junie.skills.none()
     docs:
       desc: |
-        Junie is an AI coding agent from JetBrains that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+        This check verifies that the Junie agent is not configured on this endpoint.
+
+        Junie is an AI coding agent from JetBrains that connects to model providers and can execute commands and modify files. The check reads the agent's own configuration for stored skills. A skill is a saved instruction set the agent loads and acts on, so its presence means the agent was set up on this machine rather than merely downloaded.
 
         **Why this matters**
 
-        - **Autonomous execution:** Junie can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+        Agents distributed alongside a widely used IDE arrive with the IDE's own update mechanism, so they can appear on an endpoint without a separate installation event for anyone to review.
+
+        The exposure is execution, not just disclosure. An agent that can run commands and edit files acts with the developer's full local privileges: their SSH keys, their cloud credentials, their access to internal services. A prompt that reaches it, whether from a user, a fetched web page, or a file in the repository, becomes an instruction it may act on, and the resulting commands are indistinguishable from the developer's own.
+
+        Where this tool is on the approved list, exempt it deliberately rather than suppressing the check, so the exemption is recorded and reviewed when the approval changes.
       audit: |-
         To verify that Junie is not configured on the endpoint:
 
@@ -1872,14 +1938,17 @@ queries:
       augment.skills.none()
     docs:
       desc: |
-        Augment is an AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+        This check verifies that the Augment agent is not configured on this endpoint.
+
+        Augment is an AI coding agent that connects to model providers and can execute commands and modify files. The check reads the agent's own configuration for stored skills. A skill is a saved instruction set the agent loads and acts on, so its presence means the agent was set up on this machine rather than merely downloaded.
 
         **Why this matters**
 
-        - **Autonomous execution:** Augment can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+        Agents that index a whole repository to answer questions transfer far more than the file being edited, so the volume reaching a provider is a property of the tool's design rather than of how carefully it is used.
+
+        The exposure is execution, not just disclosure. An agent that can run commands and edit files acts with the developer's full local privileges: their SSH keys, their cloud credentials, their access to internal services. A prompt that reaches it, whether from a user, a fetched web page, or a file in the repository, becomes an instruction it may act on, and the resulting commands are indistinguishable from the developer's own.
+
+        Where this tool is on the approved list, exempt it deliberately rather than suppressing the check, so the exemption is recorded and reviewed when the approval changes.
       audit: |-
         To verify that Augment is not configured on the endpoint:
 
@@ -1951,14 +2020,17 @@ queries:
       warp.skills.none()
     docs:
       desc: |
-        Warp is an AI-powered terminal that sends command history and context to cloud model providers for its AI features. When it is configured on an endpoint, command output and code context can be transmitted to third-party services. Endpoints should carry only the terminals approved by the security team.
+        This check verifies that the Warp terminal is not configured on this endpoint.
+
+        Warp is a terminal emulator with built-in AI features that send command context to a model provider. The check reads the agent's own configuration for stored skills. A skill is a saved instruction set the agent loads and acts on, so its presence means the agent was set up on this machine rather than merely downloaded.
 
         **Why this matters**
 
-        - **Command exposure:** Warp's AI features send command history and output to a cloud model provider.
-        - **Credential leakage:** Commands and output may contain tokens and secrets that reach a third-party API.
-        - **Autonomous suggestions:** AI-generated commands can be executed in the terminal without separate review.
-        - **Inventory gaps:** An unsanctioned terminal leaves security teams without an accurate picture of how data leaves the endpoint.
+        A terminal is a different exposure from an editor. What passes through it is not source code but commands and their output: connection strings, tokens pasted into a shell, the contents of files echoed during troubleshooting, and the names of internal hosts and services.
+
+        Command history is also unusually revealing about infrastructure. A sequence of shell commands describes the systems an engineer administers, how they authenticate, and what they were doing at the time, which is a precise operational picture rather than a code sample.
+
+        Where this tool is on the approved list, exempt it deliberately rather than suppressing the check, so the exemption is recorded and reviewed when the approval changes.
       audit: |-
         To verify that Warp is not configured on the endpoint:
 
@@ -2038,14 +2110,17 @@ queries:
       kilocode.skills.none()
     docs:
       desc: |
-        Kilo Code is an AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+        This check verifies that the Kilo Code agent is not configured on this endpoint.
+
+        Kilo Code is an AI coding agent that connects to model providers and can execute commands and modify files. The check reads the agent's own configuration for stored skills. A skill is a saved instruction set the agent loads and acts on, so its presence means the agent was set up on this machine rather than merely downloaded.
 
         **Why this matters**
 
-        - **Autonomous execution:** Kilo Code can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+        Several agents in this policy share a common ancestor and were forked from one another, so an organization that assessed one may have a close relative installed elsewhere in the fleet under a different name.
+
+        The exposure is execution, not just disclosure. An agent that can run commands and edit files acts with the developer's full local privileges: their SSH keys, their cloud credentials, their access to internal services. A prompt that reaches it, whether from a user, a fetched web page, or a file in the repository, becomes an instruction it may act on, and the resulting commands are indistinguishable from the developer's own.
+
+        Where this tool is on the approved list, exempt it deliberately rather than suppressing the check, so the exemption is recorded and reviewed when the approval changes.
       audit: |-
         To verify that Kilo Code is not configured on the endpoint:
 
@@ -2125,14 +2200,17 @@ queries:
       openhands.skills.none()
     docs:
       desc: |
-        OpenHands is an autonomous AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+        This check verifies that the OpenHands agent is not configured on this endpoint.
+
+        OpenHands is an autonomous AI coding agent that connects to model providers and can execute commands and modify files. The check reads the agent's own configuration for stored skills. A skill is a saved instruction set the agent loads and acts on, so its presence means the agent was set up on this machine rather than merely downloaded.
 
         **Why this matters**
 
-        - **Autonomous execution:** OpenHands can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+        OpenHands is built for autonomy rather than assistance: it is designed to take a task description and work through it, which means longer unattended runs and more commands executed per instruction.
+
+        The exposure is execution, not just disclosure. An agent that can run commands and edit files acts with the developer's full local privileges: their SSH keys, their cloud credentials, their access to internal services. A prompt that reaches it, whether from a user, a fetched web page, or a file in the repository, becomes an instruction it may act on, and the resulting commands are indistinguishable from the developer's own. The longer the agent runs unattended, the more of that execution nobody watched.
+
+        Where this tool is on the approved list, exempt it deliberately rather than suppressing the check, so the exemption is recorded and reviewed when the approval changes.
       audit: |-
         To verify that OpenHands is not configured on the endpoint:
 
@@ -2204,14 +2282,17 @@ queries:
       qwen.code.skills.none()
     docs:
       desc: |
-        Qwen Code is an AI coding agent from Alibaba that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+        This check verifies that the Qwen Code agent is not configured on this endpoint.
+
+        Qwen Code is an AI coding agent from Alibaba that connects to model providers and can execute commands and modify files. The check reads the agent's own configuration for stored skills. A skill is a saved instruction set the agent loads and acts on, so its presence means the agent was set up on this machine rather than merely downloaded.
 
         **Why this matters**
 
-        - **Autonomous execution:** Qwen Code can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+        Where the model provider processes data is a question an approval has to answer explicitly, because it determines which jurisdiction's law applies to source code and any customer data caught in context.
+
+        The exposure is execution, not just disclosure. An agent that can run commands and edit files acts with the developer's full local privileges: their SSH keys, their cloud credentials, their access to internal services. A prompt that reaches it, whether from a user, a fetched web page, or a file in the repository, becomes an instruction it may act on, and the resulting commands are indistinguishable from the developer's own.
+
+        Where this tool is on the approved list, exempt it deliberately rather than suppressing the check, so the exemption is recorded and reviewed when the approval changes.
       audit: |-
         To verify that Qwen Code is not configured on the endpoint:
 
@@ -2292,14 +2373,17 @@ queries:
       ).none()
     docs:
       desc: |
-        Codeium AI coding extensions installed in VS Code-compatible editors transmit source code to cloud AI models for completion and chat. When such an extension is present, proprietary code can leave the endpoint as part of normal editing. Only AI extensions reviewed and approved by the security team should be installed.
+        This check verifies that no Codeium extension is installed in a VS Code-compatible editor.
+
+        The check reads the installed extension list and matches extension identifiers beginning with `codeium.`. VS Code-compatible covers VS Code itself and the editors built on its extension model, so one installation of the extension is found wherever it lives.
 
         **Why this matters**
 
-        - **Source code exposure:** The extension uploads code context to a cloud model provider during editing.
-        - **Credential leakage:** Files opened in the editor may contain tokens and secrets that are sent alongside code context.
-        - **Bypassed review:** AI-generated edits applied through the extension skip the controls that govern approved tooling.
-        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+        An editor extension sees what the editor sees. It has access to the open file, the workspace, and in most cases the ability to read any file the editor can, and it sends the parts it needs to a model provider to answer a completion.
+
+        That access is granted at install time and is not scoped per project. An extension installed to help with one repository is equally present when the developer opens a different one, including repositories with stricter handling requirements than the one that prompted the install.
+
+        Where the extension is approved, exempt it deliberately so the approval is recorded. Extensions update themselves, so an approval is a statement about a publisher rather than about a fixed version.
       audit: |-
         To verify that no Codeium extension is installed:
 
@@ -2378,14 +2462,19 @@ queries:
       ).none()
     docs:
       desc: |
-        Tabnine AI coding extensions installed in VS Code-compatible editors can transmit source code to cloud AI models for completion depending on configuration. When such an extension is present, proprietary code can leave the endpoint as part of normal editing. Only AI extensions reviewed and approved by the security team should be installed.
+        This check verifies that no Tabnine extension is installed in a VS Code-compatible editor.
+
+        The check reads the installed extension list and matches extension identifiers beginning with `tabnine.`. VS Code-compatible covers VS Code itself and the editors built on its extension model, so one installation of the extension is found wherever it lives.
 
         **Why this matters**
 
-        - **Source code exposure:** The extension can upload code context to a cloud model provider during editing.
-        - **Credential leakage:** Files opened in the editor may contain tokens and secrets that are sent alongside code context.
-        - **Bypassed review:** AI-generated edits applied through the extension skip the controls that govern approved tooling.
-        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+        An editor extension sees what the editor sees. It has access to the open file, the workspace, and in most cases the ability to read any file the editor can, and it sends the parts it needs to a model provider to answer a completion.
+
+        That access is granted at install time and is not scoped per project. An extension installed to help with one repository is equally present when the developer opens a different one, including repositories with stricter handling requirements than the one that prompted the install.
+
+        Tabnine is configurable between local and cloud models, so its data path depends on how it was set up. The presence of the extension does not establish which mode is active, which is why a failure here is a question to answer rather than a conclusion.
+
+        Where the extension is approved, exempt it deliberately so the approval is recorded. Extensions update themselves, so an approval is a statement about a publisher rather than about a fixed version.
       audit: |-
         To verify that no Tabnine extension is installed:
 
@@ -2464,14 +2553,17 @@ queries:
       ).none()
     docs:
       desc: |
-        Supermaven AI coding extensions installed in VS Code-compatible editors transmit source code to cloud AI models for completion. When such an extension is present, proprietary code can leave the endpoint as part of normal editing. Only AI extensions reviewed and approved by the security team should be installed.
+        This check verifies that no Supermaven extension is installed in a VS Code-compatible editor.
+
+        The check reads the installed extension list and matches extension identifiers beginning with `supermaven.`. VS Code-compatible covers VS Code itself and the editors built on its extension model, so one installation of the extension is found wherever it lives.
 
         **Why this matters**
 
-        - **Source code exposure:** The extension uploads code context to a cloud model provider during editing.
-        - **Credential leakage:** Files opened in the editor may contain tokens and secrets that are sent alongside code context.
-        - **Bypassed review:** AI-generated edits applied through the extension skip the controls that govern approved tooling.
-        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+        An editor extension sees what the editor sees. It has access to the open file, the workspace, and in most cases the ability to read any file the editor can, and it sends the parts it needs to a model provider to answer a completion.
+
+        That access is granted at install time and is not scoped per project. An extension installed to help with one repository is equally present when the developer opens a different one, including repositories with stricter handling requirements than the one that prompted the install.
+
+        Where the extension is approved, exempt it deliberately so the approval is recorded. Extensions update themselves, so an approval is a statement about a publisher rather than about a fixed version.
       audit: |-
         To verify that no Supermaven extension is installed:
 
@@ -2550,14 +2642,19 @@ queries:
       ).none()
     docs:
       desc: |
-        Continue is an open-source AI coding assistant that connects to a range of LLM providers. When its extension is installed in a VS Code-compatible editor, proprietary code can leave the endpoint as part of normal editing. Only AI extensions reviewed and approved by the security team should be installed.
+        This check verifies that no Continue extension is installed in a VS Code-compatible editor.
+
+        The check reads the installed extension list and matches the `continue.continue` extension identifier. VS Code-compatible covers VS Code itself and the editors built on its extension model, so one installation of the extension is found wherever it lives.
 
         **Why this matters**
 
-        - **Source code exposure:** The extension uploads code context to whichever model provider it is connected to.
-        - **Credential leakage:** Files opened in the editor may contain tokens and secrets that are sent alongside code context.
-        - **Bypassed review:** AI-generated edits applied through the extension skip the controls that govern approved tooling.
-        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+        An editor extension sees what the editor sees. It has access to the open file, the workspace, and in most cases the ability to read any file the editor can, and it sends the parts it needs to a model provider to answer a completion.
+
+        That access is granted at install time and is not scoped per project. An extension installed to help with one repository is equally present when the developer opens a different one, including repositories with stricter handling requirements than the one that prompted the install.
+
+        Continue can be pointed at many providers including self-hosted ones, so the destination is a configuration question rather than a property of the extension. Read the configuration before deciding whether this finding matters.
+
+        Where the extension is approved, exempt it deliberately so the approval is recorded. Extensions update themselves, so an approval is a statement about a publisher rather than about a fixed version.
       audit: |-
         To verify that no Continue extension is installed:
 
@@ -2636,14 +2733,19 @@ queries:
       ).none()
     docs:
       desc: |
-        Cline, formerly Claude Dev, is an autonomous AI agent that runs as a VS Code extension and can execute code and modify files. When its extension is installed in a VS Code-compatible editor, it can act on local files and send code context to a cloud model provider. Only AI extensions reviewed and approved by the security team should be installed.
+        This check verifies that no Cline extension is installed in a VS Code-compatible editor.
+
+        The check reads the installed extension list and matches the `saoudrizwan.claude-dev` identifier, which is Cline's original publisher name, and identifiers beginning with `cline.`. VS Code-compatible covers VS Code itself and the editors built on its extension model, so one installation of the extension is found wherever it lives.
 
         **Why this matters**
 
-        - **Autonomous execution:** The extension can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent uploads file and repository context to a cloud model provider.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+        Cline is an autonomous agent rather than a completion tool. Installed as an extension, it can execute terminal commands and modify files, acting with the developer's full local privileges.
+
+        That is a materially different exposure from an extension that suggests code. The agent's actions are indistinguishable from the developer's own, and a prompt reaching it from a fetched page or a file in the repository becomes an instruction it may act on.
+
+        The two identifiers matter because the extension was renamed. An inventory built only on the current name misses installations that predate the change.
+
+        Where Cline is approved, exempt it deliberately. Note that this policy also reads Cline's own configuration separately, so an approved installation may produce two findings that need exempting together.
       audit: |-
         To verify that no Cline extension is installed:
 
@@ -2722,14 +2824,19 @@ queries:
       ).none()
     docs:
       desc: |
-        Sourcegraph Cody is an AI coding extension that transmits source code to cloud AI models for completion and chat. When its extension is installed in a VS Code-compatible editor, proprietary code can leave the endpoint as part of normal editing. Only AI extensions reviewed and approved by the security team should be installed.
+        This check verifies that no Sourcegraph Cody extension is installed in a VS Code-compatible editor.
+
+        The check reads the installed extension list and matches the `sourcegraph.cody` extension identifier. VS Code-compatible covers VS Code itself and the editors built on its extension model, so one installation of the extension is found wherever it lives.
 
         **Why this matters**
 
-        - **Source code exposure:** The extension uploads code context to a cloud model provider during editing.
-        - **Credential leakage:** Files opened in the editor may contain tokens and secrets that are sent alongside code context.
-        - **Bypassed review:** AI-generated edits applied through the extension skip the controls that govern approved tooling.
-        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+        An editor extension sees what the editor sees. It has access to the open file, the workspace, and in most cases the ability to read any file the editor can, and it sends the parts it needs to a model provider to answer a completion.
+
+        That access is granted at install time and is not scoped per project. An extension installed to help with one repository is equally present when the developer opens a different one, including repositories with stricter handling requirements than the one that prompted the install.
+
+        Cody's value comes from repository-wide context, so it is designed to send more than the open file. That is the feature working as intended and it is also what makes the volume reaching the provider larger than a line-completion tool's.
+
+        Where the extension is approved, exempt it deliberately so the approval is recorded. Extensions update themselves, so an approval is a statement about a publisher rather than about a fixed version.
       audit: |-
         To verify that no Sourcegraph Cody extension is installed:
 
@@ -2808,14 +2915,19 @@ queries:
       ).none()
     docs:
       desc: |
-        Extensions from the OpenAI publisher installed in VS Code-compatible editors, such as the Codex extension `openai.chatgpt`, transmit source code to OpenAI's cloud models for completion and chat. When such an extension is present, proprietary code can leave the endpoint as part of normal editing. Only AI extensions reviewed and approved by the security team should be installed.
+        This check verifies that no extension published by OpenAI is installed in a VS Code-compatible editor.
+
+        The check reads the installed extension list and matches extension identifiers beginning with `openai.`, which covers the Codex and ChatGPT extensions. VS Code-compatible covers VS Code itself and the editors built on its extension model, so one installation of the extension is found wherever it lives.
 
         **Why this matters**
 
-        - **Source code exposure:** The extension uploads code context to a cloud model provider during editing.
-        - **Credential leakage:** Files opened in the editor may contain tokens and secrets that are sent alongside code context.
-        - **Bypassed review:** AI-generated edits applied through the extension skip the controls that govern approved tooling.
-        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+        An editor extension sees what the editor sees. It has access to the open file, the workspace, and in most cases the ability to read any file the editor can, and it sends the parts it needs to a model provider to answer a completion.
+
+        That access is granted at install time and is not scoped per project. An extension installed to help with one repository is equally present when the developer opens a different one, including repositories with stricter handling requirements than the one that prompted the install.
+
+        Matching on the publisher rather than a single extension name is deliberate: it catches the publisher's current and future extensions without needing the list maintained. The cost is that a failure names the publisher rather than the specific tool, so check which extension is actually installed.
+
+        Where the extension is approved, exempt it deliberately so the approval is recorded. Extensions update themselves, so an approval is a statement about a publisher rather than about a fixed version.
       audit: |-
         To verify that no OpenAI extension is installed:
 
@@ -2894,14 +3006,19 @@ queries:
       ).none()
     docs:
       desc: |
-        Anthropic Claude extensions installed in VS Code-compatible editors transmit source code to Anthropic's cloud models for completion and chat. Even where Claude tooling is approved elsewhere, an editor extension that has not been reviewed represents an uninventoried path for code to leave the endpoint. Only AI extensions reviewed and approved by the security team should be installed.
+        This check verifies that no Anthropic Claude extension is installed in a VS Code-compatible editor.
+
+        The check reads the installed extension list and matches extension identifiers beginning with `anthropic.claude`. VS Code-compatible covers VS Code itself and the editors built on its extension model, so one installation of the extension is found wherever it lives.
 
         **Why this matters**
 
-        - **Source code exposure:** The extension uploads code context to a cloud model provider during editing.
-        - **Credential leakage:** Files opened in the editor may contain tokens and secrets that are sent alongside code context.
-        - **Bypassed review:** AI-generated edits applied through the extension skip the controls that govern approved tooling.
-        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+        An editor extension sees what the editor sees. It has access to the open file, the workspace, and in most cases the ability to read any file the editor can, and it sends the parts it needs to a model provider to answer a completion.
+
+        That access is granted at install time and is not scoped per project. An extension installed to help with one repository is equally present when the developer opens a different one, including repositories with stricter handling requirements than the one that prompted the install.
+
+        Approval of a vendor's tooling elsewhere does not extend to an editor extension. The extension is a separate data path with its own access to the workspace, so an organization that approved a vendor's API or its command-line tooling has not thereby assessed what the extension reads.
+
+        Where the extension is approved, exempt it deliberately so the approval is recorded. Extensions update themselves, so an approval is a statement about a publisher rather than about a fixed version.
       audit: |-
         To verify that no Anthropic Claude extension is installed:
 
@@ -2980,14 +3097,19 @@ queries:
       ).none()
     docs:
       desc: |
-        Cursor-specific AI extensions installed in VS Code-compatible editors bring Cursor's AI completion and chat features into editors where they have not been reviewed. When such an extension is present, proprietary code can leave the endpoint as part of normal editing. Only AI extensions reviewed and approved by the security team should be installed.
+        This check verifies that no Cursor-specific extension is installed in a VS Code-compatible editor.
+
+        The check reads the installed extension list and matches extension identifiers beginning with `cursor.` or `anysphere.`. VS Code-compatible covers VS Code itself and the editors built on its extension model, so one installation of the extension is found wherever it lives.
 
         **Why this matters**
 
-        - **Source code exposure:** The extension uploads code context to a cloud model provider during editing.
-        - **Credential leakage:** Files opened in the editor may contain tokens and secrets that are sent alongside code context.
-        - **Bypassed review:** AI-generated edits applied through the extension skip the controls that govern approved tooling.
-        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+        An editor extension sees what the editor sees. It has access to the open file, the workspace, and in most cases the ability to read any file the editor can, and it sends the parts it needs to a model provider to answer a completion.
+
+        That access is granted at install time and is not scoped per project. An extension installed to help with one repository is equally present when the developer opens a different one, including repositories with stricter handling requirements than the one that prompted the install.
+
+        These extensions bring Cursor's completion and chat features into editors other than Cursor itself, which is the case this check exists for. An organization that decided against Cursor as an editor can still have its AI features present through an extension in the editor it does use.
+
+        Where the extension is approved, exempt it deliberately so the approval is recorded. Extensions update themselves, so an approval is a statement about a publisher rather than about a fixed version.
       audit: |-
         To verify that no Cursor-specific extension is installed:
 
@@ -3069,14 +3191,19 @@ queries:
       ).none()
     docs:
       desc: |
-        Roo Code is an autonomous AI agent forked from Cline that runs as a VS Code extension and can execute code and modify files. When its extension is installed in a VS Code-compatible editor, it can act on local files and send code context to a cloud model provider. Only AI extensions reviewed and approved by the security team should be installed.
+        This check verifies that no Roo Code extension is installed in a VS Code-compatible editor.
+
+        The check reads the installed extension list and matches the `rooveterinaryinc.roo-cline` identifier and identifiers beginning with `roocode.`. VS Code-compatible covers VS Code itself and the editors built on its extension model, so one installation of the extension is found wherever it lives.
 
         **Why this matters**
 
-        - **Autonomous execution:** The extension can run commands and edit files with the user's full privileges.
-        - **Source code exposure:** The agent uploads file and repository context to a cloud model provider.
-        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
-        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+        Roo Code is an autonomous agent forked from Cline. Installed as an extension it can execute commands and modify files, acting with the developer's full local privileges rather than suggesting text.
+
+        The exposure is execution as well as disclosure. A prompt that reaches the agent, from a user, a fetched page, or a file in the repository, becomes an instruction it may act on, and the commands it runs are indistinguishable from the developer's own.
+
+        Both identifiers are matched because the extension was published under one name and later another, so an inventory built on the current name alone misses earlier installations.
+
+        Where Roo Code is approved, exempt it deliberately. This policy also reads its own configuration separately, so an approved installation produces two findings.
       audit: |-
         To verify that no Roo Code extension is installed:
 
@@ -3166,14 +3293,19 @@ queries:
       gemini.mcpServers.none(name != props.mondooAiSecurityApprovedMcpServers)
     docs:
       desc: |
-        Model Context Protocol servers grant AI agents tool access to internal systems such as email, source control, databases, and messaging platforms. Only MCP servers reviewed and approved by the security team should be configured across Claude Code, OpenAI Codex, Cursor, GitHub Copilot, Windsurf, and Gemini CLI. The `mondooAiSecurityApprovedMcpServers` property defines a single centralized allow-list and can be customized for your environment, for example `return /(?i)(mondoo|github|jira)/`.
+        This check verifies that no unapproved Model Context Protocol server is registered with any AI agent on the endpoint.
+
+        MCP servers give an agent tool access to systems: source control, ticketing, messaging, databases, cloud APIs. The check reads the registered server list across every agent this policy knows about, including Claude Code, OpenAI Codex, Cursor, and the others, and fails any server not named in this policy's approved-MCP property.
 
         **Why this matters**
 
-        - **Broad data access:** An MCP server can read, modify, or exfiltrate data across connected internal systems on behalf of the user.
-        - **Implicit consent:** Once a server is configured, the agent can invoke its tools without the user approving each individual action.
-        - **Highest-risk vector:** Unreviewed MCP servers combine remote system access with autonomous agent behavior, making them the most consequential AI shadow IT exposure.
-        - **Inventory gaps:** Servers configured outside the approved set leave security teams unaware of which systems an agent can reach.
+        An MCP server is a capability grant, not a data path. Where a completion tool sends code to a provider, a registered MCP server lets the agent read from and act on the system behind it, with whatever credentials that server holds.
+
+        That inverts the usual containment argument. An agent confined to a repository is a bounded problem; an agent with a registered MCP server for the ticket tracker, the internal wiki, and a cloud account is operating across the systems those servers reach, and the blast radius of a prompt injection grows accordingly.
+
+        The credentials are the part most often missed. An MCP server is configured once with a token and then used repeatedly, so the token's scope is the agent's scope, and tokens configured for convenience during setup are rarely narrowed afterward.
+
+        Reading across every agent at once is what makes this useful. Registrations are per-agent and per-user, so an organization checking only its standard agent misses servers registered with whatever else a developer installed. Maintain the approved-MCP property as the reviewed set, and treat a failure as a question about which credentials that server holds.
       audit: |-
         To verify that only approved MCP servers are configured:
 
@@ -3280,14 +3412,21 @@ queries:
       ).none()
     docs:
       desc: |
-        Local LLM inference runtimes such as Ollama, LM Studio, llama.cpp, LocalAI, GPT4All, and Jan run model inference directly on the endpoint. While they keep prompts off remote APIs, they still allow data to be processed outside approved channels and can carry licensing exposure from the model weights they load. Endpoints should run only the LLM runtimes approved by the security team.
+        This check verifies that no local LLM inference runtime is running on the endpoint.
+
+        The check reads the process table for the well-known local inference tools, including Ollama, LM Studio, llama.cpp, LocalAI, and GPT4All. It reports on running processes rather than installed software, so it reflects active use.
 
         **Why this matters**
 
-        - **Uncontrolled processing:** A local runtime lets users feed sensitive data into models outside sanctioned tooling and review.
-        - **Licensing exposure:** Downloaded model weights may carry license restrictions that create legal risk for the organization.
-        - **Resource and supply-chain risk:** Runtimes pull models from public registries that are not part of the organization's vetted supply chain.
-        - **Inventory gaps:** An unsanctioned runtime leaves security teams without an accurate picture of how data is processed on the endpoint.
+        Local inference is often adopted specifically to avoid sending data to a provider, and that reasoning is sound as far as it goes. Prompts genuinely do not leave the machine. The exposure is different rather than absent.
+
+        The model weights are the first concern. They are downloaded from public model hubs, they are large binaries whose contents cannot be meaningfully reviewed, and they run with the privileges of whatever loads them. Supply chain assurance for model artifacts is considerably weaker than for software packages, and the formats have had deserialization vulnerabilities.
+
+        The second is that local inference removes the audit trail rather than the risk. Data processed through an approved provider is at least governed by a contract and, usually, by logging. Data processed by a model a developer downloaded is governed by nothing and recorded nowhere, so an organization cannot say afterward what was processed or by which model.
+
+        The third is resource contention: inference is demanding enough to affect the endpoint's other work.
+
+        Where local inference is the deliberate choice for sensitive material, approve specific runtimes and specific model sources, and pair this with the companion check that no inference server is listening beyond the loopback interface.
       audit: |-
         To verify that no local LLM runtime is running:
 
@@ -3396,13 +3535,19 @@ queries:
       )
     docs:
       desc: |
-        Local LLM inference servers expose an HTTP API on well-known ports: 11434 for Ollama, 1234 for LM Studio, and 1337 for Jan. Listening on `127.0.0.1` or `::1` is acceptable because it limits the server to the local machine. The check fails when one of these ports is bound to `0.0.0.0`, a LAN address, or any other non-loopback interface, because that exposes the model to other hosts on the network.
+        This check verifies that no local LLM inference server is reachable from outside the endpoint.
+
+        Local inference tools expose an HTTP API on well-known ports: 11434 for Ollama, 1234 for LM Studio, and 1337 for Jan. The check reads the listening port table and fails when one of those ports is bound to any address other than `127.0.0.1` or `::1`. Binding to loopback is acceptable and passes.
 
         **Why this matters**
 
-        - **Network exposure:** If the server binds to a non-loopback interface, other hosts on the network can submit prompts to it.
-        - **Uncontrolled processing:** Data sent to a local inference API bypasses the review and logging applied to sanctioned tooling.
-        - **Inventory gaps:** An unsanctioned inference server leaves security teams without an accurate picture of how data is processed on the endpoint.
+        These APIs have no authentication. That is a deliberate design choice for a service intended to be reached only by applications on the same machine, and it becomes a serious exposure the moment the bind address changes.
+
+        An inference server listening on a routable address is an open endpoint that anyone who can reach it may use: to run inference at the machine owner's expense, to load or delete models, and depending on the tool, to reach other capabilities the API exposes. Internet-wide scanning for these specific ports is established and ongoing, and exposed instances are found and used.
+
+        The change is usually made for a reason that sounds harmless. A developer wants to reach the model from a container, from a second machine, or from a phone, sets the bind address to all interfaces, and the endpoint is then exposed on every network the laptop subsequently joins.
+
+        Where remote access is genuinely needed, put the server behind a reverse proxy that authenticates, or reach it over a VPN or an SSH tunnel, rather than binding it to all interfaces. The loopback default is the safe configuration and the check is deliberately tolerant of it.
       audit: |-
         To verify that no local LLM inference server is exposed beyond localhost:
 
