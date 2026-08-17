@@ -122,15 +122,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no enabled wireless networks on the UniFi controller use open (no encryption) authentication.
+        This check verifies that every enabled wireless network on the site requires encryption before a client can join.
+
+        In the UniFi Network application each SSID is configured under **Settings > WiFi**, and its **Security** setting decides whether the radio link is encrypted. Setting it to **Open** removes both the encryption and the credential, so any device in range associates and receives an address. The check reads every enabled wireless network on the site and requires **Security** to be anything other than **Open**, which in practice means WPA Personal with a passphrase or WPA Enterprise with 802.1X.
 
         **Why this matters**
 
-        Open wireless networks transmit all traffic in plaintext, allowing anyone within radio range to intercept sensitive data:
-          - Credentials, session tokens, and personal data can be captured with basic tools.
-          - Attackers can perform man-in-the-middle attacks without any authentication barrier.
-          - Open networks provide no protection against rogue clients joining the network.
-          - Even guest networks should use WPA with a shared key or captive portal authentication.
+        An open SSID hands network access to anyone within radio range. There is no key to crack and no account to compromise; the attacker sits in the parking lot, associates, pulls a DHCP lease, and is now an internal host scanning the same segment as printers, cameras, and file shares.
+
+        Everything crossing that radio is plaintext. Frames can be captured passively with an ordinary laptop in monitor mode, and the capture yields cleartext credentials, session tokens, internal hostnames, and the contents of any application that is not separately encrypted. The victim sees nothing, because passive capture is not a connection.
+
+        Open networks also make impersonation trivial. Because the client has no key to verify, an attacker can stand up an access point advertising the same SSID, wait for devices to roam onto it, and relay every session through a machine under their control.
+
+        Even a network meant for visitors should carry a key. A guest SSID protected by a shared WPA passphrase or a captive portal still encrypts the air and still keeps casual passers-by off the segment. If a deliberately open hotspot is genuinely required, pair it with a companion check in this policy that isolates guest clients at Layer 2, and keep that network on its own VLAN.
       audit: |
         To verify wireless network security using the UniFi Network web application:
 
@@ -226,21 +230,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that all enabled wireless networks use WPA-PSK or WPA-Enterprise security modes, which provide WPA2 or WPA3 encryption.
+        This check verifies that every enabled wireless network uses a modern WPA security mode rather than a legacy one.
 
-        **Note:** The UniFi API uses `wpapsk` and `wpaeap` for WPA2/WPA3 modes. WPA1-only configurations use distinct security values. If your controller uses non-standard security values, verify the mapping for your firmware version.
+        The **Security** setting under **Settings > WiFi** selects the authentication and key scheme for an SSID. The check requires each enabled wireless network to sit in one of the two current families: WPA Personal, which the controller stores as `wpapsk`, or WPA Enterprise, which it stores as `wpaeap`. Both deliver WPA2 or WPA3 key management. Anything else, including WEP, a WPA1-only configuration, or open security, fails.
 
         **Why this matters**
 
-        Older security protocols like WEP have well-known vulnerabilities that allow attackers to crack encryption keys in minutes:
-          - WEP uses RC4 encryption with known statistical weaknesses.
-          - WPA1 (TKIP) has been deprecated due to practical attacks.
-          - Only WPA2 (AES-CCMP) and WPA3 (SAE) provide adequate wireless security.
+        WEP is not a slow control to break, it is a solved one. It uses RC4 with an initialization vector short enough that the key falls out of a few minutes of captured traffic on a busy network, and the tooling to do it is packaged and scripted. An attacker within range recovers the key, joins as a trusted client, and reads every other client's traffic.
 
-        Using strong wireless encryption ensures:
-          - Data confidentiality for all wireless traffic.
-          - Protection against eavesdropping and session hijacking.
-          - Compliance with modern security standards and best practices.
+        WPA1 with TKIP is only marginally better. It was designed as a firmware-compatible retrofit onto WEP-era hardware and inherits enough of its structure that practical packet injection and decryption attacks exist against it. The Wi-Fi Alliance withdrew certification for it, and access points that still offer it do so to serve equipment that should have been replaced.
+
+        WPA2 with AES-CCMP and WPA3 with SAE are what remain. They derive per-session keys through a handshake that resists the attacks above, so captured frames stay unreadable and a client cannot be silently substituted for another.
+
+        Both accepted modes pass here, but they are not equivalent operationally. Enterprise mode with 802.1X gives each user a revocable identity and survives someone leaving the organization. Personal mode shares one passphrase that has to be rotated by hand and reconfigured on every client each time anyone who held it moves on, which is why it tends never to be rotated at all.
       audit: |
         To verify wireless network encryption modes using the UniFi Network web application:
 
@@ -336,16 +338,21 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that WPA3 support or WPA3 transition mode is enabled on all secured wireless networks.
+        This check verifies that every enabled, encrypted wireless network offers WPA3 to the clients that can use it.
+
+        WPA3 is selected per SSID under **Settings > WiFi**, in the advanced section where the WPA mode is chosen. The check accepts either full **WPA3** or the **WPA2/WPA3** transition mode, and it applies to every enabled network whose security is not open. A network that offers WPA2 alone fails.
 
         **Why this matters**
 
-        WPA3 provides significant security improvements over WPA2:
-          - Simultaneous Authentication of Equals (SAE) replaces the PSK 4-way handshake, preventing offline dictionary attacks.
-          - Forward secrecy ensures that captured traffic cannot be decrypted even if the passphrase is later compromised.
-          - Protected Management Frames (PMF) are mandatory, preventing deauthentication attacks.
+        WPA2 Personal derives its session keys from a 4-way handshake that an attacker can capture off the air in seconds, usually by forcing one client to reconnect. Once captured, the handshake is attacked offline at whatever rate the attacker's hardware allows, with no further contact with the network and no rate limit to slow them down. A passphrase that looks reasonable to a human falls to a wordlist.
 
-        WPA3 transition mode allows WPA2 clients to connect while still offering WPA3 to capable devices.
+        WPA3 replaces that handshake with Simultaneous Authentication of Equals, which never puts a crackable verifier on the air. Guessing the passphrase then requires an online attempt against the access point for every guess, which is slow, rate limited, and visible.
+
+        WPA3 also gives each session forward secrecy. Traffic captured today cannot be decrypted later even if the passphrase is eventually leaked or handed to someone who should not have it, which is exactly the scenario a shared wireless key invites.
+
+        Protected Management Frames are mandatory under WPA3, so the deauthentication and disassociation forgeries used to knock clients off a network and to trigger handshake capture stop working.
+
+        Transition mode is the pragmatic setting for a mixed fleet: capable clients negotiate WPA3 while older devices still associate over WPA2. It is a stepping stone rather than a destination, because the network stays only as strong as the weakest association it accepts. A companion check in this policy requires WPA3 without the transition fallback for networks whose clients all support it.
       audit: |
         To verify WPA3 support on secured wireless networks using the UniFi Network web application:
 
@@ -443,19 +450,21 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Protected Management Frames (PMF / IEEE 802.11w) are enabled on all secured wireless networks.
+        This check verifies that management frames on every encrypted wireless network are cryptographically protected.
+
+        Protected Management Frames, standardized as IEEE 802.11w, are configured per SSID under **Settings > WiFi** in the advanced section, where the **PMF** setting can be **Disabled**, **Optional**, or **Required**. The check evaluates every enabled network whose security is not open and requires **PMF** to be **Optional** or **Required**.
 
         **Why this matters**
 
-        Without PMF, management frames such as deauthentication and disassociation are sent unprotected:
-          - Attackers can forge deauthentication frames to disconnect clients (deauth attacks).
-          - Deauth attacks are a prerequisite for WPA2 handshake capture and offline cracking.
-          - Rogue AP attacks become easier when clients can be forcibly disconnected from legitimate APs.
+        Without PMF, the frames that manage an association are unauthenticated. Anyone in radio range can forge a deauthentication or disassociation frame that appears to come from the access point, and the client obeys it. No key, no association, and no prior access to the network are needed, so the attack works against a fully encrypted WPA2 network from outside the building.
 
-        Enabling PMF (optional or required) protects against:
-          - Deauthentication and disassociation flooding attacks.
-          - Forced roaming to rogue access points.
-          - Denial-of-service attacks targeting wireless clients.
+        That forgery is the opening move in most practical wireless attacks. Knocking a client off forces it to reconnect, and the reconnection puts a fresh handshake on the air for the attacker to capture and grind offline. A network with a strong passphrase and no PMF still hands out the material needed to attempt cracking it, on demand.
+
+        The same primitive drives clients onto rogue access points. An attacker holds the legitimate access point down with repeated deauthentication while advertising the same SSID from a stronger radio, and roaming logic does the rest, putting the session through a machine the attacker controls.
+
+        It is also a denial of service in its own right. Sustained deauthentication flooding keeps an entire floor of devices off the wireless network, and for cameras, badge readers, and handheld scanners that is an outage with no attacker footprint anywhere on the wire.
+
+        Setting **PMF** to **Required** is stronger but rejects clients that do not implement 802.11w. Where legacy hardware is still in service, **Optional** protects the clients that support it while keeping the rest connected, and it is the setting to start from before tightening.
       audit: |
         To verify Protected Management Frames using the UniFi Network web application:
 
@@ -542,15 +551,19 @@ queries:
       unifi.wlans.where(enabled == true && security != "open").all(wpaEnc == "ccmp" || wpaEnc == "gcmp-256")
     docs:
       desc: |
-        This check ensures that all secured wireless networks use strong WPA encryption ciphers such as AES-CCMP or GCMP-256.
+        This check verifies that encrypted wireless networks protect data frames with a strong cipher rather than a legacy one.
+
+        The cipher is what actually encrypts data once WPA has authenticated the client, and it is selected per SSID under **Settings > WiFi** in the advanced section. The check evaluates every enabled network whose security is not open and requires the cipher to be **CCMP**, which is AES, or **GCMP-256**. TKIP and mixed-mode settings that keep TKIP negotiable fail, and so does leaving the setting on auto, which advertises whatever the client asks for.
 
         **Why this matters**
 
-        The encryption cipher determines the strength of the actual data encryption on the wireless network:
-          - TKIP is a legacy cipher with known weaknesses and has been deprecated by the Wi-Fi Alliance.
-          - AES-CCMP is the standard cipher for WPA2 and provides strong 128-bit encryption.
-          - GCMP-256 is used with WPA3 and provides 256-bit encryption for the highest level of protection.
-          - Using weak ciphers undermines the security provided by WPA2/WPA3, even with a strong passphrase.
+        WPA decides who may join; the cipher decides whether their traffic can be read. A network can use a strong passphrase, enterprise authentication, and WPA3 key management and still expose its data if the frames themselves are protected by TKIP.
+
+        TKIP was a stopgap. It wraps RC4 in a rekeying scheme designed to run on WEP-era hardware, and practical attacks against it recover keystream and inject forged packets without recovering the passphrase at all. The Wi-Fi Alliance deprecated it, and its continued presence on a network is usually the residue of an old template rather than a decision anyone made.
+
+        AES-CCMP is the standard WPA2 cipher and provides 128-bit authenticated encryption with no practical break. GCMP-256 raises that to 256-bit and is what WPA3 uses in its higher security modes.
+
+        Mixed-mode configurations are the trap worth naming. An access point that offers both AES and TKIP so one old device can connect gives every client the option of the weak cipher, and a client that negotiates down takes the whole session with it. Pin the cipher explicitly, and move any device that cannot do AES onto a separate SSID rather than weakening the one everybody uses.
       audit: |
         To verify wireless encryption ciphers using the UniFi Network web application:
 
@@ -620,15 +633,19 @@ queries:
       unifi.wlans.where(enabled == true && security != "open").all(groupRekeyInterval > 0 && groupRekeyInterval <= 3600)
     docs:
       desc: |
-        This check ensures that the WPA group temporal key (GTK) rekey interval is set to 3600 seconds (1 hour) or less on all secured wireless networks.
+        This check verifies that the group key protecting broadcast and multicast traffic is rotated on a bounded schedule.
+
+        Every client on a WPA network shares one group temporal key for broadcast and multicast frames, and the controller rotates it on the interval set as **Group Rekey Interval** under **Settings > WiFi** in the advanced section. The check evaluates every enabled network whose security is not open and requires the interval to fall between 1 and 3600 seconds. A value of 0 disables rotation entirely and fails, as does any interval longer than 3600 seconds, which is one hour.
 
         **Why this matters**
 
-        The group temporal key encrypts broadcast and multicast traffic on a wireless network. Regular rekeying limits the exposure window if a key is compromised:
-          - A longer rekey interval means a compromised key can be used to decrypt broadcast traffic for a longer period.
-          - Regular rekeying limits the amount of data encrypted under a single key, reducing the value of a captured key.
-          - Industry best practice recommends a rekey interval of 3600 seconds or less.
-          - A value of 0 disables rekeying entirely, which is a security risk.
+        The group key is shared, so every device that has ever joined the network holds it. A personal phone that was given the passphrase once, a contractor laptop, and a device that has since been stolen all carry a key that decrypts the broadcast and multicast traffic of everyone else on the SSID. Rotation is what expires that access.
+
+        Broadcast and multicast traffic is more revealing than it looks. ARP, mDNS, NetBIOS, SSDP, and printer discovery announce hostnames, addresses, service names, and often the make and model of every device on the segment, which is exactly the map an attacker wants before choosing a target.
+
+        With rotation disabled, a key recovered once works forever. With a very long interval, an attacker capturing passively accumulates a large volume of traffic encrypted under a single key, and one recovery unlocks all of it retroactively. A bounded interval caps both the window and the payoff.
+
+        The cost of a short interval is a brief rekey event across all associated clients, which is why an hour is the usual ceiling rather than something far smaller. Setting the value to 0 to avoid that cost trades a momentary hiccup for a key that never expires.
       audit: |
         To verify the WPA group rekey interval using the UniFi Network web application:
 
@@ -707,20 +724,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Layer 2 client isolation is enabled on all guest wireless networks, preventing direct communication between wireless clients.
+        This check verifies that clients on a guest wireless network cannot talk to each other directly.
+
+        Layer 2 isolation, presented in the UniFi Network application as **L2 Isolation** or client isolation, is set per SSID under **Settings > WiFi** in the advanced section. With it on, the access point refuses to bridge frames between two associated clients, so every packet has to go to the gateway. The check looks at every enabled wireless network already marked as a guest network and requires **L2 Isolation** to be enabled on it.
 
         **Why this matters**
 
-        Without L2 isolation, clients on the same wireless network can communicate directly at the data link layer:
-          - Attackers on a guest network can ARP spoof other clients to intercept their traffic.
-          - Direct client-to-client communication enables lateral movement and network scanning.
-          - Compromised devices can attack other guests via protocols that operate at Layer 2.
-          - Guest mode alone restricts access to internal networks but does not prevent guest-to-guest attacks.
+        Guest mode and client isolation solve different problems. Guest mode keeps visitors off the internal VLANs; it does nothing about the visitors themselves. Without isolation, every device on the guest SSID shares one flat broadcast domain with every other device, which in a lobby, a waiting room, or a conference venue means an attacker sits on a segment with a rotating population of laptops and phones belonging to people who have no relationship with each other.
 
-        L2 isolation ensures:
-          - All client traffic is forced through the gateway, enabling firewall inspection.
-          - Clients cannot discover or communicate with each other directly.
-          - ARP spoofing and other Layer 2 attacks between clients are prevented.
+        From there the attack is ARP spoofing. The attacker answers requests for the gateway address, the victim starts sending every packet to the attacker's machine, and the attacker forwards it on while reading and modifying what passes. Nothing on the victim's device indicates anything unusual.
+
+        Direct reachability also exposes whatever the victim's device is listening on. Phones and laptops run file sharing, media casting, remote desktop, and development servers, often bound to every interface and often reachable without authentication on a network the device has decided to trust.
+
+        Isolation forces all traffic through the gateway, which has the useful side effect of putting every guest flow in front of the firewall and the logging that sits there. Devices that legitimately need to see each other, such as a casting receiver and the phone driving it, belong on an internal SSID rather than on a network that keeps that path open for everyone.
       audit: |
         To verify Layer 2 isolation on guest wireless networks using the UniFi Network web application:
 
@@ -817,19 +833,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that wireless networks with "guest" in the name are configured with guest mode enabled, which provides client isolation.
+        This check verifies that a wireless network named for guests is actually running under UniFi guest policy.
+
+        Marking an SSID as a guest network is a single toggle: open **Settings > WiFi**, select the network, and turn on **Guest**. That toggle is what attaches UniFi guest policy to the SSID, including the restriction on reaching other network segments and the option of a captive portal configured under **Settings > Hotspot**. The check looks at every enabled wireless network whose name contains the word guest, in any capitalization, and requires the **Guest** toggle to be on for each one.
 
         **Why this matters**
 
-        Guest networks without proper isolation allow guest clients to communicate with each other and potentially access internal network resources:
-          - Guest devices can scan and attack other devices on the same network.
-          - Lateral movement from a compromised guest device to internal resources is possible.
-          - Guest traffic should be isolated from corporate network segments.
+        An SSID named for visitors but not marked as a guest network is an ordinary internal network with a friendly label. Anyone holding the passphrase lands on the same segment as staff laptops, network printers, cameras, and the management addresses of the network equipment itself, and a visitor passphrase is precisely the credential that ends up written on a whiteboard and printed on a reception card. Reaching those systems takes no exploit, only an address scan.
 
-        Guest mode in UniFi provides:
-          - Client-to-client isolation, preventing guests from communicating with each other.
-          - Separation from the management network and other VLANs.
-          - Optional captive portal authentication for access control.
+        That is a straightforward pivot. A visitor laptop already carrying malware, or a device left behind by someone who was in the building for an afternoon, reaches internal services directly and attacks them with credentials harvested elsewhere or with whatever the service exposes to unauthenticated callers.
+
+        Guest policy also stops guests from attacking each other. Without it every device on the SSID sees every other device, so one compromised phone can scan and target the rest of the room.
+
+        Because the check finds these networks by name, it covers only SSIDs that say guest. A visitor network called something else is never evaluated, so keep the naming convention consistent or add a check matching your own convention. Guest policy is also not the whole answer: a companion check in this policy requires Layer 2 isolation on top of it, because guest mode alone does not stop client-to-client traffic within the SSID.
       audit: |
         To verify guest mode on wireless networks named "guest" using the UniFi Network web application:
 
@@ -919,19 +935,19 @@ queries:
       unifi.siteSettings.threatManagement.ipsMode == "ips"
     docs:
       desc: |
-        This check ensures that the UniFi Threat Management system is enabled and running in IPS (Intrusion Prevention System) mode rather than IDS (detection-only) mode.
+        This check verifies that the site's threat management engine is turned on and set to block attacks rather than only record them.
+
+        Threat management lives under **Settings > Security > Threat Management** in the UniFi Network application. Two states matter here: **IDS**, which inspects traffic and raises an alert, and **IPS**, which inspects traffic and drops what matches. The check requires threat management to be enabled and the mode to be **IPS**. It applies to a site fronted by a UniFi gateway such as a UDM or USG, because the inspection runs there and needs a downloaded signature set.
 
         **Why this matters**
 
-        IDS mode only detects and logs threats without blocking them, leaving the network vulnerable:
-          - Known attack signatures are detected but traffic is not blocked.
-          - Active exploitation attempts continue unimpeded in IDS mode.
-          - IPS mode actively blocks malicious traffic in real time.
+        Detection without enforcement changes nothing about the outcome of an attack. In IDS mode the exploit still reaches the vulnerable service, the payload still executes, and the beacon still leaves the network; the only difference is a line in a log that someone may read the next morning. For an attack that completes in seconds, that is not a control, it is a post-mortem.
 
-        Running in IPS mode provides:
-          - Automatic blocking of known attack patterns and exploits.
-          - Protection against network-based attacks, malware communication, and data exfiltration.
-          - Real-time threat mitigation without manual intervention.
+        The traffic this stops is the traffic most likely to matter. Signature sets cover exploitation attempts against known vulnerable services, the scanning that precedes them, malware downloads, and command-and-control check-ins from a host that is already compromised. Blocking the last of those matters most, because it cuts the operator off from a device they already own.
+
+        It also protects the things that cannot protect themselves. Cameras, printers, thermostats, badge controllers, and other embedded devices run firmware that will never be patched and cannot host any security agent. The gateway is the only place an exploit aimed at them can be stopped.
+
+        IPS blocks traffic, so a false positive is an outage rather than an alert. Enable the categories that fit the environment, watch the first weeks in detection mode if the network is unfamiliar, and then commit to blocking rather than leaving the switch permanently in the safe position.
       audit: |
         To verify the Threat Management mode using the UniFi Network web application:
 
@@ -998,16 +1014,21 @@ queries:
       unifi.siteSettings.threatManagement.dnsFiltering == true
     docs:
       desc: |
-        This check ensures that DNS filtering is enabled on the UniFi controller to block access to known malicious domains.
+        This check verifies that the gateway refuses to resolve known malicious domains.
+
+        DNS filtering is part of threat management and is turned on under **Settings > Security > Threat Management** in the UniFi Network application, where a filtering level is also chosen. It requires a UniFi gateway such as a UDM or USG with a current signature set. The check requires the setting to be enabled for the site.
 
         **Why this matters**
 
-        DNS filtering provides a network-wide layer of protection against malicious domains:
-          - Blocks access to known phishing, malware distribution, and command-and-control domains.
-          - Prevents DNS-based data exfiltration.
-          - Protects all devices on the network regardless of their individual security software.
+        Almost every stage of an intrusion starts with a name. The phishing link resolves a domain, the dropper fetches its second stage from a domain, and the implant finds its operator through a domain, often one registered hours earlier. Refusing to resolve those names breaks the chain before a packet ever reaches the host on the far side, which is a far cheaper place to stop it than on the endpoint.
 
-        DNS filtering works as a first line of defense before traffic reaches the target host.
+        It also catches what has already gotten in. A workstation that ran a malicious attachment is going to try to check in, and if the check-in domain does not resolve, the operator never gets a session. The failed lookups themselves become the alert that the machine needs attention.
+
+        Data leaves over DNS too. Exfiltration tunnels encode stolen material into subdomain labels and let the resolver carry it out, which slips past controls that only inspect HTTP and TLS. The resolver is where that traffic is visible.
+
+        Coverage is what makes this worth doing at the gateway rather than the endpoint. It applies to every device on the network, including the phones, cameras, and appliances that can never run an agent and are frequently the first thing on a network to be compromised.
+
+        Filtering is a coarse control and blocklists lag registrations, so treat it as one layer among several rather than as a replacement for endpoint protection or egress firewall rules.
       audit: |
         To verify DNS filtering using the UniFi Network web application:
 
@@ -1059,15 +1080,19 @@ queries:
       unifi.siteSettings.threatManagement.honeypotEnabled == true
     docs:
       desc: |
-        This check ensures that the UniFi internal honeypot is enabled to detect lateral movement and internal threat activity.
+        This check verifies that a decoy host is deployed on the network to catch internal scanning.
+
+        The internal honeypot is part of threat management and is enabled under **Settings > Security > Threat Management** in the UniFi Network application. Turning it on means choosing a network and an unused address on it, which the gateway then answers on as a decoy. It requires a UniFi gateway such as a UDM or USG. The check requires the honeypot to be enabled for the site.
 
         **Why this matters**
 
-        An internal honeypot creates a decoy service that legitimate users and devices should never access:
-          - Any connection to the honeypot is a strong indicator of malicious activity or compromise.
-          - Detects lateral movement from compromised devices scanning the network.
-          - Provides early warning of internal threats before they reach critical assets.
-          - Low false-positive rate since legitimate traffic should never reach the honeypot.
+        Nothing legitimate ever talks to a decoy address. No user browses to it, no application resolves it, and no backup job connects to it, because it corresponds to no real service. That yields a signal with almost none of the noise that makes most detections expensive to act on: a single connection is enough to justify investigating the source.
+
+        What produces those connections is the phase of an intrusion that is otherwise hardest to see. An attacker who has landed on one machine, whether through a phishing payload, an exposed service, or a compromised device on the wireless network, has to work out what else is reachable. That means sweeping the subnet, and a sweep hits the decoy along with everything else. Worm-style malware behaves identically.
+
+        This is detection of activity that generates no other alert. Internal scanning between two hosts on the same VLAN never crosses the gateway, so it does not appear in firewall logs, and it does not resemble anything a signature would flag. The decoy is what makes it visible at all.
+
+        Detection is only useful if someone acts on it, so pair this with a companion check in this policy that ships logs to a remote collector, and make sure the honeypot alert reaches whoever answers alerts. Place the decoy on an address no real host will ever be assigned, or the signal turns into noise the first time DHCP hands it out.
       audit: |
         To verify the internal honeypot using the UniFi Network web application:
 
@@ -1147,20 +1172,21 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Universal Plug and Play (UPnP) is disabled on the UniFi gateway.
+        This check verifies that devices on the network cannot open holes in the firewall by themselves.
+
+        Universal Plug and Play lets any host on the LAN ask the gateway to forward an external port to it, and the gateway complies without authenticating the request or asking anyone. It is turned off under **Settings > Security > Gateway** in the UniFi Network application, and the check requires the **UPnP** setting to be disabled for the site.
 
         **Why this matters**
 
-        UPnP allows devices on the network to automatically create port forwarding rules without authentication:
-          - Malware can use UPnP to open ports and expose internal services to the internet.
-          - Compromised IoT devices can use UPnP to establish reverse tunnels.
-          - UPnP bypasses firewall rules by allowing any device to modify the gateway's NAT table.
-          - Multiple CVEs have been published for UPnP implementations across various devices.
+        UPnP makes the firewall advisory. Every rule about what may be reached from the internet can be overridden by any device on the inside, including the ones nobody administers, and the resulting rule appears in the gateway's translation table with no change request, no approval, and no log entry anyone reads.
 
-        Disabling UPnP ensures:
-          - Only explicitly configured port forwards are active.
-          - The firewall maintains full control over inbound traffic.
-          - Internal devices cannot modify the gateway's NAT configuration.
+        Malware uses this deliberately. A workstation that ran a malicious attachment can ask the gateway to publish a port straight back to itself, turning a machine that was only ever supposed to make outbound connections into an internet-facing service the attacker can return to at will, surviving reboots and outlasting the session that created it.
+
+        Compromised embedded devices behave the same way and are worse, because there are more of them and nobody is watching. Cameras, recorders, and consumer appliances ship with UPnP clients that will happily expose management interfaces and video streams, and the resulting exposure has repeatedly ended up indexed by internet-wide scanners.
+
+        The protocol's own implementations have a long history of published vulnerabilities across many vendors, some of them reachable from the WAN side, so the service is worth removing on its own merits.
+
+        Turning it off means the port forwards a legitimate application needs have to be created deliberately under **Settings > Routing > Port Forwarding**. That is the point: a person decides, the rule is visible, and it can be reviewed later. Expect a small number of applications, mostly game consoles and older conferencing tools, to need an explicit rule afterwards.
       audit: |
         To verify the UPnP setting using the UniFi Network web application:
 
@@ -1249,16 +1275,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the gateway does not respond to broadcast ICMP ping requests.
+        This check verifies that the gateway ignores ICMP echo requests sent to a broadcast address.
+
+        The **Broadcast Ping** setting under **Settings > Security > Gateway** in the UniFi Network application controls whether the gateway answers pings addressed to a network's broadcast address rather than to a specific host. The check requires it to be disabled for the site.
 
         **Why this matters**
 
-        Responding to broadcast pings can be exploited for network reconnaissance and amplification attacks:
-          - Smurf attacks use broadcast ping responses to amplify denial-of-service traffic.
-          - Broadcast ping responses reveal the presence and IP address of the gateway.
-          - Network mapping tools use broadcast pings to discover hosts on a subnet.
+        A device that answers broadcast pings can be used to attack somebody else. In a Smurf attack the attacker sends one echo request to the broadcast address with the victim's address forged as the source, and every host that answers sends its reply to the victim. One packet becomes many, and the network becomes an amplifier aimed at a third party rather than the target of anything. Its owner discovers the problem when the uplink saturates or when abuse reports start arriving.
 
-        Disabling broadcast ping responses reduces the gateway's attack surface.
+        The same behavior is a reconnaissance shortcut. One broadcast ping enumerates every live host on a segment in a single exchange, where a host-by-host sweep would take thousands of packets and be far more likely to trip rate limiting or raise an alert. An attacker who has landed on any device on the network gets an inventory of everything else present for the cost of one packet.
+
+        The replies themselves say more than that something is alive. Response timing separates local hosts from those across a link, and the operating system fingerprint carried in a reply narrows down what each responder is before anything more intrusive is attempted.
+
+        Nothing legitimate depends on this. Broadcast ping was a diagnostic convenience from an era of much smaller networks, and modern discovery and monitoring tools do not use it, so disabling it removes the exposure at no functional cost.
       audit: |
         To verify the broadcast ping setting using the UniFi Network web application:
 
@@ -1346,16 +1375,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the gateway does not accept ICMP redirect messages.
+        This check verifies that the gateway will not let another host rewrite its routing decisions.
+
+        An ICMP redirect is a message telling a router that a better next hop exists for a destination. The **Receive Redirects** setting under **Settings > Security > Gateway** in the UniFi Network application controls whether the gateway acts on such messages, and the check requires it to be disabled for the site.
 
         **Why this matters**
 
-        ICMP redirects can be used to manipulate routing tables on the gateway:
-          - An attacker can send forged ICMP redirect messages to reroute traffic through a malicious host.
-          - Man-in-the-middle attacks become possible by redirecting traffic flows.
-          - Accepting redirects allows external hosts to influence the gateway's routing decisions.
+        Redirects carry no authentication of any kind. A redirect is an unauthenticated datagram, so a gateway that honors them accepts routing instructions from anything able to put a packet on the wire with a plausible source address. Nothing in the message proves it came from a router, let alone from the right one.
 
-        Disabling ICMP redirect acceptance ensures that only statically configured or protocol-learned routes are used.
+        The attack that follows is a straightforward interception. An attacker on any attached segment, which includes a compromised laptop, a camera on a poorly separated VLAN, or a device that joined over the wireless network, sends the gateway a redirect for a destination that matters, such as the subnet holding a file server or the route toward the internet. The gateway installs a route pointing at the attacker's address, and traffic for that destination starts arriving at a machine of their choosing, which forwards it on while reading and altering it. Both ends see a working connection.
+
+        Poisoned routes also make an effective denial of service. Point a busy destination at an address that does not forward, and that traffic stops, with the cause living in a routing table nobody thinks to inspect and no configuration file explains.
+
+        Legitimate routing comes from static configuration and from routing protocols that authenticate their peers, so nothing on a UniFi network needs this. Note that the setting governs redirects the gateway accepts; whether the gateway sends redirects is a separate setting on the same page and is worth reviewing at the same time.
       audit: |
         To verify the ICMP redirect setting using the UniFi Network web application:
 
@@ -1443,14 +1475,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that SYN cookies are enabled on the UniFi gateway to protect against SYN flood denial-of-service attacks.
+        This check verifies that the gateway can survive a flood of half-open TCP connections.
+
+        SYN cookies change how the gateway handles the first packet of a TCP connection. Instead of allocating an entry the moment a SYN arrives, it encodes the connection state into the sequence number it sends back and reconstructs the state when the client's acknowledgment returns. The setting is **SYN Cookies** under **Settings > Security > Gateway** in the UniFi Network application, and the check requires it to be enabled for the site.
 
         **Why this matters**
 
-        SYN flood attacks exhaust the gateway's connection tracking table by sending large volumes of SYN packets without completing the TCP handshake:
-          - Without SYN cookies, the gateway allocates resources for each half-open connection.
-          - A SYN flood can consume all available connection slots, denying service to legitimate users.
-          - SYN cookies allow the gateway to validate connections without maintaining state for half-open connections.
+        Without them, the first packet of a connection costs the gateway memory and costs the attacker nothing. A SYN flood sends a large volume of connection openings with forged source addresses and never completes any of them, and each one holds a slot in the connection tracking table until it times out. The table fills, and once it is full the gateway starts dropping the connections it should be accepting.
+
+        That is an outage for everything behind it, not only for the service under attack. Connection tracking on a UniFi gateway is shared across the site, so a flood aimed at one published web server takes down outbound browsing, VPN tunnels, and remote access at the same time. Restoring it can mean getting to the equipment, which for a remote site means somebody drives there.
+
+        The forged sources are what makes the attack cheap to run and hard to filter. The attacker never needs to receive a reply, so the traffic can come from an arbitrarily large set of addresses, and blocking by source address is chasing something that changes faster than the rules can.
+
+        SYN cookies remove the resource asymmetry. An unfinished handshake costs nothing to hold, so a flood exhausts nothing, while legitimate clients that complete the handshake connect exactly as before.
       audit: |
         To verify the SYN cookies setting using the UniFi Network web application:
 
@@ -1531,19 +1568,21 @@ queries:
       unifi.siteSettings.globalSwitch.dhcpSnoop == true
     docs:
       desc: |
-        This check ensures that DHCP snooping is enabled on UniFi switches to prevent rogue DHCP server attacks.
+        This check verifies that switches accept DHCP responses only from ports where a DHCP server is supposed to live.
+
+        DHCP snooping is a site-wide switch setting, turned on under **Settings > Networks > Global Switch Settings** in the UniFi Network application. With it enabled, the switch inspects DHCP traffic, drops server messages arriving on untrusted ports, and records each successful lease in a binding table of address, MAC address, and port. The check requires the setting to be enabled for the site.
 
         **Why this matters**
 
-        Without DHCP snooping, any device on the network can act as a DHCP server:
-          - Rogue DHCP servers can assign malicious DNS servers and default gateways to clients.
-          - Attackers can intercept all network traffic by becoming the default gateway via DHCP.
-          - DHCP starvation attacks can exhaust the legitimate DHCP pool.
+        DHCP has no authentication and clients take the first answer they get. Without snooping, any device that can reach a wall jack or associate with the wireless network can answer on behalf of the real server, which means a laptop in a meeting room, or a device on the network that has already been compromised, can start handing out addresses.
 
-        DHCP snooping validates DHCP messages and builds a binding table that:
-          - Only allows DHCP responses from trusted ports.
-          - Prevents rogue DHCP servers from operating on the network.
-          - Provides a foundation for dynamic ARP inspection and IP source guard.
+        What the attacker hands out is the whole point. A lease specifies the default gateway and the DNS servers, so a rogue answer puts the attacker's machine in the path of every packet the victim sends and lets them choose what every hostname resolves to. From there they read sessions, strip transport security wherever a client permits it, and redirect logins to a page they control. The victim's device is configured exactly as it was told to be and reports nothing wrong.
+
+        Starvation is the cruder version. An attacker requests leases until the legitimate pool is empty, so real clients get no address at all, and it doubles as a way to push clients onto a rogue server that still has addresses to give.
+
+        The binding table is also what the switch needs for dynamic ARP inspection and IP source guard, so enabling snooping is what makes those controls possible later.
+
+        One caution before enabling it: the uplink port carrying the real DHCP server has to be marked trusted, or snooping drops the legitimate responses and clients stop renewing their leases. Verify renewals after the change.
       audit: |
         To verify DHCP snooping using the UniFi Network web application:
 
@@ -1603,19 +1642,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Rapid Spanning Tree Protocol (RSTP) is enabled on UniFi switches.
+        This check verifies that the site's switches run the rapid version of Spanning Tree Protocol.
+
+        Spanning Tree keeps a switched network loop-free by blocking redundant paths and reopening them when the topology changes. The version is selected site-wide as **STP Version** under **Settings > Networks > Global Switch Settings** in the UniFi Network application, and the check requires it to be set to **RSTP**. Legacy STP or a disabled setting fails.
 
         **Why this matters**
 
-        Spanning Tree Protocol prevents network loops that can cause broadcast storms and network outages:
-          - Network loops can bring down an entire network segment within seconds.
-          - RSTP provides faster convergence than legacy STP, reducing downtime during topology changes.
-          - Without STP, connecting a cable between two switch ports can cause a catastrophic broadcast storm.
+        A Layer 2 loop is one of the fastest total failures a network can suffer. Broadcast frames have no hop limit, so a single loop multiplies every broadcast until the switch fabric is saturated, and it happens in seconds. Every device on the affected VLANs loses connectivity at once, including the management path an administrator would use to fix it, which is what turns a patching mistake into a site visit.
 
-        RSTP provides:
-          - Loop prevention with rapid convergence (seconds vs. 30-50 seconds for legacy STP).
-          - Backward compatibility with legacy STP devices.
-          - Protection against accidental or malicious loop creation.
+        Creating that loop is trivial and requires no privilege at all. Somebody patches one wall jack into another while tidying a desk, a small unmanaged switch gets plugged back into itself, or a visitor connects both ends of a cable in a conference room. Nothing about the act looks like an attack, and an attacker with physical access to any two jacks can produce the same outage deliberately and anonymously.
+
+        Legacy STP prevents the loop but recovers slowly, taking roughly 30 to 50 seconds to converge after any topology change. Every uplink failover, switch reboot, or newly added device costs the better part of a minute of dropped traffic, which is long enough to break voice calls, drop sessions, and time out applications.
+
+        RSTP converges in a few seconds instead, and it interoperates with legacy STP devices still on the network, so raising the version is a low-risk change. Availability is the security property here: a network that is down is protecting nothing, and it usually cannot be recovered remotely.
       audit: |
         To verify the Spanning Tree Protocol version using the UniFi Network web application:
 
@@ -1702,20 +1741,21 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that SSH access to UniFi devices is disabled when not actively needed for troubleshooting.
+        This check verifies that the site's access points, switches, and gateways do not accept direct SSH logins.
+
+        UniFi devices can be reached over SSH independently of the controller, using a site-wide credential. The setting is **SSH** under **Settings > System > Advanced** in the UniFi Network application, and the check requires it to be disabled for the site.
 
         **Why this matters**
 
-        SSH access to network devices increases the attack surface:
-          - SSH brute-force attacks can target device credentials.
-          - A compromised SSH session provides full shell access to the network device.
-          - Network devices should be managed through the controller, not via direct SSH.
-          - Leaving SSH enabled when not needed violates the principle of least privilege.
+        An SSH session on a UniFi device is a root shell on the network itself. Whoever holds one can read and alter the running configuration, mirror a port to copy traffic, move the device onto another VLAN, install something that survives a reboot, or take the segment down. None of that requires touching a single host, and none of it has to defeat any control that lives above the network layer.
 
-        Disabling SSH ensures:
-          - Devices are managed exclusively through the UniFi controller.
-          - No direct shell access is available to potential attackers.
-          - Credential-based attacks against device SSH are not possible.
+        The credential is what makes this worth attacking. UniFi devices on a site share one SSH account, so recovering it once, from one device, from a controller backup, or from a script committed to a repository, yields a login to every access point, switch, and gateway on the site. There is no per-device separation to slow an attacker down.
+
+        The daemon itself is the exposure. Anything that can reach a device address may attempt to authenticate, which on a flat network means every client on it, and automated password guessing against network equipment is routine background activity rather than a targeted event.
+
+        Changes made over SSH are also invisible to the controller, so the configuration the controller believes it owns can differ from what the device is actually running, and that drift persists until the next provision overwrites it, or does not.
+
+        The controller is the intended management path and covers ordinary operations. Where SSH is genuinely needed for troubleshooting, turn it on for the duration of the work and off again afterwards, and where it has to stay on, a companion check in this policy requires key-based authentication instead of a password.
       audit: |
         To verify the device SSH setting using the UniFi Network web application:
 
@@ -1797,14 +1837,21 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that if SSH is enabled on UniFi devices, password authentication is disabled in favor of key-based authentication.
+        This check verifies that where device SSH is enabled, logging in requires a key rather than a password.
+
+        The **SSH Password Authentication** setting under **Settings > System > Advanced** in the UniFi Network application decides whether the shared device account can be entered with a password. The check applies only when SSH is enabled for the site, so a site with SSH switched off passes without further conditions. Where SSH is on, password authentication has to be off, which means administrator public keys must be enrolled first.
 
         **Why this matters**
 
-        SSH password authentication is vulnerable to brute-force and credential stuffing attacks:
-          - Automated tools can attempt thousands of password combinations per minute.
-          - Default or weak passwords on network devices are a common attack vector.
-          - Key-based authentication provides stronger security and is not susceptible to brute-force attacks.
+        A password on a network device is guessable at machine speed. Automated tools work through credential lists at thousands of attempts a minute, and network equipment is a standing target for them because the reward is so high. There is no per-user lockout to hide behind here, because the account is shared, and its password is the only thing between an attacker and a root shell on every device at the site.
+
+        The passwords used in practice make it worse. A shared device credential tends to be set once during installation, chosen to be typeable, written into a runbook or a provisioning script, and never rotated, including after the people who knew it have moved on. It also tends to be reused across sites, so recovering it in one place opens the rest.
+
+        Credential stuffing closes the remaining gap. A password that also appears in any public breach corpus will be tried here, and the attacker does not need to know it belongs to this network to find that out.
+
+        A key removes the guessing entirely. There is nothing short enough to enumerate, the private key never crosses the network, and access is withdrawn by removing one public key rather than by changing a secret everybody shares.
+
+        Order matters when applying this. Enroll the keys and confirm a key-based login works before disabling password authentication, or you lock yourself out of every device at once.
       audit: |
         To verify the device SSH password authentication setting using the UniFi Network web application:
 
@@ -1874,15 +1921,21 @@ queries:
       unifi.siteSettings.mgmt.debugToolsEnabled == false
     docs:
       desc: |
-        This check ensures that debug tools are disabled on the UniFi controller.
+        This check verifies that the controller's low-level diagnostic interfaces are switched off.
+
+        Debug tools are enabled under **Settings > System > Advanced** in the UniFi Network application. They expose diagnostic commands and internal state intended for vendor support work rather than for day-to-day operation. The check requires the **Debug Tools** setting to be disabled for the site.
 
         **Why this matters**
 
-        Debug tools provide low-level diagnostic capabilities that should not be enabled in production:
-          - Debug tools may expose sensitive internal state and configuration details.
-          - They can be used to gather information useful for further attacks.
-          - Debug interfaces may bypass normal access controls.
-          - Production environments should only run with production-grade interfaces enabled.
+        Diagnostic interfaces exist to answer questions that normal interfaces refuse to answer. That is useful when a support engineer is debugging an adoption failure and unhelpful the rest of the time, because the same output describes the network to whoever is reading it: device inventory and firmware levels, internal addressing, configuration the standard views only summarize, and error detail that names the components in play.
+
+        For an attacker who has reached the controller with any level of access, that is reconnaissance handed over rather than gathered. Knowing which models are deployed and at what firmware tells them which published vulnerabilities apply, and knowing the internal topology tells them where to go next, without running a single scan that anyone might notice.
+
+        Debug paths are also held to a lower standard than production ones. They are built for a trusted operator on a support call, so authorization checks tend to be thinner, inputs are handled less carefully, and the code is exercised far less by everyday use, which is exactly the profile of code that turns out to be exploitable.
+
+        Whatever they touch, they touch with the controller's own privileges, and the controller provisions every device on the site. An interface that can invoke internal operations there is an interface worth reaching.
+
+        Leaving this on is almost always a leftover: it was enabled for one support session and never switched back. Turn it on when there is a specific problem and a support engagement, and turn it off when the work is finished.
       audit: |
         To verify the debug tools setting using the UniFi Network web application:
 
@@ -1944,14 +1997,21 @@ queries:
       unifi.controller.autobackupEnabled == true
     docs:
       desc: |
-        This check ensures that automatic backups of the UniFi controller configuration are enabled.
+        This check verifies that the controller takes scheduled backups of its own configuration.
+
+        Automatic backups are configured under **Settings > System > Backups** in the UniFi Network application, where the schedule and the retention count are also set. The check requires **Auto Backup** to be enabled on the controller.
 
         **Why this matters**
 
-        Without automatic backups, a controller failure or misconfiguration can result in complete loss of network configuration:
-          - All site settings, firewall rules, network configurations, and device adoption records could be lost.
-          - Recovery without a backup requires manual reconfiguration of every setting and re-adoption of all devices.
-          - Regular backups enable rapid recovery from ransomware, hardware failure, or accidental misconfiguration.
+        The controller holds the only complete copy of how the network is put together: every site setting, every firewall rule, the network and VLAN definitions, the wireless configuration, and the adoption records that bind each device to this controller. The devices themselves hold provisioned fragments, not the design.
+
+        Losing it is not an inconvenience, it is a rebuild. Without a backup, recovery means recreating every setting by hand from whatever documentation exists, then physically factory-resetting and re-adopting every access point, switch, and gateway, because a device adopted by a controller that no longer exists will not attach itself to a new one. For anything larger than a single closet that is days of work, much of it on ladders, with the network degraded throughout.
+
+        Ransomware is the case that makes this a security control rather than an operational one. An attacker who reaches the host running the controller encrypts it along with everything else, and a network with no configuration backup cannot be brought back even after the rest of the environment is restored.
+
+        Backups also make change safe. A firewall rule or VLAN change that cuts off remote management is recoverable in minutes with a recent backup, and needs physical access without one.
+
+        A backup nobody has restored is a hypothesis. Keep a copy off the controller itself, whether by enabling cloud backup or by pulling the archive to separate storage, and restore one into a test controller occasionally to confirm the file is usable.
       audit: |
         To verify automatic backups using the UniFi Network web application:
 
@@ -2011,19 +2071,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that automatic firmware upgrades are enabled for UniFi devices.
+        This check verifies that adopted devices install firmware updates without waiting for someone to click.
+
+        Automatic firmware updates are turned on under **Settings > System > Firmware** in the UniFi Network application, where an update window can also be chosen. The setting applies to the devices the controller manages at the site, and the check requires it to be enabled.
 
         **Why this matters**
 
-        Running outdated firmware exposes network devices to known vulnerabilities:
-          - UniFi devices receive regular security patches and bug fixes.
-          - Manually managing firmware across many devices is error-prone and often delayed.
-          - Known vulnerabilities in network equipment can be exploited remotely.
+        Network firmware vulnerabilities get published, and publication is the starting gun. Advisories name the affected models and versions, working exploit code follows within days for anything widely deployed, and internet-wide scanning for the vulnerable version begins immediately. The gap between a fix being available and a fix being installed is the entire window of exposure, and manual patching is what makes that window months long.
 
-        Automatic upgrades ensure:
-          - Security patches are applied promptly across all devices.
-          - The firmware fleet remains consistent and up to date.
-          - Reduced operational burden for network administrators.
+        What is at stake on this equipment is unusually broad. An access point, switch, or gateway sees all the traffic crossing it, so compromising one is not a step toward the data, it is arrival. An attacker controlling a gateway reads and redirects every session, and one on a switch can mirror ports or move itself between VLANs without touching a host at all.
+
+        Manual updates also drift unevenly. Fleets get updated when someone has time, which means the remote site, the closet nobody visits, and the access point that happened to be offline during the last round quietly fall behind, and it is the forgotten device a scan finds.
+
+        Automation costs a short reboot per device, which is why the update window matters. Schedule it outside business hours, and where a change freeze or a validation requirement genuinely prevents automatic updates, replace it with a tracked manual process rather than with nothing. A companion check in this policy verifies the resulting firmware state on each device, because an enabled setting is not evidence that an update actually landed.
       audit: |
         To verify automatic firmware upgrades using the UniFi Network web application:
 
@@ -2102,14 +2162,21 @@ queries:
       unifi.controller.enableAnalytics == false
     docs:
       desc: |
-        This check ensures that analytics data collection is disabled on the UniFi controller.
+        This check verifies that the controller is not sending usage telemetry back to the vendor.
+
+        The **Send Analytics and Improvement Data** setting under **Settings > System** in the UniFi Network application controls whether the controller reports how it is being used. The check requires it to be disabled.
 
         **Why this matters**
 
-        Analytics data collection sends usage telemetry to Ubiquiti:
-          - Telemetry may include network topology and usage patterns.
-          - Organizations with strict data governance policies may need to disable external data sharing.
-          - Reducing unnecessary outbound data flows limits potential information leakage.
+        Telemetry from a network controller describes the network. What it reports is product usage rather than user traffic, but product usage on this device means which features are configured, how many sites and devices exist, which models are deployed, and which versions they run, and that adds up to a description of an environment its owner never reviewed and cannot see.
+
+        An inventory of models and firmware versions is exactly the input an attacker needs to decide which published vulnerability applies. It is not exposed publicly, but it now lives in a third party's systems, subject to their retention, their access controls, and their breach history rather than yours. Vendor telemetry pipelines have been breached before, and each additional copy of an inventory is another place it can leak from.
+
+        There is also a governance dimension independent of any attacker. An organization that must be able to state where its operational data goes cannot make that statement about a channel it did not enable deliberately, and regulated environments frequently prohibit sending operational metadata outside a controlled boundary without an assessment.
+
+        Every outbound channel is also a channel. A controller that routinely talks to vendor endpoints normalizes that traffic in the logs, which makes genuinely anomalous outbound activity from the same host less likely to stand out.
+
+        Nothing about the network depends on this setting. Disabling it costs no functionality, and enabling it should be a deliberate decision to help the vendor rather than a default nobody examined.
       audit: |
         To verify analytics data collection using the UniFi Network web application:
 
@@ -2157,20 +2224,21 @@ queries:
       unifi.siteSettings.remoteSyslog.enabled == true
     docs:
       desc: |
-        This check ensures that remote syslog is enabled to forward logs to a central log management system.
+        This check verifies that the site forwards its logs to a collector outside the controller.
+
+        Remote logging is configured under **Settings > System > Remote Logging** in the UniFi Network application, where the collector address and port are set. The check requires the **Remote Syslog** setting to be enabled for the site.
 
         **Why this matters**
 
-        Without centralized logging, security events may be lost or tampered with:
-          - Local logs on the controller can be overwritten or deleted by an attacker.
-          - Centralized logging enables correlation of events across multiple systems.
-          - Log retention on the controller is limited by storage capacity.
-          - Incident response and forensic analysis require comprehensive log data.
+        Logs that live only on the system being attacked are logs the attacker controls. Anyone who reaches the controller or a device with administrative access can clear the local record, and doing so is standard practice rather than an advanced technique. Forwarding writes each event to a second system as it happens, so the copy is already gone before an intruder knows there was something to erase.
 
-        Remote syslog ensures:
-          - Logs are preserved independently of the controller.
-          - Security events can be monitored and alerted on in real time.
-          - Compliance requirements for log retention and integrity are met.
+        Local retention loses the record even without an attacker. The controller keeps a bounded amount of history and a busy site rolls through it quickly, which means the events that matter have usually aged out by the time anyone knows to look. Intrusions are typically discovered weeks after they begin, and the investigation needs the period before the discovery, which is exactly the part that is gone.
+
+        Correlation is the other half. A wireless association, a firewall drop, a VPN login, and an authentication failure on a server are individually unremarkable and together describe an intrusion, and they can only be lined up when they land in one place with consistent timestamps.
+
+        Forwarding also turns logging into detection. A collector can alert on a failed administrative login, a device rebooting unexpectedly, or a configuration change nobody scheduled, at the moment a response would still make a difference rather than in a report months later.
+
+        Choose the forwarded categories deliberately. Sending everything greatly increases volume and can include sensitive detail, so size the collector for what you send and restrict who can read what lands there.
       audit: |
         To verify remote syslog configuration using the UniFi Network web application:
 
@@ -2253,17 +2321,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no enabled port forwarding rules expose common management ports (SSH, HTTPS, UniFi controller) to the internet, and that no rule forwards traffic directly to a UniFi-managed device. Both the forwarded (external) port and the destination (internal) port are checked, and the destination IP is compared against the IP addresses of adopted UniFi devices.
+        This check verifies that no port forwarding rule publishes a management interface to the internet.
 
-        **Note:** This check matches exact port strings. Port ranges (e.g., "8000-8999") that include management ports are not detected by this check. The UniFi variant additionally fails any rule whose destination is an adopted device's IP (forwarding straight to an access point, switch, or gateway).
+        Port forwards are listed under **Settings > Routing > Port Forwarding** in the UniFi Network application, each with an external port on the WAN side and an internal destination address and port. The check reads every enabled rule and fails it on either of two grounds: the external or the internal port is 22, 443, 8443, or 8080, which are SSH and the controller web interfaces; or the destination address belongs to an adopted UniFi device such as an access point, switch, or gateway, since forwarding to the network equipment itself is management exposure whatever port is used.
 
         **Why this matters**
 
-        Port forwarding management interfaces to the internet is one of the most critical misconfigurations:
-          - Exposes the UniFi controller login page or device SSH to the public internet.
-          - Brute-force attacks against exposed management interfaces are common.
-          - Known vulnerabilities in management interfaces can be exploited remotely.
-          - Management interfaces should only be accessible from trusted internal networks or through a VPN.
+        A forwarded management port is the shortest path an attacker has into a network. It needs no foothold, no phishing, and no wireless proximity. Internet-wide scanners find the open port within hours of it being opened, recognize the controller login page or the SSH banner, and begin guessing credentials continuously against a login with no meaningful lockout that often still holds the password chosen at installation.
+
+        What that login yields is the network. Controller access means rewriting firewall rules, adding a VPN server, changing what every wireless network requires, and reading the whole topology; SSH to a device means a root shell on the equipment carrying the traffic. Neither requires defeating anything on a host.
+
+        Exposed management interfaces are also where published vulnerabilities land hardest. Advisories against network management software are exploited within days, and a controller reachable from the internet is found by the same scanning that found the port.
+
+        Two limits are worth knowing. The check compares exact port strings, so a rule forwarding a range such as 8000-8999 that happens to include a management port is not detected. And a rule on 443 may legitimately front an internal web application rather than a management interface, so confirm what a rule serves before deleting it, and where the service must stay reachable, restrict the allowed source addresses or move it behind a VPN rather than leaving it open to everyone.
       audit: |
         To verify port forwarding rules using the UniFi Network web application:
 
@@ -2353,19 +2423,19 @@ queries:
       unifi.siteSettings.doh.state != "off"
     docs:
       desc: |
-        This check ensures that DNS over HTTPS (DoH) is not turned off on the UniFi controller. The check fails when the DoH state is "off"; any other state, such as "auto", "manual", or "custom", is considered compliant.
+        This check verifies that the gateway's own DNS lookups are encrypted rather than sent in the clear.
+
+        DNS over HTTPS is configured under **Settings > Security > DNS Shield**, or under **Settings > Internet** depending on the controller version, where the feature can be set to off or to an active state such as auto, manual, or custom. The check requires the state to be anything other than off; it does not judge which active state or which upstream resolver you chose.
 
         **Why this matters**
 
-        Standard DNS queries are transmitted in plaintext and can be intercepted or manipulated:
-          - DNS queries reveal browsing patterns and can be used for surveillance.
-          - DNS spoofing attacks can redirect users to malicious sites.
-          - ISPs and network intermediaries can monitor and modify DNS responses.
+        Plain DNS is unauthenticated and unencrypted, which makes it the easiest thing on a network both to read and to rewrite. Every name the network resolves crosses the path in the clear, so anyone positioned along it, whether an upstream provider, a compromised device on the same segment, or whoever owns a hop in between, gets a running list of the services the organization uses and when it uses them.
 
-        DNS over HTTPS provides:
-          - Encryption of DNS queries, preventing eavesdropping and tampering.
-          - Protection against DNS spoofing and man-in-the-middle attacks.
-          - Privacy for network users' browsing activity.
+        Rewriting the answer is the more serious half. Because the response carries no proof of origin, an attacker able to answer first sends the client to an address of their choosing, and the victim follows without complaint. A forged answer for a software update endpoint, a mail server, or an identity provider redirects the connection to attacker infrastructure before any application-layer protection has a chance to help.
+
+        Encrypting the query removes both problems. The transport authenticates the resolver and protects the exchange, so an on-path observer sees an encrypted session to a resolver rather than a readable stream of names, and cannot substitute an answer of their own.
+
+        One caution before turning this on. DNS over HTTPS bypasses local and split-horizon resolution, so internal zones can stop resolving if the gateway sends everything upstream. Pick a state and an upstream that keep internal name resolution working, and verify internal names still resolve after the change.
       audit: |
         To verify DNS over HTTPS using the UniFi Network web application:
 
@@ -2430,21 +2500,21 @@ queries:
       unifi.networks.where(purpose == "guest").all(networkIsolationEnabled == true)
     docs:
       desc: |
-        This check ensures that network isolation is enabled on all networks with a guest purpose, preventing inter-VLAN routing to other network segments.
+        This check verifies that networks defined for guests cannot route to the rest of the site.
 
-        **Note:** This check identifies guest networks by the `purpose` attribute set in the UniFi controller, not by network name. IoT and other sensitive networks should also have isolation enabled; consider adding a custom check for your environment's IoT network naming convention.
+        In the UniFi Network application a network is created under **Settings > Networks** with a purpose, and one of the available purposes is guest. The check selects every network whose purpose is guest and requires **Network Isolation** to be enabled on it, which is the setting that stops traffic on that VLAN from reaching other VLANs at the site.
 
         **Why this matters**
 
-        Without network isolation, devices on guest networks can route traffic to other VLANs on the network:
-          - Guest users can scan and access services on internal network segments.
-          - Compromised devices on guest networks can be used as a pivot point to reach corporate resources.
-          - IoT devices with known vulnerabilities become a direct threat to sensitive systems.
+        A guest VLAN without isolation is a separate address range on the same routed network, which is a labeling exercise rather than a boundary. The gateway will happily route between the guest subnet and the internal ones, so a visitor device reaches file servers, printers, cameras, building controls, and the management addresses of the network equipment by doing nothing more than typing an address.
 
-        Network isolation ensures:
-          - Traffic from guest networks cannot reach other VLANs.
-          - Compromised devices are contained within their own network segment.
-          - Defense-in-depth is maintained even if firewall rules are misconfigured.
+        The people on that network are, by design, people nobody vetted. Their devices are unmanaged, frequently out of date, and sometimes already compromised, and they come and go within a day, which leaves almost nothing to investigate afterwards. Treating that population as adjacent to internal systems inverts the reason the guest network exists.
+
+        The same VLANs usually carry more than guests. Cameras, sensors, smart displays, and other embedded equipment tend to land on the guest network or a similarly untrusted one, and those are the devices with unpatchable firmware and default credentials. Without isolation, one of them is a permanent, always-on foothold with a route to everything.
+
+        Isolation also holds when a firewall rule is wrong. Rules accumulate, get reordered, and get widened during troubleshooting; isolation on the network object is a second boundary that does not depend on getting every rule right.
+
+        Note that this selects networks by their configured purpose rather than by name. An IoT or contractor network defined with a different purpose is not evaluated here even though it usually deserves the same treatment, so isolate those deliberately.
       audit: |
         To verify network isolation on guest networks using the UniFi Network web application:
 
@@ -2517,20 +2587,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that IGMP snooping is enabled on all LAN networks to control multicast traffic flooding.
+        This check verifies that LAN networks forward multicast only to the ports that asked for it.
+
+        IGMP snooping is enabled per network under **Settings > Networks** in the advanced section of the UniFi Network application. With it on, the switch watches group membership messages and forwards a multicast stream only out of the ports where a host has joined that group. The check evaluates the networks in the LAN interface group and requires the setting to be enabled on each of them.
 
         **Why this matters**
 
-        Without IGMP snooping, multicast traffic is flooded to all ports on a VLAN like broadcast traffic:
-          - Multicast flooding wastes bandwidth and can degrade network performance.
-          - Attackers can use multicast flooding for reconnaissance by observing which hosts respond to multicast groups.
-          - Excessive multicast traffic can cause denial-of-service conditions on low-powered devices.
-          - mDNS and other multicast-based discovery protocols leak information across the entire VLAN.
+        Without snooping, a switch treats multicast like broadcast and floods it out of every port on the VLAN. A single video stream, a backup replication job, or a busy discovery protocol is then delivered to every device on the segment, wasting capacity on the switch fabric and in every device's own network stack.
 
-        IGMP snooping ensures:
-          - Multicast traffic is only forwarded to ports with hosts that have joined the multicast group.
-          - Network bandwidth is conserved by eliminating unnecessary multicast flooding.
-          - The attack surface for multicast-based reconnaissance is reduced.
+        The devices least able to absorb that are the ones a network quietly depends on. Wireless clients receive flooded multicast over the air at the lowest supported data rate, which consumes airtime for everyone on the radio, and battery-powered and embedded devices such as sensors, badge readers, and cameras spend their processing budget discarding frames addressed to groups they never joined. A heavy multicast source is enough to make them drop off the network, and an attacker who wants that outcome only has to generate the traffic.
+
+        Flooding is also a free listening post. Discovery protocols such as mDNS announce hostnames, service names, device models, and addresses, and when those announcements reach every port, any device on the VLAN builds an inventory of the segment without sending a packet of its own or appearing in any log.
+
+        One caution when enabling it. Snooping needs an active querier on the VLAN, and without one the switch prunes multicast that applications still need, so discovery, casting, and streaming can stop working. UniFi turns on a querier alongside snooping, but test the multicast applications on one network before rolling this out everywhere.
       audit: |
         To verify IGMP snooping on LAN networks using the UniFi Network web application:
 
@@ -2615,15 +2684,21 @@ queries:
       unifi.vpnServers.where(enabled == true).all(protocol.in(["wireguard", "ipsec"]))
     docs:
       desc: |
-        This check ensures that all enabled VPN servers use modern protocols such as WireGuard or IPsec rather than legacy protocols.
+        This check verifies that every VPN server the site publishes runs on a current protocol.
+
+        VPN servers are configured under **Settings > VPN > VPN Server** in the UniFi Network application, and each one is created with a protocol. The check reads every enabled VPN server and requires its protocol to be WireGuard or IPsec. A legacy server, typically OpenVPN, fails.
 
         **Why this matters**
 
-        The VPN protocol determines the strength of the encrypted tunnel protecting site-to-site and remote access traffic:
-          - OpenVPN, while widely supported, requires careful configuration to avoid weak cipher suites and has a larger attack surface.
-          - WireGuard uses modern, audited cryptographic primitives (ChaCha20, Curve25519) and has a minimal codebase, reducing the risk of vulnerabilities.
-          - IPsec with IKEv2 provides strong encryption and is well-suited for site-to-site tunnels.
-          - Legacy VPN protocols may use deprecated ciphers or have known implementation weaknesses.
+        A VPN server is published to the internet on purpose. It is one of the few services on the network an attacker can reach with no foothold at all, and success puts them inside the perimeter as a trusted client. That makes the code handling unauthenticated packets on that port the most exposed code the organization runs.
+
+        WireGuard keeps that exposed surface small. Its implementation is a few thousand lines, it fixes its cryptography instead of negotiating it, using ChaCha20 for encryption and Curve25519 for key exchange, and it silently drops any packet that does not authenticate, so it does not answer scans at all. There is no cipher suite to misconfigure and no downgrade to negotiate.
+
+        IPsec with IKEv2 is the mature alternative and the better fit for site-to-site tunnels, offering strong authenticated encryption together with reliable rekeying and reconnection behavior.
+
+        OpenVPN is not broken, but it is a much larger and far more configurable body of code, and the configurability is the problem. Its defaults have shifted over the years, older deployments carry weak cipher suites and outdated TLS settings that nobody revisits, and a control channel that answers unauthenticated probes advertises itself to every scanner on the internet.
+
+        Replacing a VPN server means reissuing client configurations, so plan the migration: stand the new server up alongside the old one, move users across, confirm they connect, and only then remove the legacy service.
       audit: |
         To verify VPN server protocols using the UniFi Network web application:
 
@@ -2674,15 +2749,19 @@ queries:
       unifi.vpnClients.where(enabled == true).all(status == "connected")
     docs:
       desc: |
-        This check ensures that all enabled VPN client tunnels (typically site-to-site connections) have a connected status. Tunnels in error, connecting, or disconnected states will fail this check.
+        This check verifies that every VPN tunnel the site is configured to bring up is actually connected.
+
+        VPN client connections are listed under **Settings > VPN > VPN Client** in the UniFi Network application, each showing a status. The check reads every enabled VPN client tunnel, which in most deployments means the site-to-site links to other offices or to a cloud network, and requires the status to be connected. A tunnel sitting in an error, connecting, or disconnected state fails.
 
         **Why this matters**
 
-        A VPN tunnel that is configured and enabled but disconnected indicates a connectivity failure that may create security blind spots:
-          - Site-to-site tunnels carry traffic that is expected to be encrypted; a disconnected tunnel may cause traffic to be dropped or routed unencrypted.
-          - Security monitoring and logging that depends on VPN connectivity will have gaps during disconnection.
-          - Persistent disconnection may indicate misconfiguration, credential expiration, or an active attack disrupting the tunnel.
-          - Stale VPN configurations that are enabled but non-functional should be investigated and remediated.
+        A tunnel that is enabled but down is a promise the network is not keeping. Traffic the design assumed would be encrypted end to end is either dropped, which becomes an outage nobody has attributed yet, or falls back to a route that carries it across the public internet with only whatever protection the application itself provides, which for internal services is often none.
+
+        Down tunnels also blind the monitoring that runs across them. If log shipping, authentication against a remote directory, or backup replication rides the tunnel, none of it is happening while the tunnel is down, and the resulting gap is exactly the period an investigation later needs.
+
+        The reason for the failure deserves treatment as a finding in its own right. Expired credentials or certificates, a changed remote address, and a firewall change on the far side are the ordinary causes; a tunnel that repeatedly drops can also be the visible symptom of interference, since forcing a tunnel down is a way to push traffic onto a path an attacker can observe.
+
+        Enabled tunnels nobody expects to connect are the other half of this. A stale configuration left switched on for a site that closed years ago keeps a set of credentials and a route alive with nobody watching either. Disable configurations that are no longer in use rather than leaving them permanently red.
       audit: |
         To verify VPN tunnel status using the UniFi Network web application:
 
@@ -2735,15 +2814,19 @@ queries:
       unifi.vpnClients.where(enabled == true).all(protocol.in(["wireguard", "ipsec"]))
     docs:
       desc: |
-        This check ensures that all enabled VPN client connections use modern protocols such as WireGuard or IPsec.
+        This check verifies that every outbound VPN connection this site initiates uses a current protocol.
+
+        VPN client connections are configured under **Settings > VPN > VPN Client** in the UniFi Network application, where each connection to a remote site or provider is created with a protocol. The check reads every enabled VPN client and requires WireGuard or IPsec. A legacy client connection, typically OpenVPN, fails.
 
         **Why this matters**
 
-        VPN client connections to remote sites must use strong encryption to protect data in transit:
-          - The same protocol risks that apply to VPN servers apply equally to client connections.
-          - A VPN client using a weak protocol exposes traffic to interception at any point along the tunnel path.
-          - WireGuard and IPsec provide authenticated encryption with modern ciphers and smaller attack surfaces.
-          - Standardizing on modern protocols across both server and client configurations ensures consistent security posture.
+        Whatever crosses a client tunnel is traffic the organization decided was too sensitive for the open internet: file server access to a branch office, database replication, administrative sessions into a remote rack. The tunnel is the only thing protecting it across every network in between, and there are many, including whichever transit providers happen to carry the packets on a given day.
+
+        An outdated protocol undermines that in ways that are hard to notice from this end. A weak cipher negotiated for compatibility with an old peer, a stale certificate that nothing validates strictly, or a key exchange without forward secrecy all leave the tunnel working normally while an observer who records the traffic keeps the option of reading it later.
+
+        WireGuard and IPsec both authenticate the peer as part of establishing the tunnel, so a machine that cannot prove it holds the right key never gets a session. That matters more for a client connection than for a server, because the far end is somebody else's infrastructure and its posture is not under this site's control.
+
+        Client and server configurations should meet the same standard for the obvious reason: an attacker works on whichever end is weaker, and a hardened server reached through a tunnel negotiated on legacy terms is protected only by the weaker of the two. A companion check in this policy applies the same requirement to the VPN servers this site publishes.
       audit: |
         To verify VPN client protocols using the UniFi Network web application:
 
@@ -2795,21 +2878,19 @@ queries:
       unifi.devices.all(upgradable == false && semver(version) >= semver(requiredVersion))
     docs:
       desc: |
-        This check ensures that all adopted UniFi devices are running the latest available firmware with no pending upgrades, and that each device meets the controller's minimum required firmware version.
+        This check verifies that every adopted device runs current firmware and is not behind the minimum version the controller expects.
+
+        The **Devices** view in the UniFi Network application lists each adopted access point, switch, and gateway along with whether an update is pending. The check requires that no adopted device has an available upgrade waiting, and it separately compares each device's running version against the minimum version the controller records as required for that device, ordering the two by semantic version rather than by string comparison so that a release such as 6.10.0 is correctly treated as newer than 6.9.0.
 
         **Why this matters**
 
-        Devices with pending firmware upgrades may be missing critical security patches:
-          - Ubiquiti regularly releases firmware updates that address known vulnerabilities.
-          - Network devices are high-value targets because compromising them provides access to all traffic passing through.
-          - Even with automatic upgrades enabled, devices may fail to update due to connectivity issues or adoption problems.
-          - This check verifies the actual device state rather than just the auto-upgrade setting.
-          - It also fails any device running below the controller's minimum required firmware version (`requiredVersion`), using semantic-version comparison rather than a string match.
+        This is the state rather than the intention. A companion check in this policy confirms that automatic updates are switched on, which is the setting; this one confirms the firmware actually landed. Devices fail to update for ordinary reasons that raise no alarm: the device was offline during the window, it cannot reach the update servers through a restrictive egress policy, adoption is in a degraded state, or the update was attempted and rolled back. The setting stays green while the device stays vulnerable.
 
-        Keeping firmware current ensures:
-          - Known vulnerabilities are patched promptly.
-          - Devices have the latest security features and hardening improvements.
-          - The network is not exposed to publicly disclosed exploits targeting older firmware.
+        A device left behind is the one an attacker finds. Published advisories name the affected models and versions, scanning for those versions is continuous, and the single access point that missed three update cycles is the way in, regardless of how current the rest of the fleet is.
+
+        Compromising this equipment is compromising the network itself. Whoever controls a switch or a gateway reads the traffic crossing it, redirects it, or drops it, and does so beneath every control that operates on hosts.
+
+        Falling below the required version carries a second cost. The controller may not be able to provision such a device correctly, so the hardening you believe is applied may not be running on it at all.
       audit: |
         To verify device firmware status using the UniFi Network web application:
 
@@ -2856,18 +2937,21 @@ queries:
       unifi.devices.all(modelEol == false)
     docs:
       desc: |
-        This check ensures that no adopted UniFi devices have reached end-of-life (EOL) status.
+        This check verifies that no adopted device is a model the vendor has stopped supporting.
+
+        Ubiquiti publishes end-of-life announcements for hardware it no longer maintains, and the controller reports the lifecycle status of each adopted model. The check reads every adopted device in the **Devices** view and requires none of them to be end-of-life.
 
         **Why this matters**
 
-        End-of-life hardware no longer receives firmware or security updates from Ubiquiti:
-          - Vulnerabilities discovered after a device reaches EOL are never patched.
-          - Network devices are high-value targets — a compromised access point, switch, or gateway exposes all traffic that flows through it.
-          - EOL devices accumulate unmitigated risk for as long as they remain in service.
+        End-of-life means the patches stop. Vulnerabilities found after that date are still found, still published, and still exploited, but no fix is ever issued for this hardware. Unlike a device that is merely behind, there is no version to move to, so the risk never decays and cannot be remediated by any action short of replacement.
 
-        Replacing end-of-life hardware ensures:
-          - Devices continue to receive security patches.
-          - The network is not anchored to permanently vulnerable equipment.
+        Attackers actively prefer this category. A published advisory against discontinued network hardware is a durable capability rather than a race, because the population of vulnerable devices shrinks only as fast as budgets replace them, which is slowly. Scanners look for exactly these models and versions.
+
+        The impact of a hit is as broad as it gets on a network. An access point, switch, or gateway carries all the traffic passing through it, so control of one means reading sessions, mirroring ports to copy traffic elsewhere, moving between VLANs that were supposed to be separate, or taking a segment down. None of that requires compromising a single host, and none of it is visible to controls that watch hosts.
+
+        Old network gear also stays in service far longer than anyone plans, precisely because it keeps working. A switch installed in a closet a decade ago attracts no attention until it turns out to be the thing that was exploited.
+
+        The remediation here is procurement rather than configuration, so treat a finding as a replacement to plan and budget. Where a device cannot be replaced immediately, contain it: restrict what can reach its management address and keep it off segments carrying sensitive traffic until it is gone.
       audit: |
         To verify device lifecycle status using the UniFi Network web application:
 
@@ -2912,16 +2996,21 @@ queries:
       unifi.devices.all(unsupported == false)
     docs:
       desc: |
-        This check ensures that the controller is not managing any devices it reports as unsupported.
+        This check verifies that the controller is not managing hardware it reports as unsupported.
+
+        The **Devices** view in the UniFi Network application flags a device as unsupported when the controller software does not fully recognize or manage that model or its firmware. The check requires no adopted device to carry that status.
 
         **Why this matters**
 
-        A device flagged as unsupported is not fully managed by the controller's current software:
-          - Security settings and provisioning the controller applies may not take effect on the device.
-          - The device may run firmware the controller can neither audit nor update.
-          - Unsupported devices represent unmanaged, unverifiable attack surface on the network.
+        An unsupported device is adopted but not really governed. The controller lists it, so it looks managed on every screen an administrator opens, while the settings pushed from the controller may not apply to it at all. That gap is the danger: the hardening the organization believes covers the whole site silently stops at this device.
 
-        Keeping every adopted device supported ensures the controller's hardening and update mechanisms actually apply to it.
+        Concretely, the wireless security, isolation, and management settings that other checks in this policy verify are verified against what the controller intends. On a device the controller cannot provision, that intention is not the running configuration, and nobody is told. A site could pass every configuration check while one access point continues to broadcast on the settings it was last successfully given, which may be its factory defaults.
+
+        It also falls out of the update path. Firmware the controller cannot audit is firmware it cannot upgrade, so the device does not receive security patches on the same schedule as the rest and is not counted when the fleet is reported as current.
+
+        The origin of an unsupported status is worth understanding too. It usually means a controller too old for newly purchased hardware, or hardware too old for a recently upgraded controller. But a device that appeared unexpectedly deserves investigation on its own terms, because an unrecognized device on the management network is not always the result of a procurement decision.
+
+        Resolve it by bringing the controller and the device firmware to versions that support each other, or by replacing hardware no current controller version will manage.
       audit: |
         To verify device support status using the UniFi Network web application:
 
@@ -2967,16 +3056,19 @@ queries:
       unifi.siteSettings.dpiEnabled == true
     docs:
       desc: |
-        This check ensures that Deep Packet Inspection (DPI) is enabled on the UniFi controller.
+        This check verifies that the gateway classifies traffic by application rather than by port number alone.
+
+        Deep Packet Inspection is enabled for the site under **Settings > Security** in the UniFi Network application, or under **Settings > System** on older controller versions. With it off, the controller can report how many bytes moved to which address on which port, and nothing more. The check requires the setting to be enabled.
 
         **Why this matters**
 
-        DPI provides application-level visibility into the traffic crossing the network:
-          - Without DPI, traffic is only classified by port, which malware and tunneling tools routinely evade.
-          - DPI surfaces anomalous applications and destinations that flat flow logs miss.
-          - It is the data source behind UniFi's traffic-identification, fingerprinting, and several threat-management features.
+        Port numbers stopped identifying applications a long time ago. Nearly everything rides on 443 now, and the things worth noticing are precisely the things that hide there: remote access tools tunneled over TLS, cryptocurrency miners, unsanctioned file sync clients, and malware whose whole design goal is to look like a browser. Flow records alone put all of that in the same bucket as ordinary web browsing.
 
-        Enabling DPI improves the network's detection and monitoring posture.
+        Application-level classification is what makes anomalies visible. A camera that has never done anything but talk to its recorder suddenly opening a peer-to-peer session, a point-of-sale terminal reaching a file-sharing service, or a workstation running a remote administration tool nobody deployed are all obvious once traffic carries a name, and invisible when it carries only a port.
+
+        It is also the data source the rest of the platform depends on. Client fingerprinting, per-application traffic identification, and several threat management features read their input from this classifier, so leaving it off quietly reduces what those features can see without any of them reporting that they are degraded.
+
+        Inspection costs throughput on the gateway and it examines traffic that users may consider private, so make the decision deliberately and record it, rather than leaving the setting off by default and losing the visibility without noticing.
       audit: |
         To verify Deep Packet Inspection using the UniFi Network web application:
 
@@ -3034,16 +3126,19 @@ queries:
       unifi.siteSettings.gateway.geoIpFilteringEnabled == true
     docs:
       desc: |
-        This check ensures that geo-IP firewall filtering is enabled on the UniFi gateway.
+        This check verifies that the gateway is filtering traffic by the country an address belongs to.
+
+        Geo-IP filtering is configured under **Settings > Security > Geo IP Filtering** in the UniFi Network application, or under **Settings > Internet Security** on older controller versions, where a block or allow mode, a country list, and a traffic direction are selected. The check requires the feature to be enabled for the site; it does not judge which countries or which direction you chose.
 
         **Why this matters**
 
-        Geo-IP filtering blocks traffic to and from countries the organization has no legitimate business with:
-          - It removes large swaths of the internet (and the attackers operating from them) from the reachable attack surface.
-          - It reduces inbound scanning, brute-force, and command-and-control traffic from high-risk regions.
-          - Combined with explicit firewall rules, it provides defense-in-depth at the network boundary.
+        Most organizations have no business with most of the world, and the internet does not know that. Every published service is scanned continuously from everywhere, and a large share of the credential stuffing, brute forcing, and exploitation attempts arriving at a small network's edge come from address space it will never legitimately hear from. Dropping that traffic at the gateway removes it before it reaches a login page that would otherwise have to withstand it.
 
-        Note that geo-IP filtering is a coarse control and is not a substitute for proper firewall rules, but it meaningfully reduces exposure.
+        The reduction matters most for services that cannot be moved behind a VPN, such as a mail gateway, a remote access portal, or a published web application. Those are what gets brute forced, and cutting down the population of sources that can even attempt it changes the odds materially.
+
+        Filtering the outbound direction is the half more often overlooked, and it is where the control catches an intrusion in progress. A compromised host trying to reach a command-and-control endpoint in a region the organization never talks to has its session dropped, which cuts the operator off from a device they already control.
+
+        This is a coarse instrument. Attackers rent infrastructure in whatever country is convenient, and legitimate services increasingly sit behind content delivery networks whose addresses geolocate anywhere, so it thins the traffic and buys margin rather than stopping a determined adversary. Keep explicit firewall rules doing the real work.
       audit: |
         To verify geo-IP filtering using the UniFi Network web application:
 
@@ -3107,16 +3202,19 @@ queries:
       unifi.wlans.where(enabled == true && security != "open").all(wpa3Support == true && wpa3Transition == false)
     docs:
       desc: |
-        This check ensures that every enabled, encrypted wireless network uses WPA3 exclusively, with WPA2 transition (mixed) mode disabled.
+        This check verifies that every enabled, encrypted wireless network requires WPA3 and refuses WPA2 associations.
+
+        Under **Settings > WiFi**, an encrypted network can offer WPA3 outright or offer **WPA2/WPA3** transition mode, which keeps a WPA2 path open for older clients. This check requires the stricter setting: WPA3 enabled with the transition fallback turned off, evaluated for every enabled network whose security is not open. The controller only accepts WPA3 alongside Protected Management Frames, so the two settings move together.
 
         **Why this matters**
 
-        This is a stricter, high-security tier on top of the baseline "WPA3 enabled" check. WPA3 transition mode keeps a network compatible with older WPA2-only clients, but in doing so it weakens security:
-          - Transition mode continues to accept WPA2 associations, so the network remains exposed to WPA2 weaknesses (including offline dictionary attacks against captured handshakes).
-          - A downgrade-capable network is only as strong as its weakest accepted protocol.
-          - WPA3-only mandates SAE (Simultaneous Authentication of Equals) and Protected Management Frames for every client.
+        Transition mode is a downgrade path, and the attacker chooses it rather than the client. As long as the access point still answers WPA2 associations, an attacker can present the network as WPA2-only, let a target associate over the weaker path, and capture the handshake exactly as they would against a network that never heard of WPA3. The WPA3 advertisement changes nothing for that session.
 
-        Use this check for environments that can require WPA3-capable clients (for example, staff or high-sensitivity SSIDs). Networks that must support legacy WPA2-only devices will not pass and should be segmented onto their own SSID and VLAN.
+        A captured WPA2 handshake is then attacked offline at full speed. There is no lockout, no logging, and no need to stay in range once the capture is in hand, so a shared passphrase is worth only as much as its resistance to a wordlist run on a rented GPU.
+
+        WPA3-only closes that path. Every client must complete Simultaneous Authentication of Equals, which yields nothing crackable to a passive listener, and every client must use Protected Management Frames, which removes the forged deauthentication an attacker sends to trigger the reconnection in the first place.
+
+        This is the strict tier above the baseline WPA3 requirement that a companion check in this policy enforces, and it is deliberately not for every network. Any environment still running WPA2-only devices such as older printers, handheld scanners, or building automation will fail it, and the right answer there is to move those devices onto their own SSID and VLAN rather than to reopen the transition path on a staff network.
       audit: |
         To verify WPA3-only mode using the UniFi Network web application:
 
