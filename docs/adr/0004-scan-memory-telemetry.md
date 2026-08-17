@@ -31,7 +31,7 @@ This ADR accepts that boundary rather than building a second transport. Adding m
 
 ### 2. Sampling: `runtime/metrics`, not `MemStats.Alloc`
 
-A new `scanstats.MemTracker` owns a process-wide high-water mark, updated by a single sampler goroutine started in `RunLocalScan` and stopped when it returns.
+A new `scanstats.MemTracker` owns a process-wide high-water mark, updated by a single sampler goroutine started in `RunLocalScan` and stopped when it returns. (Renamed to `ResourceTracker` when scan CPU telemetry was added alongside it — see #3301 — since the type now carries both.)
 
 The sampled quantity is the Go runtime footprint:
 
@@ -94,11 +94,13 @@ These metrics are collected unconditionally on the `UploadResultsV2` path. Makin
 
 ### 8. File layout
 
-- `policy/scanstats/mem.go` — `MemTracker`: sampling loop, high-water tracking, in-flight correlation, cgroup reader, and the snapshot that records into a `Collector`.
+- `policy/scanstats/tracker.go` — `MemTracker` (renamed `ResourceTracker` in #3301): sampling loop, high-water tracking, in-flight correlation, and the snapshot that records into a `Collector`.
+- `policy/scanstats/sample.go` — the `runtime/metrics` reads.
+- `policy/scanstats/cgroup.go` — the cgroup v2 reader.
 - `policy/scanstats/collector.go` — metric name constants and `AddString`, for the run identifier.
 - `policy/scanstats/context.go` — tracker propagation, mirroring the existing `ContextWithCollector`.
 - `policy/scan/local_scanner.go` — tracker construction, sampler lifecycle, recording the static concurrency settings.
-- `policy/scan/scan_pipeline.go` — registers the in-flight accessor; existing `logMemoryStats` is repointed at the tracker so there is a single source of truth for memory readings.
+- `policy/scan/scan_pipeline.go` — registers the in-flight accessor; existing `logMemoryStats` (renamed `logResourceStats` in #3301) is repointed at the tracker so there is a single source of truth for memory readings.
 - `internal/datalakes/sqlite/sqlite.go` — snapshots the tracker into the per-asset collector before upload.
 
 The tracker takes an injected sample function and an injected cgroup root, so high-water logic, in-flight correlation, and cgroup parsing (v2 present, absent, `max` literal, malformed) are all testable without a live runtime or a real `/sys`.

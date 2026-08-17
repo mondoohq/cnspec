@@ -90,4 +90,13 @@ func TestMemMetricNamesMatchWireContract(t *testing.T) {
 	require.Equal(t, "cnspec.scan.concurrency.in_flight_at_peak", MetricConcurrencyInFlightAtPeak)
 	require.Equal(t, "cnspec.scan.concurrency.parallelism", MetricConcurrencyParallelism)
 	require.Equal(t, "cnspec.scan.concurrency.max_connections", MetricConcurrencyMaxConnections)
+
+	require.Equal(t, "cnspec.scan.cpu.busy_seconds", MetricCPUBusySeconds)
+	require.Equal(t, "cnspec.scan.cpu.available_seconds", MetricCPUAvailableSeconds)
+	require.Equal(t, "cnspec.scan.cpu.user_seconds", MetricCPUUserSeconds)
+	require.Equal(t, "cnspec.scan.cpu.gc_seconds", MetricCPUGCSeconds)
+	require.Equal(t, "cnspec.scan.cpu.scavenge_seconds", MetricCPUScavengeSeconds)
+	require.Equal(t, "cnspec.scan.cpu.gc_fraction", MetricCPUGCFraction)
+	require.Equal(t, "cnspec.scan.cpu.utilization", MetricCPUUtilization)
+	require.Equal(t, "cnspec.scan.cpu.gomaxprocs", MetricCPUGOMAXPROCS)
 }

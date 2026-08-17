@@ -32,26 +32,26 @@ func TestScanDispatcher_InFlightZeroWhenNoSemaphore(t *testing.T) {
 	require.Equal(t, 0, d.inFlight())
 }
 
-func TestLogMemoryStats_NoTrackerDoesNotPanic(t *testing.T) {
+func TestLogResourceStats_NoTrackerDoesNotPanic(t *testing.T) {
 	// DEBUG_PROVIDER_MEMORY can be set on a scan whose dispatcher was built
 	// without a tracker (unit tests, embedded callers).
 	d := &scanDispatcher{scannedAssets: &atomic.Int64{}}
 	require.NotPanics(t, func() {
-		d.logMemoryStats(&inventory.Asset{Name: "test-asset"})
+		d.logResourceStats(&inventory.Asset{Name: "test-asset"})
 	})
 }
 
-func TestLogMemoryStats_UsesTrackerPeak(t *testing.T) {
-	tr := scanstats.NewMemTracker(scanstats.MemTrackerConfig{
+func TestLogResourceStats_UsesTrackerPeak(t *testing.T) {
+	tr := scanstats.NewResourceTracker(scanstats.ResourceTrackerConfig{
 		RunID:  "run-abc",
 		Sample: func() scanstats.Sample { return scanstats.Sample{RuntimeBytes: 4242, Goroutines: 17} },
 	})
 	tr.SetInFlightFunc(func() int { return 5 })
 	tr.Observe()
 
-	d := &scanDispatcher{scannedAssets: &atomic.Int64{}, memTracker: tr}
+	d := &scanDispatcher{scannedAssets: &atomic.Int64{}, resourceTracker: tr}
 
-	// logMemoryStats writes through the package-level zerolog logger, so
+	// logResourceStats writes through the package-level zerolog logger, so
 	// capture that global for the duration of the test (not parallel-safe)
 	// and assert on the emitted line, proving the logged values came from
 	// the tracker rather than an independent reader.
@@ -60,7 +60,7 @@ func TestLogMemoryStats_UsesTrackerPeak(t *testing.T) {
 	log.Logger = zerolog.New(buf)
 	defer func() { log.Logger = orig }()
 
-	d.logMemoryStats(&inventory.Asset{Name: "test-asset"})
+	d.logResourceStats(&inventory.Asset{Name: "test-asset"})
 
 	out := buf.String()
 	// goroutines_peak and in_flight_at_peak come only from the tracker;

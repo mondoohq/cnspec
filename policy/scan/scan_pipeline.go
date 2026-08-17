@@ -141,16 +141,16 @@ type scanDispatcher struct {
 	wg      sync.WaitGroup
 
 	// Dependencies for scanning a single asset.
-	scanner       *LocalScanner
-	explorer      *discovery.AssetExplorer
-	job           *Job
-	upstream      *upstream.UpstreamConfig
-	reporter      Reporter
-	multiprogress progress.MultiProgress
-	services      *policy.Services
-	spaceMrn      string
-	scannedAssets *atomic.Int64
-	memTracker    *scanstats.MemTracker
+	scanner         *LocalScanner
+	explorer        *discovery.AssetExplorer
+	job             *Job
+	upstream        *upstream.UpstreamConfig
+	reporter        Reporter
+	multiprogress   progress.MultiProgress
+	services        *policy.Services
+	spaceMrn        string
+	scannedAssets   *atomic.Int64
+	resourceTracker *scanstats.ResourceTracker
 }
 
 func newScanDispatcher(
@@ -165,21 +165,21 @@ func newScanDispatcher(
 	services *policy.Services,
 	spaceMrn string,
 	scannedAssets *atomic.Int64,
-	memTracker *scanstats.MemTracker,
+	resourceTracker *scanstats.ResourceTracker,
 ) *scanDispatcher {
 	return &scanDispatcher{
-		scanSem:       make(chan struct{}, parallelism),
-		connSem:       connSem,
-		scanner:       scanner,
-		explorer:      explorer,
-		job:           job,
-		upstream:      up,
-		reporter:      reporter,
-		multiprogress: mp,
-		services:      services,
-		spaceMrn:      spaceMrn,
-		scannedAssets: scannedAssets,
-		memTracker:    memTracker,
+		scanSem:         make(chan struct{}, parallelism),
+		connSem:         connSem,
+		scanner:         scanner,
+		explorer:        explorer,
+		job:             job,
+		upstream:        up,
+		reporter:        reporter,
+		multiprogress:   mp,
+		services:        services,
+		spaceMrn:        spaceMrn,
+		scannedAssets:   scannedAssets,
+		resourceTracker: resourceTracker,
 	}
 }
 
@@ -313,7 +313,7 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 
 	// Break the allAssets → Asset reference so the proto data (connections,
 	// platform, labels, etc.) becomes GC-eligible immediately. The local
-	// `asset` variable still holds a reference for logMemoryStats below;
+	// `asset` variable still holds a reference for logResourceStats below;
 	// reporters that need the data (AggregateReporter) already captured
 	// their own reference via AddReport.
 	tracked.Asset = nil
@@ -321,18 +321,18 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 	debug.FreeOSMemory()
 
 	if os.Getenv("DEBUG_PROVIDER_MEMORY") != "" {
-		d.logMemoryStats(asset)
+		d.logResourceStats(asset)
 	}
 }
 
-// logMemoryStats emits memory diagnostics after an asset scan completes.
+// logResourceStats emits memory diagnostics after an asset scan completes.
 // Only called when DEBUG_PROVIDER_MEMORY is set.
 //
-// Reads the run's MemTracker rather than sampling independently, so the
+// Reads the run's ResourceTracker rather than sampling independently, so the
 // logged numbers and the numbers reported upstream cannot disagree.
-func (d *scanDispatcher) logMemoryStats(asset *inventory.Asset) {
-	peakBytes, peakGoroutines, inFlightAtPeak := d.memTracker.Peaks()
-	snap := d.memTracker.Snapshot()
+func (d *scanDispatcher) logResourceStats(asset *inventory.Asset) {
+	peakBytes, peakGoroutines, inFlightAtPeak := d.resourceTracker.Peaks()
+	snap := d.resourceTracker.Snapshot()
 
 	ev := log.Info().
 		Str("asset", asset.Name).
@@ -354,8 +354,11 @@ func (d *scanDispatcher) logMemoryStats(asset *inventory.Asset) {
 	if snap.HasCgroupMax {
 		ev = ev.Uint64("cgroup_max_mb", snap.CgroupMax/1024/1024)
 	}
+	if snap.HasCPU {
+		ev = ev.Float64("cpu_busy_seconds", snap.CPUBusySeconds)
+	}
 
-	ev.Msg("memory after asset scan")
+	ev.Msg("resource usage after asset scan")
 
 	if ar, ok := d.reporter.(*AggregateReporter); ok {
 		rptBytes, rpBytes, vrBytes, aBytes := ar.AccumulatedBytes()

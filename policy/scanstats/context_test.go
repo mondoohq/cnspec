@@ -58,25 +58,25 @@ func TestRecordKindCounts_NilCollector(t *testing.T) {
 	RecordKindCounts(nil, KindCounts{Checks: 5})
 }
 
-func TestContextWithMemTracker_RoundTrip(t *testing.T) {
-	tr := NewMemTracker(MemTrackerConfig{RunID: "run-abc"})
-	ctx := ContextWithMemTracker(context.Background(), tr)
-	require.Same(t, tr, MemTrackerFromContext(ctx))
+func TestContextWithResourceTracker_RoundTrip(t *testing.T) {
+	tr := NewResourceTracker(ResourceTrackerConfig{RunID: "run-abc"})
+	ctx := ContextWithResourceTracker(context.Background(), tr)
+	require.Same(t, tr, ResourceTrackerFromContext(ctx))
 }
 
-func TestMemTrackerFromContext_AbsentReturnsNil(t *testing.T) {
-	// Must return a usable nil rather than panicking: every MemTracker
+func TestResourceTrackerFromContext_AbsentReturnsNil(t *testing.T) {
+	// Must return a usable nil rather than panicking: every ResourceTracker
 	// method is nil-safe, so callers need no branch.
-	tr := MemTrackerFromContext(context.Background())
+	tr := ResourceTrackerFromContext(context.Background())
 	require.Nil(t, tr)
 	require.NotPanics(t, func() { tr.Record(New()) })
 }
 
-func TestMemTrackerAndCollectorAreIndependentContextValues(t *testing.T) {
+func TestResourceTrackerAndCollectorAreIndependentContextValues(t *testing.T) {
 	c := New()
-	tr := NewMemTracker(MemTrackerConfig{RunID: "run-abc"})
-	ctx := ContextWithMemTracker(ContextWithCollector(context.Background(), c), tr)
+	tr := NewResourceTracker(ResourceTrackerConfig{RunID: "run-abc"})
+	ctx := ContextWithResourceTracker(ContextWithCollector(context.Background(), c), tr)
 
 	require.Same(t, c, CollectorFromContext(ctx))
-	require.Same(t, tr, MemTrackerFromContext(ctx))
+	require.Same(t, tr, ResourceTrackerFromContext(ctx))
 }

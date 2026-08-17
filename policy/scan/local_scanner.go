@@ -515,25 +515,25 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	if u, err := uuid.NewRandom(); err == nil {
 		runID = u.String()
 	}
-	memTracker := scanstats.NewMemTracker(scanstats.MemTrackerConfig{
+	resourceTracker := scanstats.NewResourceTracker(scanstats.ResourceTrackerConfig{
 		RunID:          runID,
 		Parallelism:    parallelism,
 		MaxConnections: maxConn,
 	})
-	ctx = scanstats.ContextWithMemTracker(ctx, memTracker)
+	ctx = scanstats.ContextWithResourceTracker(ctx, resourceTracker)
 
 	dispatcher := newScanDispatcher(
 		parallelism, connSem, s, explorer, job, upstream,
 		reporter, multiprogress, services, spaceMrn, &scannedAssets,
-		memTracker,
+		resourceTracker,
 	)
 	// Registered before Start so the sampler's immediate first sample —
 	// which can end up being the run's peak — already has an accessor to
 	// call, instead of recording an in-flight count of zero that would be
 	// indistinguishable from a legitimate zero.
-	memTracker.SetInFlightFunc(dispatcher.inFlight)
-	memTracker.Start(memSampleInterval)
-	defer memTracker.Stop()
+	resourceTracker.SetInFlightFunc(dispatcher.inFlight)
+	resourceTracker.Start(memSampleInterval)
+	defer resourceTracker.Stop()
 	batcher := newSyncBatcher(dispatcher, services, spaceMrn, s.recording, multiprogress)
 
 	scanCtx := &scanContext{

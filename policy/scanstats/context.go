@@ -20,18 +20,18 @@ func CollectorFromContext(ctx context.Context) *Collector {
 	return c
 }
 
-type memTrackerCtxKey struct{}
+type resourceTrackerCtxKey struct{}
 
-// ContextWithMemTracker returns a ctx carrying t so the datalake layer can
+// ContextWithResourceTracker returns a ctx carrying t so the datalake layer can
 // record process memory into a per-asset collector without threading the
 // tracker through every signature.
-func ContextWithMemTracker(ctx context.Context, t *MemTracker) context.Context {
-	return context.WithValue(ctx, memTrackerCtxKey{}, t)
+func ContextWithResourceTracker(ctx context.Context, t *ResourceTracker) context.Context {
+	return context.WithValue(ctx, resourceTrackerCtxKey{}, t)
 }
 
-// MemTrackerFromContext returns the MemTracker carried by ctx, or nil. Every
-// MemTracker method is nil-safe, so callers need not check.
-func MemTrackerFromContext(ctx context.Context) *MemTracker {
-	t, _ := ctx.Value(memTrackerCtxKey{}).(*MemTracker)
+// ResourceTrackerFromContext returns the ResourceTracker carried by ctx, or nil. Every
+// ResourceTracker method is nil-safe, so callers need not check.
+func ResourceTrackerFromContext(ctx context.Context) *ResourceTracker {
+	t, _ := ctx.Value(resourceTrackerCtxKey{}).(*ResourceTracker)
 	return t
 }

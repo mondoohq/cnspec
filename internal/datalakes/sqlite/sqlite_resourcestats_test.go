@@ -13,16 +13,16 @@ import (
 )
 
 func TestRecordMemStats_WritesTrackerIntoCollector(t *testing.T) {
-	tr := scanstats.NewMemTracker(scanstats.MemTrackerConfig{
+	tr := scanstats.NewResourceTracker(scanstats.ResourceTrackerConfig{
 		RunID: "run-abc",
 		// Avoid reading the real /sys/fs/cgroup default on a containerized
 		// CI runner.
 		CgroupRoot: filepath.Join(t.TempDir(), "absent"),
 	})
-	ctx := scanstats.ContextWithMemTracker(context.Background(), tr)
+	ctx := scanstats.ContextWithResourceTracker(context.Background(), tr)
 
 	c := scanstats.New()
-	recordMemStats(ctx, c)
+	recordResourceStats(ctx, c)
 
 	stats := c.ToProto()
 	require.NotNil(t, stats)
@@ -39,6 +39,6 @@ func TestRecordMemStats_WritesTrackerIntoCollector(t *testing.T) {
 func TestRecordMemStats_NoTrackerOnContextIsNoop(t *testing.T) {
 	// Scans that never installed a tracker must still upload cleanly.
 	c := scanstats.New()
-	require.NotPanics(t, func() { recordMemStats(context.Background(), c) })
+	require.NotPanics(t, func() { recordResourceStats(context.Background(), c) })
 	require.Nil(t, c.ToProto())
 }
