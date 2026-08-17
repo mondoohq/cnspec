@@ -101,6 +101,7 @@ var tfVariantPolicies = []tfVariantPolicy{
 	{"mondoo-neon-security-", "mondoo-neon-security.mql.yaml", ""},
 	{"mondoo-databricks-security-", "mondoo-databricks-security.mql.yaml", ""},
 	{"mondoo-vercel-security-", "mondoo-vercel-security.mql.yaml", ""},
+	{"mondoo-netlify-security-", "mondoo-netlify-security.mql.yaml", ""},
 }
 
 // checkOutcome distinguishes a check that ran and passed, ran and failed, or was
