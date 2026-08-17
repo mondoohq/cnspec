@@ -49,12 +49,15 @@ import (
 // connection lives in the os provider); the rest back the non-cloud policies in
 // tfVariantPolicies. The base list (terraform/k8s/aws/azure/gcp/cloudformation)
 // lives in main_test.go.
+//
+// Every policy in tfVariantPolicies needs its runtime provider here.
 func init() {
 	extraProviders = append(extraProviders,
 		"bicep", "os",
 		"alicloud", "oci", "vsphere", "okta", "openstack", "gitlab", "cloudflare",
 		"github", "digitalocean", "unifi", "portainer", "snowflake",
-		"hetzner", "tailscale", "ms365", "databricks",
+		"hetzner", "tailscale", "ms365", "databricks", "vercel",
+		"clickhousecloud", "hcp", "neon", "netlify",
 	)
 }
 
@@ -101,6 +104,7 @@ var tfVariantPolicies = []tfVariantPolicy{
 	{"mondoo-neon-security-", "mondoo-neon-security.mql.yaml", ""},
 	{"mondoo-databricks-security-", "mondoo-databricks-security.mql.yaml", ""},
 	{"mondoo-vercel-security-", "mondoo-vercel-security.mql.yaml", ""},
+	{"mondoo-netlify-security-", "mondoo-netlify-security.mql.yaml", ""},
 }
 
 // checkOutcome distinguishes a check that ran and passed, ran and failed, or was
