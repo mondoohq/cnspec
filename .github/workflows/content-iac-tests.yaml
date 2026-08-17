@@ -10,14 +10,28 @@ name: Content IaC Variant Tests
 ## default `go test ./...`. One matrix job per IaC type keeps wall-clock down and
 ## makes failures easy to attribute.
 ##
-## The Terraform suite is by far the largest (~1,200 variants, thousands of
-## provider-backed scans). Because in-process concurrency is capped at a safe
-## -parallel to avoid provider-subprocess deadlocks, we cut its wall-clock by
-## fanning it out across TF_SHARDS runners: each terraform matrix entry sets
-## IAC_SHARD_INDEX/IAC_SHARD_TOTAL, and the harness (iacShard/inShard in
+## Every suite is sharded the same way. Because in-process concurrency is capped
+## at a safe -parallel to avoid provider-subprocess deadlocks, wall-clock comes
+## down by fanning a suite out across runners instead: each matrix entry sets
+## IAC_SHARD_INDEX/IAC_SHARD_TOTAL, and runFixtureSuite (iacShard/inShard in
 ## content/validation/scans/iac_variants_test.go) runs only the scenarios that
-## hash into its shard. The smaller suites (cloudformation/bicep/dockerfile/
-## kubernetes) stay on one runner each.
+## hash into its shard. shards: 1 means "run everything here".
+##
+## Shard counts are sized from measured scan time, not from suite size. A job
+## costs about 45 seconds of checkout/toolchain before it reaches the tests, so
+## a shard carrying less than roughly two minutes of scans spends more of its
+## life starting up than working. The counts below aim at four-minute jobs:
+##
+##   terraform       ~25 min of scans -> 12 shards
+##   remediation     ~12 min          ->  6
+##   cloudformation   ~8 min          ->  4
+##   bicep            ~4 min          ->  3
+##   kubernetes       ~1 min          ->  1
+##   dockerfile      under a minute   ->  1
+##
+## Re-measure before changing one: the per-shard "Run <suite> variant tests" step
+## time in a recent run, minus the shared prep, is the number that matters. Split
+## a suite further only while that remainder stays above ~2 minutes.
 ##
 ## content/validation/README.md documents this workflow alongside every other
 ## content check.
@@ -31,13 +45,44 @@ on:
     branches: ["main"]
     paths:
       - "content/**"
+      # These suites read the policy bundles and their own fixtures under
+      # content/validation/scans. The remediation linters, the CLI-grammar
+      # payloads under data/, the compliance-map tests and the upstream pin
+      # resolvers all share the content/ prefix but feed nothing here, so a
+      # change confined to one of them used to run every provider-backed scan
+      # below for nothing. Later patterns win, so these subtract from the line
+      # above. Keep the two copies in step -- Actions does not expand YAML
+      # anchors, so the push and pull_request lists have to be spelled out.
+      - "!content/validation/remediation/**"
+      - "!content/validation/data/**"
+      - "!content/validation/compliance/**"
+      - "!content/validation/upstream/**"
       - ".github/workflows/content-iac-tests.yaml"
   pull_request:
     branches: ["main"]
     paths:
       - "content/**"
+      # These suites read the policy bundles and their own fixtures under
+      # content/validation/scans. The remediation linters, the CLI-grammar
+      # payloads under data/, the compliance-map tests and the upstream pin
+      # resolvers all share the content/ prefix but feed nothing here, so a
+      # change confined to one of them used to run every provider-backed scan
+      # below for nothing. Later patterns win, so these subtract from the line
+      # above. Keep the two copies in step -- Actions does not expand YAML
+      # anchors, so the push and pull_request lists have to be spelled out.
+      - "!content/validation/remediation/**"
+      - "!content/validation/data/**"
+      - "!content/validation/compliance/**"
+      - "!content/validation/upstream/**"
       - ".github/workflows/content-iac-tests.yaml"
   workflow_dispatch:
+
+# A pull request that is pushed again does not need the superseded run to
+# finish its two dozen provider-backed jobs. Pushes to main are never
+# cancelled: main's runs are the record of what the branch actually passed.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -45,12 +90,19 @@ permissions:
 jobs:
   content-iac-variants:
     runs-on: ubuntu-latest
+    # A shard of this size finishes in about four minutes. The failure mode this
+    # guards is not a slow shard but a stuck one: the coordinator lock ordering
+    # documented in scans/main_test.go deadlocks rather than errors, and a
+    # deadlocked shard sat at "in progress" for the go test timeout -- an hour --
+    # holding the whole run open. Fifteen minutes is well clear of a healthy
+    # shard and turns that hour into a fast, legible failure.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
-      # The terraform suite is sharded across several runners (IAC_SHARD_*); the
-      # smaller suites run on a single runner. To change the terraform fan-out,
-      # add/remove terraform entries and keep every `shards` value equal to the
-      # number of terraform entries.
+      # Every suite is sharded across IAC_SHARD_* runners. To change a suite's
+      # fan-out, add or remove its entries and keep every `shards` value in that
+      # suite equal to the number of entries it has -- a mismatch silently drops
+      # or double-runs scenarios rather than failing.
       matrix:
         include:
           # shards: 1 = run everything on one runner; the harness treats total 1
@@ -62,23 +114,34 @@ jobs:
           - { iac: coverage, shard: 0, shards: 1 }
           # The closed loop runs one scan per variant that has a same-language
           # remediation snippet (~1,900), so it is sharded like terraform.
-          - { iac: remediation, shard: 0, shards: 4 }
-          - { iac: remediation, shard: 1, shards: 4 }
-          - { iac: remediation, shard: 2, shards: 4 }
-          - { iac: remediation, shard: 3, shards: 4 }
-          - { iac: cloudformation, shard: 0, shards: 1 }
-          - { iac: bicep, shard: 0, shards: 1 }
+          - { iac: remediation, shard: 0, shards: 6 }
+          - { iac: remediation, shard: 1, shards: 6 }
+          - { iac: remediation, shard: 2, shards: 6 }
+          - { iac: remediation, shard: 3, shards: 6 }
+          - { iac: remediation, shard: 4, shards: 6 }
+          - { iac: remediation, shard: 5, shards: 6 }
+          - { iac: cloudformation, shard: 0, shards: 4 }
+          - { iac: cloudformation, shard: 1, shards: 4 }
+          - { iac: cloudformation, shard: 2, shards: 4 }
+          - { iac: cloudformation, shard: 3, shards: 4 }
+          - { iac: bicep, shard: 0, shards: 3 }
+          - { iac: bicep, shard: 1, shards: 3 }
+          - { iac: bicep, shard: 2, shards: 3 }
           - { iac: dockerfile, shard: 0, shards: 1 }
           - { iac: kubernetes, shard: 0, shards: 1 }
-          - { iac: terraform, shard: 0, shards: 8 }
-          - { iac: terraform, shard: 1, shards: 8 }
-          - { iac: terraform, shard: 2, shards: 8 }
-          - { iac: terraform, shard: 3, shards: 8 }
-          - { iac: terraform, shard: 4, shards: 8 }
-          - { iac: terraform, shard: 5, shards: 8 }
-          - { iac: terraform, shard: 6, shards: 8 }
-          - { iac: terraform, shard: 7, shards: 8 }
-    name: ${{ (matrix.iac == 'terraform' || matrix.iac == 'remediation') && format('{0} (shard {1}/{2})', matrix.iac, matrix.shard, matrix.shards) || matrix.iac }}
+          - { iac: terraform, shard: 0, shards: 12 }
+          - { iac: terraform, shard: 1, shards: 12 }
+          - { iac: terraform, shard: 2, shards: 12 }
+          - { iac: terraform, shard: 3, shards: 12 }
+          - { iac: terraform, shard: 4, shards: 12 }
+          - { iac: terraform, shard: 5, shards: 12 }
+          - { iac: terraform, shard: 6, shards: 12 }
+          - { iac: terraform, shard: 7, shards: 12 }
+          - { iac: terraform, shard: 8, shards: 12 }
+          - { iac: terraform, shard: 9, shards: 12 }
+          - { iac: terraform, shard: 10, shards: 12 }
+          - { iac: terraform, shard: 11, shards: 12 }
+    name: ${{ matrix.shards > 1 && format('{0} (shard {1}/{2})', matrix.iac, matrix.shard, matrix.shards) || matrix.iac }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -105,12 +168,36 @@ jobs:
       - name: Set provider env
         run: echo "PROVIDERS_PATH=${PWD}/${GITHUB_JOB}/.providers" >> $GITHUB_ENV
 
+      # TestMain installs seven providers before the first scan, which costs
+      # roughly 40 seconds of download on a cold runner -- paid once per matrix
+      # entry, so it scaled with the fan-out and set the floor on how thin a
+      # shard is worth cutting.
+      #
+      # The key rotates daily rather than tracking go.sum, and that is the whole
+      # trade: EnsureProvider returns early when a provider is already present,
+      # so a cached directory pins the provider versions instead of resolving
+      # the latest ones. A go.sum-keyed cache would freeze them for weeks and
+      # this suite would stop being the place an upstream provider regression
+      # surfaces. A daily key keeps that detection, bounded at 24 hours, and
+      # still shares one download across every job in a day's runs.
+      - name: Provider cache day
+        run: echo "PROVIDER_CACHE_DAY=$(date -u +%Y-%m-%d)" >> $GITHUB_ENV
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/content-iac-variants/.providers
+          key: ${{ runner.os }}-mql-providers-${{ env.PROVIDER_CACHE_DAY }}
+
       # matrix.iac is a fixed enum (terraform|cloudformation|bicep|dockerfile|
-      # kubernetes|coverage) that maps to a dedicated make target — no untrusted input
-      # reaches the shell. The non-terraform suites pass shards=1, which the
-      # harness treats as "run every scenario" (no sharding).
+      # kubernetes|remediation|coverage) that maps to a dedicated make target — no
+      # untrusted input reaches the shell. A suite that passes shards=1 is treated
+      # by the harness as "run every scenario" (no sharding).
       - name: Run ${{ matrix.iac }} variant tests
         env:
           IAC_SHARD_INDEX: ${{ matrix.shard }}
           IAC_SHARD_TOTAL: ${{ matrix.shards }}
+          # Under the job's timeout-minutes on purpose. Both caps end a stuck
+          # shard, but only the test binary's own timeout prints the goroutine
+          # dump that says where it stuck; a job timeout kills the runner and
+          # leaves nothing to read.
+          IAC_TIMEOUT: 12m
         run: make test/content/iac/${{ matrix.iac }}
