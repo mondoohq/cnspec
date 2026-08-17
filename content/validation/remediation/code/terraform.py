@@ -97,7 +97,7 @@ PROVIDER_MAP = {
     # versions. Current stable is 1.288.0, so the pin holds the 1.x line on
     # purpose rather than by preference. Revisit it once 2.x has a stable
     # release, otherwise the mirror keeps resolving to 1.x indefinitely.
-    "alicloud": ("aliyun/alicloud", "~> 1.288"),
+    "alicloud": ("aliyun/alicloud", "~> 2.0"),
     "clickhouse": ("ClickHouse/clickhouse", "~> 3.0"),
     "cloudflare": ("cloudflare/cloudflare", "~> 5.0"),
     "databricks": ("databricks/databricks", "~> 1.0"),
