@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-bigip-security
     name: Mondoo F5 BIG-IP Security
-    version: 1.0.3
+    version: 1.0.4
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -72,18 +72,21 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that no SSL certificates installed on the BIG-IP device have expired. Expired certificates cause TLS handshake failures and can lead to service outages or insecure fallback behavior.
+        This check verifies that every SSL certificate installed on the BIG-IP is still within its validity period.
+
+        The BIG-IP terminates TLS for the applications behind it, so the certificates in its traffic certificate store are the ones clients validate before they trust the site. Review and replace them under **System > Certificate Management > Traffic Certificate Management > SSL Certificate List**, or list them with `tmsh list sys crypto cert`. The check fails any certificate whose expiration date has already passed.
 
         **Why this matters**
 
-        When an SSL certificate expires, clients connecting to virtual servers using that certificate will receive certificate validation errors. If certificate validation is not enforced:
+        When a certificate expires, every client that validates properly refuses the connection. Browsers interrupt with a full-page interstitial, and API clients, mobile apps, and service-to-service callers simply fail the handshake. Each virtual server bound to that certificate stops serving traffic, and the failure arrives all at once for everyone.
 
-        - Man-in-the-middle attacks become possible because clients may accept invalid certificates.
-        - Automated systems and APIs that perform strict certificate validation will fail, causing service disruptions.
-        - Users may be trained to bypass certificate warnings, weakening the overall security posture.
-        - Compliance frameworks that require valid certificates will report the device as non-compliant.
+        The dangerous part is the response to that outage. Under pressure, operators turn validation off rather than fix the certificate: users are told to click through, scripts gain a flag that skips verification, and integrations get certificate checking disabled to restore service. Once that happens an attacker positioned on the path presents a self-signed certificate of their own and the client accepts it, so the attacker reads and rewrites session cookies, authorization headers, and request bodies for as long as the workaround stays in place. The expiration turns a cryptographic guarantee into a prompt someone dismisses.
 
-        Regularly monitoring certificate expiration dates and renewing certificates before they expire ensures uninterrupted and secure TLS communication.
+        Recurring expirations also destroy the warning's value. A population trained to click past certificate errors every few months has no way to react differently to the one raised by a real interception, so the control that was supposed to detect impersonation stops functioning as a signal.
+
+        An expired certificate is also an ownership signal. A certificate nobody renewed is a certificate nobody is monitoring, while its private key is still installed on the device and present in every configuration backup taken since.
+
+        Track renewal well ahead of expiry and install the replacement under the existing certificate object name so SSL profiles keep resolving it without edits. If a certificate has expired because the service it fronted was retired, delete the unused certificate and its key rather than leaving them installed.
       audit: |
         ### Audit via the BIG-IP Configuration utility
 
@@ -168,18 +171,19 @@ queries:
       bigip.certificates.all(keySize >= 2048 || keyType.downcase.contains("ec") && keySize >= 256)
     docs:
       desc: |
-        This check verifies that all SSL certificates installed on the BIG-IP device use a key size of at least 2048 bits. Certificates with smaller key sizes are vulnerable to brute-force attacks.
+        This check verifies that the certificates the BIG-IP presents are backed by keys strong enough to resist recovery through factoring.
+
+        Key type and size are fixed when the key and certificate signing request are generated, and they travel with the issued certificate for its whole life. Inspect them under **System > Certificate Management > Traffic Certificate Management > SSL Certificate List** by opening a certificate and reading its **Key Type** and **Key Size**, or run `tmsh list sys crypto cert all-properties`. The check requires an RSA key of at least 2048 bits, or an elliptic curve key of at least 256 bits.
 
         **Why this matters**
 
-        RSA keys shorter than 2048 bits are considered cryptographically weak by NIST, the CA/Browser Forum, and all major industry standards. If certificates use weak key sizes:
+        RSA moduli of 1024 bits and below are within reach of well-resourced attackers, which is why NIST SP 800-131A withdrew them and no public certificate authority will issue against one. An attacker who factors the modulus obtains the private key without ever touching the device, without triggering a login, and without leaving anything in a log. Because the BIG-IP is the TLS termination point, that single key covers every application behind the virtual servers that use it.
 
-        - Attackers with sufficient computing resources can factor the private key and decrypt traffic.
-        - Man-in-the-middle attacks become feasible by recovering the private key.
-        - Certificate authorities no longer issue certificates with key sizes below 2048 bits, making weak keys a sign of legacy or misconfigured infrastructure.
-        - Compliance frameworks including PCI DSS and NIST SP 800-131A require a minimum of 2048-bit RSA keys.
+        With the key in hand, the attacker decrypts recorded sessions that used RSA key exchange and reads whatever was in them, then stands up a server that presents the site's own valid, unexpired, publicly trusted certificate. Clients see no warning, because nothing about the certificate is wrong. Detection is close to impossible: the break happened offline, and the device has no event to report.
 
-        All certificates should use at least 2048-bit RSA keys, or equivalent strength elliptic curve keys of 256 bits or higher.
+        A certificate below 2048 bits in a current configuration almost always arrives from an internal certificate authority or from configuration carried forward across upgrades for a decade. Where one exists, the surrounding key material usually was not rotated either, so the finding is worth treating as a prompt to review the whole store rather than a single object.
+
+        Replacing the key means re-issuing the certificate, so coordinate with the issuing certificate authority and update every SSL profile that references the old object before removing it. Where the client population includes embedded devices that cannot negotiate elliptic curve suites, a 2048-bit RSA key satisfies this check without cutting those clients off.
       audit: |
         ### Audit via the BIG-IP Configuration utility
 
@@ -266,17 +270,19 @@ queries:
       bigip.keys.all(keySize >= 2048 || keyType.downcase.contains("ec") && keySize >= 256)
     docs:
       desc: |
-        This check verifies that all SSL keys on the BIG-IP device use a key size of at least 2048 bits. Weak keys undermine the security of all certificates and SSL profiles that reference them.
+        This check verifies that every SSL private key stored on the BIG-IP is large enough to resist recovery by an attacker who never touches the device.
+
+        The key store holds every private key the device has generated or imported, including keys whose certificates have since been replaced and keys that were generated for a request that was never issued. Inspect them under **System > Certificate Management > Traffic Certificate Management > SSL Certificate List** on the **Key** tab of each object, or run `tmsh list sys crypto key all-properties`. The check requires an RSA key of at least 2048 bits, or an elliptic curve key of at least 256 bits.
 
         **Why this matters**
 
-        SSL keys are the foundation of TLS encryption. If a private key can be compromised through brute-force factoring:
+        The private key is the entirety of the device's cryptographic identity. Anyone who reconstructs it can decrypt traffic that was captured months earlier and encrypted under RSA key exchange, and can impersonate the site to any client that trusts the matching certificate. On a BIG-IP that means the plaintext of every application behind the affected virtual servers, because the device is where the encryption ends.
 
-        - All traffic encrypted with that key can be decrypted, exposing sensitive data in transit.
-        - An attacker who recovers the private key can impersonate the server, enabling man-in-the-middle attacks.
-        - All certificates signed with that key are effectively compromised regardless of their own parameters.
+        Weak keys stay exploitable after their certificate has been swapped out. The old certificate is public, recorded in certificate transparency logs, and remains valid until it expires or is revoked, so an attacker who breaks the key can pair it with that certificate and be trusted by clients regardless of what the device is currently serving. Auditing only the certificate list misses these keys entirely, which is why the key store is examined on its own.
 
-        RSA keys below 2048 bits, and ECDSA keys below 256 bits, should be replaced immediately.
+        Key reuse spreads the problem. When an operator generates a new signing request, selecting an existing key object is easier than creating one, so a single undersized key can be carried into renewal after renewal and end up behind several certificates that each look independently fine.
+
+        Retiring a key that a certificate depends on means re-issuing that certificate, so start with the keys that have no current certificate; those can be deleted outright. For the rest, generate the replacement key and certificate together, repoint the SSL profiles, and delete the old key once nothing references it.
       audit: |
         ### Audit via the BIG-IP Configuration utility
 
@@ -358,18 +364,19 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that no client SSL profiles on the BIG-IP device reference insecure cipher suites. Weak ciphers such as RC4, DES, NULL, and EXPORT-grade ciphers have known cryptographic vulnerabilities.
+        This check verifies that the TLS suites the BIG-IP offers to clients exclude the ones with practical, published breaks.
+
+        A client SSL profile carries the cipher string or cipher group that a virtual server uses when negotiating with clients. Set it under **Local Traffic > Profiles > SSL > Client** with the **Configuration** selector on **Advanced**, or with `tmsh modify ltm profile client-ssl`. The check fails any profile whose cipher list admits RC4, DES, 3DES, NULL, or EXPORT suites.
 
         **Why this matters**
 
-        Client SSL profiles control the TLS parameters used when clients connect to BIG-IP virtual servers. If weak ciphers are permitted:
+        RC4 leaks its plaintext through keystream biases. An attacker who can make a browser repeat a request many times, typically by running script in a page under the same origin, recovers a session cookie byte by byte from passively captured ciphertext and then replays it as the user. RFC 7465 prohibits RC4 in TLS for exactly this reason.
 
-        - **RC4** has known biases that allow plaintext recovery from captured TLS traffic. RFC 7465 prohibits its use.
-        - **DES and 3DES** use short block sizes vulnerable to the SWEET32 birthday attack, allowing data recovery from long-lived connections.
-        - **NULL ciphers** provide no encryption at all, transmitting all data in plaintext.
-        - **EXPORT ciphers** were intentionally weakened and are trivially broken, as demonstrated by the FREAK and Logjam attacks.
+        DES and 3DES encrypt in 64-bit blocks, and SWEET32 turns that into plaintext recovery once enough data flows over one connection. An attacker who can keep a long-lived keep-alive connection busy reaches the required volume in hours on a fast link, then extracts the repeated secret in that stream, which in practice is the authentication cookie sent with every request.
 
-        Removing these ciphers from client SSL profiles forces clients to negotiate strong encryption.
+        NULL suites negotiate authentication with no encryption at all, so anyone able to see the traffic reads the session as clear text. EXPORT suites are worse than legacy: their 512-bit RSA and Diffie-Hellman parameters were deliberately crippled and can be broken on rented compute in hours. FREAK and Logjam showed that an attacker on the path can force a handshake down into an EXPORT suite even when client and server both prefer strong ones, so merely leaving those suites enabled in the profile is enough. The client never has to ask for them.
+
+        Narrowing a cipher list removes clients that could only negotiate what was removed, so review the negotiated-suite distribution for the affected virtual servers first and stage the change in a maintenance window. On releases that support cipher groups, building the profile from F5's `f5-secure` rule is the more durable form, because the group tracks F5's list rather than freezing a string at the moment it was typed.
       audit: |
         ### Audit via the BIG-IP Configuration utility
 
@@ -462,17 +469,19 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that no server SSL profiles on the BIG-IP device reference insecure cipher suites. Server SSL profiles control the TLS parameters used when the BIG-IP connects to backend pool members.
+        This check verifies that the TLS connections the BIG-IP opens to backend pool members exclude suites with practical, published breaks.
+
+        A server SSL profile governs the second leg of the connection, the one the BIG-IP originates toward pool members after it has decrypted the client request. Set the cipher list under **Local Traffic > Profiles > SSL > Server** with the **Configuration** selector on **Advanced**, or with `tmsh modify ltm profile server-ssl`. The check fails any profile whose cipher list admits RC4, DES, 3DES, NULL, or EXPORT suites.
 
         **Why this matters**
 
-        Even when client-facing connections use strong encryption, weak ciphers on the backend leg expose traffic between the BIG-IP and application servers. If weak ciphers are configured:
+        The backend leg is routinely left at a permissive default while the client-facing profile gets hardened, on the reasoning that the server segment is internal. It carries the same requests, plus more: the headers the BIG-IP inserts, the original client address, and whatever session or authentication material the traffic policy attaches on the way through.
 
-        - An attacker with network access between the BIG-IP and backend servers can decrypt traffic using known attacks against RC4, DES, or EXPORT ciphers.
-        - The end-to-end encryption chain is only as strong as its weakest link, negating the security provided by strong client-side ciphers.
-        - Backend connections carrying sensitive data such as authentication tokens, personal information, and financial data are exposed.
+        An attacker who already has a foothold on that segment, whether from a compromised neighboring workload or a mirrored switch port, records those sessions and breaks them with the same techniques that apply on the front side. SWEET32 against 3DES recovers the repeated secret from a long-lived connection, RC4 keystream analysis recovers cookies, and an attacker who can influence the handshake downgrades it into an EXPORT suite and factors the key. A strong client-facing handshake does nothing to protect any of this.
 
-        Server SSL profiles should enforce the same cipher standards as client SSL profiles.
+        A breakable backend leg also undoes the reason for terminating TLS at the BIG-IP in the first place. The device holds the certificates and inspects the traffic so that policy can be applied in one place; if the re-encrypted hop is decryptable, the plaintext is available to precisely the attacker the arrangement was meant to exclude, and the device's central position makes it a richer capture point than any single application server.
+
+        Pool members are frequently older than the client population, so confirm what each member supports before narrowing the list, and expect that a member which negotiates nothing better than 3DES needs upgrading rather than a permanent exception. Where a member genuinely cannot be changed yet, scope the weaker suite to a dedicated profile bound only to that pool and track it for removal.
       audit: |
         ### Audit via the BIG-IP Configuration utility
 
@@ -558,22 +567,21 @@ queries:
       bigip.serverSslProfiles.none(authenticate == "none")
     docs:
       desc: |
-        This check verifies that server SSL profiles on the BIG-IP device are configured to authenticate backend servers. Without server authentication, the BIG-IP blindly trusts any server presenting a certificate, making it vulnerable to man-in-the-middle attacks.
+        This check verifies that authentication of backend servers is not switched off in the BIG-IP's server SSL profiles.
+
+        When the BIG-IP re-encrypts traffic toward a pool member, two settings on the server SSL profile decide how much it trusts what that member presents, and both live under **Local Traffic > Profiles > SSL > Server** with the **Configuration** selector on **Advanced**. **Server Certificate**, in the **Server Authentication** section, decides whether the backend certificate is validated at all; in `tmsh modify ltm profile server-ssl` it is the `peer-cert-mode` field, with the values `ignore` and `require`. How often that authentication is performed is the separate `authenticate` setting, and it is the value this check reads, failing any profile where it is set to none. A hardened profile sets **Server Certificate** to **require** and points **Trusted Certificate Authorities** at a bundle containing the issuer of the backend certificates.
 
         **Why this matters**
 
-        When the BIG-IP connects to backend pool members over TLS without authenticating the server's certificate:
+        With backend authentication off, the BIG-IP completes a TLS handshake with whatever answers on the pool member's address, including a certificate the attacker generated a minute earlier. There is no name check, no chain check, and no failure to notice.
 
-        - An attacker who compromises the network between the BIG-IP and a backend server can intercept and modify traffic by presenting a fraudulent certificate.
-        - DNS spoofing or ARP poisoning attacks can redirect backend connections to a malicious server without detection.
-        - The BIG-IP may send sensitive data such as session tokens, credentials, and personal information to an impersonator.
-        - Compliance frameworks such as PCI DSS require authentication of all parties in a communication channel.
+        That turns any address-level control of the server segment into full interception. An attacker who poisons ARP on the server VLAN, edits a DNS record the pool resolves, or claims the address of a decommissioned member terminates the connection themselves. The BIG-IP hands over the complete request, session cookie and authorization header included, and returns the attacker's response to the client under the site's own valid certificate. The client sees a green padlock, because the front-side handshake was genuine.
 
-        Enabling server authentication ensures the BIG-IP validates the backend server's certificate against a trusted CA before establishing the connection.
+        Unverified backend TLS also reads as protection in an audit that it does not deliver. The profile shows encryption in place and the traffic capture shows ciphertext, but the encryption is to whoever responded rather than to the intended server, which is the exact property an attacker needs and the exact one the ciphertext hides.
 
-        **Mapping the setting across the GUI, tmsh, and the scanner**
+        Requiring verification tightens lateral movement as well. A host compromised elsewhere in the data center cannot simply take over a pool member's address, because it has no certificate that chains to the configured bundle and the connection is dropped rather than served.
 
-        The same control has a different label in each place a junior engineer encounters it. In the BIG-IP Configuration utility it is the **Server Certificate** setting under **Server Authentication**, with the values **ignore** and **require**. In tmsh that setting is the `peer-cert-mode` field, where **ignore** maps to `peer-cert-mode ignore` and **require** maps to `peer-cert-mode require`. To satisfy the control, configure **Server Certificate: require**, which is `peer-cert-mode require`. When auditing a profile by hand, the `peer-cert-mode` value is the field to read.
+        Configure the trusted certificate authority bundle in the same change: requiring verification without one drops every pool member and stops traffic through the affected virtual servers immediately. Where backend certificates come from an internal certificate authority, import that authority first and confirm that each member's certificate chains to it and presents a name the profile expects.
       audit: |
         ### Audit via the BIG-IP Configuration utility
 
@@ -655,18 +663,19 @@ queries:
       bigip.vlans.all(sourceChecking == "enabled")
     docs:
       desc: |
-        This check verifies that source checking is enabled on all VLANs configured on the BIG-IP device. Source checking validates that incoming packets have a source address that matches the network assigned to the receiving interface, preventing IP spoofing.
+        This check verifies that source address verification is enabled on every VLAN configured on the BIG-IP.
+
+        Source checking makes the device confirm that the route back toward a packet's source address leaves through the same VLAN the packet arrived on, and drop the packet when it does not. Enable it under **Network > VLANs > VLAN List** with the **Configuration** selector on **Advanced** and the **Source Check** box, or with `tmsh modify net vlan <name> source-checking enabled`.
 
         **Why this matters**
 
-        Without source checking, the BIG-IP accepts packets with forged source IP addresses on its VLANs. This enables several attack vectors:
+        Without it the BIG-IP forwards packets whose source address belongs to a segment they could not have come from. An attacker with access to any untrusted VLAN sets the source address of an internal host and reaches virtual servers whose access policy or traffic rule admits connections by client address, so an address allowlist stops being a boundary and becomes a field the attacker fills in. The same forgery defeats logging-based rate limits and any policy that keys on client subnet.
 
-        - **IP spoofing**: Attackers can send packets with forged source addresses to bypass IP-based access controls and appear as trusted hosts.
-        - **Reflection attacks**: Spoofed source addresses can redirect response traffic to a victim, amplifying denial-of-service attacks.
-        - **Session hijacking**: Forged packets can be injected into existing connections by spoofing the source address of a legitimate client.
-        - **Audit trail poisoning**: Logs record the spoofed source address rather than the attacker's real address, making forensic analysis unreliable.
+        Forged sources also make the device a reflector. An attacker sends requests to a virtual server carrying a victim's address as the source, and the BIG-IP directs every response at that victim. With an amplifying service behind the virtual server, a modest sending rate becomes a flood the victim traces straight back to your address space, and the device spends its own connection capacity generating it.
 
-        Enabling source checking on all VLANs provides a fundamental layer of defense against IP spoofing.
+        Everything downstream records the forged address. Access logs, connection tables, and any alert built on them attribute the request to a host that never sent it, so an investigation that starts from the logs runs down the wrong system while the real source stays untouched.
+
+        Source checking assumes symmetric routing, and it takes effect only where auto last hop is disabled. In a design where traffic legitimately enters on one VLAN and returns over another, enabling it drops valid connections, so confirm routing symmetry per VLAN before turning it on. Where asymmetry is deliberate and permanent, enforce source trust for that VLAN with a packet filter or an upstream firewall rule instead of leaving the address unchecked.
       audit: |
         ### Audit via the BIG-IP Configuration utility
 
@@ -747,18 +756,19 @@ queries:
       bigip.routeDomains.all(strict == "enabled")
     docs:
       desc: |
-        This check verifies that all route domains on the BIG-IP device are configured with strict isolation. Route domains provide traffic separation by creating independent routing tables, but without strict mode, traffic can leak between domains.
+        This check verifies that every route domain on the BIG-IP enforces strict isolation.
+
+        A route domain gives a set of addresses its own routing table so that networks with overlapping or separately governed address space can coexist on one device. Strict isolation decides whether traffic may cross out of a domain into another one. Set it under **Network > Route Domains** with the **Strict Isolation** box, or with `tmsh modify net route-domain <name> strict enabled`.
 
         **Why this matters**
 
-        Route domains are used to segment network traffic on the BIG-IP, often to separate different tenants, environments, or security zones. Without strict isolation:
+        With strict isolation off, a connection that originates in one route domain can be routed into another, and the separation the design depends on holds only for as long as nothing is configured to cross it. The boundary exists in intent rather than in enforcement.
 
-        - Traffic from one route domain can be forwarded into another, breaking network segmentation boundaries.
-        - A compromised application in one segment can reach resources in another segment that should be isolated.
-        - Multi-tenant environments lose tenant isolation, potentially exposing one customer's traffic to another.
-        - Regulatory requirements for network segmentation, such as PCI DSS cardholder data environment isolation, are violated.
+        An attacker who gains code execution inside an application in a low-trust domain, a public web tier or a customer tenant, reaches services that were never meant to be routable from there: the management network, a payment segment, a database tier, or another tenant's pool members. The pivot needs no new credential and no new exploit, only a route the device is willing to follow.
 
-        Strict isolation ensures that traffic within a route domain stays within that domain and cannot cross into other domains.
+        Because the crossing happens inside the device's own routing table, it produces nothing at the segment boundary an operator would think to inspect. No firewall records a permitted or denied connection and no interface counter looks unusual; the packet is simply forwarded. Segmentation that regulators and auditors are told exists cannot be demonstrated, because reachability is a property of the path rather than of the endpoints, and a single non-strict domain is enough to make the whole arrangement permeable.
+
+        Enabling strict isolation immediately stops any flow that crosses domain boundaries today, including lookups that currently fall back to a parent route domain. Inventory those flows first, and give the ones that must survive an explicit path such as a virtual server that terminates in each domain, rather than leaving them dependent on implicit crossing.
       audit: |
         ### Audit via the BIG-IP Configuration utility
 
@@ -838,18 +848,19 @@ queries:
       bigip.snmp.allowedAddresses.none(_.in(["0.0.0.0/0", "0.0.0.0", "::/0", "ALL"]))
     docs:
       desc: |
-        This check verifies that the SNMP allowed addresses list on the BIG-IP device does not permit unrestricted access. SNMP exposes detailed system configuration and operational data that attackers can use for reconnaissance and exploitation.
+        This check verifies that SNMP access to the BIG-IP is restricted to named management hosts rather than open to every source address.
+
+        The device's SNMP agent answers only sources that appear on its client allowlist. Maintain that list under **System > SNMP > Agent > Properties** in the **Client Allowlist** setting, labeled **SNMP Access** on older releases, or with `tmsh modify sys snmp allowed-addresses`. The check fails when the list contains a wildcard entry such as `0.0.0.0/0`, `::/0`, or `ALL`.
 
         **Why this matters**
 
-        SNMP provides read, and potentially write, access to device configuration, performance metrics, network topology, and operational state. If SNMP access is unrestricted:
+        SNMP on a BIG-IP is a complete map of what the device does. A reader with a valid community string walks the interface table, the virtual server and pool tables, the routing table, and the software version, and comes away knowing which applications sit behind the device, which addresses their members use, and which release the management plane is running. That release string matters most. F5 has repeatedly shipped critical unauthenticated remote code execution flaws in its management interface, and mass exploitation has followed disclosure within days, so an open allowlist hands an attacker the version number to match against the exploit they already have.
 
-        - **Information disclosure**: Any host on the network can enumerate system details including software versions, interface configurations, routing tables, and virtual server configurations.
-        - **Community string attacks**: SNMPv1 and v2c use community strings as plaintext passwords. Unrestricted access maximizes the exposure window for brute-force attacks.
-        - **Configuration manipulation**: When write access is enabled, an attacker can modify the device configuration remotely.
-        - **Lateral movement**: Information gathered via SNMP, such as network topology and connected systems, aids attackers in mapping the network for further exploitation.
+        Version 1 and version 2c authenticate with a community string sent in clear text, and defaults such as `public` survive on more devices than anyone expects. With the allowlist unrestricted, that string is guessable and sniffable from anywhere able to route to the management address rather than from a handful of monitoring stations, which turns a weak shared secret into an internet-facing one. Where write access is configured, the same string edits the running configuration.
 
-        SNMP access should be restricted to specific management stations by IP address.
+        A compromised BIG-IP is not one more host on the network. It terminates TLS for everything behind it, so it holds the private keys and sees the plaintext of every application it fronts, and it sits astride the traffic path for all of them. Reconnaissance that shortens an attacker's route to that position is worth denying on its own.
+
+        Keep `127.0.0.0/8` on the list so on-box processes can still query the agent, and enumerate every authorized monitoring station before replacing the list, because a station left out loses access the moment the change is saved. Where the management network is already segmented and reachable only from a monitoring subnet, the allowlist remains the enforcement point on the device itself and should still name those hosts.
       audit: |
         ### Audit via the BIG-IP Configuration utility
 
