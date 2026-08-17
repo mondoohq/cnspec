@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-digitalocean-security
     name: Mondoo DigitalOcean Security
-    version: 2.5.2
+    version: 2.5.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -150,18 +150,19 @@ queries:
       digitalocean.account.emailVerified == true
     docs:
       desc: |
-        This check ensures that the DigitalOcean account has a verified email address. By default, accounts can operate without email verification, but DigitalOcean uses the account email for password resets and other account recovery workflows.
+        This check verifies that email verification is completed for the DigitalOcean account.
+
+        DigitalOcean uses the account email address for password resets and other account recovery workflows, but an account can operate without ever confirming that address. The verification state is shown in the account settings of the DigitalOcean Cloud Control Panel and reported on the account API object; this check requires that it report the address as verified.
 
         **Why this matters**
 
-        - **Account recovery integrity:** An unverified email cannot be trusted as the true owner's address, so the self-service recovery flow can be exploited by whoever controls an unverified address.
-        - **Identity binding:** Verification demonstrates that the account holder demonstrably controls the mailbox, binding the account identity to a real owner.
-        - **Credential reset protection:** Password reset links sent to an unverified address could reach an attacker who planted that address, enabling full account takeover.
+        An unverified address cannot be trusted as the true owner's mailbox, which makes the self-service recovery flow exploitable by whoever controls that address. Password reset links sent to an address the account holder never confirmed can land in an attacker's inbox, and the reset completes a full account takeover without any other credential being compromised.
 
-        **Risk mitigation**
+        Verification demonstrates that the account holder controls the mailbox, binding the account identity to a real owner. That binding is what makes the recovery flow safe to leave enabled, and an attacker who inserts an unverified address into the account gains the recovery path without detection.
 
-        - **Takeover prevention:** Without a verified email, an attacker who inserts an unverified address gains access to the account recovery flow without detection.
-        - **Audit trail:** A verified email establishes a confirmed point of contact that supports incident response and ownership disputes.
+        A verified address also establishes a confirmed point of contact for security notifications, incident response, and ownership disputes.
+
+        Complete verification from the message DigitalOcean sends to the address on record, and verify again whenever the account email changes.
       audit: |
         ### Audit via Console
 
@@ -232,18 +233,17 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Droplet is deployed inside a Virtual Private Cloud (VPC). By default, DigitalOcean places Droplets outside a named VPC unless one is selected at creation time, leaving them with only public-facing network interfaces.
+        This check verifies that every Droplet is placed inside a VPC private network.
+
+        A DigitalOcean VPC is a private network boundary that contains traffic between the resources attached to it. Unless a VPC is selected at creation time, a Droplet is left outside any named VPC with only public-facing network interfaces. The network is chosen in the VPC Network step of the create flow and recorded as the Droplet's VPC UUID.
 
         **Why this matters**
 
-        - **Network segmentation:** VPCs provide a private layer-2 network boundary that contains traffic between resources and prevents it from traversing the public internet.
-        - **Lateral movement containment:** A compromised Droplet outside a VPC has broader network reach across the account because there is no segmentation to limit its blast radius.
-        - **Private connectivity:** VPC membership enables private-IP communication between Droplets, databases, and load balancers without routing through public addresses.
+        Without VPC membership, every connection a Droplet makes to another resource in the account leaves through a public interface. Traffic that should never be routable from outside is instead carried on addresses anyone can reach, which lengthens the path and widens the set of hosts that can observe or reach it.
 
-        **Risk mitigation**
+        VPC membership is also what contains a compromise. A Droplet outside a VPC has broader network reach across the account, so an attacker who lands on it can survey and attack far more than an attacker on a segmented host. Membership additionally enables private-IP communication between Droplets, managed databases, and load balancers, removing the need to expose those services on public addresses at all.
 
-        - **Reduced attack surface:** Keeping inter-resource traffic on private networks eliminates the exposure window that arises when every connection must traverse a public interface.
-        - **Defense in depth:** VPC-level isolation supplements Cloud Firewalls and host-based firewall rules, so a misconfiguration in one layer does not immediately expose the resource.
+        This is defense in depth alongside the Cloud Firewall and any host firewall rules, so a misconfiguration in one layer does not immediately expose the resource. Because a Droplet's network cannot be changed after creation, a Droplet outside a VPC must be rebuilt or replaced inside one.
       audit: |
         ### Audit via Console
 
@@ -355,19 +355,17 @@ queries:
       digitalocean.droplets.all(missingFirewall == false)
     docs:
       desc: |
-        This check ensures that every Droplet is covered by at least one DigitalOcean Cloud Firewall, either attached directly by Droplet ID or through a matching tag. Without firewall coverage, all network traffic is filtered only by the host operating system's own firewall rules.
+        This check verifies that every Droplet is covered by at least one DigitalOcean Cloud Firewall.
+
+        Cloud Firewalls attach either directly by Droplet ID or through a tag the Droplet carries, and they filter traffic before it reaches the Droplet's network stack. They are opt-in: a Droplet created without one has no network-layer filtering at all, and its traffic is governed only by whatever rules the host operating system happens to enforce. Coverage is managed under Networking then Firewalls in the DigitalOcean Cloud Control Panel, or with `doctl compute firewall`.
 
         **Why this matters**
 
-        - **Default-open exposure:** A Droplet with no Cloud Firewall exposes every listening service directly to the network reachable from its IP addresses, including services bound to all interfaces by default.
-        - **Continuous scanning:** Common default ports such as SSH on port 22 are continuously scanned by automated tools; uncovered Droplets are targeted within minutes of provisioning.
-        - **Host firewall fragility:** Relying solely on iptables or nftables rules means a single misconfiguration or software install that opens a port bypasses all network-layer controls.
-        - **Centralized policy enforcement:** Cloud Firewalls apply rules consistently across all covered Droplets, unlike per-host rules that drift independently.
+        An uncovered Droplet exposes every listening service directly to whatever network can reach its IP addresses, including services that bind to all interfaces by default. Common ports such as SSH on port 22 are scanned continuously by automated infrastructure, and uncovered Droplets are targeted within minutes of provisioning.
 
-        **Risk mitigation**
+        Relying on iptables or nftables alone is fragile. A single misconfigured rule, or a package that opens a port during installation, bypasses every network-layer control at once, and per-host rules drift independently across a fleet so that no two Droplets end up filtering the same way. A Cloud Firewall applies its rules consistently to everything it covers and cannot be disabled from inside a compromised workload.
 
-        - **Network-layer control:** Cloud Firewalls block unwanted traffic before it reaches the Droplet's network stack, providing a platform-enforced boundary that cannot be disabled by a compromised workload.
-        - **Tag-based coverage:** Applying firewall rules through tags ensures new Droplets inherit the correct policy at creation time, preventing coverage gaps during scaling events.
+        Attach firewalls by tag rather than by Droplet ID wherever possible, so Droplets created during a scaling event inherit the correct policy at creation time instead of opening a coverage gap.
       audit: |
         ### Audit via Console
 
@@ -443,20 +441,19 @@ queries:
       digitalocean.droplets.all( exposure.internetReachable == false )
     docs:
       desc: |
-        This check ensures that no Droplet is reachable from the public internet. `internetReachable` combines a public IP with firewall ingress that actually admits inbound traffic from any address — including the case where no Cloud Firewall covers the Droplet at all — so it reports a Droplet as exposed only when both conditions hold. This is a higher-fidelity "actually exposed" signal than a public-IP flag alone.
+        This check verifies that no Droplet is actually reachable from the public internet.
+
+        The `internetReachable` signal correlates two facts rather than one: whether the Droplet holds a public IP, and whether firewall ingress genuinely admits inbound traffic to it from any address. The case where no Cloud Firewall covers the Droplet at all counts as admitting traffic. A Droplet is reported exposed only when both conditions hold, which makes this a higher-fidelity signal than a public-IP flag on its own.
 
         **Why this matters**
 
-        - **Reduced attack surface:** A Droplet with no internet-reachable path keeps its listening services off the public scanning grid entirely.
-        - **Defense in depth:** A public IP is harmless until a firewall rule (or a missing firewall) admits traffic to it; removing either side closes the path.
-        - **Fewer false alarms:** Because the signal correlates the IP with the firewall ingress, it surfaces Droplets that are genuinely exposed rather than every Droplet that merely holds a public address.
+        A Droplet with no internet-reachable path keeps its listening services off the public scanning grid entirely. Nothing on the internet can probe them, so the pre-authentication surface of every daemon on the host stops being an internet-facing surface, and a compromise there stops being an available entry point into the rest of the account.
 
-        **Risk mitigation**
+        A public IP is harmless until a firewall rule, or the absence of a firewall, admits traffic to it. Closing either side of that pair closes the path, which gives operators two independent ways to remediate: detach the public address, or tighten the ingress rules that make it useful to an attacker.
 
-        - **Internet-wide exploitation:** Prevents listening services from being probed and attacked by arbitrary internet hosts.
-        - **Lateral movement entry:** Removes a public foothold an attacker could use to reach the rest of the account's resources.
+        Because the signal correlates the address with the ingress rules, it surfaces the Droplets that are genuinely exposed rather than every Droplet that merely holds a public address, so a failing result is worth acting on rather than triaging away.
 
-        Intentionally public hosts such as bastions and public web servers will fail this check and should be exempted.
+        Intentionally public hosts such as bastions and public web servers will fail this check and should be exempted, ideally after their ingress rules have been narrowed to the ports they actually serve.
       audit: |
         ### Audit via Console
 
@@ -552,18 +549,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Cloud Firewall has an inbound rule permitting TCP traffic on port 22 from the entire public internet (`0.0.0.0/0` or `::/0`). SSH should be restricted to a known trusted CIDR range, a bastion host, or a VPN endpoint.
+        This check verifies that no Cloud Firewall admits inbound SSH from the entire internet.
+
+        A Cloud Firewall inbound rule pairs a protocol and port range with a set of source addresses. A rule permitting TCP port 22 from `0.0.0.0/0` or `::/0` opens SSH to every host on the internet. Inbound rules are edited under Networking then Firewalls in the DigitalOcean Cloud Control Panel, or with `doctl compute firewall add-rules`, and the SSH source should be a known trusted CIDR range, a bastion host, or a VPN endpoint.
 
         **Why this matters**
 
-        - **Brute-force exposure:** SSH open to the internet is subjected to continuous automated credential-stuffing and brute-force login attempts from global scanning infrastructure.
-        - **CVE attack surface:** Public SSH exposure means the SSH daemon itself is reachable by any host; any pre-authentication vulnerability in the SSH implementation becomes immediately exploitable.
-        - **Key compromise amplification:** Even environments using key-based authentication can be compromised if a private key is exfiltrated; restricting source IPs limits where that key can be used from.
+        SSH open to the internet is subjected to continuous automated credential-stuffing and brute-force login attempts from global scanning infrastructure. The volume is not background noise that can be ignored; it is a permanent adversarial workload against every account that has a weak password or a weak key.
 
-        **Risk mitigation**
+        Public exposure also puts the SSH daemon itself in reach of every host on the internet, so any pre-authentication vulnerability in the SSH implementation becomes immediately exploitable against the Droplet, with no credential required at all.
 
-        - **Source restriction:** Scoping SSH access to a specific CIDR or bastion host eliminates the vast majority of opportunistic automated attacks without affecting legitimate operator access.
-        - **Breach containment:** If a credential or key is compromised, a source IP restriction prevents an attacker outside the trusted range from using it directly against the Droplet.
+        Environments that use key-based authentication only are not immune either, because private keys leak from laptops, CI systems, and backups. Restricting the source IPs limits where a stolen key can be used from, so a compromised credential outside the trusted range cannot be replayed directly against the Droplet.
+
+        Scoping SSH to a specific CIDR or bastion eliminates the vast majority of opportunistic automated attacks without affecting legitimate operator access. Where operator addresses are not static, front SSH with a VPN endpoint or a bastion and allow only that source.
       audit: |
         ### Audit via Console
 
@@ -690,18 +688,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Cloud Firewall has an inbound rule permitting TCP traffic on port 3389 from the entire public internet (`0.0.0.0/0` or `::/0`). RDP should never be reachable from untrusted networks.
+        This check verifies that no Cloud Firewall admits inbound RDP from the entire internet.
+
+        A Cloud Firewall inbound rule permitting TCP port 3389 from `0.0.0.0/0` or `::/0` publishes the Remote Desktop endpoint of every Droplet the firewall covers. RDP should never be reachable from untrusted networks. Inbound rules are edited under Networking then Firewalls in the DigitalOcean Cloud Control Panel, or with `doctl compute firewall add-rules`.
 
         **Why this matters**
 
-        - **Ransomware vector:** Internet-exposed RDP is one of the most common ransomware delivery channels; attackers acquire credentials from broker markets and connect directly to exposed endpoints.
-        - **Protocol vulnerabilities:** RDP has a documented history of critical pre-authentication remote code execution vulnerabilities that are routinely weaponized within days of disclosure.
-        - **Credential exposure:** RDP endpoints on the internet are targeted by continuous credential-stuffing tools that replay breached username and password pairs at scale.
+        Internet-exposed RDP is one of the most common ransomware delivery channels. Attackers acquire working credentials from broker markets and connect directly to exposed endpoints, so the intrusion looks like an ordinary login and requires no exploit at all.
 
-        **Risk mitigation**
+        RDP also carries a documented history of critical pre-authentication remote code execution vulnerabilities, which are routinely weaponized within days of disclosure. An endpoint reachable from the internet is exploitable the moment such a flaw is published, well before most operators have patched.
 
-        - **Attack surface elimination:** Blocking RDP from public sources removes the endpoint from the attack surface entirely; legitimate users should connect through a VPN or bastion host instead.
-        - **Incident prevention:** Removing public RDP access is one of the highest-return single controls for preventing ransomware incidents in cloud environments.
+        Public RDP endpoints separately attract continuous credential-stuffing tools that replay breached username and password pairs at scale, so any password reused from a prior breach is tried against the endpoint automatically.
+
+        Blocking RDP from public sources removes the endpoint from the attack surface entirely, which is one of the highest-return single controls available for preventing ransomware incidents in cloud environments. Legitimate users should reach RDP through a VPN or a bastion host instead.
       audit: |
         ### Audit via Console
 
@@ -826,19 +825,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Cloud Firewall allows inbound traffic from the public internet to common database ports: MySQL (3306), PostgreSQL (5432), MongoDB (27017), Redis (6379), Kafka (9092), and Elasticsearch/OpenSearch (9200). Database connectivity should be confined to private networks.
+        This check verifies that no Cloud Firewall admits inbound traffic from the internet to a common database port.
+
+        The ports covered are MySQL on 3306, PostgreSQL on 5432, MongoDB on 27017, Redis on 6379, Kafka on 9092, and Elasticsearch or OpenSearch on 9200. Database connectivity should be confined to private networks, so an inbound rule pairing any of these ports with `0.0.0.0/0` or `::/0` fails this check. Rules are edited under Networking then Firewalls in the DigitalOcean Cloud Control Panel, or with `doctl compute firewall add-rules`.
 
         **Why this matters**
 
-        - **Credential-based attacks:** Databases exposed to the internet are targeted by automated tools that guess weak passwords or replay known credentials obtained from breaches.
-        - **Unauthenticated exploitation:** Several database engines have had critical unauthenticated vulnerabilities; network exposure provides direct access to these attack paths without requiring valid credentials.
-        - **Data exfiltration risk:** A database reachable from the internet can be fully exfiltrated or ransomed by an attacker in a single session once initial access is achieved.
-        - **Application tier bypass:** Exposing the database port publicly bypasses the application layer that should be the only authorized client, widening the attack surface significantly.
+        Databases exposed to the internet are targeted by automated tools that guess weak passwords or replay credentials obtained from unrelated breaches. Several of these engines have also had critical unauthenticated vulnerabilities, so network exposure alone provides a direct attack path that needs no valid credential.
 
-        **Risk mitigation**
+        The consequence of success is total. A database reachable from the internet can be fully exfiltrated or ransomed in a single session once initial access is achieved, because the attacker is already speaking the engine's own protocol against live data.
 
-        - **Private-network confinement:** Database traffic should only traverse internal networks; applications that need external access should connect through the application tier, not directly to the database.
-        - **Defense in depth:** Firewalling database ports at the network layer supplements database-level authentication, so a weak password or stolen credential cannot be used from an arbitrary internet host.
+        Publishing the database port also bypasses the application tier that should be the only authorized client. Every authorization rule, rate limit, and audit hook implemented above the database stops applying to traffic that reaches it directly, which widens the attack surface well beyond the port itself.
+
+        Confine database traffic to internal networks and route external consumers through the application tier. Firewalling these ports at the network layer supplements engine-level authentication, so a weak password or a stolen credential cannot be used from an arbitrary internet host.
       audit: |
         ### Audit via Console
 
@@ -969,18 +968,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Cloud Firewall has an inbound rule opening the full port range (`0`, `all`, `1-65535`, or `0-65535`) from the public internet. Firewalls must only expose specific ports required by the workload.
+        This check verifies that no Cloud Firewall opens the full port range to the internet.
+
+        A DigitalOcean inbound rule expresses every port as `0`, `all`, `1-65535`, or `0-65535`. Paired with a source of `0.0.0.0/0` or `::/0`, any of these admits all traffic from all hosts. Firewalls should expose only the specific ports the workload requires, set under Networking then Firewalls in the DigitalOcean Cloud Control Panel or with `doctl compute firewall add-rules`.
 
         **Why this matters**
 
-        - **Complete exposure:** An allow-all-ports-from-anywhere rule is functionally equivalent to having no firewall; every service on the Droplet is reachable from every host on the internet.
-        - **Unknown service exposure:** Droplets often have services bound to non-standard ports during development or installed by packages; an all-ports rule exposes those unintended listeners alongside the intended ones.
-        - **Firewall intent violation:** A firewall configured to allow everything provides zero protection and creates false confidence that traffic is being filtered.
+        An allow-all-ports-from-anywhere rule is functionally equivalent to having no firewall. Every service on every covered Droplet is reachable from every host on the internet, and the firewall's presence provides only the false confidence that traffic is being filtered.
 
-        **Risk mitigation**
+        Droplets rarely listen on only the ports their operators have in mind. Development tooling binds high ports, packages start listeners during installation, and debugging endpoints are left running. An all-ports rule exposes all of those unintended listeners alongside the intended service.
 
-        - **Mandatory specificity:** Replacing all-ports rules with explicit per-port rules forces an explicit decision about each service that should be exposed, surfacing forgotten or unintended listeners.
-        - **Blast radius reduction:** Even if one exposed service is compromised, specific port rules limit how an attacker can pivot to other services on the same host or adjacent hosts.
+        Replacing an all-ports rule with explicit per-port rules forces an explicit decision about each service that should be exposed, which is what surfaces the forgotten ones. It also reduces blast radius: if one exposed service is compromised, specific port rules limit how far an attacker can pivot to other services on the same host or on adjacent hosts the firewall covers.
+
+        Where a workload genuinely needs a wide port range, such as a passive FTP or media relay, scope the rule to that range and to the source addresses that use it rather than to the whole port space and the whole internet.
       audit: |
         ### Audit via Console
 
@@ -1102,18 +1102,19 @@ queries:
       digitalocean.database.firewallRules != empty
     docs:
       desc: |
-        This check ensures that every managed database cluster has at least one Trusted Sources entry, restricting inbound connections to specific Droplets, tags, Kubernetes clusters, applications, or IP addresses. By default, a newly created managed database cluster accepts connections from any source that presents valid credentials.
+        This check verifies that every managed database cluster restricts inbound connections with a Trusted Sources list.
+
+        Trusted Sources is the managed database firewall. Each entry names a Droplet, a tag, a Kubernetes cluster, an App Platform application, or an IP address permitted to connect. A newly created cluster has no entries, and in that state it accepts connections from any source that presents valid credentials. The list is edited on the cluster's Settings tab in the DigitalOcean Cloud Control Panel, or with `doctl databases firewalls`.
 
         **Why this matters**
 
-        - **Credential leak containment:** Without Trusted Sources, a database password that leaks from application logs, source control, or developer laptops can be used from any internet host to connect directly.
-        - **Lateral movement prevention:** Trusted Sources ensure that even a fully compromised application server cannot be used as a pivot to reach databases that the compromised host was never authorized to access.
-        - **Defense in depth:** Network-level restrictions complement database-level authentication; both layers must be defeated for an attacker to access database contents.
+        With no Trusted Sources entry, the only thing standing between the internet and the data is the database password. Passwords leak from application logs, source control, CI configuration, and developer laptops, and a leaked one can then be used from any internet host to connect directly to the cluster.
 
-        **Risk mitigation**
+        Trusted Sources also stops a compromised application server from being used as a pivot. A host that was never authorized to reach a given cluster cannot reach it even after an attacker owns it completely, which keeps a single compromised workload from becoming access to every database in the account.
 
-        - **Credential compromise isolation:** Scoping access to specific Droplets, tags, or CIDRs means a leaked credential is only usable from the authorized infrastructure, not from arbitrary internet hosts.
-        - **Audit clarity:** A Trusted Sources list provides an explicit inventory of every authorized client, making it straightforward to identify unauthorized access attempts in database logs.
+        This is a network layer beneath engine authentication, so both must be defeated for an attacker to read data. Scoping access to specific Droplets, tags, or CIDRs means a leaked credential is only usable from the authorized infrastructure.
+
+        The resulting list is also an explicit inventory of every authorized client, which makes unauthorized access attempts in the database logs straightforward to identify.
       audit: |
         ### Audit via Console
 
@@ -1194,18 +1195,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every managed database cluster is attached to a VPC private network. By default, managed databases receive a public connection string and must be connected over the internet unless a private network is configured at creation time.
+        This check verifies that every managed database cluster is attached to a VPC private network.
+
+        A managed database receives a public connection string by default and must be reached over the internet unless a private network is configured at creation time. Attaching the cluster to a VPC gives it a private hostname that resources in the same VPC use instead. The network is selected in the create flow and recorded as the cluster's private network UUID.
 
         **Why this matters**
 
-        - **Traffic confidentiality:** Without a private network, database traffic between applications and the cluster traverses public-facing endpoints, increasing the path length and number of hops where traffic can be observed.
-        - **Reduced attack surface:** A database reachable only on private IPs is not directly accessible from the internet even if Trusted Sources are misconfigured, providing a second layer of protection.
-        - **Application simplicity:** VPC-attached databases provide a private hostname that applications use without requiring per-connection TLS certificate pinning or public DNS.
+        Without a private network, traffic between applications and the cluster traverses public-facing endpoints. That lengthens the path and increases the number of hops where the traffic can be observed, for no benefit when the client is a Droplet in the same region. A private network keeps that traffic inside DigitalOcean's infrastructure instead.
 
-        **Risk mitigation**
+        A cluster reachable only on private IPs is also not directly accessible from the internet even when Trusted Sources are misconfigured, which is the second layer that matters most in practice. A firewall rule opened by accident has no effect if there is no public path for it to open.
 
-        - **Network isolation:** Private network attachment keeps all database traffic inside DigitalOcean's infrastructure, removing it from internet-facing routing paths entirely.
-        - **Misconfiguration resilience:** A VPC-only database cannot be reached from the internet even if a firewall rule is accidentally opened, limiting the consequence of a separate misconfiguration.
+        Applications gain the private hostname and use it without per-connection TLS certificate pinning against a public endpoint or reliance on public DNS, so the simpler configuration is also the more private one.
+
+        Attach the cluster to the same VPC as the Droplets and clusters that consume it, and keep the Trusted Sources list in place as well; the two controls fail differently and are worth having together.
       audit: |
         ### Audit via Console
 
@@ -1317,18 +1319,17 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-2-7
     docs:
       desc: |
-        This check ensures that no managed database cluster is reachable from the public internet. `internetReachable` is true when the cluster has a public connection endpoint and its trusted-source firewall rules admit any address, including the case where no trusted sources are configured at all and the public endpoint is left open to every host. It is a higher-fidelity signal than the presence of a public endpoint alone because it accounts for whether the trusted-source rules actually restrict access.
+        This check verifies that no managed database cluster is actually reachable from the public internet.
+
+        The `internetReachable` signal correlates the cluster's public connection endpoint with its trusted-source firewall rules. A cluster counts as internet-reachable when it publishes a public endpoint and those rules admit any address, which includes the common case where no trusted sources are configured at all and the public endpoint is left open to every host. Because it accounts for whether the rules actually restrict access, it is a higher-fidelity signal than the presence of a public endpoint alone.
 
         **Why this matters**
 
-        - **Reduced attack surface:** A database that no internet host can reach is removed from the pool of targets for credential-stuffing and protocol-level attacks against the database engine.
-        - **Misconfiguration resilience:** Correlating the public endpoint with the trusted-source rules catches the common failure where a cluster keeps its public endpoint and the trusted-source list is empty or world-open.
-        - **Defense in depth:** Keeping the cluster private supplements engine authentication, so a weak or leaked credential is not directly exploitable from the internet.
+        A database that no internet host can reach is removed from the pool of targets for credential stuffing and for protocol-level attacks against the database engine. Both of those are automated and continuous, so removing the path removes a standing workload rather than a hypothetical one.
 
-        **Risk mitigation**
+        Correlating the endpoint with the rules catches the specific failure that matters: a cluster that kept its public endpoint while its trusted-source list is empty or world-open. That combination is easy to produce during troubleshooting and easy to miss afterward, because neither half looks alarming on its own.
 
-        - **Data exfiltration:** Removes the direct internet path an attacker would use to reach the database with stolen or brute-forced credentials.
-        - **Internet-wide scanning:** Takes the database endpoint off the public scanning grid entirely.
+        Keeping the cluster private supplements engine authentication rather than replacing it, so a weak or leaked credential is not directly exploitable from an arbitrary internet host, and the endpoint stops appearing to mass scanners entirely.
       audit: |
         ### Audit via Console
 
@@ -1413,19 +1414,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that managed database clusters are not running a database engine version that has reached end of life or is no longer receiving security patches from its upstream maintainer or from DigitalOcean.
+        This check verifies that no managed database cluster runs an engine version that has reached end of life.
+
+        Each cluster's engine and version are compared against the releases that no longer receive security patches from their upstream maintainer or from DigitalOcean, covering PostgreSQL, MySQL, Redis, MongoDB, Kafka, and OpenSearch. The version in use is shown on the cluster overview in the DigitalOcean Cloud Control Panel and returned by `doctl databases get`.
 
         **Why this matters**
 
-        - **No security patches:** Databases on end-of-life versions do not receive patches for newly disclosed CVEs, meaning known vulnerabilities accumulate without remediation.
-        - **Active exploitation:** Known-exploited CVEs in older PostgreSQL, MySQL, Redis, MongoDB, and other database releases are routinely weaponized in targeted and opportunistic attacks.
-        - **Compliance exposure:** Most security frameworks require that software components receive vendor security support; end-of-life engines fail this requirement regardless of other controls in place.
-        - **Feature gaps:** Supported versions include protocol-level security improvements such as stronger TLS defaults and authentication mechanisms that older versions lack.
+        An end-of-life engine receives no patches for newly disclosed CVEs, so known vulnerabilities accumulate in it with no remediation available. Known-exploited flaws in older PostgreSQL, MySQL, Redis, MongoDB, and other database releases are routinely weaponized in both targeted and opportunistic attacks, and the cluster holds exactly the data those attacks are aimed at.
 
-        **Risk mitigation**
+        Supported versions also carry protocol-level security improvements that older releases simply lack, including stronger TLS defaults and better authentication mechanisms. Staying on an unsupported major means forgoing those improvements permanently, not merely waiting longer for fixes.
 
-        - **Patch coverage restoration:** Migrating to a supported major version restores the flow of security patches, closing accumulating CVE exposure without requiring other configuration changes.
-        - **Supported upgrade path:** DigitalOcean provides upgrade tooling for supported engine transitions; acting before a version reaches EOL avoids more disruptive cold-migration paths.
+        Most security frameworks require software components to receive vendor security support, so an end-of-life engine produces an audit finding regardless of how well the rest of the environment is configured.
+
+        Migrating to a supported major version restores the flow of security patches without requiring other configuration changes. DigitalOcean provides upgrade tooling for supported engine transitions, so acting before a version reaches end of life avoids the more disruptive cold-migration path that a fully retired version forces.
       audit: |
         ### Audit via Console
 
@@ -1580,19 +1581,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that every managed database cluster advertises a CA certificate whose validity window has not passed. Clients verify the cluster's TLS endpoint by pinning to this CA; once it expires, every connection that performs TLS verification fails its handshake.
+        This check verifies that the CA certificate a managed database cluster advertises is still within its validity window.
+
+        Clients verify a managed database's TLS endpoint by pinning to the CA certificate the cluster publishes. Once that certificate's validity window passes, every connection performing TLS verification fails at the handshake. The current CA is downloaded from the cluster's connection details in the DigitalOcean Cloud Control Panel.
 
         **Why this matters**
 
-        - **Connection failure cascade:** A managed database whose CA has expired fails every TLS-verifying client at the handshake, taking the cluster offline from the application's perspective even though the cluster itself is healthy.
-        - **Silent verification bypass:** Operators under pressure to restore service often disable TLS verification rather than rotate the CA, downgrading future connections to unauthenticated TLS that is vulnerable to man-in-the-middle interception.
-        - **Audit and forensics gap:** A revoked or expired CA pinned in application configuration breaks the only signal that distinguishes a legitimate cluster endpoint from a replacement under an attacker's control.
-        - **Renewal blind spot:** Managed database CA certificates are rotated by the platform on long cycles, so expiry is easy to miss in the operator's calendar; an automated check catches the renewal need before the outage.
+        An expired CA takes the cluster offline from the application's perspective even though the cluster itself is healthy, because every TLS-verifying client fails at the handshake at the same moment. The failure arrives as an outage, not as a warning.
 
-        **Risk mitigation**
+        That is where the security damage happens. Operators under pressure to restore service frequently disable TLS verification rather than rotate the CA, which downgrades every subsequent connection to unauthenticated TLS that a man-in-the-middle can intercept. The temporary fix outlives the incident and quietly removes the control.
 
-        - **Outage prevention:** Detecting CA expiry before it lapses gives operators time to pull the updated CA from the DigitalOcean Cloud Control Panel and distribute it to every client.
-        - **TLS posture preservation:** Renewing rather than disabling verification keeps the cluster's authenticated TLS path intact, preventing operators from being pushed into a less-secure fallback.
+        The pinned CA is also the only signal that distinguishes a legitimate cluster endpoint from a replacement under an attacker's control, so an expired or revoked CA left in application configuration removes the basis for that distinction and the forensic record that depends on it.
+
+        Managed database CA certificates are rotated by the platform on long cycles, which makes expiry easy to miss on an operator's calendar. Detecting it in advance leaves time to pull the updated CA and distribute it to every client before the current one lapses.
       audit: |
         ### Audit via Console
 
@@ -1676,19 +1677,19 @@ queries:
       digitalocean.database.connectionSslEnabled
     docs:
       desc: |
-        This check ensures that every managed database cluster advertises a connection endpoint with TLS/SSL enabled, so that credentials and query data are encrypted in transit between clients and the cluster. A cluster whose connection object reports SSL disabled would accept plaintext connections that expose authentication and payload data to anyone on the network path.
+        This check verifies that every managed database cluster advertises a connection endpoint with TLS enabled.
+
+        The cluster's connection object reports whether its endpoint requires SSL. When it reports SSL disabled, the cluster accepts plaintext connections, and both the authentication exchange and the query payload cross the network unprotected. Connection details are shown on the cluster page in the DigitalOcean Cloud Control Panel and returned by `doctl databases connection`.
 
         **Why this matters**
 
-        - **Credential protection:** Database connections carry authentication material on every session; without TLS, usernames and passwords traverse the network in cleartext and can be captured by any host on the path.
-        - **Payload confidentiality:** Query results and writes often contain the most sensitive data an organization holds, so an unencrypted connection exposes that data to passive interception.
-        - **Man-in-the-middle resistance:** TLS binds the connection to the cluster's certificate, so an attacker cannot transparently proxy or tamper with traffic between the application and the database.
-        - **Regulatory expectation:** Frameworks that govern regulated data require encryption of sensitive information whenever it crosses a network boundary, and database traffic is a primary carrier of that data.
+        Database connections carry authentication material on every session. Without TLS, usernames and passwords traverse the network in cleartext and can be captured by any host on the path, which turns a single passive observer into a permanent credential holder.
 
-        **Risk mitigation**
+        The payload is at least as valuable. Query results and writes often contain the most sensitive data an organization holds, so an unencrypted connection exposes that data to the same passive interception, continuously and without leaving a trace.
 
-        - **Interception prevention:** An encrypted connection ensures that a network observer captures only ciphertext, keeping credentials and records confidential end to end.
-        - **Integrity assurance:** TLS detects tampering in flight, so an attacker cannot silently modify queries or responses between the client and the cluster.
+        TLS also binds the connection to the cluster's certificate, so an attacker cannot transparently proxy the connection or tamper with queries and responses in flight. An encrypted session yields only ciphertext to a network observer and detects modification if one is attempted.
+
+        Frameworks that govern regulated data require encryption of sensitive information whenever it crosses a network boundary, and database traffic is a primary carrier of that data.
       audit: |
         ### Audit via Console
 
@@ -1768,18 +1769,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that any load balancer accepting inbound HTTP traffic has `redirectHttpToHttps` enabled, so clients are issued a 301 redirect to the HTTPS equivalent of their request. A load balancer that forwards HTTP without redirecting it allows plaintext sessions end-to-end.
+        This check verifies that a load balancer accepting HTTP traffic redirects it to HTTPS.
+
+        When a DigitalOcean load balancer has a forwarding rule with an HTTP entry protocol, the redirect setting decides whether clients are answered with a 301 to the HTTPS equivalent of their request or simply forwarded to the backend in plaintext. It appears as the redirect option on the load balancer's settings page in the DigitalOcean Cloud Control Panel and as `redirectHttpToHttps` on the load balancer object, or `redirect_http_to_https` in Terraform. A load balancer that forwards HTTP without redirecting it allows plaintext sessions end to end.
 
         **Why this matters**
 
-        - **Credential and session protection:** Plaintext HTTP exposes authentication tokens, session cookies, API keys, and form submissions to any host on the network path between the client and the load balancer.
-        - **Downgrade attack prevention:** Without an enforced redirect, a passive attacker can strip HTTPS by intercepting the initial HTTP request before the client has a chance to use HTTPS.
-        - **Client guidance:** A 301 redirect updates bookmarks and caches so clients use HTTPS for all future requests, not only when they happen to type the HTTPS URL.
+        Plaintext HTTP exposes authentication tokens, session cookies, API keys, and form submissions to any host on the network path between the client and the load balancer. Everything the application treats as a secret is readable in transit, and the backend has no way to tell that it was.
 
-        **Risk mitigation**
+        Without an enforced redirect, an attacker positioned on that path can also strip HTTPS by intercepting the initial HTTP request before the client ever gets the chance to upgrade, so the client never sees a certificate error and never learns the session was downgraded.
 
-        - **Transport encryption enforcement:** Redirecting HTTP to HTTPS ensures all active sessions use TLS, so network-level interception cannot yield plaintext traffic.
-        - **Consistent TLS posture:** Enabling the redirect at the load balancer enforces HTTPS for every backend regardless of whether individual application components handle the redirect themselves.
+        A 301 is a permanent redirect, so it updates bookmarks and caches and moves clients to HTTPS for all future requests rather than only for the requests where they happened to type the HTTPS URL.
+
+        Enabling the redirect at the load balancer ensures every active session uses TLS and enforces HTTPS for every backend behind it, regardless of whether individual application components implement the redirect themselves. Pair it with HSTS at the application so even the first request in a session avoids the plaintext round trip.
       audit: |
         ### Audit via Console
 
@@ -1913,18 +1915,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that any load balancer terminating TLS uses the `STRONG` minimum TLS cipher policy rather than the `DEFAULT` policy. The `STRONG` policy negotiates only TLS 1.2 and later with a restricted set of modern, forward-secret cipher suites, whereas the default policy permits a broader, weaker set for backward compatibility.
+        This check verifies that a load balancer terminating TLS enforces the strong cipher policy.
+
+        DigitalOcean load balancers offer two minimum TLS cipher policies. `DEFAULT` permits a broader, weaker set of protocol versions and cipher suites for backward compatibility; `STRONG` negotiates only TLS 1.2 and later with a restricted set of modern, forward-secret suites. The policy is chosen on the load balancer's settings page in the DigitalOcean Cloud Control Panel and set as `tls_cipher_policy` in the API. This check requires `STRONG` on any load balancer with an HTTPS or TLS entry protocol.
 
         **Why this matters**
 
-        - **Modern ciphers only:** The strong policy removes cipher suites that lack forward secrecy or rely on weaker primitives, so captured traffic cannot be decrypted later if a key is compromised.
-        - **Downgrade resistance:** Restricting the negotiable protocol versions and ciphers narrows the room an attacker has to force a client onto a weaker connection.
-        - **Compliance alignment:** Frameworks that require strong cryptography for data in transit are satisfied by the restricted policy but not by the permissive default.
+        The strong policy removes cipher suites that lack forward secrecy or rely on weaker primitives. Without forward secrecy, traffic captured today can be decrypted later by an adversary who eventually obtains the server key, so a recording made now stays valuable to an attacker indefinitely.
 
-        **Risk mitigation**
+        Restricting the negotiable protocol versions and cipher suites also narrows the room an attacker has to force a client onto a weaker connection than both ends could have agreed on, which is the mechanism behind protocol downgrade attacks.
 
-        - **Traffic interception:** Enforcing strong cipher suites keeps TLS sessions resistant to passive decryption and known cipher-level attacks.
-        - **Standards drift:** Pinning the load balancer to the strong policy prevents weak ciphers from being negotiated as client populations change over time.
+        Pinning the policy keeps that posture stable as the client population changes over time, rather than letting a permissive default quietly negotiate weak suites for whichever clients ask for them.
+
+        Frameworks that require strong cryptography for data in transit are satisfied by the restricted policy and not by the permissive default. Confirm that any legacy client which must reach the load balancer supports TLS 1.2 before switching, since the strong policy will refuse the ones that do not.
       audit: |
         ### Audit via Console
 
@@ -2055,18 +2058,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every load balancer is attached to a Virtual Private Cloud (VPC). By default, load balancers can be created without VPC association, which forces backend communication through public-facing addresses.
+        This check verifies that every load balancer is attached to a VPC.
+
+        A DigitalOcean load balancer can be created without a VPC association, in which case it must reach its backend Droplets over public-facing addresses. Attaching it to a VPC lets it forward to those backends on private IPs instead. The network is selected when the load balancer is created and recorded as its VPC UUID.
 
         **Why this matters**
 
-        - **Private backend connectivity:** A VPC-attached load balancer reaches its backend Droplets on private IPs, keeping intra-application traffic entirely within DigitalOcean's internal network.
-        - **Reduced public attack surface:** Without VPC attachment, the load balancer must communicate with backends using public endpoints, adding unnecessary internet-reachable addresses to the infrastructure.
-        - **Network segmentation:** Placing the load balancer and its backends in the same VPC enables other network controls such as private firewall rules and internal DNS resolution to function correctly.
+        A VPC-attached load balancer keeps intra-application traffic entirely within DigitalOcean's internal network. The forwarding hop from the balancer to the backend never leaves the private network, so hosts outside the VPC cannot intercept or interpose on it.
 
-        **Risk mitigation**
+        Without VPC attachment, that hop needs public endpoints on the backends, which adds internet-reachable addresses to the infrastructure for no reason other than to let two components in the same account talk to each other.
 
-        - **Traffic isolation:** VPC-internal load balancer to backend traffic cannot be intercepted by hosts outside the VPC, eliminating the risk of man-in-the-middle attacks on the internal forwarding path.
-        - **Segmentation enforcement:** VPC membership allows firewall rules to reference the VPC as a trusted source, making it straightforward to allow only load-balancer-originated traffic to backend ports.
+        Shared VPC membership also makes other network controls work as intended. Firewall rules can name the VPC as a trusted source, which is what allows backend ports to accept load-balancer-originated traffic and nothing else, and internal DNS resolution behaves consistently across the tier.
+
+        Because a load balancer's network is fixed at creation, an existing balancer outside the VPC must be replaced by one created inside it.
       audit: |
         ### Audit via Console
 
@@ -2185,18 +2189,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every DigitalOcean Kubernetes Service (DOKS) cluster has automatic patch upgrades enabled. By default, auto-upgrade is not enabled on new clusters, leaving patch application as a manual operator responsibility.
+        This check verifies that every DOKS cluster has automatic patch upgrades enabled.
+
+        DigitalOcean Kubernetes applies patch releases to the control plane and node components automatically when auto-upgrade is turned on, during the maintenance window configured for the cluster. New clusters do not have it enabled, so patch application is a manual operator responsibility by default. The setting is on the cluster's Settings tab in the DigitalOcean Cloud Control Panel and is `auto_upgrade` in the API.
 
         **Why this matters**
 
-        - **Patch gap closure:** Kubernetes control-plane and node components receive regular patch releases that fix security vulnerabilities; clusters without auto-upgrade accumulate unpatched CVEs during the window between disclosure and manual action.
-        - **Reduced operational burden:** Enabling auto-upgrade within a configured maintenance window removes the need for operators to track and manually apply each patch release, lowering the likelihood of a missed update.
-        - **Consistent security posture:** Auto-upgrade ensures all clusters in the account receive patches on a predictable schedule rather than depending on per-cluster manual follow-through.
+        Kubernetes control-plane and node components receive regular patch releases that fix security vulnerabilities. A cluster without auto-upgrade accumulates unpatched CVEs across the whole window between disclosure and the moment an operator notices and acts, and that window is as long as the team's spare attention allows.
 
-        **Risk mitigation**
+        Automating the upgrade removes the operational step most likely to be delayed or skipped during periods of high workload. Operators no longer have to track and apply each patch release per cluster, which is the tracking failure that produces most of the gap in practice.
 
-        - **Exploit window reduction:** Automated patching closes known-exploited vulnerabilities within the maintenance window rather than leaving them open until an operator notices the available update.
-        - **Human error elimination:** Automating patch application removes the operational step most likely to be delayed or skipped during periods of high workload.
+        It also makes posture consistent across the account. Every cluster receives patches on the same predictable schedule rather than depending on per-cluster manual follow-through, so no cluster silently falls years behind its peers.
+
+        Set the maintenance window to a period the workload can absorb, and keep node pools sized so a rolling node replacement does not exhaust capacity.
       audit: |
         ### Audit via Console
 
@@ -2311,18 +2316,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every DOKS cluster runs Kubernetes version 1.30 or newer, staying within the three-minor-version support window that DigitalOcean maintains. Clusters on older minor versions no longer receive security patches from either the upstream Kubernetes community or DigitalOcean.
+        This check verifies that every DOKS cluster runs a Kubernetes minor version that is still supported.
+
+        Upstream Kubernetes supports only the latest three minor versions, and DigitalOcean aligns its own support window with that. This check requires version 1.30 or newer, the boundary of that window. The running version is shown on the cluster overview in the DigitalOcean Cloud Control Panel and returned by `doctl kubernetes cluster get`.
 
         **Why this matters**
 
-        - **Security patch availability:** Upstream Kubernetes supports only the latest three minor versions; clusters on older minors do not receive fixes for newly disclosed CVEs in cluster components.
-        - **Provider support boundary:** DigitalOcean aligns its support window with upstream; clusters outside that window may also lose access to critical managed-node updates and operational tooling.
-        - **CVE accumulation:** Running an unsupported minor means a growing list of publicly known vulnerabilities exists in the cluster with no patch available, increasing the exploitability of the environment over time.
+        A cluster on an older minor receives no fixes for newly disclosed CVEs in cluster components, because no upstream patch release targets it. The list of publicly known vulnerabilities present in the cluster grows continuously with nothing available to close them, which makes the environment more exploitable the longer it sits.
 
-        **Risk mitigation**
+        Falling outside the provider support boundary compounds this. Clusters beyond the window may also lose access to critical managed-node updates and operational tooling, so the node images stop advancing along with the control plane.
 
-        - **Restored patch coverage:** Upgrading to a supported minor version immediately restores the flow of security fixes from both the upstream community and DigitalOcean's managed node images.
-        - **Reduced exposure window:** Supported clusters can apply patch releases promptly, closing CVEs within days rather than leaving them permanently unaddressed.
+        Upgrading to a supported minor immediately restores the flow of security fixes from both the upstream community and DigitalOcean's managed node images, and it puts the cluster back in a position where patch releases can be applied within days rather than never.
+
+        Plan minor upgrades one step at a time and check the deprecated API removals for each hop, since a cluster that has fallen several minors behind may need workload changes before it can move.
       audit: |
         ### Audit via Console
 
@@ -2439,18 +2445,19 @@ queries:
       digitalocean.kubernetes.cluster.ssoEnabled == true
     docs:
       desc: |
-        This check ensures that every DOKS cluster has Single Sign-On (SSO) configured against an OIDC identity provider. Without SSO configured, cluster authentication relies entirely on static kubeconfig tokens with no identity-provider integration.
+        This check verifies that every DOKS cluster has Single Sign-On configured against an identity provider.
+
+        DOKS can authenticate cluster users through an OIDC identity provider rather than through the static tokens embedded in a downloaded kubeconfig. Until that integration is configured, static kubeconfig tokens are the only authentication path the cluster has. SSO is configured on the cluster's settings in the DigitalOcean Cloud Control Panel.
 
         **Why this matters**
 
-        - **Centralized identity management:** SSO configuration connects the cluster to an authoritative identity provider, enabling user lifecycle events such as offboarding to propagate to cluster access automatically.
-        - **MFA enablement:** Once SSO is configured, MFA policies defined in the identity provider apply to cluster authentication, raising the bar for credential-based attacks.
-        - **Access visibility:** IdP-integrated authentication creates an audit trail in the identity provider that shows who authenticated to the cluster and when, which static tokens do not provide.
+        Connecting the cluster to an authoritative identity provider is what lets user lifecycle events reach cluster access. Offboarding, group changes, and account suspensions propagate automatically instead of leaving a static token valid until someone remembers to rotate it on every cluster.
 
-        **Risk mitigation**
+        Once the integration exists, MFA policies defined in the identity provider apply to cluster authentication, which raises the bar for credential-based attacks well above what a bearer token in a file on a laptop provides.
 
-        - **Stale access prevention:** Identity-provider integration enables revoking a user's cluster access by deprovisioning their IdP account, without requiring separate kubeconfig rotation for each cluster.
-        - **Prerequisite for enforcement:** SSO must be configured before it can be required; establishing the integration is the necessary first step toward fully enforced IdP-based cluster authentication.
+        Identity-provider integration also creates an audit trail showing who authenticated to the cluster and when. Static tokens produce no such record, so there is nothing to review after an incident.
+
+        Configuring SSO is the necessary first step toward requiring it, since SSO must be configured before it can be enforced. Pair this check with the requirement that SSO be enforced, because a configured but optional integration leaves the static-token path fully usable.
       audit: |
         ### Audit via Console
 
@@ -2520,18 +2527,19 @@ queries:
       digitalocean.kubernetes.cluster.ssoRequired == true
     docs:
       desc: |
-        This check ensures that every DOKS cluster has SSO both configured and required for all cluster authentication, so that kubectl access is authenticated through the OIDC identity provider rather than through static tokens. Enabling SSO without requiring it leaves static-token paths active.
+        This check verifies that every DOKS cluster requires Single Sign-On for cluster authentication.
+
+        DOKS treats configuring SSO and requiring it as separate settings. When SSO is required, kubectl access must be authenticated through the OIDC identity provider and static kubeconfig tokens are no longer accepted. Enabling SSO without requiring it leaves those token paths active alongside it. The requirement is set on the cluster's settings in the DigitalOcean Cloud Control Panel.
 
         **Why this matters**
 
-        - **Static token elimination:** Requiring SSO disables static kubeconfig tokens as a valid authentication path, ensuring every user session is backed by a live IdP session that can be revoked.
-        - **Joiner/mover/leaver enforcement:** With SSO required, deprovisioning a user in the identity provider immediately revokes their cluster access without requiring separate kubeconfig rotation.
-        - **MFA coverage:** Required SSO ensures MFA policies in the IdP apply to every cluster authentication attempt, not only to users who happen to use the SSO flow voluntarily.
+        Requiring SSO eliminates static kubeconfig tokens as a valid authentication path, so every user session is backed by a live identity-provider session that can be revoked. A token file copied to a second laptop, a CI system, or a personal backup stops being a working credential.
 
-        **Risk mitigation**
+        That is what makes joiner, mover, and leaver processes effective for the cluster. Deprovisioning a user at the identity provider revokes their cluster access at the next kubectl session, closing the window in which a former employee or a compromised account retains access through a previously issued token, and doing so without separate kubeconfig rotation per cluster.
 
-        - **Revocation immediacy:** Revoking a user at the IdP takes effect at the next kubectl session, eliminating the window where a former employee or compromised account retains access via a pre-issued token.
-        - **Credential theft impact reduction:** Even if a static kubeconfig token is exfiltrated, required SSO prevents its use because the API server will not accept non-IdP-issued credentials.
+        Required SSO also makes MFA coverage complete rather than voluntary. The identity provider's policies apply to every authentication attempt against the cluster, not only to users who happen to choose the SSO flow. Even an exfiltrated kubeconfig token cannot be used, because the API server will not accept credentials the provider did not issue.
+
+        Confirm that automation reaching the API server has a supported identity before enforcing the requirement, so CI systems and controllers are migrated rather than broken.
       audit: |
         ### Audit via Console
 
@@ -2611,18 +2619,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every DigitalOcean Kubernetes (DOKS) cluster is deployed inside a Virtual Private Cloud (VPC). When a cluster is not assigned a VPC at creation time, its worker nodes communicate over the default network rather than an isolated private network boundary.
+        This check verifies that every DOKS cluster is deployed inside a VPC.
+
+        A DigitalOcean Kubernetes cluster is assigned a VPC at creation time. When none is chosen, the worker nodes communicate over the default network rather than an isolated private network boundary. The network is selected in the create flow and recorded as the cluster's VPC UUID.
 
         **Why this matters**
 
-        - **Network segmentation:** A VPC gives the cluster's worker nodes a private network boundary that contains intra-cluster and node-to-resource traffic instead of routing it across the shared default network.
-        - **Private connectivity:** VPC membership lets the cluster reach managed databases, Droplets, and load balancers in the same VPC over private IPs, keeping that traffic off public addresses.
-        - **Lateral movement containment:** A compromised node in a VPC-isolated cluster has a narrower reachable network than one on the default network, limiting how far an attacker can pivot.
+        A VPC gives the cluster's worker nodes a private network boundary that contains intra-cluster and node-to-resource traffic instead of routing it across the shared default network. Traffic that only ever needs to travel between nodes stays where it belongs.
 
-        **Risk mitigation**
+        VPC membership also lets the cluster reach managed databases, Droplets, and load balancers in the same VPC over private IPs, which keeps that traffic off public addresses and removes any need to publish those services publicly just so the cluster can consume them.
 
-        - **Reduced attack surface:** Keeping node-to-resource traffic on a private network removes the exposure window that arises when those connections traverse public interfaces.
-        - **Defense in depth:** VPC isolation supplements Kubernetes-level network policies and cloud firewalls, so a single misconfiguration in one layer does not immediately expose the cluster's internal traffic.
+        Containment matters most when a node is compromised. A node in a VPC-isolated cluster has a narrower reachable network than one on the default network, which limits how far an attacker who wins a container escape can pivot.
+
+        This supplements Kubernetes network policies and cloud firewalls rather than replacing them, so a misconfiguration in one layer does not immediately expose the cluster's internal traffic. Because the network cannot be changed after creation, a cluster outside a VPC must be rebuilt inside one.
       audit: |
         ### Audit via Console
 
@@ -2730,20 +2739,19 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-2-7
     docs:
       desc: |
-        This check ensures that no DigitalOcean Kubernetes (DOKS) cluster leaves its Kubernetes API server reachable from the public internet. The verdict combines the cluster's published control-plane endpoint with the control-plane firewall: the API server is internet-reachable unless the firewall is enabled and its allowed source addresses exclude `0.0.0.0/0` and `::/0`. When the firewall is disabled, the API server accepts connections from any internet host; when it is enabled but allows any address, the restriction is effectively removed. Correlating the endpoint with the firewall in a single reachability signal reports a cluster as exposed only when the API server is genuinely open, rather than flagging the firewall settings in isolation.
+        This check verifies that a DOKS cluster's Kubernetes API server is not reachable from the public internet.
+
+        The verdict combines the cluster's published control-plane endpoint with the control-plane firewall. The API server counts as internet-reachable unless that firewall is enabled and its allowed source addresses exclude `0.0.0.0/0` and `::/0`. When the firewall is disabled, the API server accepts connections from any internet host; when it is enabled but allows any address, the restriction is effectively removed. Correlating the endpoint with the firewall in a single reachability signal reports a cluster as exposed only when the API server is genuinely open, rather than flagging the firewall settings in isolation. Allowed sources are managed on the cluster's settings in the DigitalOcean Cloud Control Panel.
 
         **Why this matters**
 
-        - **The API server is the cluster's control surface:** Anyone who can reach the Kubernetes API server can attempt authentication, exploit an API-level vulnerability, or probe for misconfigurations that grant access to workloads and secrets.
-        - **Authentication is not the only layer:** Even with strong authentication, an internet-reachable API server remains a target for credential attacks and for any future flaw in the API server itself.
-        - **A scoped allowlist contains blast radius:** Restricting the API server to known administrative and CI/CD source ranges removes it from internet-wide scanning entirely.
+        The API server is the cluster's control surface. Anyone who can reach it can attempt authentication, exploit an API-level vulnerability, or probe for misconfigurations that grant access to workloads and to every secret the cluster holds.
 
-        **Risk mitigation**
+        Authentication is not the only layer that matters here. Even with strong authentication in place, an internet-reachable API server remains a standing target for credential attacks and for any future flaw in the API server itself, and neither of those requires defeating authentication first.
 
-        - **Cluster takeover:** Limiting which sources can reach the API server cuts off the primary network path an attacker would use to compromise the control plane.
-        - **Internet-wide scanning:** A firewalled API server is not discoverable by mass scanners probing for exposed Kubernetes endpoints.
+        A scoped allowlist contains the blast radius. Restricting the API server to known administrative and CI/CD source ranges removes it from internet-wide scanning entirely, so it is not discoverable by mass scanners probing for exposed Kubernetes endpoints, and it cuts off the primary network path to a control-plane takeover.
 
-        Administrative and CI/CD source ranges that legitimately need API access should be added to the allowed-address list rather than leaving the firewall open.
+        Add the administrative and CI/CD source ranges that legitimately need API access to the allowed-address list rather than leaving the firewall open or disabled.
       audit: |
         ### Audit via Console
 
@@ -2818,18 +2826,19 @@ queries:
       digitalocean.certificates.all(notAfter > time.now)
     docs:
       desc: |
-        This check ensures that no TLS certificate stored in DigitalOcean has passed its `notAfter` expiration date. Expired certificates break the chain of trust that clients use to verify server identity.
+        This check verifies that no TLS certificate stored in the account has passed its expiration date.
+
+        DigitalOcean holds the certificates that load balancers and CDN endpoints present to clients, each with a `notAfter` date after which it is no longer valid. An expired certificate breaks the chain of trust clients use to verify server identity. Certificates are listed under Settings then Security in the DigitalOcean Cloud Control Panel and with `doctl compute certificate list`.
 
         **Why this matters**
 
-        - **Trust chain breakage:** An expired certificate causes browsers and API clients to reject the TLS handshake, generating certificate warnings or hard failures that directly affect application availability.
-        - **Security warning fatigue:** Users trained to click through certificate warnings when an app expires may extend that behavior to legitimate man-in-the-middle attempts, where the same warning is the only defense signal.
-        - **API client failures:** Many API clients fail closed on expired certificates and abort the connection, causing cascading failures in dependent services and making an expired certificate both a security failure and an availability incident.
+        An expired certificate causes browsers and API clients to reject the TLS handshake, producing certificate warnings or hard failures that hit application availability directly. The service is running and correctly configured in every other respect, and it is still unreachable.
 
-        **Risk mitigation**
+        Users trained to click through certificate warnings when their own applications expire carry that habit elsewhere. The warning is the only defense signal a user gets against a genuine man-in-the-middle attempt, and routine expiry teaches them to dismiss it.
 
-        - **Continuous trust:** Keeping certificates valid ensures clients can establish authenticated, encrypted connections without operator intervention and without warning users to bypass security checks.
-        - **Monitoring prompt:** Catching expiration proactively via this check provides a remediation window before the certificate expires, avoiding both the security degradation and the availability incident.
+        Many API clients fail closed on an expired certificate and abort the connection outright, so a single expired certificate cascades into dependent services and becomes both a security failure and an availability incident at the same time.
+
+        Catching expiry in advance provides a remediation window before the certificate lapses and before either consequence lands. Prefer DigitalOcean's Let's Encrypt certificates, which renew without operator intervention, over custom uploads that depend on someone remembering the renewal date.
       audit: |
         ### Audit via Console
 
@@ -2923,18 +2932,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every CDN endpoint configured with a custom domain has a TLS certificate attached. A CDN endpoint on a custom domain without a certificate cannot terminate HTTPS for that domain, forcing clients to use HTTP or encounter certificate errors.
+        This check verifies that every CDN endpoint using a custom domain has a TLS certificate attached.
+
+        A DigitalOcean CDN endpoint fronting a Spaces bucket can be given a custom domain, but it can only terminate HTTPS for that domain if a certificate covering it is attached to the endpoint. Without one, clients reach the custom domain over HTTP or encounter certificate errors. The certificate is selected when the custom domain is configured on the endpoint in the DigitalOcean Cloud Control Panel.
 
         **Why this matters**
 
-        - **HTTPS capability:** Without a certificate, the CDN endpoint cannot serve the custom domain over HTTPS; clients either receive certificate errors or fall back to unencrypted HTTP.
-        - **Content injection risk:** HTTP-served CDN responses can be modified by any host on the network path between the user and the CDN, enabling content injection attacks against end users.
-        - **Credential and cookie exposure:** Users authenticating through a custom-domain CDN endpoint over HTTP expose their credentials and session cookies to anyone who can observe the traffic path.
+        Content served over HTTP from a CDN can be modified by any host on the network path between the user and the edge. That makes content injection straightforward against every visitor on a hostile network, and the injected content carries the authority of the custom domain.
 
-        **Risk mitigation**
+        Users who authenticate through a custom-domain CDN endpoint over HTTP expose their credentials and session cookies to anyone able to observe the traffic path, with no indication to them that anything is wrong.
 
-        - **Transport encryption:** Attaching a valid TLS certificate enables HTTPS termination at the CDN edge, ensuring all user traffic to the custom domain is encrypted from client to CDN.
-        - **Trust signal:** A valid certificate allows clients to verify the CDN endpoint's identity, preventing impersonation attacks that would otherwise succeed silently over HTTP.
+        A valid certificate also lets clients verify the endpoint's identity, which is what prevents an impersonation attempt from succeeding silently. Over plain HTTP there is nothing for the client to check.
+
+        Attach a certificate covering the custom domain and confirm the DNS record points at the endpoint, since a mismatch produces the same client-visible failure as having no certificate at all.
       audit: |
         ### Audit via Console
 
@@ -3045,18 +3055,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Spaces access key has at least one bucket grant defined, scoping the key to specific buckets and operations. A key with no grants has unrestricted account-level access to every Spaces bucket in the account.
+        This check verifies that every Spaces access key is scoped by at least one bucket grant.
+
+        A Spaces access key can be issued with grants naming the specific buckets and operations it may use. A key created with no grants carries unrestricted account-level access to every Spaces bucket in the account. Grants are set when the key is created, under Spaces Keys in the API section of the DigitalOcean Cloud Control Panel.
 
         **Why this matters**
 
-        - **Blast radius minimization:** An unscoped Spaces key that leaks provides full read and write access to every bucket in the account; grant-scoped keys limit the damage to exactly the bucket and permissions the key was issued for.
-        - **Least-privilege enforcement:** Each application or service that accesses Spaces should hold a key restricted to only the buckets and operations it requires, not an account-wide credential.
-        - **Credential compromise containment:** A scoped key accidentally committed to source control, logged by an application, or embedded in a binary exposes only the designated bucket, not the entire object storage environment.
+        An unscoped key that leaks provides full read and write access to every bucket in the account, so a single exposed string is a complete object-storage compromise. A grant-scoped key limits the damage to exactly the bucket and permissions it was issued for.
 
-        **Risk mitigation**
+        Keys leak in predictable ways: committed to source control, written to application logs, embedded in a shipped binary, captured in a CI job's environment. Scoping decides in advance how much any of those incidents is worth, which is the only decision still available once the key is already out.
 
-        - **Exfiltration scope limitation:** An attacker who obtains a scoped key can access only the granted buckets and operations, preventing full account data exfiltration through a single credential.
-        - **Audit and rotation granularity:** Scoped keys can be individually rotated or revoked for a specific integration without disrupting other services, enabling precise incident response.
+        Each application or service that touches Spaces should hold a key restricted to the buckets and operations it actually requires, rather than sharing an account-wide credential across everything that happens to need object storage.
+
+        Scoped keys are also individually rotatable. One integration's key can be revoked and reissued without disrupting other services, which is what makes precise incident response possible instead of a coordinated fleet-wide rotation.
       audit: |
         ### Audit via Console
 
@@ -3170,19 +3181,21 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Spaces bucket is publicly reachable. The runtime verdict combines every path to public access into one signal: an ACL grant to the `AllUsers` or `AuthenticatedUsers` group, a bucket policy that allows the wildcard `*` principal, and whether block-public-access actually neutralizes those grants. A bucket is reported public only when a grant exists and public access is not fully blocked, so a bucket made public through its policy is caught even when its ACL looks private. DigitalOcean Spaces is S3-compatible, so the same `public-read` ACL and wildcard-policy semantics as Amazon S3 apply, and the `AuthenticatedUsers` group covers every account on the platform rather than only this one, which is why it counts as public.
+        This check verifies that no Spaces bucket is publicly readable.
+
+        The runtime verdict combines every path to public access into one signal: an ACL grant to the `AllUsers` or `AuthenticatedUsers` group, a bucket policy that allows the wildcard `*` principal, and whether block-public-access actually neutralizes those grants. A bucket is reported public only when a grant exists and public access is not fully blocked, so a bucket made public through its policy is caught even when its ACL looks private. DigitalOcean Spaces is S3-compatible, so the same `public-read` ACL and wildcard-policy semantics as Amazon S3 apply, and the `AuthenticatedUsers` group covers every account on the platform rather than only this one, which is why it counts as public.
 
         **Why this matters**
 
-        - **Unauthenticated exposure:** A `public-read` bucket allows any client to enumerate object keys and download contents over the predictable `https://<bucket>.<region>.digitaloceanspaces.com/` URL pattern, requiring no DigitalOcean account or credentials.
-        - **Accidental data leak:** Buckets created for development or one-off asset hosting commonly inherit `public-read` and accumulate logs, backups, customer uploads, or build artifacts that were never reviewed for public release.
-        - **Compliance breach:** Frameworks that govern customer data, PII, or cardholder data prohibit storage in world-readable locations; a single `public-read` Spaces bucket creates an audit finding regardless of bucket contents.
-        - **Crawler and indexing exposure:** Search engines and security scanners actively index publicly readable Spaces buckets, increasing the speed at which leaked content is discovered and reused.
+        A `public-read` bucket lets any client enumerate object keys and download contents over the predictable `https://<bucket>.<region>.digitaloceanspaces.com/` URL pattern, with no DigitalOcean account and no credentials required. Discovery is trivial because the URL is derived from the bucket name and region.
 
-        **Risk mitigation**
+        Buckets created for development or one-off asset hosting commonly inherit `public-read` and then accumulate logs, backups, customer uploads, and build artifacts that nobody ever reviewed for public release. The exposure grows silently long after the decision that caused it.
 
-        - **Authenticated access only:** Removing the anonymous `READ` grant forces every retrieval through Spaces access keys or pre-signed URLs, restoring auditability and access control.
-        - **CDN-fronted distribution:** When content genuinely needs to be public, serving it through a DigitalOcean CDN endpoint or a custom signed-URL pattern provides rate limiting, access logs, and revocation that the raw bucket URL cannot.
+        Search engines and security scanners actively index publicly readable Spaces buckets, so the interval between a bucket becoming public and its contents being discovered and reused by others is short.
+
+        Frameworks that govern customer data, personal information, or cardholder data prohibit storage in world-readable locations, so a single `public-read` bucket produces an audit finding regardless of what it contains.
+
+        Removing the anonymous `READ` grant forces every retrieval through Spaces access keys or pre-signed URLs, restoring both auditability and access control. Where content genuinely needs to be public, serve it through a DigitalOcean CDN endpoint or a signed-URL pattern, which provide the rate limiting, access logs, and revocation that a raw bucket URL cannot.
       audit: |
         ### Audit via Console
 
@@ -3298,19 +3311,19 @@ queries:
       digitalocean.spacesBucket.publicWriteAcl == false
     docs:
       desc: |
-        This check ensures that no Spaces bucket grants the `WRITE` permission to the `AllUsers` group. An anonymously writable bucket lets any unauthenticated caller upload, overwrite, or delete objects, turning the bucket into a free hosting and laundering point for malicious payloads.
+        This check verifies that no Spaces bucket grants anonymous write access.
+
+        An ACL granting the `WRITE` permission to the `AllUsers` group, expressed as the `public-read-write` canned ACL, lets any unauthenticated caller upload, overwrite, or delete objects in the bucket. The ACL is set on the bucket's settings in the DigitalOcean Cloud Control Panel or through the S3-compatible API.
 
         **Why this matters**
 
-        - **Malicious content hosting:** Writable buckets are routinely abused to stage phishing pages, malware downloads, and command-and-control payloads under a legitimate-looking domain that customers and security tools may trust.
-        - **Object replacement and tampering:** An attacker who can write the bucket can overwrite legitimate assets (configuration files, JavaScript bundles, signed artifacts) and serve modified versions to every consumer.
-        - **Billing and quota abuse:** Anonymous writes accumulate uncontrolled storage and bandwidth charges that are billed to the bucket owner; high-volume abuse can also push the account against service quotas.
-        - **No legitimate use case:** Unlike `public-read`, which has legitimate static-hosting patterns, `public-read-write` essentially has no defensible reason to exist on a production bucket; its presence is almost always a misconfiguration.
+        Writable buckets are routinely abused to stage phishing pages, malware downloads, and command-and-control payloads under a legitimate-looking domain that the owner's customers and security tools may already trust. The bucket becomes free hosting and a laundering point for someone else's campaign.
 
-        **Risk mitigation**
+        An attacker who can write the bucket can also overwrite what is already there. Configuration files, JavaScript bundles, and signed artifacts can be replaced with modified versions served to every consumer, which turns the bucket into a supply-chain foothold rather than an unwanted upload target.
 
-        - **Authenticated writes only:** Removing the anonymous `WRITE` grant forces every upload through Spaces access keys or pre-signed URLs, restoring accountability.
-        - **Per-object policies:** When third parties must upload content, gate the workflow through short-lived pre-signed PUT URLs issued by application code instead of a permanently writable bucket.
+        Anonymous writes accumulate storage and bandwidth charges billed to the bucket owner, and high-volume abuse can push the account against its service quotas, so the incident has a direct cost even before anything malicious is served.
+
+        Unlike `public-read`, which at least supports legitimate static-hosting patterns, `public-read-write` has no defensible reason to exist on a production bucket; its presence is almost always a misconfiguration. Removing the anonymous `WRITE` grant forces every upload through Spaces access keys and restores accountability, and where third parties must upload content the workflow should be gated through short-lived pre-signed PUT URLs issued by application code.
       audit: |
         ### Audit via Console
 
@@ -3385,19 +3398,19 @@ queries:
       digitalocean.spacesBucket.encryptionEnabled
     docs:
       desc: |
-        This check ensures that every Spaces bucket has a default server-side encryption configuration set. When default encryption is configured, every object written to the bucket is encrypted at rest by the platform, removing the need for clients to remember to apply per-request encryption.
+        This check verifies that every Spaces bucket has a default server-side encryption configuration.
+
+        When default encryption is configured on a bucket, the platform encrypts every object written to it at rest, without the client having to request encryption on each call. The configuration is applied to the bucket through the S3-compatible API.
 
         **Why this matters**
 
-        - **Encryption-at-rest guarantee:** Without a default encryption configuration, individual `PutObject` callers can write unencrypted objects whenever they forget the per-request encryption header, leaving sensitive data on disk in plaintext.
-        - **Defense in depth:** Bucket-level default encryption is the last line of defense if access controls fail and an attacker gains read access to underlying storage media or backups.
-        - **Audit and compliance evidence:** Frameworks that mandate encryption at rest expect a single platform-enforced control rather than a per-call discipline that depends on developer behavior.
-        - **Lifecycle and replication safety:** Objects produced by lifecycle transitions, replication, and multipart uploads inherit the bucket default; without a configured default these derived objects also land unencrypted.
+        Without a default, encryption depends on every caller remembering the per-request encryption header on every `PutObject`. One client that forgets, or one script written before the convention existed, leaves sensitive data sitting on disk in plaintext, and nothing in the write path objects.
 
-        **Risk mitigation**
+        Derived objects make this worse. Objects produced by lifecycle transitions, replication, and multipart uploads inherit the bucket default, so without one configured those objects also land unencrypted even when the original write was handled correctly.
 
-        - **Plaintext-on-disk prevention:** A bucket with default encryption configured encrypts every new object server-side, so a future media exposure does not equal a content exposure.
-        - **Operational simplicity:** Centralising the encryption decision at the bucket removes the per-call configuration burden from every client SDK and CI pipeline.
+        Encryption at rest is the last line of defense if access controls fail and an attacker reaches the underlying storage media or a backup of it. With a bucket default in place, a future media exposure does not automatically become a content exposure.
+
+        Frameworks that mandate encryption at rest expect a single platform-enforced control rather than a per-call discipline that depends on developer behavior, and centralizing the decision at the bucket removes the configuration burden from every client SDK and CI pipeline.
       audit: |
         ### Audit via Console
 
@@ -3481,19 +3494,19 @@ queries:
       digitalocean.spacesBucket.publicAccessBlocked
     docs:
       desc: |
-        This check ensures that every Spaces bucket has the Public Access Block fully enabled, so that no ACL or bucket policy can grant public access regardless of how it is written. The Public Access Block is a bucket-level guardrail that blocks public ACLs, blocks public bucket policies, ignores any public ACLs already present, and restricts public bucket policies. By default a bucket has no Public Access Block, so a single misconfigured ACL or policy can expose its contents to the entire internet.
+        This check verifies that every Spaces bucket has the Public Access Block fully enabled.
+
+        The Public Access Block is a bucket-level guardrail with four parts: it blocks public ACLs, blocks public bucket policies, ignores any public ACLs already present, and restricts public bucket policies. With all four in force, no ACL or bucket policy can grant public access regardless of how it is written. A bucket has no Public Access Block by default, so a single misconfigured ACL or policy can expose its contents to the entire internet. The guardrail is applied to the bucket through the S3-compatible API.
 
         **Why this matters**
 
-        - **Defense against accidental exposure:** The Public Access Block overrides any public grant, so a developer mistake in an ACL or policy cannot silently make objects world-readable or world-writable.
-        - **Single enforceable guardrail:** Rather than auditing every ACL and policy for public principals, one bucket-level control makes public access structurally impossible.
-        - **Protection from policy drift:** Automation, third-party tools, or console changes can reintroduce a public grant over time; the Public Access Block neutralizes them all until it is explicitly removed.
-        - **Data breach prevention:** Publicly readable object storage is one of the most common sources of large-scale data leaks, and a writable bucket lets attackers stage malware or ransom the contents.
+        The block overrides any public grant, so a developer mistake in an ACL or a policy cannot silently make objects world-readable or world-writable. It converts a whole class of misconfiguration from an exposure into a no-op.
 
-        **Risk mitigation**
+        It also replaces continuous review with a single enforceable control. Rather than auditing every ACL and every policy statement for public principals, one bucket-level guardrail makes public access structurally impossible, which shrinks the surface an auditor must keep verifying.
 
-        - **Exposure containment:** With the Public Access Block enabled, an errant public ACL or policy has no effect, so the bucket's contents remain private even under misconfiguration.
-        - **Reduced audit burden:** A single passing guardrail replaces per-object and per-policy review, shrinking the surface an auditor must continuously verify.
+        Public grants get reintroduced over time by automation, third-party tools, and console changes, and the block neutralizes all of them until it is explicitly removed. That removal is a visible, auditable act, unlike the quiet drift it prevents.
+
+        Publicly readable object storage is one of the most common sources of large-scale data leaks, and a writable bucket lets attackers stage malware or ransom the contents, so this guardrail is worth enabling on every bucket that is not deliberately serving public content.
       audit: |
         ### Audit via Console
 
@@ -3582,19 +3595,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Spaces bucket has object versioning enabled. Versioning preserves every revision of an object — including deletions, which become delete markers — so that accidental overwrites or ransomware-style mass deletes can be reversed by reading the prior version.
+        This check verifies that every Spaces bucket has object versioning enabled.
+
+        Versioning preserves every revision of an object rather than replacing it, and a deletion becomes a delete marker over the retained versions instead of destroying them. Accidental overwrites and ransomware-style mass deletes can then be reversed by reading the prior version. Versioning is turned on in the bucket's settings in the DigitalOcean Cloud Control Panel or through the S3-compatible API.
 
         **Why this matters**
 
-        - **Accidental overwrite recovery:** A misconfigured deployment that pushes an empty file to the wrong key still leaves the previous version recoverable, turning what would be a data-loss incident into a roll-back.
-        - **Ransomware containment:** Attackers who obtain Spaces credentials and re-encrypt the contents of a bucket cannot remove the prior versions with a simple `DELETE`; versioned buckets force them to also issue per-version deletes, slowing exfiltration and increasing forensic evidence.
-        - **Auditability of changes:** Versioning provides a tamper-resistant record of every change to an object, which downstream compliance evidence and incident response rely on.
-        - **Replication and lifecycle dependencies:** Cross-region replication and certain lifecycle transitions on S3-compatible storage require versioning to be enabled; turning it on early avoids re-architecting later.
+        A misconfigured deployment that pushes an empty file to the wrong key still leaves the previous version recoverable, which turns what would be a data-loss incident into a rollback. Single-object recovery becomes a `GET` of the prior version rather than a restore from external backups.
 
-        **Risk mitigation**
+        Versioning also slows credential abuse. An attacker who obtains Spaces credentials and re-encrypts the contents of a bucket cannot remove the prior versions with a simple `DELETE`; they are forced to issue per-version deletes, which takes longer, slows exfiltration, and leaves substantially more forensic evidence behind. The operator can roll forward to the prior versions while the leaked key is rotated.
 
-        - **Data-loss recovery:** Enabling versioning means that single-object recovery is a `GET` of the prior version rather than a restore from external backups.
-        - **Defense against credential abuse:** A leaked write-capable key cannot quietly empty the bucket; the operator can roll forward to the prior versions while the credential is rotated.
+        The version history is additionally a tamper-resistant record of every change to an object, which downstream compliance evidence and incident response both rely on.
+
+        Cross-region replication and certain lifecycle transitions on S3-compatible storage require versioning to be enabled, so turning it on early avoids re-architecting later. Pair it with a lifecycle rule that expires noncurrent versions so the retained history does not grow without bound.
       audit: |
         ### Audit via Console
 
@@ -3709,18 +3722,19 @@ queries:
       digitalocean.spacesBucket.authenticatedReadAcl == false
     docs:
       desc: |
-        This check ensures that no Spaces bucket grants the `READ` permission to the `AuthenticatedUsers` group. In the S3-compatible ACL model that DigitalOcean Spaces implements, `AuthenticatedUsers` is not limited to the bucket owner's account — it covers every authenticated S3-compatible principal, including any DigitalOcean or AWS account on the internet. A bucket with this grant is effectively listable and readable by anyone willing to authenticate.
+        This check verifies that no Spaces bucket grants read access to the `AuthenticatedUsers` group.
+
+        In the S3-compatible ACL model that Spaces implements, `AuthenticatedUsers` is not limited to the bucket owner's account. It is satisfied by any authenticated S3-compatible principal, including any DigitalOcean or AWS account on the internet. A bucket carrying the `authenticated-read` grant is therefore listable and readable by anyone willing to authenticate at all. The ACL is set on the bucket's settings in the DigitalOcean Cloud Control Panel or through the S3-compatible API.
 
         **Why this matters**
 
-        - **Near-public exposure:** The `AuthenticatedUsers` group is satisfied by any valid S3-compatible credential, so an `authenticated-read` grant exposes object listings and contents to essentially the entire authenticated internet, not to a trusted subset.
-        - **Misleading ACL label:** Operators often read `authenticated-read` as "only my account," when it actually means "any authenticated account," making it a quietly over-permissive setting that survives review.
-        - **Data leak path:** Logs, backups, and uploads accumulated in such a bucket are reachable by outside accounts without any per-bucket authorization, the same exposure class as a fully public bucket but harder to spot.
+        Because any valid S3-compatible credential satisfies the group, an `authenticated-read` grant exposes object listings and contents to essentially the entire authenticated internet rather than to a trusted subset. Creating an account is not a barrier.
 
-        **Risk mitigation**
+        The label is what makes this dangerous. Operators read `authenticated-read` as meaning only their own account, when it means any authenticated account, so the setting survives review by looking like the restrictive option it is named after.
 
-        - **Owner-scoped access:** Removing the `AuthenticatedUsers` grant restores access to the bucket owner and explicitly granted principals only, forcing all other retrieval through scoped Spaces access keys or pre-signed URLs.
-        - **Reviewable intent:** A private bucket ACL makes any future grant an explicit, auditable decision rather than a label that hides cross-account reach.
+        The practical result is the same exposure class as a fully public bucket, applied to the logs, backups, and uploads that accumulate in it, but harder to spot because neither the ACL name nor a casual console glance suggests anything is open.
+
+        Removing the `READ` grant restores access to the bucket owner and explicitly granted principals only, forcing all other retrieval through scoped Spaces access keys or pre-signed URLs, and it makes any future grant an explicit, auditable decision rather than a label that hides cross-account reach.
       audit: |
         ### Audit via Console
 
@@ -3793,18 +3807,19 @@ queries:
       digitalocean.spacesBucket.hasWildcardPolicy == false
     docs:
       desc: |
-        This check ensures that no Spaces bucket policy contains an `Allow` statement whose `Principal` is the anonymous wildcard `"*"`. A bucket policy is evaluated independently of the bucket ACL, so a policy that allows `"*"` grants unauthenticated access to every caller even when the ACL is private. This is the bucket-policy counterpart to the ACL-based public-read and public-write checks.
+        This check verifies that no Spaces bucket policy grants access to the anonymous wildcard principal.
+
+        A bucket policy is a JSON document evaluated independently of the bucket ACL. An `Allow` statement whose `Principal` is the wildcard `"*"` grants unauthenticated access to every caller, even when the ACL on the same bucket is private. This is the bucket-policy counterpart to the ACL-based public-read and public-write checks. The policy is set on the bucket through the S3-compatible API.
 
         **Why this matters**
 
-        - **ACL-independent exposure:** Access controls on Spaces come from both the ACL and the bucket policy; a wildcard-principal policy statement opens the bucket to anyone regardless of how restrictive the ACL is.
-        - **Broad action grants:** Policy statements often grant `s3:GetObject`, `s3:ListBucket`, or `s3:*`; with `Principal: "*"` these actions become available to the entire internet without credentials.
-        - **Easy to overlook:** Because the policy is a separate JSON document from the ACL, a public policy can be present on a bucket whose ACL review came back clean, leaving a gap that ACL-only checks miss.
+        Access to a Spaces bucket comes from both the ACL and the bucket policy, so a wildcard-principal statement opens the bucket to anyone regardless of how restrictive the ACL is. Tightening the ACL alone does not close it.
 
-        **Risk mitigation**
+        Policy statements typically grant `s3:GetObject`, `s3:ListBucket`, or `s3:*`. With `Principal: "*"` those actions become available to the entire internet without credentials, and in the case of `s3:*` that includes writing and deleting as well as reading.
 
-        - **Principal scoping:** Replacing `"*"` with specific account or Spaces-key principals confines policy-granted access to known identities.
-        - **Layered review:** Auditing the policy alongside the ACL closes the most common path by which a bucket ends up effectively public despite a private ACL.
+        This is easy to overlook precisely because the policy is a separate document from the ACL. A bucket whose ACL review came back clean can still be fully public through its policy, leaving a gap that an ACL-only audit never sees.
+
+        Replace `"*"` with the specific account or Spaces-key principals that need access, and audit the policy alongside the ACL so the two are never reviewed in isolation. Enabling the Public Access Block additionally neutralizes a public policy if one is reintroduced.
       audit: |
         ### Audit via Console
 
@@ -3881,18 +3896,19 @@ queries:
       digitalocean.spacesBucket.mfaDeleteEnabled == true
     docs:
       desc: |
-        This check ensures that every Spaces bucket requires multi-factor authentication to permanently delete object versions or to suspend versioning. MFA delete hardens a versioned bucket so that a leaked or compromised access key alone cannot erase the retained version history that versioning is meant to protect.
+        This check verifies that every Spaces bucket requires multi-factor authentication to delete object versions.
+
+        MFA delete hardens a versioned bucket so that permanently removing an object version, or suspending versioning altogether, requires a second factor in addition to the access key. It is configured on the bucket's versioning settings through the S3-compatible API.
 
         **Why this matters**
 
-        - **Tamper resistance for backups:** Object versioning preserves prior revisions, but without MFA delete a single compromised key can still issue per-version deletes; MFA delete forces a second factor before any version is permanently removed.
-        - **Ransomware and insider resilience:** Requiring an MFA code to delete versions or disable versioning closes the path by which an attacker with stolen credentials destroys the recovery copies before exfiltration or extortion.
-        - **Defense in depth for retention:** MFA delete complements versioning and lifecycle retention, ensuring the controls that guarantee recoverability cannot be silently undone with key access alone.
+        Object versioning preserves prior revisions, but on its own it only slows an attacker down: a single compromised key can still issue per-version deletes until nothing is left. MFA delete forces a second factor before any version is permanently removed, which is the difference between slowing the destruction and preventing it.
 
-        **Risk mitigation**
+        That closes the path by which an attacker with stolen credentials destroys the recovery copies before exfiltration or extortion. With MFA delete enabled, the version history remains available for recovery even after a write-capable key is compromised, and the same protection applies to a destructive insider.
 
-        - **Protected version history:** With MFA delete enabled, the version history remains available for recovery even if a write-capable key is compromised.
-        - **Higher bar for destructive actions:** The second factor requirement means permanently destructive operations require interactive, authenticated action rather than an automated API call with a leaked key.
+        It also protects the controls themselves. Suspending versioning is a version-level operation, so MFA delete prevents the guarantees that make the bucket recoverable from being silently undone with key access alone.
+
+        Requiring a second factor means destructive operations demand interactive, authenticated action rather than an automated API call, so confirm that no pipeline depends on programmatic version deletion before enabling it.
       audit: |
         ### Audit via Console
 
@@ -3969,18 +3985,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Spaces bucket has a CORS rule whose allowed origins include the wildcard `"*"`. A wildcard origin lets any website instruct a visitor's browser to issue cross-origin requests against the bucket, weakening the same-origin protections that normally isolate web applications from each other.
+        This check verifies that no Spaces bucket allows all origins in its CORS rules.
+
+        A CORS rule tells the browser which web origins may issue cross-origin requests against the bucket and read the responses. An allowed-origins list containing the wildcard `"*"` grants that permission to every website. CORS rules are configured on the bucket's settings in the DigitalOcean Cloud Control Panel or through the S3-compatible API, and each rule's allowed origins should name specific scheme-and-host front ends.
 
         **Why this matters**
 
-        - **Cross-origin data reach:** A `"*"` allowed origin permits scripts on any site to read responses from the bucket in the browser context, which can expose objects intended only for a specific application's front end.
-        - **Credentialed request risk:** Combined with permissive methods, a wildcard origin broadens the set of sites that can drive authenticated browser requests against the bucket, expanding the surface for cross-site abuse.
-        - **Overly broad by default:** Wildcard origins are frequently copied from quick-start examples and left in place, granting far wider browser access than the single front-end domain the bucket actually serves.
+        A `"*"` allowed origin permits scripts on any site to read responses from the bucket in a visitor's browser context. Objects intended only for one application's front end become readable by any page the user happens to have open, weakening exactly the same-origin protections that normally isolate web applications from each other.
 
-        **Risk mitigation**
+        Combined with permissive methods, a wildcard origin also broadens the set of sites that can drive credentialed browser requests against the bucket on a visitor's behalf, expanding the surface for cross-site abuse rather than merely widening read access.
 
-        - **Origin allowlisting:** Restricting allowed origins to the specific scheme-and-host front ends that need browser access confines cross-origin requests to trusted applications.
-        - **Least-privilege CORS:** Pairing a narrow origin list with only the required methods and headers keeps the bucket's browser-accessible surface limited to its intended use.
+        Wildcard origins are frequently copied from quick-start examples and left in place, so the bucket ends up granting far wider browser access than the single front-end domain it actually serves, without anyone having decided to.
+
+        Restrict allowed origins to the specific front ends that need browser access, and pair that narrow list with only the methods and headers those front ends require.
       audit: |
         ### Audit via Console
 
@@ -4100,18 +4117,19 @@ queries:
       digitalocean.apps.where(liveUrl != "").all(liveUrl == /^https:\/\//)
     docs:
       desc: |
-        This check ensures that every DigitalOcean App Platform application with a public live URL serves requests over HTTPS. App Platform automatically provisions managed TLS certificates for app URLs, so an HTTP live URL indicates a misconfigured custom domain or an incorrectly deployed application.
+        This check verifies that every App Platform application with a public live URL serves requests over HTTPS.
+
+        App Platform automatically provisions managed TLS certificates for application URLs, so an app's live URL should always begin with `https://`. An HTTP live URL indicates a misconfigured custom domain or an incorrectly deployed application. The live URL is shown on the app's overview in the DigitalOcean Cloud Control Panel and returned by `doctl apps get`.
 
         **Why this matters**
 
-        - **Request and response protection:** An app served over HTTP exposes every request and response to interception and modification, including authentication flows, session tokens, and API payloads.
-        - **Managed TLS availability:** App Platform provides managed TLS certificates for all `ondigitalocean.app` URLs at no additional cost, so there is no technical barrier to serving apps over HTTPS.
-        - **Misconfiguration signal:** An HTTP live URL is a reliable indicator of a custom domain configuration error that, if uncorrected, will also prevent certificate issuance for that domain.
+        An app served over HTTP exposes every request and response to interception and modification, including authentication flows, session tokens, and API payloads. Session cookies captured this way can be replayed to impersonate an authenticated user, and the application has no way to detect it.
 
-        **Risk mitigation**
+        There is no technical barrier to fixing this. App Platform provides managed TLS certificates for all `ondigitalocean.app` URLs at no additional cost, so an HTTP live URL is never a cost or complexity trade-off.
 
-        - **Eavesdropping prevention:** HTTPS ensures all traffic between end users and the App Platform edge is encrypted, removing the ability for passive network observers to read application data.
-        - **Session hijacking prevention:** Serving session cookies and authentication tokens only over HTTPS prevents them from being captured by network-level attackers and reused to impersonate authenticated users.
+        It is also a reliable indicator of a custom domain configuration error. The same misconfiguration that leaves the live URL on HTTP will usually prevent certificate issuance for that domain, so the finding points at a problem that will not resolve itself.
+
+        Correct the custom domain's DNS records so the certificate can be issued, and confirm the application does not construct absolute HTTP URLs of its own once the certificate is in place.
       audit: |
         ### Audit via Console
 
@@ -4205,18 +4223,19 @@ queries:
       digitalocean.latestSecurityScan != null && digitalocean.latestSecurityScan.findings.none(severity == "critical")
     docs:
       desc: |
-        This check ensures that a DigitalOcean managed security scan has run and that its most recent results report no findings with a severity of `critical`. The DigitalOcean security scanner inspects account resources for misconfigurations and weaknesses; a critical finding represents a vulnerability that should be remediated promptly.
+        This check verifies that the account's most recent DigitalOcean security scan reports no critical findings.
+
+        The DigitalOcean managed security scanner inspects account resources for misconfigurations and weaknesses and assigns each finding a severity. This check requires that a scan has run at all and that its latest results contain no finding at `critical` severity. Scan results are reviewed in the security section of the DigitalOcean Cloud Control Panel.
 
         **Why this matters**
 
-        - **Vulnerability visibility:** A critical finding flags a concrete, high-severity weakness in the account's resources that an attacker could exploit.
-        - **Scan coverage:** The absence of any scan means the account has no automated assurance that its resources have been assessed for known weaknesses.
-        - **Remediation tracking:** Resolving critical findings and keeping the latest scan clean demonstrates that high-severity issues are being addressed rather than accumulating.
+        A critical finding names a concrete, high-severity weakness in the account's resources that an attacker could exploit. It is not a generic recommendation; it is the platform reporting something specific that is wrong right now.
 
-        **Risk mitigation**
+        The absence of any scan is its own problem. An account that has never been scanned has no automated assurance that its resources have been assessed for known weaknesses, so a clean posture and an unassessed one are indistinguishable without that distinction being made.
 
-        - **Reduced exposure window:** Promptly clearing critical findings limits the time a known weakness remains exploitable.
-        - **Continuous assurance:** Keeping a recent, clean scan provides ongoing evidence that the account's posture has been evaluated.
+        Clearing critical findings promptly limits the time a known weakness remains exploitable, and keeping the latest scan clean is ongoing evidence that high-severity issues are being resolved rather than accumulating behind a growing backlog.
+
+        Treat this as a complement to the specific configuration checks in this policy rather than a substitute, since the scanner and the policy cover overlapping but different ground.
       audit: |
         ### Audit via Console
 
@@ -4272,19 +4291,19 @@ queries:
       digitalocean.gradientai.agent.deploymentVisibility != "VISIBILITY_PUBLIC"
     docs:
       desc: |
-        This check ensures that no GradientAI agent is deployed with public visibility. An agent deployed with `VISIBILITY_PUBLIC` exposes its chat endpoint to anyone with the URL, with no authentication, allowing unauthenticated users to interact with the agent and the data and tools it can reach.
+        This check verifies that no GradientAI agent is deployed with public visibility.
+
+        An agent's deployment visibility controls who can reach its chat endpoint. Deployed as `VISIBILITY_PUBLIC`, that endpoint is open to anyone with the URL and requires no authentication, so unauthenticated users can interact with the agent and with the data and tools it can reach. Visibility is set on the agent's deployment settings in the DigitalOcean Cloud Control Panel.
 
         **Why this matters**
 
-        - **Unauthenticated access:** A public agent can be queried by anyone on the internet, exposing its system prompt behavior, connected knowledge bases, and any functions it can call.
-        - **Data leakage:** Agents grounded on private knowledge bases can surface that content to anonymous users when deployed publicly.
-        - **Abuse and cost:** Public agents are subject to unrestricted prompting, enabling prompt-injection attempts and consumption-driven cost abuse.
+        A public agent can be queried by anyone on the internet. That exposes its system prompt behavior, the connected knowledge bases it is grounded on, and any functions it is permitted to call, all through an interface designed to be helpful to whoever is asking.
 
-        **Risk mitigation**
+        Agents grounded on private knowledge bases will surface that content to anonymous users, because retrieval happens at query time on the caller's behalf. The knowledge base does not have to be public for its contents to leave through a public agent.
 
-        - **Restrict visibility:** Deploy agents with private or organization-scoped visibility so only authenticated principals can reach them.
-        - **Front with authentication:** Where external access is required, place the agent behind an authenticating proxy or application rather than exposing it directly.
-        - **Review guardrails:** Ensure agents that must be public have guardrails and citation settings appropriate for an untrusted audience.
+        Public agents are also subject to unrestricted prompting, which invites prompt-injection attempts against the agent's instructions and consumption-driven cost abuse against the account.
+
+        Deploy agents with private or organization-scoped visibility so only authenticated principals can reach them. Where external access is genuinely required, place the agent behind an authenticating proxy or application rather than exposing it directly, and confirm that its guardrails and citation settings are appropriate for an untrusted audience.
       audit: |
         ### Audit via Console
 
@@ -4352,20 +4371,19 @@ queries:
       digitalocean.gradientai.agent.guardrails.where(isAttached == true).length > 0
     docs:
       desc: |
-        This check ensures that every GradientAI agent has at least one content guardrail attached. Guardrails inspect the prompts an agent receives and the responses it returns, blocking content that violates the configured policy and returning a canned response instead. An agent with no attached guardrail applies no content filtering to its inputs or outputs.
+        This check verifies that every GradientAI agent has a content guardrail attached.
+
+        A guardrail inspects the prompts an agent receives and the responses it returns, blocking content that violates the configured policy and returning a canned response in its place. An agent with no attached guardrail applies no content filtering to either its inputs or its outputs. Guardrails are created and attached to agents in the GradientAI section of the DigitalOcean Cloud Control Panel.
 
         **Why this matters**
 
-        - **Prompt-injection resistance:** A guardrail can intercept adversarial prompts that attempt to override the agent's instructions or extract its system prompt and connected data.
-        - **Output safety:** Guardrails keep an agent from returning sensitive, unsafe, or policy-violating content to its users.
-        - **Consistent enforcement:** Attaching a guardrail enforces content policy at the platform layer rather than relying on the agent's instruction text alone, which a determined user can work around.
+        A guardrail can intercept adversarial prompts that attempt to override the agent's instructions or extract its system prompt and connected data, which is the most direct route an attacker has into an agent that is otherwise behaving correctly.
 
-        **Risk mitigation**
+        It also constrains what leaves. Filtering outputs reduces the chance that an agent grounded on private knowledge bases discloses that content in response to a crafted prompt, and keeps the agent from returning sensitive, unsafe, or policy-violating material to its users.
 
-        - **Data leakage:** A guardrail reduces the chance that an agent grounded on private knowledge bases discloses that content in response to a crafted prompt.
-        - **Abuse:** Filtering inputs and outputs limits how an exposed agent can be misused for harmful generation.
+        Enforcement at the platform layer is what makes this durable. Content policy expressed only in the agent's instruction text is guidance that a determined user can work around; a guardrail applies regardless of what the conversation has persuaded the agent to do, which is what limits how an exposed agent can be misused for harmful generation.
 
-        Agents that are intentionally unfiltered for a trusted internal audience can be exempted from this check.
+        Agents that are intentionally unfiltered for a trusted internal audience can be exempted from this check, provided the data and tools they can reach are scoped to match that trust.
       audit: |
         ### Audit via Console
 
@@ -4429,19 +4447,19 @@ queries:
       digitalocean.gradientai.knowledgeBases.all(isPublic == false)
     docs:
       desc: |
-        This check ensures that no GradientAI knowledge base is marked public. A public knowledge base makes its indexed content readable beyond the account, exposing the source documents used to ground agents — which frequently include proprietary or sensitive material.
+        This check verifies that no GradientAI knowledge base is marked public.
+
+        A knowledge base indexes source documents so that agents can retrieve from them at query time. Marking one public makes its indexed content readable beyond the account. The public flag is set on the knowledge base in the GradientAI section of the DigitalOcean Cloud Control Panel.
 
         **Why this matters**
 
-        - **Data exposure:** A public knowledge base can expose the documents, embeddings, and source data it indexes to parties outside the account.
-        - **Grounding leakage:** Agents retrieve from knowledge bases at query time; a public base widens who can reach that content indirectly through any connected agent.
-        - **Intellectual property:** Knowledge bases commonly hold internal documentation, support content, or other proprietary data that should not be publicly readable.
+        A public knowledge base exposes the documents, embeddings, and source data it indexes to parties outside the account. The embedded form is not a safe intermediate here, because the indexed content is retrievable by design.
 
-        **Risk mitigation**
+        The exposure also widens indirectly. Agents retrieve from knowledge bases when they answer, so a public base broadens who can reach that content through any connected agent, including agents whose own visibility looks properly restricted.
 
-        - **Keep knowledge bases private:** Leave the public flag disabled unless the indexed content is explicitly intended for public consumption.
-        - **Classify before publishing:** Review the source data of any knowledge base before making it public to confirm it contains no sensitive material.
-        - **Audit periodically:** Re-check knowledge base visibility as their source data changes over time.
+        Knowledge bases commonly hold internal documentation, support content, and other proprietary material that was never classified for release, because the effort of assembling one favors including everything available.
+
+        Leave the public flag disabled unless the indexed content is explicitly intended for public consumption, review the source data before making any knowledge base public, and re-check visibility as those sources change over time.
       audit: |
         ### Audit via Console
 
@@ -4503,20 +4521,19 @@ queries:
       digitalocean.functionNamespaces.all(functions.where(webExported == true).all(requiresApiKey == true))
     docs:
       desc: |
-        This check ensures that every DigitalOcean Function published as a web-accessible HTTP endpoint requires an API key. A function marked web-accessible is reachable over the internet at its namespace URL; unless it also requires an API key, anyone who learns or guesses the URL can invoke it without credentials.
+        This check verifies that every web-accessible Function requires an API key.
+
+        A DigitalOcean Function marked web-accessible is published as an HTTP endpoint at its namespace URL and is reachable over the internet. A separate setting decides whether callers must present an API key. Without it, anyone who learns or guesses the URL can invoke the function without credentials. Both settings are declared per function in the project's `project.yml` and shown in the Functions section of the DigitalOcean Cloud Control Panel.
 
         **Why this matters**
 
-        - **Unauthenticated invocation:** A web-accessible function without an API key runs its code for any anonymous caller, exposing whatever data access, downstream services, and secrets the function holds.
-        - **Abuse and cost:** Open endpoints are targets for automated abuse — scraping, data injection, and invocation floods that run up compute charges.
-        - **Bypassed access controls:** Functions frequently sit in front of databases, object storage, or third-party APIs. An unauthenticated function becomes an open proxy to those backends.
+        A web-accessible function with no API key runs its code for any anonymous caller. Whatever data access, downstream services, and secrets the function holds are exercised on the attacker's behalf, using the function's own identity rather than one they had to obtain.
 
-        **Risk mitigation**
+        Functions frequently sit in front of databases, object storage, or third-party APIs, so an unauthenticated function becomes an open proxy to those backends. The access controls on those backends are satisfied by the function's credentials, not by the caller's, which is why this matters more than the function's own logic suggests.
 
-        - **Anonymous access:** Requiring an API key ensures only callers presenting a valid credential can execute the function.
-        - **Attack surface:** Endpoints that reject unauthenticated requests are not usable by opportunistic internet scanners probing for open functions.
+        Open endpoints also attract automated abuse: scraping, data injection, and invocation floods that run up compute charges against the account. Endpoints that reject unauthenticated requests are simply not usable by opportunistic internet scanners probing for open functions.
 
-        Functions that are intentionally public, such as a health check that returns no sensitive data, should be reviewed and documented as exceptions rather than left unauthenticated by default.
+        Functions that are intentionally public, such as a health check returning no sensitive data, should be reviewed and documented as exceptions rather than left unauthenticated by default.
       audit: |
         ### Audit via Console
 
@@ -4602,20 +4619,17 @@ queries:
       digitalocean.sshKeys.none(publicKey.split(" ")[0] == "ssh-dss")
     docs:
       desc: |
-        This check ensures that no SSH key registered on the DigitalOcean account uses the DSA (`ssh-dss`) algorithm. DSA keys are capped at 1024 bits, rely on a signing scheme that is fragile to poor random-number generation, and have been disabled by default in OpenSSH since version 7.0.
+        This check verifies that no SSH key registered on the account uses the deprecated DSA signature algorithm.
+
+        DigitalOcean stores account-level SSH public keys and injects them into new Droplets at creation time. A key advertised as `ssh-dss` is a DSA key, capped at 1024 bits by the standard and disabled by default in OpenSSH since version 7.0. This check requires every key in the account's SSH key list to use a modern algorithm instead.
 
         **Why this matters**
 
-        - **Weak by construction:** DSA SSH keys are limited to 1024-bit strength, which is below the cryptographic strength recommended for authentication credentials.
-        - **Fragile signing:** DSA signatures can leak the private key if the per-signature nonce is ever reused or predictable, a failure mode that has compromised real keys.
-        - **Deprecated everywhere:** Modern SSH clients and servers reject `ssh-dss` by default, so a DSA key is both insecure and increasingly unusable.
+        DSA keys are weak by construction. The 1024-bit ceiling puts them below the strength expected of any authentication credential today, and the DSA signing scheme leaks the private key outright if the per-signature nonce is ever reused or predictable, a failure mode that has compromised real keys in the field.
 
-        **Risk mitigation**
+        Because modern SSH clients and servers reject `ssh-dss` by default, a DSA key is also increasingly unusable. An operator who depends on one will eventually be locked out when a client or a Droplet image drops support, and the usual response under time pressure is to re-enable the deprecated algorithm rather than replace the key.
 
-        - **Credential compromise:** Replacing DSA keys with Ed25519 or RSA (2048-bit or larger) keys removes a class of key that is realistically forgeable.
-        - **Access continuity:** Migrating off deprecated algorithms avoids sudden lockout when a client or server drops `ssh-dss` support.
-
-        Replace any DSA key with an Ed25519 key (preferred) or an RSA key of at least 2048 bits.
+        Replace any DSA key with an Ed25519 key, or an RSA key of at least 2048 bits, in the Settings section of the DigitalOcean Cloud Control Panel or with `doctl compute ssh-key create`. Then remove the DSA key and re-key any Droplet that trusted it.
       audit: |
         ### Audit via Console
 
@@ -4686,20 +4700,19 @@ queries:
       digitalocean.functionNamespaces.all(accessKeys.all(lastUsedAt != empty && lastUsedAt > time.now - 90 * time.day || lastUsedAt == empty && createdAt > time.now - 90 * time.day))
     docs:
       desc: |
-        This check ensures that every Functions namespace API access key has been used within the last 90 days (keys created within the window are exempt while they wait to be used first). An access key that has sat unused for months is almost always a forgotten credential — still valid, still able to deploy and invoke functions, but no longer watched by anyone.
+        This check verifies that every Functions namespace access key has been used recently.
+
+        Each namespace API access key must have been used within the last 90 days. Keys created inside that window are exempt while they wait to be used for the first time. A key that has sat unused for months is almost always a forgotten credential: still valid, still able to deploy and invoke functions, but no longer watched by anyone. Keys are listed and removed under the namespace's settings in the DigitalOcean Cloud Control Panel.
 
         **Why this matters**
 
-        - **Forgotten standing credentials:** A key nobody uses is a key nobody notices being abused. Dormant credentials are a favorite foothold because their misuse blends into the absence of legitimate activity.
-        - **Larger credential inventory:** Every live key is an independent secret that can leak from a laptop, CI system, or backup. Retiring unused keys shrinks the set of secrets that must be protected and rotated.
-        - **No expiration by default:** Namespace keys do not expire on their own, so without periodic cleanup they accumulate indefinitely.
+        A key nobody uses is a key nobody notices being abused. Dormant credentials are a favorite foothold precisely because their misuse blends into the absence of legitimate activity, so there is no baseline of normal use for anomalous use to stand out against.
 
-        **Risk mitigation**
+        Every live key is also an independent secret that can leak from a laptop, a CI system, or a backup. Retiring keys that are no longer in use shrinks the set of secrets that must be protected, distributed, and rotated, which makes the remaining rotation work tractable.
 
-        - **Credential leakage:** Removing keys that are no longer in active use eliminates secrets whose compromise would otherwise go undetected.
-        - **Least standing access:** Pruning dormant keys keeps the namespace's authorized credentials aligned with what is actually in use.
+        Namespace keys do not expire on their own, so without periodic cleanup they accumulate indefinitely and the authorized-credential list drifts steadily away from what is actually in use.
 
-        Delete keys that are no longer needed, and rotate the keys that remain on a regular schedule.
+        Delete keys that are no longer needed and rotate the ones that remain on a regular schedule, so the namespace's standing access stays aligned with its real consumers.
       audit: |
         ### Audit via Console
 
@@ -4770,20 +4783,17 @@ queries:
       digitalocean.images.all(public == false)
     docs:
       desc: |
-        This check ensures that no custom image, snapshot, or backup owned by the account is publicly shared. A public image can be listed and used by any DigitalOcean user, and disk images frequently carry embedded secrets, credentials, application source, and configuration baked in at build time.
+        This check verifies that no custom image, snapshot, or backup owned by the account is shared publicly.
+
+        A DigitalOcean image marked public can be listed and launched by any DigitalOcean user. Disk images capture whatever was present on the source system at build time, which routinely includes secrets, credentials, application source, and configuration. Visibility is managed under Images in the DigitalOcean Cloud Control Panel and reported by the `public` field on each image.
 
         **Why this matters**
 
-        - **Embedded secrets:** Golden images and snapshots routinely contain SSH keys, API tokens, database credentials, and application code that were present on the source system when the image was captured.
-        - **Intellectual property exposure:** A public custom image exposes proprietary software, configuration, and architecture to anyone who launches it.
-        - **Unintended distribution:** Once an image is public it can be copied by others, so the exposure persists even after the image is later made private.
+        Golden images and snapshots routinely contain SSH keys, API tokens, database credentials, and application code that were on the source system when the image was captured. Anyone who launches a public image gets a running copy of all of it, with no need to break anything.
 
-        **Risk mitigation**
+        A public custom image also hands over proprietary software, configuration, and architecture to anyone who wants to inspect it. Once the image is public it can be copied by others, so the exposure persists after the image is later made private again, and the account owner has no way to recall the copies.
 
-        - **Data leakage:** Keeping images private ensures their contents are reachable only by the account and the team members it authorizes.
-        - **Supply-chain integrity:** Private images cannot be enumerated and used as an untrusted base by unrelated parties.
-
-        Keep custom images private and share them explicitly with named accounts only when required. Rebuild any image that was public to rotate secrets it may have exposed.
+        Keep custom images private and share them explicitly with named accounts only when that is required. Any image that was public should be rebuilt and every secret it may have exposed rotated, because reverting the visibility flag does not undo the distribution.
       audit: |
         ### Audit via Console
 
@@ -4853,20 +4863,19 @@ queries:
       digitalocean.loadBalancer.firewallAllow == empty || digitalocean.loadBalancer.firewallAllow.all(_.contains("/0") == false)
     docs:
       desc: |
-        This check ensures that when a DigitalOcean load balancer defines a source-IP firewall allowlist, that allowlist does not include an any-address entry with a `/0` mask such as `0.0.0.0/0` or `::/0`. A load balancer firewall allowlist is meant to restrict which source addresses can reach the balancer; an any-address entry defeats that purpose while giving the false impression that access is controlled.
+        This check verifies that a load balancer's source-IP allowlist does not contain an any-address entry.
+
+        The DigitalOcean load balancer firewall restricts which source addresses can reach the balancer. This check applies when an allowlist is defined and requires that none of its entries carry a `/0` mask such as `0.0.0.0/0` or `::/0`. The allowlist is edited on the load balancer's settings page in the DigitalOcean Cloud Control Panel and expressed as the firewall allow rules in the API.
 
         **Why this matters**
 
-        - **False sense of restriction:** An allowlist containing `0.0.0.0/0` looks like a control in the console and in code review, but admits every host on the internet just as if no allowlist existed.
-        - **Silent scope creep:** A specific allowlist that later has an any-address entry added — often as a temporary troubleshooting step — quietly reopens the load balancer to the world.
-        - **Bypassed segmentation:** Load balancers front application backends; an unrestricted allowlist exposes those backends to internet-wide scanning and attack.
+        An allowlist containing `0.0.0.0/0` looks like a control in the console and in code review while admitting every host on the internet, exactly as if no allowlist existed. It is worse than having none, because it consumes the attention that would otherwise go to the missing restriction.
 
-        **Risk mitigation**
+        That state is usually reached gradually. A specific allowlist has an any-address entry added as a temporary troubleshooting step, the immediate problem is solved, and the entry stays, quietly reopening the balancer to the world through a change that never reads as a security regression.
 
-        - **Attack surface:** Restricting the allowlist to the specific source ranges that need access removes the load balancer from opportunistic internet scanning.
-        - **Auditable intent:** An allowlist without an any-address entry accurately reflects who is permitted to reach the balancer.
+        Load balancers front application backends, so an unrestricted allowlist exposes those backends to internet-wide scanning and attack through the balancer even when the backends themselves are firewalled against direct access.
 
-        Replace any-address entries with the specific administrative, client, or CDN source ranges that legitimately need to reach the load balancer. A load balancer that is intentionally public simply omits the allowlist rather than allowlisting `0.0.0.0/0`.
+        Replace any-address entries with the specific administrative, client, or CDN source ranges that legitimately need to reach the load balancer. A load balancer that is intentionally public should simply omit the allowlist rather than allowlisting `0.0.0.0/0`, so the configuration states its intent accurately.
       audit: |
         ### Audit via Console
 
