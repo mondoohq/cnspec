@@ -60,19 +60,20 @@ queries:
       # than guessing how the positive case is spelled.
       netlify.accounts.all(enforceMfa != "not_enforced")
     docs:
-      desc: |-
-        This check ensures that every Netlify team account enforces multi-factor authentication for its members. When MFA is enforced at the team level, a stolen or guessed password alone cannot sign in, because a second factor is always demanded. Note that MFA enforcement is a Netlify paid-team capability.
+      desc: |
+        This check verifies that every Netlify team requires its members to sign in with a second factor.
+
+        The setting is found in the Netlify UI by opening Team settings and then the Security section, where it appears as Enforce multi-factor authentication. Turning it on requires each member to enroll a second factor before they can continue working in the team. The team record reports the state as `enforceMfa`, whose only documented negative value is `not_enforced`, and this check requires the team to be in any other state. Enforcement is a paid-team capability, so a team on the free plan cannot satisfy this check without an upgrade.
 
         **Why this matters**
 
-        - **Credential theft resistance:** Passwords are phished, reused, and leaked constantly; a mandatory second factor stops a valid password from being enough to log in.
-        - **Team-wide coverage:** Enforcing MFA at the team level closes the gap left when it is only encouraged, so no member can opt out.
-        - **Privileged-account protection:** Netlify team members can deploy sites, change domains, and manage build settings, so their accounts are high-value targets that warrant strong authentication.
+        A Netlify team member controls what visitors receive from every site the team publishes. An attacker who signs in as one deploys a build of their choosing, and that build then runs in each visitor's browser: a script that reads session cookies from the site's own origin, a checkout page that posts card numbers to an endpoint the attacker controls, a redirect that quietly sends traffic elsewhere. Because the deploy travels through Netlify's normal pipeline and is served on the site's real domain under a valid certificate, nothing a visitor can see distinguishes it from a legitimate release.
 
-        **Risk mitigation**
+        The same account reaches the team's environment variables, which typically hold the API keys and database credentials the site's functions use at runtime, and the domain settings, where control of DNS is enough to take delivery of certificate validation for the domain itself.
 
-        - **Account-takeover containment:** Even after a password compromise, an attacker without the second factor cannot access the team.
-        - **Consistent enforcement:** A single team setting guarantees the control applies to current and future members alike.
+        A password alone protects none of that, and passwords are lost in bulk rather than one at a time. They are reused on sites that later get breached, entered on phishing pages that copy the Netlify sign-in screen, and pulled straight out of browsers by infostealer malware.
+
+        Enforce at the team level rather than asking members to enroll on their own, because the team setting covers people who join later and removes the choice from members who would otherwise skip it. Confirm that existing members have enrolled afterwards, since an account still lacking a factor is exactly the one worth attacking.
       audit: |-
         ### Audit via the Netlify UI
 
@@ -118,19 +119,20 @@ queries:
     mql: |
       netlify.sites.all(forceSsl == true)
     docs:
-      desc: |-
-        This check ensures that every Netlify site forces HTTPS. When forced HTTPS is enabled, HTTP requests are redirected to HTTPS and visitors never exchange data with the site over an unencrypted connection, keeping page content and form submissions confidential in transit.
+      desc: |
+        This check verifies that every Netlify site redirects HTTP requests to HTTPS.
+
+        The setting is found in the Netlify UI by opening a site, then Site configuration, then Domain management, then HTTPS, where it appears as Force HTTPS. The sites API exposes the same state as `force_ssl`. A provisioned certificate has to be in place before the redirect can be turned on. This check requires the redirect to be in effect for each site the team publishes.
 
         **Why this matters**
 
-        - **Eavesdropping resistance:** Traffic sent over plain HTTP can be read and modified by anyone on the network path; forcing HTTPS encrypts it end to end.
-        - **Tamper protection:** HTTPS prevents on-path injection of malicious scripts or ads into pages served to visitors.
-        - **Consistent posture:** Forcing the redirect closes the window where a visitor first lands on the insecure HTTP version of a page.
+        Without the redirect, the site answers on plain HTTP as well as HTTPS, and the plain answer is the one many visitors get. A hostname typed into the address bar, an old bookmark, a link in a mail client that strips the scheme, and every place a bare domain appears in print or conversation all resolve to HTTP first.
 
-        **Risk mitigation**
+        That first request is what an attacker on the network path takes. On a shared network, a public hotspot, a hotel connection, a home router someone else already owns, they answer it themselves and return a modified copy of the page. The visitor's browser has nothing to object to, because an unencrypted response carries no certificate to fail. The modified copy can include a script that reads whatever the visitor types, so a login form on the site sends credentials to the attacker instead of to the origin, and a payment form sends card details the same way.
 
-        - **Credential and data confidentiality:** Login forms and other submitted data are protected from interception in transit.
-        - **Trust and integrity:** Visitors always receive the authenticated, encrypted version of the site rather than a downgraded one.
+        Passive reading is available on the same terms even when nothing is changed. Everything the visitor submits over HTTP, including session cookies that were not marked secure, is readable by everyone between them and the site, and a stolen session cookie needs no password at all.
+
+        Turning on the redirect closes the plain path for requests that reach Netlify. Pair it with a Strict-Transport-Security response header, set through the site's headers configuration, so that a returning browser goes straight to HTTPS and never sends the first insecure request that the redirect exists to catch.
       audit: |-
         ### Audit via the Netlify UI
 
