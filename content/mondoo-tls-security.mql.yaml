@@ -85,19 +85,19 @@ queries:
       tls.certificateMatchesDomain
     docs:
       desc: |
-        This check ensures that the SSL/TLS certificate presented by the server is configured to match the hostname being secured, through either the Common Name or a Subject Alternative Name entry. A mismatch breaks the identity guarantee that TLS depends on and leaves clients unable to confirm they reached the legitimate server.
+        This check verifies that the certificate the server presents actually covers the hostname the client asked for, through the common name or a subject alternative name entry.
+
+        Current clients match against the subject alternative name list only, so every hostname a service answers on has to appear there. You set it when the certificate is requested. `certbot --nginx -d example.com -d www.example.com` adds one name per flag, and a manually built certificate signing request needs each name listed in its SAN extension.
 
         **Why this matters**
 
-        - **Man-in-the-middle exposure:** When domain validation fails, clients cannot confirm they are connecting to the legitimate server, which opens the door to interception attacks.
-        - **Browser security warnings:** Users encounter alarming warnings that damage brand trust and train them to dismiss legitimate security alerts.
-        - **Service disruptions:** API clients, mobile apps, and automated systems reject mismatched certificates, causing integration failures.
-        - **Compliance violations:** Standards such as PCI DSS and HIPAA require valid TLS certificates for protecting data in transit.
+        The hostname match is the step where TLS stops being encryption and becomes authentication. A certificate proves that its holder controls the names inside it, and nothing more. If a client accepted a valid certificate for some other name, an attacker holding any legitimate certificate for any domain they own could present it and terminate your users' sessions. Hostname verification is what makes that fail.
 
-        **Risk mitigation**
+        The consequence of a mismatch, then, is not that the connection becomes insecure by itself, but that users are trained to make it insecure. Browsers show a warning page and users click through it, because they have learned the warning usually means a certificate somebody forgot to renew. Once clicking through is normal on your site, an attacker on the path presents a self-signed certificate for the same host and collects the same click, and from that point the session really is being read and rewritten.
 
-        - **List every hostname:** Include all required domain names in the Subject Alternative Name field, since modern browsers validate against SAN rather than the Common Name.
-        - **Catch deployment errors early:** A mismatch often signals a deployment mistake, so correcting it removes a misconfiguration before it disrupts production.
+        Non-browser clients fail differently and more usefully. Mobile applications, API callers, and job runners reject the connection outright, so a mismatch surfaces as an outage rather than as a warning, often in an integration nobody retested after the certificate changed.
+
+        A mismatch is usually a deployment error, a certificate copied to the wrong host or a new hostname added to a service without being added to the certificate. Correcting it removes the misconfiguration and the training effect together.
       audit: |
         ### Audit via openssl
 
@@ -254,19 +254,17 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that the SSL/TLS certificate is configured to be currently within its validity window and to have a total lifetime no longer than 398 days. Certificates that are not yet valid, already expired, or issued for an excessive duration are rejected by clients and break service availability.
+        This check verifies that the leaf certificate is inside its validity window today and was issued for a total lifetime shorter than 398 days.
+
+        The window is fixed at issuance and cannot be edited afterward, so the remedy is always to reissue. The check reads the notBefore and notAfter dates from the certificate the server presents and requires notBefore in the past, notAfter in the future, and fewer than 398 days between them. That ceiling reflects what publicly trusted issuance still allows: certificates issued from March 2026 are capped at 200 days, and the cap falls again to 100 days in March 2027, which makes automated issuance and renewal the only sustainable arrangement.
 
         **Why this matters**
 
-        - **Immediate connection failures:** Clients reject certificates that are not yet valid or have expired, causing service outages with no graceful degradation.
-        - **Browser rejection:** Certificates with validity periods longer than 398 days are rejected by major browsers even when otherwise correct.
-        - **Trust chain failures:** Certificates not signed by a trusted authority cannot be verified, which enables man-in-the-middle attacks.
-        - **Incident response delays:** An invalid certificate can indicate compromise or misconfiguration that requires immediate investigation.
+        An expired or not-yet-valid certificate is an immediate outage. Every client rejects it, there is no partial degradation, and the failure arrives at the same moment for everyone. Browser users see a warning page, and the ones who click through are now in the habit of accepting whatever certificate is offered, including the one an attacker substitutes later.
 
-        **Risk mitigation**
+        An overlong lifetime is a different problem. The lifetime is the maximum time a compromised key stays useful when revocation does not reach the client, and revocation frequently does not, because some clients fail open when they cannot fetch status and some never check at all. A key stolen from a server holding a five-year certificate lets an attacker impersonate that host for years, whereas a short-lived certificate expires the stolen credential on its own. That reasoning is behind the industry moving the cap down, and it is also why browsers reject anything issued for longer than the current limit regardless of what the authority was willing to sign.
 
-        - **Automate renewal:** Use automated certificate management so certificates are renewed before they expire and stay within current validity limits.
-        - **Issue from trusted CAs:** Obtain certificates from a recognized Certificate Authority so clients can complete trust chain verification.
+        Automate renewal so the validity window is never the thing standing between you and an outage.
       audit: |
         ### Audit via openssl
 
@@ -414,19 +412,17 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that the leaf certificate is configured with enough remaining validity that it is not at risk of expiring soon. Scoring degrades as the expiration date approaches so teams can act before an outage occurs.
+        This check verifies that the leaf certificate has enough validity left that renewal is still a planned activity rather than an incident.
+
+        Scoring degrades as expiry approaches instead of flipping at a single line. More than 30 days remaining scores full marks, more than 21 days scores half, more than 14 days scores lower still, more than 7 days lower again, and 7 days or fewer scores zero. Renewal is the fix, and it belongs to whatever issues the certificate: `certbot renew` driven by the `certbot.timer` systemd unit, a cloud certificate manager, or cert-manager in a cluster.
 
         **Why this matters**
 
-        - **Service outages:** Expired certificates cause immediate connection failures across all clients with no graceful degradation.
-        - **Emergency renewals:** Last-minute replacements are error-prone and often happen during off-hours when the problem is finally noticed.
-        - **Trust degradation:** Users who encounter certificate warnings lose confidence in the service's security practices.
-        - **Attack window:** During the confusion of an expired certificate, users are more likely to bypass warnings or fall for phishing.
+        Certificate expiry is one of the few outages that arrives on a published schedule and still takes services down. When the date passes, every client refuses the connection at once. Browsers show a warning page, mobile applications and API callers fail outright, and health checks that speak TLS start failing alongside the traffic they were meant to watch, which removes the signal you would have used to diagnose it.
 
-        **Risk mitigation**
+        The security consequence follows from how people respond. An expiry is handled under time pressure, often at night, frequently by whoever is on call rather than by whoever owns the certificate. Keys get generated in a hurry and left in a home directory, private keys get copied between hosts over channels nobody would approve in daylight, and verification steps get skipped. Users, meanwhile, are being shown a certificate warning on your domain and told by support to click through it, which is exactly the behavior an attacker on the path needs in order to substitute their own certificate later.
 
-        - **Monitor with lead time:** Configure expiration alerts at 30, 14, and 7 days before expiry so renewal happens on a planned schedule.
-        - **Automate renewal:** Use tools such as cert-manager or Certbot to renew certificates without manual intervention.
+        The graded scoring exists so the work lands in the first band rather than the last. Treat any score below full marks as the renewal ticket, not as a warning to acknowledge.
       audit: |
         ### Audit via openssl
 
@@ -567,19 +563,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that every certificate in the trust chain, including intermediate and root certificates, is configured to remain within its validity period. An expired intermediate or root breaks verification for all services that rely on that chain.
+        This check verifies that every certificate the server presents is still inside its validity period, not only the leaf but each intermediate in the chain it sends.
+
+        The chain is a file you assemble and point the server at: `SSLCertificateFile` in Apache, `ssl_certificate` in Nginx, and the combined PEM named on HAProxy's `bind` line, each holding the leaf followed by its intermediates. An expired intermediate is fixed by fetching the current bundle from the certificate authority and rebuilding that file, not by renewing the leaf.
 
         **Why this matters**
 
-        - **Cascading failures:** A single expired intermediate can simultaneously affect every service that uses that trust chain.
-        - **Silent trust failures:** Intermediate expiration may not trigger renewal automation, catching teams off-guard.
-        - **Client verification failures:** Even a valid leaf certificate cannot be verified if an intermediate in its chain has expired.
-        - **Delayed diagnosis:** Trust chain problems are harder to identify than a simple expired leaf certificate.
+        Client validation walks the whole chain, so an expired intermediate fails the connection exactly as an expired leaf would, even though the leaf itself may have months left. The outage is wider, because one intermediate typically signs every certificate an organization holds from that authority, so a single expiry takes down every service presenting it at the same moment.
 
-        **Risk mitigation**
+        It is also the failure your automation does not catch. Renewal tooling watches the leaf date and renews on schedule, and monitoring built around that tooling inherits the same blind spot. The chain file, meanwhile, was written by hand during the original deployment and has not been touched since, so nothing tracks the dates inside it. The result is an outage on a certificate nobody knew they owned.
 
-        - **Audit the full chain:** Regularly review every certificate in the chain rather than monitoring only the leaf.
-        - **Track cross-signed paths:** Account for cross-signing relationships between roots and intermediates so renewals cover every validation path.
+        Diagnosis is slower for the same reason. The leaf looks fine to anyone who checks it, the server log shows a handshake failure without naming which certificate caused it, and clients disagree with each other because some carry the expiring intermediate in their own trust store and validate a shorter path.
+
+        An attacker gains from the confusion rather than from the expiry itself, since a support instruction to bypass the warning applies to whatever certificate is presented afterward.
       audit: |
         ### Audit via openssl
 
@@ -712,19 +708,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that the certificate the server presents is issued by a Certificate Authority rather than self-signed. A self-signed certificate, whose subject and issuer names are identical, bypasses the third-party trust model that TLS authentication relies on.
+        This check verifies that the certificate the server presents was issued by a certificate authority rather than signed by its own key.
+
+        A self-signed certificate has an identical subject and issuer distinguished name, which is what the check compares. Replacing it means obtaining a certificate for the same hostnames from a publicly trusted authority. `certbot --nginx -d example.com -d www.example.com` does that at no cost with automated renewal, and a commercial authority takes the certificate signing request produced by `openssl req -new -newkey rsa:2048`.
 
         **Why this matters**
 
-        - **No third-party verification:** Self-signed certificates provide no external validation of server identity, which enables impersonation attacks.
-        - **User warning fatigue:** Clients display warnings that users must bypass, training them to ignore legitimate security alerts.
-        - **Integration failures:** APIs, automated systems, and mobile apps reject self-signed certificates without a manual override.
-        - **Man-in-the-middle vulnerability:** An attacker can present another self-signed certificate that users may accept as normal.
+        A self-signed certificate asserts an identity with nothing behind the assertion. Anyone can generate one for any hostname in a second, so holding one proves nothing about who controls the name. The public key infrastructure exists to add the missing step: an authority confirms that the requester controls the domain before signing, and clients then trust the signature rather than the claim.
 
-        **Risk mitigation**
+        Without that step a client cannot tell your certificate from an attacker's. An attacker on the path generates their own self-signed certificate for the same hostname, presents it, and the client shows a warning identical to the one your certificate produces. Users who have learned to click through the warning for the legitimate service click through it for the attacker as well, and from that moment the attacker reads and rewrites the session.
 
-        - **Use a recognized CA:** Obtain certificates from a publicly trusted Certificate Authority so clients can verify server identity automatically.
-        - **Adopt automated issuance:** Free options such as Let's Encrypt provide trusted certificates with automated renewal at no cost.
+        The training effect is the real cost. Every warning a legitimate service produces lowers the value of every warning that browser will ever show that user.
+
+        Non-browser clients behave differently and often worse. Some reject the certificate and break the integration, while others get configured with verification switched off to make it work, which removes certificate checking entirely and permanently for that caller.
       audit: |
         ### Audit via openssl
 
@@ -893,19 +889,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that no certificate in the chain is configured with a revoked status from its issuing Certificate Authority. Revocation indicates that a certificate should no longer be trusted, frequently because of a key compromise.
+        This check verifies that no certificate the server presents has been revoked by the authority that issued it.
+
+        Revocation status is published by the issuer through an OCSP responder or a certificate revocation list, and the check reads it for each certificate in the chain. No server setting clears a revoked status. The response is to generate a new private key, request a replacement certificate, and install it, which `certbot --nginx --force-renewal -d example.com` does in one step for an ACME-issued certificate.
 
         **Why this matters**
 
-        - **Active security incident:** Revocation typically follows private key compromise, meaning attackers may be able to impersonate the service.
-        - **Continued vulnerability:** Using a revoked certificate keeps the security exposure that triggered the revocation in place.
-        - **Client rejection:** Modern clients check revocation status through OCSP or CRL and refuse connections to revoked certificates.
-        - **Reputation damage:** Security-conscious users and partners lose trust when they encounter a revoked certificate.
+        Revocation almost always means the private key is believed to be in someone else's hands. It follows a stolen backup, a key committed to a repository, a compromised host, or a mis-issuance the authority had to withdraw. A revoked certificate still in service is therefore not a paperwork problem, it is a live incident in which an attacker may hold the key that authenticates your hostname.
 
-        **Risk mitigation**
+        With that key, an attacker who can steer traffic toward themselves through DNS, a hijacked route, or a hostile local network terminates the connection and presents a certificate the client's own checks say is yours. Nothing in the handshake distinguishes them from you. They read credentials, they modify responses, and the browser shows the same lock it always did.
 
-        - **Replace with a fresh key pair:** Reissue any revoked certificate immediately using a newly generated key pair rather than reusing the old key.
-        - **Investigate the root cause:** Determine why the certificate was revoked so the underlying compromise or error does not recur.
+        Revocation only helps clients that check it, and many do not check reliably, so continuing to serve the revoked certificate maximizes the number of users still accepting it. Clients that do check refuse the connection outright, which means the deployment is broken for some users and silently unsafe for the rest.
+
+        Never reissue onto the same key pair. A replacement certificate signed over a key an attacker already holds recreates the exposure the revocation was meant to end.
       audit: |
         ### Audit via openssl
 
@@ -1108,19 +1104,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that every certificate in the chain is configured to use a strong signature algorithm and not MD2, MD5, or SHA-1. Weak signature algorithms can be exploited to forge certificates that appear legitimately signed.
+        This check verifies that no certificate in the presented chain is signed with MD2, MD5, or SHA-1.
+
+        The signature algorithm is chosen by the issuer, not by the server, so the fix is reissuance rather than a configuration change. A certificate signing request created with `openssl req -new -newkey rsa:2048 -sha256` asks for SHA-256, and any publicly trusted authority signs with SHA-256 or stronger by default today. Where an intermediate carries the weak algorithm, ask the authority for a current bundle and rebuild the chain file the server points at. SHA-384 and SHA-512 are equally acceptable.
 
         **Why this matters**
 
-        - **Certificate forgery:** MD5 and SHA-1 collision attacks allow creation of fraudulent certificates that pass signature verification.
-        - **Historical attacks:** The Flame malware used MD5 weaknesses to forge Windows Update certificates in a real-world attack.
-        - **Browser deprecation:** Major browsers reject certificates signed with SHA-1 and weaker algorithms.
-        - **Future vulnerability:** As computing power grows, even SHA-1 becomes more exposed to practical collision attacks.
+        A signature binds a name to a public key, and a hash collision breaks that binding. MD5 collisions are cheap enough to compute on ordinary hardware, which means an attacker can prepare two certificates that hash identically, get the harmless one signed through a normal request, and transplant the signature onto the other. The result verifies correctly against the authority's public key while carrying a name and a key the attacker chose.
 
-        **Risk mitigation**
+        That is not hypothetical. The Flame malware used an MD5 collision against a Microsoft certificate authority to forge a code-signing certificate and deliver malicious updates that Windows accepted as genuine.
 
-        - **Require SHA-256 or stronger:** Issue and reissue all certificates with SHA-256, SHA-384, or SHA-512 signature algorithms.
-        - **Verify the whole chain:** Confirm that intermediate and root certificates also use strong signatures, not just the leaf.
+        SHA-1 collisions have been demonstrated as well, and the cost has fallen every year since. Every major browser now rejects a publicly trusted chain containing SHA-1, so a certificate signed that way fails for your users as well as failing this check.
+
+        The chain matters as much as the leaf. A modern leaf validated through an intermediate with a forgeable signature inherits the intermediate's weakness, because an attacker who forges the intermediate can then issue anything beneath it.
       audit: |
         ### Audit via openssl
 
@@ -1283,19 +1279,17 @@ queries:
       tls.versions.containsOnly(["tls1.2", "tls1.3"])
     docs:
       desc: |
-        This check ensures that the server is configured to offer only TLS 1.2 and TLS 1.3 and to disable SSL 2.0, SSL 3.0, TLS 1.0, and TLS 1.1. The older protocols carry cryptographic weaknesses that configuration alone cannot fix.
+        This check verifies that the server negotiates only TLS 1.2 and TLS 1.3, and refuses SSL 2.0, SSL 3.0, TLS 1.0, and TLS 1.1.
+
+        The accepted versions come from a single directive: `SSLProtocol -all +TLSv1.2 +TLSv1.3` in Apache, `ssl_protocols TLSv1.2 TLSv1.3` in Nginx, `ssl-min-ver TLSv1.2` in HAProxy, and on an AWS Application Load Balancer the listener security policy, where `ELBSecurityPolicy-TLS13-1-2-2021-06` or newer offers only these two.
 
         **Why this matters**
 
-        - **POODLE attack:** SSL 3.0 can be exploited through a padding oracle attack to decrypt sensitive data.
-        - **BEAST attack:** The CBC implementation in TLS 1.0 allows chosen-plaintext attacks against session cookies.
-        - **Downgrade attacks:** Attackers can force connections onto weaker protocols whenever those protocols remain enabled.
-        - **Browser deprecation:** Major browsers have removed support for TLS 1.0 and TLS 1.1 entirely.
+        Each retired version carries a decryption attack its own design cannot close. SSL 3.0 falls to POODLE, where an attacker on the path replays a modified record and recovers a byte of the session cookie every few hundred attempts, because SSL 3.0 padding is not covered by the message authentication code. TLS 1.0 falls to BEAST, where predictable block chaining lets the attacker confirm guesses about the same cookie. TLS 1.1 is not individually broken but carries the same construction set and no authenticated encryption.
 
-        **Risk mitigation**
+        Leaving an old version enabled does not merely serve old clients, it exposes current ones. Version negotiation starts with the client proposing its best and the server answering, and an attacker who controls the path edits that proposal downward. A browser that would have used TLS 1.3 completes the handshake on TLS 1.0 instead, and the attacker then runs the attack that version permits. The floor you configure is the floor for everybody, not only for the stragglers.
 
-        - **Enable only modern protocols:** Restrict the server to TLS 1.2 and TLS 1.3, which provide current cryptographic protections.
-        - **Meet baseline standards:** Disabling legacy protocols satisfies the TLS 1.2 minimum required by PCI DSS and other frameworks.
+        Raising it does cut off genuinely old clients: Android 4.3 and earlier, Internet Explorer 10 and earlier, default-configured Java 7, and many embedded and point-of-sale devices. Review connection logs for legacy protocol use and plan a migration window before applying the change in production. A minimum of TLS 1.2 is also the floor that current industry baselines require.
       audit: |
         ### Audit via nmap
 
@@ -1483,19 +1477,17 @@ queries:
       tls.cipherSuites.none(encryption == /rc4/i)
     docs:
       desc: |
-        This check ensures that the server is configured to reject all RC4 cipher suites. RC4 has known cryptographic flaws that allow practical recovery of plaintext from encrypted traffic.
+        This check verifies that the server offers no RC4 cipher suite.
+
+        RC4 is a stream cipher that appears in suite names such as `ECDHE-RSA-RC4-SHA`. Exclude the family from the server's cipher list by appending `!RC4` to `SSLCipherSuite` in Apache, to `ssl_ciphers` in Nginx, or to `ssl-default-bind-ciphers` in HAProxy.
 
         **Why this matters**
 
-        - **Statistical biases:** The RC4 keystream has detectable biases that permit plaintext recovery once enough traffic is captured.
-        - **Bar Mitzvah attack:** Weak keys in RC4 produce exploitable patterns in the first bytes of ciphertext.
-        - **RFC 7465 prohibition:** The IETF has officially prohibited RC4 in all TLS versions because of these weaknesses.
-        - **Browser removal:** All major browsers have removed RC4 support, so leaving it enabled serves no legitimate clients.
+        The RC4 keystream is not uniform. Certain byte positions take certain values more often than chance allows, and those biases are fixed properties of the cipher rather than accidents of one key. An attacker who can get the same secret encrypted many times under different keys, which a browser will do readily if a script issues repeated requests, collects the ciphertexts and lets the bias vote. Given enough samples the plaintext at each position becomes the most likely candidate rather than a guess, and a session cookie is exactly the short, repeated, high-value secret this technique recovers.
 
-        **Risk mitigation**
+        The Bar Mitzvah attack comes at it from the other end. RC4 has a class of weak keys whose structure leaks into the opening bytes of the keystream, which is where protocol headers and cookies sit, so the start of a session falls with far less captured traffic than the general attack needs.
 
-        - **Remove RC4 suites:** Drop every RC4 cipher suite from the server's allowed cipher list.
-        - **Use modern AEAD ciphers:** Replace RC4 with AES-GCM or ChaCha20-Poly1305, which have no known practical attacks.
+        The IETF prohibited RC4 in every version of TLS in RFC 7465, and every major browser removed support years ago. No client on your traffic still requires it, so leaving it in the cipher list serves nobody except an attacker who can steer a negotiation toward it. Replace it with AES-GCM or ChaCha20-Poly1305, which have no comparable practical attack.
       audit: |
         ### Audit via nmap
 
@@ -1608,19 +1600,19 @@ queries:
       tls.cipherSuites.none(nullCipher)
     docs:
       desc: |
-        This check ensures that the server is configured to reject all NULL cipher suites. NULL ciphers transmit data with no encryption at all despite negotiating a TLS session.
+        This check verifies that the server refuses NULL cipher suites, which complete a TLS handshake and then send every byte in the clear.
+
+        A NULL suite negotiates keys and integrity as usual but selects no encryption algorithm, and its name contains `NULL`. Exclude the family from the server's cipher list by appending `!NULL:!aNULL:!eNULL` to `SSLCipherSuite` in Apache, to `ssl_ciphers` in Nginx, or to `ssl-default-bind-ciphers` in HAProxy.
 
         **Why this matters**
 
-        - **No confidentiality:** All data travels in cleartext and is fully visible to anyone monitoring the network.
-        - **False security:** Applications believe they hold a secure TLS connection while the data is actually unprotected.
-        - **Credential exposure:** Passwords, session tokens, and other sensitive data are transmitted without any encryption.
-        - **Downgrade attacks:** Attackers may try to negotiate a NULL cipher whenever one remains enabled.
+        An attacker who can watch the network reads the entire session. Passwords in a sign-in request, session cookies on every subsequent request, API tokens in an `Authorization` header, and personal data in response bodies all travel as plaintext. Anyone on the same wireless network, at any transit hop, or with a tap on the link collects them without doing any work at all.
 
-        **Risk mitigation**
+        What makes this worse than plain HTTP is that everything above the connection believes it is protected. The browser shows a lock. The application logs an HTTPS request. Monitoring that alerts on cleartext protocols sees port 443 and stays quiet. A cookie carrying the `Secure` attribute is still sent, because the browser considers the connection secure. The one control that would have caught the exposure is the control the NULL suite defeats.
 
-        - **Disable NULL ciphers explicitly:** Exclude the aNULL and eNULL cipher groups from the server's cipher configuration.
-        - **Require encrypting ciphers:** Allow only cipher suites that provide genuine confidentiality, such as AES-GCM or ChaCha20-Poly1305.
+        An offered NULL suite is also a downgrade target. An attacker on the path who can influence the negotiation steers a client toward it, and a client that would have used AES-GCM finds itself sending plaintext instead. That is why removing the suites from the server matters more than trusting client preference, because a suite the server never offers cannot be selected.
+
+        Replace them with authenticated encryption, AES-GCM or ChaCha20-Poly1305, which provide confidentiality and integrity in the same operation.
       audit: |
         ### Audit via nmap
 
@@ -1736,19 +1728,19 @@ queries:
       tls.cipherSuites.none(export)
     docs:
       desc: |
-        This check ensures that the server is configured to reject all export-grade cipher suites. Export ciphers were deliberately weakened to satisfy 1990s-era US export rules and provide almost no real security.
+        This check verifies that the server refuses export-grade cipher suites, the deliberately weakened ciphers that 1990s United States export rules once required.
+
+        Export suites cap the effective key at 40 or 56 bits and their names contain `EXPORT`. You exclude them from the server's cipher list with `!EXPORT` appended to `SSLCipherSuite` in Apache, to `ssl_ciphers` in Nginx, or to `ssl-default-bind-ciphers` in HAProxy. Everything the server offers should use 128-bit keys or stronger.
 
         **Why this matters**
 
-        - **Tiny key sizes:** Export ciphers use 40-bit or 56-bit keys that modern hardware can brute-force in minutes to hours.
-        - **FREAK attack:** Attackers can force a server to use an export-grade RSA key, which enables decryption of captured traffic.
-        - **Logjam attack:** Export-grade Diffie-Hellman parameters allow a downgrade attack against connections that should be secure.
-        - **Active exploitation:** These attacks are practical and have been demonstrated against real-world servers.
+        A 40-bit key falls to a rented pool of cloud instances in hours, and 56 bits is not meaningfully better. An attacker who records one session and wants its contents pays for the compute and reads it afterward.
 
-        **Risk mitigation**
+        The sharper problem is that offering these suites endangers connections that never asked for them. FREAK works because a server that still carries export RSA suites will, when asked, sign an export-strength ephemeral key with its real certificate. An attacker on the path rewrites the client hello to request the export suite, the server complies, and the attacker factors the 512-bit modulus that servers commonly reuse across many connections. They then hold the session key for a handshake the client believed was strong.
 
-        - **Remove export suites:** Drop every export-grade cipher suite from the server's allowed cipher list.
-        - **Require adequate key sizes:** Allow only ciphers with 128-bit keys or stronger so brute-force attacks are infeasible.
+        Logjam is the same shape against Diffie-Hellman. The attacker downgrades the negotiation to export-grade parameters and completes a one-time precomputation against the small standard prime that many servers share, which reduces each individual session to a cheap final step.
+
+        Both attacks have been demonstrated against real deployments, and both are defeated by removing the suites rather than by relying on clients to refuse them. What the client prefers does not matter if the server will still agree.
       audit: |
         ### Audit via nmap
 
@@ -1861,19 +1853,17 @@ queries:
       tls.cipherSuites.none(anonymous)
     docs:
       desc: |
-        This check ensures that the server is configured to reject all anonymous Diffie-Hellman cipher suites. Anonymous Diffie-Hellman performs key exchange without authenticating the server, which makes interception straightforward.
+        This check verifies that the server refuses anonymous Diffie-Hellman cipher suites, so every handshake authenticates the server before a key is agreed.
+
+        An anonymous suite performs the key exchange with no certificate at all, and its name carries `ADH` or `DH_anon`. You exclude the family in the server's cipher list by appending `!ADH:!aNULL` to `SSLCipherSuite` in Apache, to `ssl_ciphers` in Nginx, or to `ssl-default-bind-ciphers` in HAProxy.
 
         **Why this matters**
 
-        - **No authentication:** The server cannot prove its identity, so any attacker can intercept and relay traffic.
-        - **Trivial man-in-the-middle:** Unlike attacks that require forging a certificate, anonymous Diffie-Hellman makes interception simple.
-        - **Full traffic visibility:** An attacker can decrypt, inspect, and modify all traffic in both directions.
-        - **Certificate bypass:** Skipping authentication circumvents the entire PKI trust model.
+        Encryption without authentication protects nothing against an attacker who is on the path rather than merely listening. If a client will accept an anonymous suite, an attacker sitting on the network answers the handshake themselves, agrees a key with the client, opens a second connection to the real server, and relays every request and response between the two. Both ends see a working encrypted session. The attacker sees the plaintext and can change it before passing it on.
 
-        **Risk mitigation**
+        Ordinary interception needs a certificate the client will trust, which means compromising a certificate authority or getting a fraudulent issuance past the transparency logs. An anonymous suite removes that requirement completely. There is no certificate to forge because the protocol never asks for one, so the attack costs nothing beyond a position on the path.
 
-        - **Disable anonymous suites:** Remove all ADH cipher suites from the server's cipher configuration.
-        - **Require authenticated key exchange:** Allow only mechanisms such as ECDHE that pair key exchange with certificate verification.
+        These suites exist for narrow cases where the parties authenticate at another layer, and no browser or ordinary client will negotiate them today. On an internet-facing server they are dead configuration, present because a default cipher string was never narrowed. Leaving them offered gives an attacker who can influence negotiation a route that skips the entire public key infrastructure the rest of your TLS setup rests on.
       audit: |
         ### Audit via nmap
 
@@ -1985,20 +1975,19 @@ queries:
     mql: tls.cipherSuites.none(encryption == /des|rc2|idea/i)
     docs:
       desc: |
-        This check ensures that the server is configured to reject cipher suites built on weak block ciphers such as DES, 3DES, RC2, and IDEA. These legacy algorithms no longer offer enough security margin to protect data in transit against modern attackers.
+        This check verifies that the server offers no cipher suite built on DES, 3DES, RC2, or IDEA.
+
+        These are the pre-AES block ciphers, and their suite names carry `DES-CBC3-SHA`, `RC2`, or `IDEA`. Exclude them from the server's cipher list with `!DES:!3DES:!RC2:!IDEA` appended to `SSLCipherSuite` in Apache, to `ssl_ciphers` in Nginx, or to `ssl-default-bind-ciphers` in HAProxy.
 
         **Why this matters**
 
-        - **DES brute-force:** A 56-bit DES key can be recovered in hours with dedicated hardware or rented cloud computing.
-        - **Sweet32 collisions:** 3DES and other 64-bit block ciphers are vulnerable to birthday attacks that recover plaintext once enough traffic is captured.
-        - **RC2 weaknesses:** RC2 has known related-key attacks and an inadequate security margin for current threats.
-        - **IDEA obsolescence:** IDEA is outdated and lacks the strength of modern algorithms even though it is not formally broken.
-        - **Standards alignment:** Current security baselines require AES-strength encryption and reject these legacy ciphers outright.
+        Single DES has a 56-bit key. Purpose-built hardware and rented cloud capacity recover one in hours for a few hundred dollars, so an attacker who captures a session encrypted this way decrypts it as a matter of budget rather than of skill.
 
-        **Risk mitigation**
+        3DES survives the key length problem and fails on block size instead. Its 64-bit block means that after roughly 32 gigabytes sent under one key, a collision between ciphertext blocks becomes likely, and each collision reveals the exclusive-or of two plaintext blocks. Sweet32 turns that into a working attack: the attacker keeps a long-lived connection busy with requests from the victim's browser, waits for collisions to accumulate, and reads out the secret that repeats in every request, which is the session cookie.
 
-        - **Modern algorithms:** Replace weak block ciphers with AES-GCM or ChaCha20-Poly1305 to gain strong encryption with authenticated integrity.
-        - **Reduced attack surface:** Removing DES, 3DES, RC2, and IDEA eliminates the brute-force and Sweet32 exposure they introduce.
+        RC2 has published related-key attacks and a security margin nobody would accept for new work, and IDEA is obsolete, unmaintained in current libraries and offering nothing AES does not do better.
+
+        None of these ciphers is needed by any client that will reach an internet-facing service today. Their presence in a cipher list is almost always inherited from a default string that was never trimmed. Replace them with AES-GCM or ChaCha20-Poly1305.
       audit: |
         ### Audit via openssl
 
@@ -2124,20 +2113,19 @@ queries:
     mql: tls.cipherSuites.none(cbc)
     docs:
       desc: |
-        This check ensures that the server is configured to reject cipher suites using CBC (Cipher Block Chaining) mode. CBC mode has a long history of exploitable flaws that authenticated encryption modes were designed to eliminate.
+        This check verifies that the server offers no cipher suite using CBC mode, in any protocol version.
+
+        CBC suites are the ones whose names end in a bare hash rather than a mode, such as `ECDHE-RSA-AES128-SHA`. Removing them means listing only AEAD suites in the server's cipher configuration, which is `SSLCipherSuite` in Apache, `ssl_ciphers` in Nginx, and `ssl-default-bind-ciphers` in HAProxy, with `ECDHE-ECDSA-AES128-GCM-SHA256` and `ECDHE-RSA-CHACHA20-POLY1305` as typical entries.
 
         **Why this matters**
 
-        - **BEAST attack:** Predictable IV selection in TLS 1.0 CBC mode enables chosen-plaintext attacks against encrypted traffic.
-        - **POODLE attack:** Padding oracle vulnerabilities in CBC allow byte-by-byte recovery of plaintext.
-        - **Lucky13 timing leaks:** Timing side channels in CBC padding verification leak information about the underlying plaintext.
-        - **Weak integrity guarantees:** CBC delivers only confidentiality, leaving room for undetected ciphertext manipulation in some scenarios.
-        - **Implementation complexity:** CBC padding rules create frequent opportunities for implementation errors.
+        CBC in TLS encrypts first and authenticates second, so the server decrypts and strips padding from data it has not yet verified. Every attack on the mode works from that ordering. An attacker on the path who replays a modified record learns from the server's response whether the padding was well formed, and that single bit of feedback, repeated, recovers plaintext byte by byte. POODLE is that attack. Lucky13 is the same attack read from response timing when the server tries to hide the error, because the message authentication code is computed over a different number of blocks depending on what the padding claimed.
 
-        **Risk mitigation**
+        BEAST exploits the same mode from the initialization vector side, using predictable chaining in TLS 1.0 to confirm guesses about a session cookie.
 
-        - **Authenticated encryption:** Use AEAD modes such as AES-GCM or ChaCha20-Poly1305, which provide confidentiality and integrity by design.
-        - **Protocol enforcement:** Enabling TLS 1.3 removes CBC suites entirely and forces authenticated encryption for every connection.
+        The remedy is not to patch the timing but to stop offering the mode. An AEAD suite authenticates a record before decrypting anything, so a tampered record produces one indistinguishable failure and no oracle at all.
+
+        Removing every CBC suite does cut off clients that cannot negotiate AEAD, which in practice means Internet Explorer 11 on Windows 7 and 8.1 with RSA certificates, Android 4.x, and default-configured Java 7. Review connection logs for CBC negotiation before making the change, and enable TLS 1.3, which has no CBC suite to offer.
       audit: |
         ### Audit via openssl
 
@@ -2271,20 +2259,17 @@ queries:
     mql: tls.cipherSuites.none(keyExchange == "RSA")
     docs:
       desc: |
-        This check ensures that the server is configured to reject cipher suites that use static RSA key exchange. RSA key exchange ties the confidentiality of every session to a single long-term private key, creating lasting cryptographic risk.
+        This check verifies that the server offers no cipher suite that uses static RSA key exchange.
+
+        In those suites, named `TLS_RSA_WITH_...` in the registry and written `AES128-GCM-SHA256` in OpenSSL syntax, the client picks the session secret and encrypts it to the public key in the server's certificate. Exclude them from the cipher list with `!kRSA` in Apache's `SSLCipherSuite`, or by listing only ECDHE and DHE suites in Nginx's `ssl_ciphers` and HAProxy's `ssl-default-bind-ciphers`. Note the distinction from `ECDHE-RSA-AES128-GCM-SHA256`, which uses RSA only to sign the handshake and is fine to keep.
 
         **Why this matters**
 
-        - **No forward secrecy:** Captured traffic can be decrypted retroactively if the server's private key is ever obtained.
-        - **Store now, decrypt later:** Adversaries can record encrypted traffic today and decrypt it years later once the key becomes available.
-        - **Broad key-compromise impact:** A single key compromise exposes all historical communications, not only future ones.
-        - **Quantum exposure:** Future quantum computers may break RSA and expose all traffic protected with RSA key exchange.
-        - **Protocol deprecation:** RSA key exchange was intentionally removed from TLS 1.3 because of these limitations.
+        Because the session secret crosses the wire encrypted to a key that lives for years, every session negotiated this way is decryptable by whoever eventually holds that key. An attacker records the traffic today with no ability to read it, keeps the capture, and waits. The key surfaces later from a stolen server backup, a private key checked into a repository, a memory disclosure bug in the TLS stack, or the compromise of the host itself. On that day the whole archive decrypts in bulk, including sessions from long before the attacker had any access.
 
-        **Risk mitigation**
+        A single key compromise therefore has unbounded retrospective scope. With ephemeral key exchange, the same compromise lets an attacker impersonate the server going forward, which is serious but bounded and detectable. With static RSA it also hands them the history.
 
-        - **Ephemeral key exchange:** Use ECDHE or DHE cipher suites, which generate per-session keys and provide forward secrecy.
-        - **Contained breaches:** Forward secrecy limits a private-key compromise to a single session rather than the entire traffic history.
+        The protocol designers reached the same conclusion and removed static RSA key exchange from TLS 1.3 entirely, leaving ephemeral exchange as the only option.
       audit: |
         ### Audit via openssl
 
@@ -2409,18 +2394,19 @@ queries:
     mql: tls.ciphers.none( /^old/i )
     docs:
       desc: |
-        This check ensures that the server is configured to reject the draft ChaCha20-Poly1305 cipher suites that predate RFC 7905. These suites, assigned the IDs 0xCC13, 0xCC14, and 0xCC15, were implemented from early drafts before the algorithm was standardized and are only offered by outdated TLS stacks.
+        This check verifies that the server does not offer the draft ChaCha20-Poly1305 cipher suites that predate the standardized ones.
+
+        Three suite identifiers were assigned to the pre-standard construction: `0xCC13`, `0xCC14`, and `0xCC15`. They come from implementations written against the ChaCha20-Poly1305 internet drafts before RFC 7905 fixed the design in 2016, and in practice they appear only on OpenSSL 1.0.2 builds carrying the early ChaCha20 patch. No cipher string removes them individually. The fix is to upgrade the TLS library and the server package linked against it, then set a current cipher list containing `ECDHE-ECDSA-CHACHA20-POLY1305` and `ECDHE-RSA-CHACHA20-POLY1305`.
 
         **Why this matters**
 
-        - **Outdated TLS stack:** Offering the draft suites signals a TLS library that predates the 2016 standardization, typically OpenSSL 1.0.2 with an early ChaCha20 patch, which also lacks years of security fixes.
-        - **Non-standard construction:** The draft suites use a different nonce construction than the standardized suites and never received the same scrutiny or formal analysis.
-        - **No benefit to clients:** Modern clients negotiate the standardized ChaCha20-Poly1305 suites, so keeping the draft IDs adds risk without improving compatibility.
+        The draft suites themselves are not the prize. What they reveal is that this host runs a TLS stack frozen before 2016, and an attacker reads that off a single handshake with no authentication and no noisy probing. That library predates years of published vulnerabilities in the same code, so the finding is really an inventory result. A scanner recording the suites offered by every host on the internet has already filed this one as running a known-old OpenSSL, and exploit selection follows from there.
 
-        **Risk mitigation**
+        The construction also differs from the standardized one in how the nonce is built, and it never received the review the final design did. Any weakness found in it will not be fixed, because nobody maintains the drafts.
 
-        - **Upgrade the TLS library:** Move to a current OpenSSL release so the standardized ChaCha20-Poly1305 suites replace the draft IDs.
-        - **Modern cipher selection:** Configure only current suites with AEAD encryption, forward secrecy, and SHA-256 or stronger hashing.
+        No client benefits from keeping them. Every current client negotiates the RFC 7905 suites, so the draft identifiers add fingerprinting value for an attacker and nothing at all for your users. Removing them by upgrading also brings the fixes that the same upgrade carries for everything else in the library.
+
+        Once the library is current, narrow the cipher list to suites that pair authenticated encryption with forward secrecy and SHA-256 or stronger hashing, so the standardized ChaCha20-Poly1305 suites are the only ones on offer under that name.
       audit: |
         ### Audit via nmap
 
@@ -2563,20 +2549,19 @@ queries:
     mql: tls.cipherSuites.any(aead)
     docs:
       desc: |
-        This check ensures that the server is configured to offer AEAD cipher suites such as AES-GCM, ChaCha20-Poly1305, or AES-CCM among its preferred options. AEAD ciphers combine encryption and authentication in one operation, which is the security baseline for modern TLS.
+        This check verifies that the server offers at least one authenticated encryption cipher suite, so a client can negotiate a cipher that protects integrity as well as confidentiality.
+
+        AEAD suites encrypt a record and authenticate it in a single operation. The families that qualify are AES-GCM, ChaCha20-Poly1305, and AES-CCM. You choose them in the server's cipher list, which is `SSLCipherSuite` in Apache, `ssl_ciphers` in Nginx, and `ssl-default-bind-ciphers` in HAProxy. The check passes as soon as one offered suite is AEAD, so a list carrying `ECDHE-RSA-AES128-GCM-SHA256` alongside older entries already satisfies it.
 
         **Why this matters**
 
-        - **Built-in integrity:** AEAD ciphers detect any tampering with ciphertext and block manipulation attacks.
-        - **No padding oracles:** Unlike CBC mode, AEAD ciphers are not exposed to padding-based timing attacks.
-        - **Strong performance:** AES-GCM uses hardware acceleration on modern CPUs to deliver high throughput.
-        - **Protocol direction:** TLS 1.3 uses AEAD ciphers exclusively, making them the standard for secure communication.
-        - **Fewer implementation errors:** Combining encryption and authentication reduces the chance of flawed implementations.
+        With no AEAD suite in the list, every client falls back to a CBC suite with a bolted-on message authentication code, and those constructions leak. An attacker on the network path who can trigger repeated requests recovers plaintext a byte at a time through the padding oracle that CBC record processing exposes, which is how POODLE and Lucky13 read session cookies out of an otherwise encrypted stream. Nothing about the certificate or the key size prevents that, because the weakness is in the record layer.
 
-        **Risk mitigation**
+        An AEAD suite closes the oracle. A record that has been altered fails authentication before any padding is examined, so there is no error to time and no oracle to query, and the attacker's probes return the same indistinguishable failure regardless of what they guessed.
 
-        - **Prioritized AEAD suites:** Place AES-GCM and ChaCha20-Poly1305 at the top of the cipher list for broad support and strong protection.
-        - **Hardware-aware coverage:** Offering both AES-GCM and ChaCha20-Poly1305 keeps performance high across devices with and without AES acceleration.
+        Offer both AES-GCM and ChaCha20-Poly1305. AES-GCM runs on the AES instructions present in modern server and desktop processors, while ChaCha20-Poly1305 is faster on phones and embedded clients that lack them, so carrying both keeps throughput high without narrowing who can connect.
+
+        TLS 1.3 negotiates only AEAD suites, so enabling it satisfies this requirement on every connection it serves. A server that still offers TLS 1.2 needs the AEAD suites named explicitly in its cipher list as well.
       audit: |
         ### Audit via openssl
 
@@ -2706,20 +2691,19 @@ queries:
     mql: tls.cipherSuites.any(forwardSecrecy)
     docs:
       desc: |
-        This check ensures that the server is configured to offer cipher suites that provide Perfect Forward Secrecy through ECDHE or DHE key exchange. Forward secrecy keeps past sessions protected even if the server's private key is later compromised.
+        This check verifies that the server offers at least one cipher suite whose key exchange is ephemeral, so the session key cannot be recovered later from the server's long-term private key.
+
+        Forward secrecy comes from ECDHE or DHE key exchange, where both sides derive a fresh key for each connection and discard it when the connection ends. You select those suites in the server's cipher list, which is `SSLCipherSuite` in Apache, `ssl_ciphers` in Nginx, and `ssl-default-bind-ciphers` in HAProxy. Where DHE is used, pair it with a generated parameter file of at least 2048 bits, pointed at by `ssl_dhparam` in Nginx.
 
         **Why this matters**
 
-        - **Ephemeral keys:** Each session negotiates unique key exchange parameters that are discarded once the session ends.
-        - **Retroactive protection:** Previously captured traffic stays confidential even if the server's long-term private key is obtained.
-        - **Quantum resilience:** Forward secrecy limits the damage future quantum attacks can do to historical traffic.
-        - **Regulatory expectations:** Many security frameworks now require forward secrecy for the protection of sensitive data.
-        - **Defense in depth:** Forward secrecy adds a protective layer that holds even when other controls fail.
+        Without forward secrecy the session key is encrypted to the server's RSA key and sent across the wire, so whoever later obtains that private key can decrypt every session they recorded. An attacker does not need to break any cryptography today. They capture the traffic now, at a transit provider, on a compromised switch, or on a hostile network the client is sitting on, and store it. The key arrives afterward through a server compromise, a stolen backup, a private key committed to a repository, or a memory disclosure bug that reads it out of process memory. At that moment the entire archive opens at once, including the credentials and tokens inside it.
 
-        **Risk mitigation**
+        With ECDHE the recorded traffic stays closed. The private key signs the handshake but never encrypts the session key, so compromising it lets an attacker impersonate the server from that point forward and nothing more. Yesterday's captures remain unreadable.
 
-        - **ECDHE-based suites:** Enable ECDHE cipher suites for forward secrecy with strong performance, and back them with well-sized DHE parameters where DHE is used.
-        - **Protocol enforcement:** Enabling TLS 1.3 guarantees forward secrecy on every connection by design.
+        The same reasoning drives the store-now-decrypt-later concern about future advances in cryptanalysis, since only sessions whose keys were transmitted are exposed in retrospect.
+
+        TLS 1.3 removed non-forward-secret key exchange from the protocol, so enabling it guarantees this property on every connection it serves.
       audit: |
         ### Audit via openssl
 
@@ -2859,20 +2843,17 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that the server is configured to negotiate only TLS 1.2 and TLS 1.3, or otherwise avoids the CBC cipher conditions that make the BEAST attack possible. BEAST (Browser Exploit Against SSL/TLS) abuses a flaw in the way TLS 1.0 chains cipher blocks and can be used to decrypt sensitive data such as session cookies.
+        This check verifies that the server cannot be pushed into the TLS 1.0 CBC record construction that the BEAST attack depends on.
+
+        BEAST, short for Browser Exploit Against SSL/TLS, targets the way TLS 1.0 chains cipher blocks. The check scores full marks when the server negotiates only TLS 1.2 and TLS 1.3, and partial credit when older versions remain reachable but the cipher list carries no CBC, NULL, anonymous, export, DES, RC2, or IDEA suite. Both states are set in the server configuration: `SSLProtocol -all +TLSv1.2 +TLSv1.3` with `SSLCipherSuite` in Apache, `ssl_protocols TLSv1.2 TLSv1.3` with `ssl_ciphers` in Nginx, and `ssl-min-ver TLSv1.2` in HAProxy.
 
         **Why this matters**
 
-        - **Predictable initialization vector:** TLS 1.0 reuses the last ciphertext block as the initialization vector for the next record, enabling a chosen-plaintext attack against CBC ciphers.
-        - **Session hijacking:** A successful BEAST attack can recover authentication cookies, letting an attacker impersonate a legitimate user.
-        - **Client-side execution:** The attack requires malicious code running in the victim's browser to inject chosen plaintext alongside the target data.
-        - **Protocol-level flaw:** BEAST cannot be fully resolved within TLS 1.0 itself; it requires moving to a newer protocol or non-CBC ciphers.
-        - **Demonstrated weakness:** BEAST showed that TLS 1.0 has fundamental design weaknesses that justify retiring it entirely.
+        TLS 1.0 uses the last ciphertext block of one record as the initialization vector for the next, and an attacker on the network path can observe it. Combined with script running in the victim's browser, that predictability becomes a working decryption. The attacker gets the browser to issue requests that place a chosen byte next to the secret they want, watches which guess produces a matching ciphertext block, and walks the session cookie out one byte at a time. The cookie is then replayed to sign in as that user, with no password ever needed.
 
-        **Risk mitigation**
+        The flaw is in the protocol rather than in any one implementation, so no configuration of TLS 1.0 removes it. Disabling TLS 1.0 and TLS 1.1 is the fix. TLS 1.2 chooses a fresh initialization vector for each record, and TLS 1.3 admits only authenticated encryption.
 
-        - **Disable legacy protocols:** Negotiate only TLS 1.2 and TLS 1.3 so the vulnerable TLS 1.0 CBC behavior is never reachable.
-        - **Use AEAD cipher suites:** Prefer authenticated encryption ciphers such as AES-GCM, which are immune to the BEAST chosen-plaintext technique, and never substitute RC4 as a workaround.
+        Do not reach for RC4 as the workaround, which was the common advice at the time. RC4 avoids CBC entirely but has keystream biases that recover plaintext from captured traffic on their own, so that trade swaps one practical decryption for another.
       audit: |
         ### Audit via nmap
 
@@ -3013,20 +2994,19 @@ queries:
       tls.certificates.first.isVerified == true
     docs:
       desc: |
-        This check ensures that the server is configured to present a certificate chain that validates fully against a recognized Certificate Authority. A chain that fails verification represents a fundamental trust failure that prevents clients from confirming the server's identity.
+        This check verifies that the certificate chain the server presents validates to a trusted root, which `openssl s_client` reports as `Verify return code: 0`.
+
+        Verification fails on the chain rather than on the leaf, and it fails for a small set of causes: a missing intermediate, certificates sent out of order, an expired intermediate or root, or a root that clients do not carry. The chain is the file the server points at, `SSLCertificateFile` in Apache, `ssl_certificate` in Nginx, and the combined PEM on HAProxy's `bind` line, and it must hold the leaf first followed by every intermediate. An ACME `fullchain.pem` is already in that order.
 
         **Why this matters**
 
-        - **Unconfirmed identity:** When the chain does not verify, clients cannot establish that they are communicating with the legitimate server rather than an impostor.
-        - **Missing intermediates:** An absent or incorrect intermediate certificate breaks the chain even when the leaf certificate itself is valid.
-        - **Chain ordering errors:** Certificates presented out of order can cause validation failures in strict TLS implementations.
-        - **Cross-signing gaps:** Transitions between cross-signed certificates can leave the chain incomplete if it is not updated correctly.
-        - **Insecure fallback:** Some clients silently downgrade to an insecure connection when chain verification fails, masking the underlying problem.
+        A chain that does not verify means clients cannot establish that they are talking to you rather than to someone standing in the path. That is the property TLS exists to provide, and once it is gone, the encryption is protecting a conversation with an unidentified party.
 
-        **Risk mitigation**
+        What follows depends on the client, and every outcome is bad. Browsers show a warning page, users click through it, and thereby learn to click through the next one, including the one an attacker's certificate produces. Some libraries and command-line tools fail open, or get configured with verification switched off to get past the error, which removes certificate checking for that caller permanently. Others fail closed and take an integration down.
 
-        - **Serve the full chain:** Configure the server to present the leaf certificate followed by every required intermediate in the correct order.
-        - **Validate after changes:** Verify the chain against a current trust store whenever certificates are renewed or rotated to catch breaks before clients do.
+        Missing intermediates are the most common cause and the most deceptive, because browsers often paper over them. Several fetch the missing certificate themselves or carry a cached copy from another site, so the deployment looks healthy on a laptop while failing for every mobile application and API caller that does no such fetching.
+
+        Re-verify the chain after every renewal or rotation. Authorities change intermediates, and a chain that verified last year can stop verifying without the leaf changing at all.
       audit: |
         ### Audit via openssl
 
@@ -3202,20 +3182,19 @@ queries:
       tls.versions.contains("tls1.3")
     docs:
       desc: |
-        This check ensures that the server is configured to support TLS 1.3, the latest version of the TLS protocol. Offering TLS 1.3 lets clients negotiate the strongest available protocol and benefit from its security and performance improvements over earlier versions.
+        This check verifies that the server offers TLS 1.3 alongside TLS 1.2, so clients that support it negotiate the newer protocol.
+
+        TLS 1.3 needs a recent TLS library and a server build linked against it: Apache 2.4.36 or later, Nginx 1.13.0 or later, or HAProxy 1.9.1 or later, each with OpenSSL 1.1.1 or later. Once that is in place, it is enabled by naming it in the same directive that sets the protocol floor, `SSLProtocol -all +TLSv1.2 +TLSv1.3` in Apache and `ssl_protocols TLSv1.2 TLSv1.3` in Nginx. In HAProxy, remove anything that caps the ceiling below it, such as `ssl-max-ver TLSv1.2` or `no-tlsv13` on a bind line.
 
         **Why this matters**
 
-        - **Mandatory forward secrecy:** Every TLS 1.3 cipher suite provides forward secrecy by design, eliminating the risk of retroactive decryption if a key is later compromised.
-        - **Reduced handshake:** The TLS 1.3 handshake completes in a single round trip, lowering latency and shrinking the attack surface during negotiation.
-        - **Simplified cipher suites:** TLS 1.3 supports only AEAD ciphers, removing weak and legacy algorithm options entirely.
-        - **Encrypted handshake:** More of the TLS 1.3 handshake is encrypted, reducing the information available to passive observers.
-        - **No renegotiation:** TLS 1.3 removes the insecure renegotiation mechanism that has been exploited in past attacks.
+        TLS 1.3 removes the options an attacker relies on. Every one of its key exchanges is ephemeral, so recorded traffic cannot be opened later with a stolen server key. Every one of its cipher suites is authenticated encryption, so the padding oracle and timing attacks that work against CBC have no suite left to attack. Renegotiation, compression, and static RSA key exchange are gone from the protocol, which retires the attacks built on each of them rather than requiring you to disable them one at a time.
 
-        **Risk mitigation**
+        More of the handshake is encrypted as well. In TLS 1.2 an observer reads the server certificate straight off the wire and learns which site behind a shared address a client is visiting. In TLS 1.3 that certificate is encrypted, so a passive observer sees considerably less about who is talking to what.
 
-        - **Enable TLS 1.3:** Configure the server to offer TLS 1.3 so clients negotiate the most secure protocol available.
-        - **Keep TLS 1.2 alongside it:** Retain TLS 1.2 support for compatibility with older clients while disabling TLS 1.0 and TLS 1.1.
+        The handshake also completes in one round trip instead of two, which shortens the unprotected window at the start of a connection and makes the change easier to justify on performance grounds.
+
+        Keep TLS 1.2 enabled for clients that cannot do TLS 1.3, and keep TLS 1.0 and TLS 1.1 disabled.
       audit: |
         ### Audit via nmap
 
@@ -3341,23 +3320,17 @@ queries:
       tls.certificates.first.ocspServer != empty || tls.certificates.first.crlDistributionPoints != empty
     docs:
       desc: |
-        This check ensures that the server's leaf certificate tells clients how to determine whether it has been revoked, by publishing an OCSP responder URL in its Authority Information Access extension, a CRL distribution point, or both. Either mechanism satisfies the requirement.
+        This check verifies that the leaf certificate tells clients where to check whether it has been revoked, by carrying an OCSP responder URL in its Authority Information Access extension, a CRL distribution point, or both. Either one satisfies the check.
+
+        This is a property of the certificate, set by the issuer, so no server directive adds it. A certificate with neither is almost always self-signed or issued by an internal authority, and the fix is to reissue from a publicly trusted one. Where an OCSP responder is present, stapling is worthwhile hardening on top of it: `ssl_stapling on` with `ssl_stapling_verify on` in Nginx, or `SSLUseStapling on` in Apache's global scope.
 
         **Why this matters**
 
-        - **Undetected revocation:** A certificate carrying neither an OCSP responder nor a CRL distribution point gives clients no way to learn it was revoked, so a compromised key stays trusted until the certificate expires on its own.
-        - **Key compromise response:** Revocation is the only tool for withdrawing trust in a certificate before its natural expiry. Without a published mechanism, the response to a stolen private key is to wait.
-        - **Inconsistent client behavior:** When revocation information is unavailable, some clients fail open and accept the certificate anyway, creating a silent security gap.
-        - **Compliance expectations:** Security frameworks expect a functional revocation mechanism, without mandating which one.
+        Revocation is the only way to withdraw trust in a certificate before it expires on its own. If the certificate publishes no way to check, then a key stolen from your server stays valid to every client for the whole remaining lifetime, and the incident response to a compromised key is to wait. An attacker holding that key impersonates the hostname for as long as the certificate lives, and nothing you do reaches the clients.
 
-        **Why both mechanisms count**
+        Even where revocation data exists, clients differ. Some fail open when they cannot reach the responder and accept the certificate anyway. That is the argument for stapling, which delivers a fresh signed status inside the handshake so the client never needs to reach the responder at all.
 
-        The industry has moved revocation checking from OCSP toward CRLs. Let's Encrypt, the largest certificate authority by volume, stopped including OCSP URLs in its certificates in May 2025 and shut down its OCSP responders that August, citing the privacy cost of OCSP: a responder learns which site each visitor is browsing. Its certificates publish a CRL distribution point instead. Requiring OCSP specifically would therefore fail a large share of correctly configured, modern certificates, so this check accepts either mechanism.
-
-        **Risk mitigation**
-
-        - **Confirm your CA publishes revocation data:** Any publicly trusted CA does, though which mechanism varies. A certificate with neither is the case to investigate.
-        - **Enable OCSP stapling where OCSP exists:** If your CA still publishes an OCSP responder, stapling lets the server deliver a fresh signed status so clients never contact the responder themselves, removing the privacy and latency cost.
+        Both mechanisms count here deliberately, because the industry has moved from OCSP toward revocation lists. Let's Encrypt stopped putting OCSP URLs in its certificates in May 2025 and shut its responders down that August, on the grounds that a responder learns which site each visitor is browsing. Its certificates carry a CRL distribution point instead, so demanding OCSP specifically would fail a large share of correctly configured modern certificates.
       audit: |
         ### Audit via openssl
 
@@ -3530,20 +3503,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that the server is configured to avoid presenting a different default certificate when a client connects without Server Name Indication. A divergent default certificate can disclose internal hostnames, other hosted services, or infrastructure details to anyone who connects.
+        This check verifies that a client connecting without Server Name Indication receives the same certificate as a client that supplies the hostname.
+
+        The default certificate is whichever one the server picks when the handshake carries no name. Apache uses the first `<VirtualHost *:443>` it parses, Nginx uses the `server` block marked `default_server`, and HAProxy uses the first certificate on the `bind` line or the first entry of its `crt-list`. The check compares the common name of the certificate served without a name against the one served with it, and fails when they differ.
 
         **Why this matters**
 
-        - **Hostname disclosure:** Internal hostnames or service names can be revealed through the default certificate's Common Name or Subject Alternative Name fields.
-        - **Service enumeration:** A distinct default certificate lets an attacker discover other services hosted on the same server or IP address.
-        - **Hosting relationships:** A default certificate belonging to another organization exposes shared hosting arrangements that should remain private.
-        - **Reconnaissance value:** Information gathered from leaked certificates aids attackers in planning targeted attacks.
-        - **Weaker defaults:** Legacy or outdated certificates served as the default may carry weaker security properties than the intended certificate.
+        The default certificate is the one an attacker gets for free. Scanning an address range and connecting to every host on port 443 without a name is a single unauthenticated pass, and it returns whatever certificate each server treats as its default. When that certificate belongs to an internal service, its common name and subject alternative names hand over hostnames the operator never published: an admin panel, a staging environment, a monitoring endpoint, or a wildcard covering an internal domain. Those names become the target list for the next stage, and none of them was reachable through public DNS.
 
-        **Risk mitigation**
+        The same response maps co-tenancy. A default certificate naming a different organization tells an attacker which sites share this address, which is useful for picking the weakest one and for working out what a compromise of that host would reach.
 
-        - **Serve a consistent certificate:** Configure the server to present the same certificate whether or not SNI is supplied, so non-SNI connections reveal nothing extra.
-        - **Restrict the default:** Where possible, require SNI or set the default virtual host to a benign certificate that exposes no internal detail.
+        The certificate served by default is also frequently an older or internally issued one that nobody rotates, so it may carry a weaker key or signature than the certificate the public site presents.
+
+        Point the default at the same public certificate the primary site uses, or configure the server to refuse handshakes that carry no name at all, which Nginx does with `ssl_reject_handshake on`.
       audit: |
         ### Audit via openssl
 

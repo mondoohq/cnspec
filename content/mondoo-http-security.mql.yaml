@@ -1000,17 +1000,17 @@ queries:
     mql: http.get.header.params.keys.any(downcase == "x-frame-options")
     docs:
       desc: |
-        This check ensures that the X-Frame-Options HTTP header is set to prevent clickjacking attacks.
+        This check verifies that the server tells browsers whether the page may be displayed inside another site's frame.
+
+        The instrument is the `X-Frame-Options` response header, and the check requires only that a header by that name is present. The two values that do anything are `DENY`, which forbids framing outright, and `SAMEORIGIN`, which permits it from your own origin only. `ALLOW-FROM` was never widely implemented and is ignored by current browsers, so an origin allowlist has to come from the Content-Security-Policy `frame-ancestors` directive instead. Set the header in the `server` block in Nginx, with `Header set` in Apache, or under HTTP Response Headers in IIS.
 
         **Why this matters**
 
-        The X-Frame-Options header controls whether a browser should render a page inside a `<frame>`, `<iframe>`, `<embed>`, or `<object>` element. Without this header, attackers can embed your site in a malicious page to trick users into interacting with it unknowingly:
+        Without the header, any site can load your pages in a `<frame>`, `<iframe>`, `<embed>`, or `<object>` element. An attacker builds a page that does exactly that, makes the frame fully transparent, and positions it so a button on your page sits underneath something their own page invites the visitor to click. The visitor clicks what looks like a play button and actually clicks Transfer, or Authorize, or Delete Account, in a session where they are already signed in. Their browser sends the request with their cookies attached, and your application cannot tell it apart from a deliberate action.
 
-        - **Clickjacking attacks**: Attackers overlay invisible frames on legitimate pages, tricking users into clicking hidden elements that perform unintended actions such as changing account settings or initiating transactions.
-        - **UI redressing**: Malicious sites can position transparent iframes over buttons or links, redirecting user interactions to attacker-controlled content.
-        - **Session hijacking**: Combined with other vulnerabilities, clickjacking can be used to steal session tokens or credentials.
+        The technique does not stop at a single click. An overlaid frame can be repositioned between clicks to walk a victim through a multi-step flow, and a transparent frame placed over a text field captures keystrokes the visitor believed they were typing into the attacker's page.
 
-        Valid values are `DENY` to prevent all framing and `SAMEORIGIN` to allow framing only from the same origin. The `ALLOW-FROM` directive is obsolete and ignored by modern browsers; to allow framing from specific origins, use the Content-Security-Policy `frame-ancestors` directive instead.
+        Deploy `frame-ancestors` alongside the legacy header rather than instead of it. Browsers that understand both prefer the policy directive, and the older header keeps protecting clients that do not.
       audit: |
         Use `curl` to inspect the response headers returned by the site:
 
@@ -1117,17 +1117,19 @@ queries:
     mql: http.get.header.params.keys.any(downcase == "referrer-policy")
     docs:
       desc: |
-        This check ensures that the Referrer-Policy HTTP header is set to control how much referrer information is sent with requests.
+        This check verifies that the server states how much of the current URL browsers may disclose when a user follows a link or the page loads an external resource.
+
+        The instrument is the `Referrer-Policy` response header, and the check requires only that a header by that name is present. `strict-origin-when-cross-origin` is the usual choice, sending the full URL within your own site and only the bare origin to anyone else. `no-referrer` sends nothing at all, and `same-origin` sends the URL internally and nothing externally. Set it in the `server` block in Nginx, with `Header set` in Apache, or under HTTP Response Headers in IIS.
 
         **Why this matters**
 
-        Without a Referrer-Policy header, browsers use their default policy, which may leak sensitive information in the Referer header:
+        Without the header the browser applies its own default, and that default sends the full URL of the page the user came from, path and query string included, to every third party the page touches. URLs carry secrets far more often than anyone intends. Password reset links, email confirmation tokens, invitation links, single sign-on parameters, and session identifiers in older applications all live in the query string, and any one of them is enough to take over the account it belongs to.
 
-        - **URL information disclosure**: The full URL, including query parameters that may contain tokens, session IDs, or other sensitive data, can be sent to third-party sites.
-        - **Privacy concerns**: Referrer information reveals browsing patterns and internal URL structures to external sites.
-        - **Data leakage via embedded resources**: Third-party scripts, images, and stylesheets loaded by the page receive the referrer, potentially exposing sensitive URL paths.
+        The recipient list is larger than it looks. Every image, font, script, advertisement, and analytics beacon on the page receives the referrer, as does every outbound link the user clicks. A password reset page that loads one third-party script has handed the reset token to that vendor and to anyone with access to their request logs.
 
-        Recommended values include `strict-origin-when-cross-origin`, which sends only the origin for cross-origin requests; `no-referrer`, which never sends the referrer; and `same-origin`, which sends the referrer only for same-origin requests.
+        Even where no token is present, the referrer leaks structure. Internal hostnames, customer identifiers embedded in paths, and the names of pages that were never meant to be public all accumulate in logs you do not control and cannot get deleted.
+
+        Keep tokens out of URLs where the design allows it, and set this header for the cases where it does not.
       audit: |
         Use `curl` to inspect the response headers returned by the site:
 
@@ -1218,17 +1220,19 @@ queries:
     mql: http.get.header.sts != empty && http.get.header.sts.maxAge >= 365 * time.day
     docs:
       desc: |
-        This check ensures that the Strict-Transport-Security (HSTS) header specifies a max-age of at least 365 days (31536000 seconds). A short max-age reduces the effectiveness of HSTS, as browsers will stop enforcing HTTPS-only connections sooner.
+        This check verifies that the HTTPS-only instruction the site sends to browsers lasts at least a year.
+
+        The instrument is the `max-age` directive of the `Strict-Transport-Security` response header, expressed in seconds, and the check requires at least 365 days, which is `31536000`. A complete header reads `Strict-Transport-Security: max-age=31536000; includeSubDomains`. Set it in the `server` block in Nginx, with `Header always set` in Apache, or through the site's native HSTS setting on current IIS releases rather than as a custom response header.
 
         **Why this matters**
 
-        The max-age directive controls how long browsers remember to enforce HTTPS for the site:
+        The directive is a countdown, and it restarts on every HTTPS response the browser receives. Protection therefore lasts for the length of `max-age` after a user's last visit, and once it lapses that browser is back to sending its first request in the clear.
 
-        - **Short max-age values**: With a short max-age, the HSTS protection expires quickly, leaving a window where an attacker could perform an SSL stripping attack after the cache expires.
-        - **Browser preload requirement**: To be eligible for browser HSTS preload lists, a max-age of at least 31536000 seconds (1 year) is required.
-        - **First-visit vulnerability**: After the HSTS cache expires, the next visit is vulnerable to interception until the browser receives the HSTS header again over a secure connection.
+        That first cleartext request is the whole attack. A user who types the hostname, follows an old bookmark, or clicks a link in a plain-text email makes a plain HTTP request, and an attacker on the network path answers it instead of the server. They proxy the session, speaking HTTPS to the real site and HTTP to the victim, rewriting links as they go. No certificate warning appears because no certificate is involved, and the session cookie, the submitted credentials, and every response body pass through their hands.
 
-        A max-age of at least 31536000 seconds, or one year, is recommended by OWASP and required for HSTS preload eligibility.
+        A short lifetime narrows the protection to frequent visitors. Someone who signs in monthly, or who returns after a holiday, arrives with an expired entry and is exposed on exactly the visit where they are most likely to type a password.
+
+        One year is also the floor for browser preload eligibility, so a shorter value forecloses the strongest form of this protection while providing the weakest form of the ordinary one.
       audit: |
         Use `curl` to inspect the response headers returned by the site over HTTPS:
 
@@ -1429,17 +1433,17 @@ queries:
     mql: http.get.header.sts.preload == true
     docs:
       desc: |
-        This check ensures that the Strict-Transport-Security (HSTS) header includes the `preload` directive. HSTS preload allows the domain to be hardcoded into browsers' built-in HSTS lists, providing protection from the very first connection.
+        This check verifies that the site asks to be included in the browsers' built-in HTTPS-only lists.
+
+        The instrument is the `preload` directive of the `Strict-Transport-Security` response header. Sending it is a declaration of intent rather than the enrollment itself. After the header is deployed the domain has to be submitted at https://hstspreload.org/, and the lists also require `includeSubDomains` and a `max-age` of at least a year before they will accept it. On current IIS releases, `preload` is an attribute of the site's native HSTS setting rather than a value typed into a custom header.
 
         **Why this matters**
 
-        Standard HSTS has a fundamental limitation: the browser must visit the site at least once over HTTPS to receive the HSTS header. This creates a trust-on-first-use (TOFU) vulnerability:
+        Ordinary HSTS is trust on first use. A browser learns the rule only from a response it already received over HTTPS, so the very first request a given browser makes to your domain still goes out in the clear when the user types a bare hostname or follows an `http://` link. An attacker on the network path answers that request, proxies the session while speaking HTTPS to the real site, and reads the credentials the user submits. The same window reopens whenever the recorded entry expires.
 
-        - **First-visit attack window**: The initial connection to a site is unprotected, allowing an attacker to intercept or downgrade the connection before the HSTS header is received.
-        - **Cache expiration**: When the HSTS max-age expires, the next visit is again vulnerable until the header is refreshed.
-        - **Browser preload lists**: With the `preload` directive (along with `includeSubDomains` and a sufficient `max-age`), the domain can be submitted to browser preload lists, eliminating the first-visit vulnerability entirely.
+        Preloading removes the window by shipping the rule inside the browser. A browser that has never contacted your domain still refuses to make a cleartext request to it, so there is no first request left to intercept.
 
-        Note: Submitting to preload lists is a separate step that must be done at https://hstspreload.org/ after setting the header.
+        The commitment is real and slow to reverse. Every name under the registrable domain has to serve HTTPS, including internal hosts that resolve only inside your network and any subdomain a team creates later, and removal from the lists takes months to reach users who already hold the entry. Inventory what exists under the domain and confirm each name has a certificate before submitting, because after submission a host that cannot serve HTTPS is unreachable rather than merely insecure.
       audit: |
         Use `curl` to inspect the response headers returned by the site over HTTPS:
 
