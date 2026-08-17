@@ -72,19 +72,19 @@ queries:
       atlassian.admin.organization.policies.any(policyType == "ip-allowlist" && status == "enabled")
     docs:
       desc: |
-        This check ensures that the Atlassian organization has at least one IP allowlist policy enabled. Without an active IP allowlist, every Atlassian Cloud product is reachable from any address on the public internet, so a stolen credential or API token can be used from anywhere an attacker happens to be.
+        This check verifies that the Atlassian organization restricts product access to a list of approved source addresses.
+
+        An IP allowlist names the network ranges from which Atlassian Cloud products accept traffic, and it is evaluated before any credential is examined. You create one at admin.atlassian.com under **Security > IP allowlists**, name it, add the ranges of corporate offices, VPN exit nodes, and approved cloud egress points, then apply it to the products you want to protect. This check requires at least one allowlist on the organization whose status is enabled. Jira, Jira Service Management, Confluence, and Compass need a Premium plan for the feature, and Atlassian Analytics needs Enterprise.
 
         **Why this matters**
 
-        - **Network-layer enforcement:** An IP allowlist blocks unauthorized addresses before credentials are evaluated, removing the entire pool of internet-based attackers as a threat.
-        - **Stolen-credential containment:** Even when a password or token is exposed, the attacker cannot use it from outside an allowed network range.
-        - **Reduced attack surface:** Restricting access to known corporate networks and VPN ranges narrows the set of sources from which authentication attempts can succeed.
-        - **Audit-trail clarity:** Sign-ins originate from a predictable set of networks, which makes anomalous source addresses easier to spot in audit logs.
+        With no allowlist, every Atlassian Cloud product answers requests from any address on the public internet. An attacker who phishes an employee password or lifts an API token out of a CI job log signs in from their own machine, opens Jira, and reads the issue history of every project that account can see. Nothing about the request looks unusual, because there is no location the product considers wrong.
 
-        **Risk mitigation**
+        An allowlist removes the entire pool of internet-based attackers before authentication runs. A password-spray campaign against your organization never reaches the credential check, so the stolen password stays useless outside your networks and the token found in a public repository cannot be replayed from a hosting provider.
 
-        - **Define corporate ranges:** Maintain the allowlist with the IP ranges of corporate offices, VPN exit nodes, and approved cloud egress points.
-        - **Review regularly:** Audit the allowed ranges so deprecated office addresses or stale cloud egress IPs do not silently retain access.
+        Sign-ins also become predictable. When every successful authentication originates from a small set of known ranges, a source address outside them stands out in the audit log instead of blending into ordinary traffic.
+
+        Activation takes effect immediately and denies every source outside the listed ranges, so confirm your own egress address falls inside a range before you enable it, and list VPN exit ranges rather than individual home addresses. An organization with no stable egress, such as a fully remote workforce on residential connections, should reach the same goal through identity and device conditions instead.
       audit: |
         ### Audit via Atlassian Admin
 
@@ -147,19 +147,19 @@ queries:
       atlassian.admin.organization.domains.any(type == "verified")
     docs:
       desc: |
-        This check ensures that the Atlassian organization has claimed and verified at least one email domain. Without a verified domain, the organization cannot claim accounts at that domain as managed identities, so administrators have no way to enforce single sign-on, password policy, or session controls on users who sign up with that email domain.
+        This check verifies that the Atlassian organization has proven ownership of at least one email domain.
+
+        Domain verification is how Atlassian confirms that your organization controls an email namespace before it will let you assert policy over the accounts inside it. You add the domain at admin.atlassian.com under **Directory > Domains** and prove control with a DNS TXT record, an HTML file in the root folder of the domain's website, or a connected identity provider such as Google Workspace or Microsoft Entra ID. This check requires at least one domain whose claim status is verified.
 
         **Why this matters**
 
-        - **Managed-account enforcement:** Verified domain ownership is the prerequisite for converting individual Atlassian accounts at that domain into organization-managed accounts.
-        - **Identity proofing:** Domain verification proves the organization controls the email namespace before any policy is asserted over its users.
-        - **Policy applicability:** Sign-on, authentication, and session policies only apply to managed accounts, so unverified domains create blind spots.
-        - **Offboarding completeness:** Only managed accounts can be reliably deactivated when a person leaves the organization.
+        Verification is the gate on managed accounts, and managed accounts are the only ones your organization governs. Without a verified domain, single sign-on, password policy, session length, and account deactivation apply to nobody. Every employee holding an Atlassian account at your domain holds a personal account that happens to have your logo on it.
 
-        **Risk mitigation**
+        That gap is what an attacker uses. An unmanaged account signs in with an email address and password directly, bypassing whatever multi-factor requirement your identity provider enforces, so a password recovered from an unrelated breach is enough to read the Jira projects and Confluence spaces the person belongs to. When that person leaves the company, the organization has no button that turns their access off, so the account and its session keep working long after the badge is returned.
 
-        - **Verify every corporate domain:** Verify every email domain used by employees and contractors so each user can be claimed and managed centrally.
-        - **Reclaim shadow accounts:** After verification, claim existing unmanaged accounts at the domain so they fall under organization policy.
+        Verification also closes the offboarding gap in the other direction. Once the domain is claimed you can see every account at it, including accounts an employee created without telling anyone.
+
+        After the domain shows as verified, claim the accounts at it from the same page. Claiming is disruptive, because it converts existing personal accounts at the domain into managed accounts your organization governs and may be billed for, so review the account list and communicate the change before you proceed.
       audit: |
         ### Audit via Atlassian Admin
 
@@ -230,19 +230,19 @@ queries:
         )
     docs:
       desc: |
-        This check ensures that every API token issued to an active managed Atlassian account has been used recently. API tokens grant the same access as the account that created them, do not require a second factor, and remain valid until explicitly revoked, so a token that has not been used in months is far more likely to be unaccounted for than legitimate.
+        This check verifies that every API token belonging to an active managed Atlassian account has been used recently.
+
+        API tokens authenticate REST calls with the full access of the account that created them. Atlassian records the last use of each one, and **Insights > API token activity** at admin.atlassian.com lists every token a managed account holds together with its creation date, expiry, and last-used date. This check compares that last-used timestamp against an inactivity threshold you set as a policy property in days, and fails a token that has never been used or has gone unused for longer than the threshold.
 
         **Why this matters**
 
-        - **Long-lived credentials:** Atlassian API tokens do not expire on their own, so a forgotten token can remain valid indefinitely.
-        - **No second factor:** API tokens bypass interactive multi-factor authentication, so a stolen token gives an attacker direct access.
-        - **Reduced detectability:** Tokens that are not actively used produce no audit-log noise, so unauthorized use is unlikely to be noticed.
-        - **Lateral movement:** A leaked token can be used from any source allowed by the organization's network policy without triggering sign-in alerts.
+        A token nobody has used in months is almost never a token somebody is carefully looking after. It is the one pasted into a shell script on a laptop that was replaced, committed to a repository before the team started scanning history, or left in the environment of a build agent that was decommissioned without anyone revoking its credentials.
 
-        **Risk mitigation**
+        An attacker who finds one gets the same reach as the person it belongs to, with none of the friction. The token is presented with basic authentication and is never challenged for a second factor, so multi-factor enrollment on the account does not slow the attacker down. They page through the Jira and Confluence REST APIs and pull every issue, comment, attachment, and page the owner can read. Because there is no interactive sign-in, none of it produces the sign-in event that an anomalous login would.
 
-        - **Revoke unused tokens:** Treat any token unused for the configured threshold as abandoned and revoke it.
-        - **Document active tokens:** Maintain a current inventory of API tokens with the system or person that owns each one so unowned tokens can be identified and removed.
+        Atlassian tokens do not expire on their own, so this state persists indefinitely until someone revokes the token.
+
+        Revocation is permanent and immediately breaks any integration still using the token, so contact the owner of any token whose purpose is unclear before revoking it, and issue a replacement only where there is a documented active use case.
       audit: |
         ### Audit via Atlassian Admin
 
@@ -320,19 +320,19 @@ queries:
         )
     docs:
       desc: |
-        This check ensures that every active managed Atlassian account has signed in or otherwise transacted with the organization inside the configured inactivity threshold. Accounts that retain an active status but have not been used for months represent unused identities whose credentials may have been forgotten, shared, or compromised without anyone noticing.
+        This check verifies that every managed Atlassian account still marked active has actually been used recently.
+
+        Atlassian records a last active date for each managed account, and the CSV export from **Directory > Managed accounts** at admin.atlassian.com carries that date for every account in the organization. This check reads it for accounts of type Atlassian whose status is active, compares it against an inactivity threshold you set as a policy property in days, and fails any account that has been idle longer than the threshold or has no recorded activity at all.
 
         **Why this matters**
 
-        - **Account-takeover surface:** Dormant accounts retain their access, group memberships, and API tokens, so a successful credential theft has the same impact as on an active employee.
-        - **Offboarding gaps:** A dormant account often signals an incomplete offboarding where the leaver was never deactivated.
-        - **License waste and noise:** Inactive accounts inflate license counts and dilute the signal in audit reviews of who has access.
-        - **Compliance review fatigue:** A large backlog of unused accounts makes access reviews longer and reduces the chance that genuinely risky access is spotted.
+        Deactivating an account removes its access. Leaving it active and unused does not. A dormant account keeps its group memberships, its Jira project roles, its Confluence space permissions, and any API tokens it issued, so the access is exactly what it was on the person's last working day.
 
-        **Risk mitigation**
+        What is missing is the owner. Nobody signs in to the account, so nobody notices when someone else does. An attacker who lands the account's password from a credential-stuffing list gets no complaint from a real user about a strange login prompt, no report of a session appearing on an unfamiliar device, and no colleague wondering why that person is suddenly reading a project they left two years ago. They browse the same issues and pages the account always could, at whatever pace avoids attention.
 
-        - **Deactivate dormant accounts:** Deactivate or delete accounts that have not been used inside the threshold and have no documented business justification.
-        - **Tie offboarding to identity events:** Connect leaver workflows from HR or the IdP to managed-account deactivation so departures are reflected in Atlassian immediately.
+        Dormancy usually points at an offboarding that stopped halfway, where the identity provider entry was removed but the Atlassian account was never deactivated. It also inflates the license count and buries genuinely risky access in a long list of accounts nobody uses.
+
+        Some accounts legitimately transact rarely, such as a break-glass administrator or a seasonal contractor. Confirm with the owning team, then either deactivate the account or record the justification and schedule a follow-up review.
       audit: |
         ### Audit via Atlassian Admin
 
@@ -393,19 +393,19 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that no Jira project's permission scheme contains a grant whose holder is anyone, the holder type Atlassian uses to grant a permission to unauthenticated callers. An anyone grant means the named permission applies to every visitor, including users with no Atlassian account, so anything the permission allows is effectively public.
+        This check verifies that no Jira project grants a permission to unauthenticated visitors.
+
+        Every permission in a Jira permission scheme is granted to a holder, and Jira offers one holder type, anyone, that means exactly what it says: the permission applies to callers with no Atlassian account at all. You review the holders under **Settings > Issues > Permission schemes** in your Jira site. This check requires every grant in every project's scheme to name an authenticated holder instead, such as a user, group, project role, application role, assignee, reporter, or project lead.
 
         **Why this matters**
 
-        - **Unauthenticated exposure:** A grant to anyone bypasses login entirely, so an issue, comment, or attachment covered by that permission is readable or writable from the public internet.
-        - **Data leak vector:** Permissions such as Browse Projects or View Read-Only Workflow expose ticket content; permissions such as Create Issues expose write surface to the open web.
-        - **Audit-trail integrity:** Actions taken under an anonymous grant have no associated user identity, so audit logs cannot attribute who did what.
-        - **Compliance violation:** Most frameworks require that access to information assets be tied to an identified user.
+        A Browse Projects permission granted to anyone turns the project into a public archive. Someone who has your site URL and guesses a project key reads every issue in it without signing in, and issue trackers are where teams paste the things they would never put in a document: stack traces with internal hostnames, customer names attached to bug reports, screenshots of admin consoles, and the occasional token dropped into a comment while debugging. The attacker does not need to break anything, because nothing is asking who they are.
 
-        **Risk mitigation**
+        Grants that carry write access are worse still. Create Issues held by anyone hands the open internet a way to inject content into a workspace employees trust, which is a serviceable delivery route for a link that staff will open because it arrived in a familiar tool.
 
-        - **Replace anyone grants with named holders:** Re-grant the same permission to a specific group, project role, or application role that represents an authenticated audience.
-        - **Review permission schemes regularly:** Re-audit project permission schemes during access reviews so anonymous grants introduced for short-term use cases do not persist.
+        Anonymous actions also carry no identity, so the audit log records that something happened without recording who did it. After the fact you cannot tell which issues were read or by whom.
+
+        If content genuinely needs to be reachable without a login, expose it through a service desk portal that still identifies the requester, rather than opening a project permission to anyone.
       audit: |
         ### Audit via Jira Admin
 
@@ -464,20 +464,19 @@ queries:
       atlassian.confluence.spaces.none(anonymousAccess == true)
     docs:
       desc: |
-        This check ensures that no Confluence space is configured to allow access for anonymous, unauthenticated users. A space with anonymous access enabled publishes every page within it to the public internet, so any content that ends up there — internal documentation, runbooks, customer data, credentials — is readable by anyone who guesses or stumbles on the URL.
+        This check verifies that no Confluence space is readable without signing in.
+
+        Anonymous access is a per-space setting that grants permissions to visitors with no account. A space administrator finds it under **Space settings > Space access > Anonymous access**, and a Confluence administrator can additionally turn off the global setting that allows spaces to enable it at all. This check reads the per-space configuration, so the permissions granted to the anonymous principal must be cleared on each affected space even when the site-wide setting is already off.
 
         **Why this matters**
 
-        - **Direct public exposure:** Anonymous access turns a Confluence space into a public website, regardless of the sensitivity of the content authors have added to it.
-        - **Default-deny violation:** A space configured this way explicitly inverts the default-deny posture expected for internal collaboration tools.
-        - **Audit-trail gap:** Reads by anonymous viewers do not produce attributable audit log entries, so leaks cannot be traced to a specific person or session.
-        - **Search-engine indexing:** Public spaces are indexable by search engines, so once a page is exposed it may remain reachable from cached results long after the permission is corrected.
-        - **Compliance violation:** Most frameworks require that access to internal information be granted only to authenticated, authorized users.
+        A space with anonymous access is a public website, and the people writing in it do not know that. Confluence is where the runbook with the recovery procedure lives, where the architecture page names the internal hostnames, where onboarding docs walk a new hire through bootstrapping their credentials, and where a postmortem describes exactly how a control failed.
 
-        **Risk mitigation**
+        Reaching that content takes no attack. A page URL leaks in a support ticket, a partner email, or a search engine index, and the attacker follows it, then walks the space tree from there. They learn your internal topology and your escalation paths before touching anything you would recognize as an intrusion, and that reading is the reconnaissance phase of the intrusion that follows.
 
-        - **Disable anonymous access:** Remove the anonymous permission from every space and confirm no space-level permission entry references the anonymous principal.
-        - **Curate intentional public spaces:** If a space must be public, move it to a dedicated marketing or documentation site and treat it as published external content rather than internal collaboration.
+        Anonymous reads produce no attributable audit entry, so after the exposure is found you cannot say which pages were taken or when. Search engines compound this: once a page has been crawled it may stay reachable from cached results long after the permission is corrected.
+
+        If a space genuinely must be public, that is a publishing decision rather than a permission tweak. Move the content to a dedicated documentation site where it is reviewed as external material, and leave the internal instance closed.
       audit: |
         ### Audit via Confluence Admin
 
@@ -537,19 +536,19 @@ queries:
       atlassian.confluence.spaces.none(unlicensedAccess == true)
     docs:
       desc: |
-        This check ensures that no Confluence space is configured to allow access for unlicensed users such as Jira Service Management customers or other portal-only accounts. Unlicensed access widens the audience for the space beyond the licensed employees the access model is built around, so internal documentation can be read by external customers without the access being treated as external sharing.
+        This check verifies that no Confluence space is exposed to users who hold no Confluence license.
+
+        Unlicensed access is how Jira Service Management shows Confluence pages to portal customers through a linked knowledge base. It is configured per service project under **Project settings > Knowledge base**, where the **Who can view** option decides whether reading requires access to the linked space or is open to portal users without a Confluence license, and it can be turned off site-wide from the **JSM Access** tab in Confluence settings. This check requires no space to report unlicensed access.
 
         **Why this matters**
 
-        - **External audience leak:** Service desk customers and other unlicensed accounts are external to the organization, so granting them access to internal spaces is equivalent to publishing the content to those customers.
-        - **Boundary confusion:** Authors of internal documentation usually assume the audience is licensed employees, so they may post information that is inappropriate for an external audience.
-        - **Audit visibility loss:** Unlicensed-user reads are not always surfaced in standard access reviews because they are scoped through the portal, not regular space membership.
-        - **Compliance violation:** Many frameworks require that information access be restricted to authorized, identified personnel.
+        Portal customers are outside your organization, but this route does not look like external sharing to anyone involved. The person who wrote the escalation runbook assumed licensed colleagues were reading it. The service desk administrator who linked the knowledge base was trying to reduce ticket volume. Neither decision, on its own, reads as publishing internal documentation to customers.
 
-        **Risk mitigation**
+        An attacker takes the shortest path in. Many service desks accept self-signup or accept any address at a partner domain, so obtaining a portal account is a form submission rather than a compromise. From there the linked space opens, and its pages give up internal escalation contacts, vendor account details, and writeups of known weaknesses that have not been fixed yet. That is targeting material for the social-engineering call that follows.
 
-        - **Disable unlicensed access:** Turn off the unlicensed-access permission on every internal space.
-        - **Use a dedicated customer space:** If unlicensed users genuinely need access to documentation, create a separate space whose content is reviewed and published as external collateral.
+        These reads scope through the portal rather than through space membership, so they do not surface in the usual access review of who belongs to a space. The exposure stays invisible to the review that was supposed to catch it.
+
+        Where portal customers genuinely need documentation, link a dedicated customer-facing space whose pages are written and reviewed as external collateral, instead of relaxing access on a space the internal teams treat as private.
       audit: |
         ### Audit via Confluence Admin
 
