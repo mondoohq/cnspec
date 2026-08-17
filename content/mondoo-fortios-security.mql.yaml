@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-fortios-security
     name: Mondoo Fortinet FortiOS Security
-    version: 1.0.3
+    version: 1.0.4
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -114,18 +114,19 @@ queries:
     mql: fortios.system.firmware.current.releaseType == "GA"
     docs:
       desc: |
-        This check verifies that the FortiOS device is running a General Availability (GA) firmware release rather than a pre-release, beta, or engineering build.
+        This check verifies that the FortiGate runs a General Availability firmware release rather than a beta, interim, or engineering build.
+
+        Fortinet publishes firmware in stages. General Availability builds have completed the full quality assurance cycle and are the only builds Fortinet supports in production, while interim and engineering builds are handed out to resolve a specific customer issue and carry fixes that have not been regression tested. The running build appears under **System > Firmware & Registration** in the web interface and in the output of `get system status`, and this check requires a release type of GA.
 
         **Why this matters**
 
-        Pre-release firmware has not completed Fortinet's full quality assurance cycle. If the device is running non-GA firmware:
+        A non-GA build is a firmware image whose security fixes have not been cross-checked against the rest of the code base. An attacker holding a working exploit for a known FortiOS flaw does not care which branch the device is on, only whether the fix for that flaw is present and correct. Interim builds routinely lag the GA branch on unrelated security patches, so a device sitting on a months-old engineering build can be missing several rounds of fixes for the SSL-VPN and administrative daemons that get scanned for within days of every advisory.
 
-        - Security vulnerabilities discovered during testing may not yet be patched.
-        - Stability issues can cause unexpected reboots or failovers, leaving the network unprotected.
-        - Fortinet TAC support is limited or unavailable for pre-release builds.
-        - Compliance frameworks require production systems to run vendor-supported, generally available software.
+        Non-GA firmware also fails in ways that become outages rather than alerts. An unexpected reboot or a crashing inspection process on a perimeter firewall drops every tunnel the device terminates, and if the unit is not clustered the site stays dark until someone reaches the console.
 
-        Running GA firmware ensures the device benefits from Fortinet's full testing, security patching, and support processes.
+        Fortinet support is limited for non-GA builds, so when the device does misbehave the first instruction from support is to move to a GA release, which then happens during an incident instead of during a planned window.
+
+        If Fortinet has supplied an interim build to resolve a specific defect, run it only until that fix reaches a GA release, and track the return to GA as an open action item.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -207,17 +208,19 @@ queries:
     mql: fortios.system.firmware.current.maturity == "M"
     docs:
       desc: |
-        This check verifies that the FortiOS firmware has reached Fortinet's "Mature" (M) maturity level rather than "Feature" (F) status. Mature releases have undergone extended field testing and are recommended for production environments that prioritize stability.
+        This check verifies that the FortiGate runs firmware Fortinet classifies as Mature rather than a Feature release.
+
+        Fortinet labels each FortiOS branch with a maturity level. Feature builds carry new capability and are still accumulating field exposure, while Mature builds have stopped taking new features and receive only stability and security fixes. The running build appears under **System > Firmware & Registration** and in the output of `get system status`, the FortiOS release notes state which branches have reached Mature status, and this check requires a maturity level of M.
 
         **Why this matters**
 
-        Fortinet classifies firmware maturity into stages, with "Feature" (F) releases receiving new features and "Mature" (M) releases focused on stability and bug fixes. If the device runs a Feature-stage release:
+        New code on a firewall is new attack surface. A Feature branch ships parsers, protocol handlers, and management pages that have run in production for weeks rather than years, and the FortiOS advisories that get exploited at scale are consistently memory-safety and authentication-bypass defects in exactly that kind of freshly written code. Staying on a Mature branch means an attacker's newly discovered bug in a recent feature does not apply to the device at all.
 
-        - Newly introduced features may contain undiscovered bugs or security issues.
-        - The firmware has had less time in production environments to surface edge-case defects.
-        - Critical infrastructure benefits from the additional stability testing that Mature releases provide.
+        Stability matters here for the same reason. A defect that crashes an inspection daemon on a perimeter firewall does not degrade gracefully. Sessions drop, tunnels renegotiate, and if the crash loops the site loses connectivity until someone reaches the console. Mature branches have had that class of defect shaken out by the installed base.
 
-        For environments where stability is paramount, running a Mature release reduces the risk of unexpected issues. Environments that require the latest features may accept Feature-stage firmware with appropriate testing.
+        Firmware upgrades on a firewall need an outage window, so the branch chosen is the branch the device lives on for a long time. A Mature branch keeps it on a supported path that continues to receive fixes without forcing a feature-driven upgrade later.
+
+        Environments that genuinely need a capability present only in a Feature branch should run it deliberately, with a plan to move to the corresponding Mature release once Fortinet publishes it.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -300,19 +303,19 @@ queries:
     mql: fortios.system.firmware.current.major >= 7
     docs:
       desc: |
-        This check verifies that the FortiOS device is running a supported major firmware version. FortiOS versions below 7.x have reached or are approaching end of support and no longer receive security patches.
+        This check verifies that the FortiGate runs a major FortiOS version that is still within Fortinet's support lifecycle.
+
+        Fortinet publishes an end of engineering support date and an end of support date for every FortiOS major version. Past those dates the branch receives no further security fixes, and FortiGuard entitlements and vendor assistance wind down with it. The running version appears under **System > Firmware & Registration** and in the output of `get system status`, and this check requires major version 7 or later.
 
         **Why this matters**
 
-        Fortinet maintains a defined product lifecycle for each FortiOS major version. When a version reaches end of engineering support or end of life:
+        An out-of-support major version is a device with a permanent, published list of unfixed vulnerabilities. Fortinet's advisories name the affected versions and the fixed versions, so when a branch has no fixed version the advisory reads as an exploitation guide for anyone scanning the public address. Several FortiOS pre-authentication flaws in the SSL-VPN and administrative daemons have been exploited at scale within days of disclosure, and unsupported devices stay exploitable indefinitely because there is no patch to apply.
 
-        - No further security patches are released, leaving known vulnerabilities permanently unpatched.
-        - FortiGuard services may stop providing updates for threat signatures and IPS rules.
-        - Fortinet TAC support becomes limited or unavailable for end-of-life versions.
-        - New features, protocol support, and performance improvements are only available in supported versions.
-        - Compliance and cyber insurance requirements typically mandate running vendor-supported software.
+        Because the firewall terminates VPN tunnels and holds the certificates used for inspection, that exploitation is not contained to the appliance. An attacker who lands on the device reads the traffic crossing it, adds an administrative account or a local-in policy to get back in later, and reaches the internal networks the firewall is supposed to keep apart.
 
-        Upgrading to a supported major version ensures the device continues to receive critical security updates and vendor support.
+        Support expiry also removes the safety net for everything else. FortiGuard signature feeds and vendor escalation follow the same lifecycle, so the device loses its detection content and its support path at the same moment it stops receiving patches.
+
+        Major-version upgrades change configuration semantics, so follow Fortinet's documented upgrade path through each intermediate release and back up the configuration before every hop.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -397,15 +400,19 @@ queries:
     mql: fortios.system.global.admintimeout > 0 && fortios.system.global.admintimeout <= 5
     docs:
       desc: |
-        This check verifies that the FortiOS admin session timeout is set to 5 minutes or less. Idle admin sessions that remain open are an attack vector for unauthorized access.
+        This check verifies that idle administrative sessions on the FortiGate are terminated after five minutes or less.
+
+        The idle timeout closes a management session, in the web interface and on the command line, once it has gone that long without activity. It appears under **System > Settings** as **Idle Timeout** in the web interface, and in the CLI as `config system global` with `set admintimeout`, which on a multi-VDOM device is reached through `config global`. This check requires a value greater than zero and no more than five.
 
         **Why this matters**
 
-        If an administrator walks away from a management session without logging out, anyone with physical or remote access to the workstation can take full control of the firewall. Short timeouts ensure that:
+        A live administrative session is full control of the firewall without a password. An attacker who reaches an unlocked workstation, or who takes over a session on a shared jump host, inherits that control and can add an administrator account, insert a permissive firewall policy, extend the access list on a WAN interface to open a way back in, or export the whole configuration with its VPN keys and stored credentials.
 
-        - Unattended sessions are terminated before an attacker can exploit them.
-        - Compliance frameworks such as NIST 800-53 AC-12 require automatic session termination after a defined period of inactivity.
-        - The blast radius of a compromised admin workstation is limited to the timeout window.
+        Long timeouts also widen the window for session reuse after a laptop is lost or an operations console is left logged in. With a five minute limit an abandoned session is gone before an opportunist finds it, and the attacker has to produce credentials and any second factor rather than picking up where an administrator stopped.
+
+        Setting the value to zero disables the timeout completely and leaves sessions open until the device or the client tears them down, which is why this check requires a positive value as well as a short one.
+
+        Automation that holds a long-lived command line session should be reworked to authenticate per run, rather than justifying a longer timeout for every human administrator.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -469,17 +476,17 @@ queries:
     mql: fortios.system.global.adminSport != 443
     docs:
       desc: |
-        This check verifies that the HTTPS administrative interface is not running on the default port 443. Using a non-default port reduces exposure to automated scanners and bots that target well-known management ports.
+        This check verifies that the HTTPS administrative interface listens on a port other than the default 443.
+
+        The administrative HTTPS listener is what serves the FortiGate web interface. Its port is set under **System > Settings** as **HTTPS port**, or in the CLI with `config system global` and `set admin-sport`, and this check requires any value other than 443.
 
         **Why this matters**
 
-        Automated attack tools and botnets routinely scan for FortiOS management interfaces on port 443. Changing the admin HTTPS port:
+        Mass scanning for FortiGate management interfaces is continuous and cheap. Internet-wide scanners sweep port 443 for the FortiOS login page, index what they find, and publish or sell the result, so a device on the default port appears in a searchable list of FortiGates within hours of being connected. When the next pre-authentication advisory lands, that list is the target list, and exploitation has followed disclosure by days.
 
-        - Reduces the attack surface from automated reconnaissance and brute-force attempts.
-        - Makes the management interface less likely to be discovered by opportunistic attackers.
-        - Adds an additional layer of defense-in-depth alongside proper access controls.
+        Moving the listener does not stop an attacker who scans every port, but it takes the device out of the cheap sweeps that drive commodity exploitation and credential stuffing, and it makes the traffic that does arrive on the new port far more interesting to investigate.
 
-        This is not a substitute for restricting management access to trusted networks, but it reduces noise and opportunistic attacks.
+        The change supplements restricting where administration can happen at all and never replaces it. Pair it with trusted host entries on every administrator account and an interface access list that does not offer management on internet-facing interfaces. Choose a port that does not collide with the SSL-VPN listener, because if the two overlap one of the services fails to bind and either administrators or VPN users lose access.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -547,15 +554,17 @@ queries:
     mql: fortios.system.global.adminSshPort != 22
     docs:
       desc: |
-        This check verifies that the SSH administrative interface is not running on the default port 22. Using a non-default SSH port reduces exposure to automated scanners targeting the management plane.
+        This check verifies that the SSH administrative service listens on a port other than the default 22.
+
+        SSH gives full command line control of the FortiGate, including configuration export and firmware installation. Its port is set under **System > Settings** as **SSH port**, or in the CLI with `config system global` and `set admin-ssh-port`, and this check requires any value other than 22.
 
         **Why this matters**
 
-        SSH brute-force attacks are among the most common automated attacks against network devices. A non-default SSH port:
+        Credential-guessing botnets hammer port 22 on every routable address around the clock. On the default port a FortiGate absorbs thousands of authentication attempts a day from that background traffic, and every one of them is a chance that a reused or weak administrator password lands. Moving the listener drops that volume to almost nothing.
 
-        - Reduces the volume of automated brute-force attempts against the management interface.
-        - Makes the SSH service less likely to appear in Shodan, Censys, or similar internet scanning databases.
-        - Provides defense-in-depth alongside access control lists and trusted host restrictions.
+        The noise is also what hides the real attempt. When the log is full of automated guessing against port 22, a targeted attack on a named administrator account is invisible inside it. On an unusual port nearly every connection attempt is worth looking at, which turns the authentication log from something nobody reads into a usable signal.
+
+        Scanners that enumerate every port still find the service and fingerprint it as FortiOS SSH, so treat this as one layer. Restrict administrator logins with trusted host entries, prefer key authentication where the workflow allows it, and keep SSH out of the interface access list on internet-facing interfaces entirely.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -619,17 +628,19 @@ queries:
     mql: fortios.system.global.adminScp == "disable"
     docs:
       desc: |
-        This check verifies that SCP (Secure Copy Protocol) admin access is disabled. SCP allows direct file transfer to and from the FortiOS device, which is rarely needed and increases the attack surface of the management plane.
+        This check verifies that SCP access to the FortiGate configuration is disabled.
+
+        With SCP enabled the SSH daemon additionally serves file transfer, letting anyone who can authenticate as an administrator copy the device configuration off the unit or push a file onto it in a single non-interactive command. The option appears under **System > Settings** as **SCP**, and in the CLI as `config system global` with `set admin-scp`. This check requires it to be disabled.
 
         **Why this matters**
 
-        When SCP is enabled, an attacker who compromises admin credentials can:
+        The FortiGate configuration file is the most valuable object on the device. It holds the full policy set, the address objects that map the internal network, the administrator definitions, IPsec preshared keys, and stored credentials for authentication servers and cloud connectors. SCP turns exfiltrating all of that into one command, fast enough to finish before anyone reads an alert and quiet enough to leave nothing in the web interface audit trail.
 
-        - Download the full device configuration, including secrets, VPN keys, and firewall rules.
-        - Upload malicious firmware or configuration files to take persistent control of the device.
-        - Exfiltrate data without triggering web-based admin audit logs.
+        The same channel works in the other direction. An attacker with administrative credentials can push a prepared configuration that adds an account, offers management on a WAN interface, or installs a local-in policy allowing their own address, then let the device load it, which is far less conspicuous than typing those changes at a console.
 
-        SCP should only be enabled temporarily when needed for specific maintenance tasks and disabled afterward.
+        Disabling SCP removes no administrative capability, because configuration backup and restore remain available through the web interface and through `execute backup` and `execute restore` on the command line.
+
+        If a migration or a support case genuinely needs SCP, enable it for the duration of that work and turn it off when the work is finished.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -693,17 +704,19 @@ queries:
     mql: fortios.system.ha.mode != "standalone"
     docs:
       desc: |
-        This check verifies that the FortiOS device is configured in a high availability (HA) cluster rather than running in standalone mode. HA ensures the firewall is not a single point of failure.
+        This check verifies that the FortiGate is a member of a high availability cluster rather than running standalone.
+
+        In a high availability cluster two or more units share a virtual identity and exchange heartbeats, so that if one stops responding another takes over the traffic without an administrator being involved. The mode is set under **System > HA** in the web interface, or in the CLI with `config system ha` and `set mode`, and this check requires any mode other than standalone.
 
         **Why this matters**
 
-        A firewall running in standalone mode has no failover capability. If the device fails due to hardware issues, software crashes, or an attack:
+        A standalone perimeter firewall is a single point of failure for everything behind it. When it dies, whether from a power supply, a firmware defect, or a crash triggered by hostile traffic, it does not fail open into an unprotected state. It fails closed and the site goes offline until someone physically replaces the unit and restores a configuration, which at a remote location is measured in hours or days.
 
-        - All network traffic protected by the firewall is disrupted until the device is restored.
-        - Security inspection stops completely, leaving the network unprotected or disconnected.
-        - Recovery time depends on manual intervention, which may take hours.
+        Denial of service against the device therefore becomes a business outage rather than a nuisance. An attacker who can reliably crash or exhaust one unit takes the site down and can repeat it after each manual recovery. With a cluster the peer picks the traffic up, and the same attack costs the attacker a failover instead of a day of downtime.
 
-        HA configurations (active-passive or active-active) provide automatic failover, ensuring continuous network protection and availability.
+        Standalone also removes the safe way to install firmware. Patching means an outage window, outage windows get postponed, and that is the mechanism by which firewalls stay on vulnerable builds for years. A cluster allows one member to be upgraded at a time, so the security fix and the availability requirement stop competing.
+
+        Small sites where a second unit is not justified should compensate with a documented spare, a current configuration backup held off the device, and a rehearsed recovery procedure.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -774,18 +787,17 @@ queries:
     mql: fortios.system.ha.mode == "standalone" || fortios.system.ha.sessionPickup == "enable"
     docs:
       desc: |
-        This check verifies that HA session pickup is enabled, ensuring active sessions are preserved during failover. Without session pickup, all connections are dropped when the primary device fails.
+        This check verifies that a clustered FortiGate synchronizes its session table to its peers so established connections survive a failover.
+
+        Session pickup copies the state of active sessions from the primary unit to the other cluster members as those sessions are created, which is what lets the new primary keep forwarding existing flows instead of dropping them for having no matching state. It is set under **System > HA** as **Session pickup**, or in the CLI with `config system ha` and `set session-pickup enable`. This check requires it on a clustered device and passes on a standalone unit, where there is no peer to synchronize with.
 
         **Why this matters**
 
-        When the primary FortiGate fails over to the secondary device without session pickup:
+        Without session pickup a failover is indistinguishable from a reboot for every connection crossing the firewall. IPsec and SSL-VPN tunnels renegotiate, database and application sessions reset, calls drop, and long-running transfers restart, so a hardware fault or a firmware upgrade on one member produces the visible outage the cluster was bought to prevent.
 
-        - All active TCP connections (VPN tunnels, web sessions, database connections) are terminated.
-        - Stateful inspection state is lost, meaning return traffic for existing flows is dropped until new connections are established.
-        - VoIP calls, video conferences, and long-lived connections are disrupted.
-        - During the reconnection storm, the secondary device may miss traffic while thousands of connections re-establish simultaneously.
+        That predictable outage is also a lever. An attacker who can force a failover, by crashing the active unit or by disrupting the heartbeat path, flushes every established session on demand. The reconnection storm that follows is a denial of service in its own right and a noisy window in which individual malicious connections are hard to pick out of thousands of legitimate re-establishments.
 
-        Session pickup synchronizes the session table between HA peers so that existing connections continue seamlessly after failover.
+        Synchronizing sessions costs memory and heartbeat bandwidth on very large session tables. Where that cost is real, narrow it with the session pickup delay option, which synchronizes only sessions that have lasted long enough to be worth preserving, rather than switching the feature off.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -847,16 +859,19 @@ queries:
     mql: fortios.system.dns.dnsOverTls == "enable"
     docs:
       desc: |
-        This check verifies that DNS-over-TLS (DoT) is enabled for the FortiOS device's DNS resolution. Plaintext DNS queries expose the device's resolution activity to eavesdropping and manipulation.
+        This check verifies that the FortiGate encrypts its own DNS queries with DNS over TLS.
+
+        The device resolves names for FortiGuard updates, fully qualified domain name address objects, certificate revocation checks, and administrative tooling, and by default it does so in cleartext. Encrypted resolution is selected under **Network > DNS** in the web interface, or in the CLI with `config system dns` and `set protocol dot` on FortiOS 7.0 and later, or `set dns-over-tls enable` on earlier releases. This check requires DNS over TLS to be in use.
 
         **Why this matters**
 
-        FortiOS uses DNS resolution for FQDN-based firewall address objects, FortiGuard updates, and certificate validation. If DNS traffic is unencrypted:
+        Cleartext DNS from the firewall is both readable and writable by anyone on the path. An attacker who answers a query first controls what a domain name address object resolves to, and those objects are how firewall policies name partners, update services, and SaaS endpoints. Poisoning one turns a policy written to permit traffic to a vendor into a policy that permits traffic to the attacker, with no change appearing anywhere in the rule base.
 
-        - Attackers on the network path can observe which domains the firewall resolves, revealing security tool update patterns and policy configurations.
-        - DNS spoofing attacks can redirect FQDN-based firewall address objects to attacker-controlled IPs, bypassing firewall policies.
-        - FortiGuard update requests could be redirected to serve malicious signature databases.
-        - Compliance frameworks increasingly require encryption of management-plane traffic.
+        The same position redirects the device's own outbound calls. FortiGuard update and rating lookups start with a name, so a forged answer can point the device at a host the attacker controls and stall or subvert signature delivery, while the device keeps reporting a healthy configuration as its detection content goes stale.
+
+        Even purely passive observation is useful. The resolution stream from a firewall reveals which security services it subscribes to, which partners and internal services it fronts, and when maintenance happens, all of which is reconnaissance for the attack that follows.
+
+        Encrypting resolution moves trust onto the resolver you name, so point the device at resolvers you operate or contract with, and have it verify the server certificate rather than accepting whatever answers.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -933,17 +948,19 @@ queries:
     mql: fortios.system.ntp.ntpsync == "enable"
     docs:
       desc: |
-        This check verifies that NTP synchronization is enabled on the FortiOS device. Accurate time is foundational for security operations, log correlation, and certificate validation.
+        This check verifies that the FortiGate synchronizes its clock with an external time source.
+
+        Time synchronization keeps the device clock aligned with a reference so that logs, certificate checks, and time-based authentication agree with the rest of the estate. It is turned on under **System > Settings** in the **System Time** section, or in the CLI with `config system ntp` and `set ntpsync enable`, and this check requires it to be enabled.
 
         **Why this matters**
 
-        If the system clock drifts due to lack of NTP synchronization:
+        Log timestamps are the only thing tying firewall events to events on servers, endpoints, and identity providers. A drifting clock does not announce itself. It produces an incident timeline in which the firewall's record of a connection sits minutes or hours away from the endpoint's record of the same connection, and an analyst reconstructing an intrusion either draws the wrong causal order or discards the firewall evidence entirely.
 
-        - Log timestamps become inaccurate, making incident response and forensic timelines unreliable.
-        - TLS certificate validation may fail if the device clock is outside the certificate's validity period, breaking FortiGuard updates and HTTPS inspection.
-        - TOTP-based two-factor authentication for admin access will fail if the clock is more than a few seconds off.
-        - Kerberos authentication in AD-integrated environments has strict time tolerance (typically 5 minutes).
-        - Correlation of events across firewalls, SIEM, and other security tools becomes impossible with clock skew.
+        Clock error also breaks security functions outright rather than gradually. Certificate validity is evaluated against the device clock, so a device far enough off rejects valid certificates or accepts expired ones on FortiGuard connections and inspected sessions. Time-based one-time passwords for administrator login stop working, and Kerberos authentication in directory-integrated deployments refuses tickets outside a tight tolerance, which turns a quiet drift into a lockout in the middle of an incident.
+
+        An attacker who reaches an unsynchronized device gains a small but real advantage, because timestamps that cannot be correlated with anything else are timestamps that are easy to dispute.
+
+        Synchronization is only as trustworthy as its source, so pair this with time servers you operate or trust rather than leaving the device pointed at whatever default it shipped with.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -1014,15 +1031,19 @@ queries:
     mql: fortios.system.ntp.servers.length > 0
     docs:
       desc: |
-        This check verifies that at least one NTP server is configured on the FortiOS device. NTP synchronization being enabled is meaningless without a time source to synchronize against.
+        This check verifies that the FortiGate has at least one time server configured to synchronize against.
+
+        Enabling synchronization selects the behavior, and the server list supplies the reference it uses. Servers are entered under **System > Settings** in the **System Time** section by choosing a custom time source, or in the CLI with `config system ntp`, `set type custom`, and a `config ntpserver` block naming each server. This check requires the list to hold at least one entry.
 
         **Why this matters**
 
-        Even with NTP sync enabled, the device cannot maintain accurate time without configured NTP servers:
+        Synchronization with no configured source silently does nothing. The device reports that it is set to synchronize, nobody looks again, and the clock drifts exactly as it would with the feature switched off, so the failure surfaces during an investigation when the log timeline does not line up with anything else.
 
-        - The device clock will drift over time, degrading log accuracy and authentication reliability.
-        - FortiGuard services, certificate validation, and time-based access policies depend on accurate system time.
-        - Configuring multiple NTP servers provides redundancy in case the primary time source is unavailable.
+        The choice of source is itself a security decision. A device pointed at whatever public server happened to be in the shipped configuration takes its notion of time from a host nobody in the organization controls, and unauthenticated time answers are forgeable by anyone on the path, which lets an attacker step the clock far enough to make expired certificates appear valid or to scatter log timestamps.
+
+        A single server is also a single point of failure. When it becomes unreachable the device falls back to free-running and drifts, whereas several sources let it discard an outlier instead of following it.
+
+        Configure two or three servers, preferably internal ones that in turn synchronize with a small number of vetted upstream sources, so both the availability and the trustworthiness of time are under your control.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -1096,16 +1117,19 @@ queries:
     mql: fortios.log.setting.fwpolicyImplicitLog == "enable"
     docs:
       desc: |
-        This check verifies that traffic hitting the implicit deny rule at the end of the firewall policy table is logged. By default, FortiOS silently drops traffic that does not match any explicit policy.
+        This check verifies that traffic dropped by the implicit deny policy is written to the log.
+
+        Every FortiGate policy table ends with an implicit deny that discards anything no explicit policy matched, and unless logging for it is turned on those drops leave no record at all. The option exists only in the CLI, as `config log setting` with `set fwpolicy-implicit-log enable`, and this check requires it to be enabled.
 
         **Why this matters**
 
-        The implicit deny rule catches all traffic not matched by explicit policies. Without logging this traffic:
+        The implicit deny is where reconnaissance lands. Port sweeps, service probes, and the slow enumeration that precedes a targeted attack all fail against policies that do not match them, so with implicit logging off the firewall discards the best early indicator it has and the security team sees nothing until the attacker finds something that is permitted.
 
-        - Reconnaissance attempts, port scans, and probing are invisible to security teams.
-        - Policy gaps are undetectable — traffic that should be allowed by an explicit rule but is silently dropped causes hard-to-diagnose connectivity issues.
-        - Blocked lateral movement attempts from compromised internal hosts go unnoticed.
-        - Compliance frameworks such as PCI DSS and NIST 800-53 AU-2 require logging of denied access attempts.
+        It is also where lateral movement fails first. A compromised internal host reaching for segments it has no business in generates a stream of denied sessions, and that stream is often the earliest evidence that a workstation is under someone else's control. Without the log there is no stream, and the containment opportunity passes.
+
+        Silent drops are also what make firewall troubleshooting expensive. Traffic that should have matched a policy but does not disappears without explanation, and the usual response under time pressure is to add a broad permissive policy rather than to find the real gap.
+
+        Implicit deny logging on a busy internet-facing interface produces significant volume, so plan the forwarding and retention for it and filter at the collector rather than turning the source off.
       audit: |
         Implicit deny logging is the `fwpolicy-implicit-log` option in `config log setting`, a global log setting rather than a property of a firewall policy, and it is not exposed in the FortiGate web interface. Audit it from the CLI.
 
@@ -1159,16 +1183,19 @@ queries:
     mql: fortios.log.setting.localInDenyUnicast == "enable"
     docs:
       desc: |
-        This check verifies that denied unicast local-in traffic is logged. Local-in traffic is traffic destined for the FortiGate device itself, such as management access attempts, routing protocol packets, and VPN negotiation.
+        This check verifies that unicast traffic denied by the local-in policy, meaning traffic addressed to the FortiGate itself, is logged.
+
+        Local-in traffic is everything sent to the device's own addresses rather than through it: administrative logins, VPN negotiation, routing protocol packets, and SNMP polls. Local-in denies are logged separately from forwarded traffic, and the option exists only in the CLI, as `config log setting` with `set local-in-deny-unicast enable`. This check requires it to be enabled.
 
         **Why this matters**
 
-        Local-in denied traffic reveals attempts to directly access or attack the firewall:
+        Attacks on a FortiGate are aimed at the device, not through it, so they appear in this log and nowhere else. Password guessing against the web interface and SSH, probing of the SSL-VPN listener, and attempts to reach management services that the interface access list refuses are all local-in denies, and with the option off the device absorbs every one of them in silence.
 
-        - Brute-force attempts against the management interface (HTTPS, SSH) are captured.
-        - Unauthorized VPN connection attempts are logged for investigation.
-        - Port scanning against the firewall's own IP addresses is recorded.
-        - Without this logging, attacks targeting the firewall itself are invisible, and the first sign of compromise may be the attacker already having access.
+        That silence matters because Fortinet has repeatedly disclosed pre-authentication flaws in the administrative and VPN daemons, and exploitation has followed disclosure within days. The reconnaissance that precedes it is visible as denied local-in traffic from addresses that have no business talking to the firewall, so losing the record means the first sign of compromise is an attacker who already holds an account.
+
+        Denied local-in traffic is also the honest measure of whether the interface access lists are doing their job. A steady stream of refused management connections from the internet says the exposure is real even though the current configuration happens to block it.
+
+        Broadcast and multicast local-in denies are governed by separate options, so enable those as well where the device sits on a segment on which that traffic is worth recording.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -1233,18 +1260,19 @@ queries:
     mql: fortios.log.setting.extendedLog == "enable"
     docs:
       desc: |
-        This check verifies that extended log format is enabled. Extended logs include additional detail such as application data, URL information, and threat context that are essential for security analysis.
+        This check verifies that the FortiGate writes logs in the extended format, which carries the additional fields security tooling needs.
+
+        A standard log entry records the session skeleton: source, destination, service, and action. Extended format adds the application, URL, and threat context the inspection engines produced while handling the session. The option exists only in the CLI, as `config log setting` with `set extended-log enable`, and this check requires it to be enabled.
 
         **Why this matters**
 
-        Standard FortiOS logs contain basic session information (source, destination, action). Extended logs add:
+        A log line saying that a host opened an outbound TLS session to an address is nearly useless during an investigation, because that description fits both a software update and an exfiltration channel. The extended fields are what separate them, naming the application, the destination category, and the verdict the inspection engines reached. Without them an analyst has to go to the endpoint for information the firewall already had and threw away.
 
-        - Application-level detail needed to identify specific threats and attack techniques.
-        - URL and web category information for investigating data exfiltration or policy violations.
-        - Threat metadata that enables SIEM correlation rules and automated incident response.
-        - Additional context that reduces mean-time-to-investigate during security incidents.
+        Detection content depends on the same fields. Rules that alert on a user reaching a newly registered domain, on an application that should not be in use, or on a repeated threat verdict cannot be written against records that contain neither the application nor the URL, so the collector receives a large volume of data with very little detectable structure in it.
 
-        The additional log volume is a worthwhile tradeoff for the improved visibility during investigations.
+        The extra detail also shortens containment. When the fields identifying what was transferred are already in the record, scoping an incident is a query instead of a forensic exercise on every affected host.
+
+        Extended entries are larger, so size retention and any per-day licensing on the collector accordingly rather than trading away the fields that make the log usable.
       audit: |
         The global extended log format option is not exposed in the FortiGate web interface. Audit it from the CLI.
 
@@ -1298,18 +1326,19 @@ queries:
     mql: fortios.log.setting.userAnonymize == "disable"
     docs:
       desc: |
-        This check verifies that user anonymization is disabled in log settings. When anonymization is enabled, usernames in log entries are replaced with anonymous identifiers, making incident response and forensic investigation impossible.
+        This check verifies that the FortiGate records real user names in its logs rather than replacing them with anonymous identifiers.
+
+        When anonymization is on, FortiOS substitutes a placeholder for the authenticated user in log entries, so the record shows that something happened but not who did it. The option exists only in the CLI, as `config log setting` with `set user-anonymize`, and this check requires it to be disabled.
 
         **Why this matters**
 
-        User attribution is essential for security operations:
+        Attribution is what makes a firewall log actionable. During an intrusion the question is which account is being used, because that determines which credentials to reset, which endpoint to isolate, and how far the attacker has already reached. An anonymized log answers none of it. It shows a session from an address, which in an environment with roaming users and shared egress is not a person.
 
-        - Incident responders cannot identify which user account was compromised or misused.
-        - Insider threat investigations require associating actions with specific users.
-        - Compliance frameworks require audit trails that can attribute actions to individuals (NIST 800-53 AU-3, SOC 2 CC7.2).
-        - SIEM correlation rules that match user behavior across systems cannot function with anonymized usernames.
+        Insider misuse becomes effectively uninvestigable. Data staged to a personal cloud service, access to systems outside a role, and slow collection over weeks are patterns that exist only when actions can be tied to an identity across time, and anonymization removes the key that makes the pattern visible.
 
-        If privacy regulations require anonymization in certain contexts, implement it at the SIEM level with role-based access to deanonymize rather than at the source.
+        Detection tooling loses the same key. Correlation between the firewall, the identity provider, and endpoint telemetry is keyed on the user, so anonymized firewall records cannot be joined to a suspicious sign-in or a malicious process, and the rules that would have caught the combination never fire.
+
+        Where privacy rules genuinely require that names not be broadly visible, apply the restriction at the collector with access controls and a documented process for re-identification during an investigation, rather than destroying the attribution at the source where it cannot be recovered.
       audit: |
         The user-anonymize option is not exposed in the FortiGate web interface. Audit it from the CLI.
 
@@ -1363,17 +1392,19 @@ queries:
     mql: fortios.log.syslog.status == "enable"
     docs:
       desc: |
-        This check verifies that syslog forwarding is enabled. Logs stored only on the firewall are vulnerable to loss if the device is compromised, fails, or is reset to factory defaults.
+        This check verifies that the FortiGate forwards its logs to a syslog collector.
+
+        Syslog forwarding streams log entries off the device as they are produced, to a server you name. It is configured under **Log & Report > Log Settings** in the web interface, or in the CLI with `config log syslogd setting` using `set status enable` together with a `set server` address. This check requires the syslog destination to be enabled.
 
         **Why this matters**
 
-        External log forwarding via syslog is critical for security operations:
+        Logs that exist only on the firewall are logs the attacker owns as soon as the firewall is compromised. An intruder with administrative access clears local storage, or simply resets the unit, and the record of how they arrived and what they reached goes with it. Forwarded entries are already on another host by then, which is what makes them evidence.
 
-        - If an attacker compromises the FortiGate, they can clear local logs to cover their tracks. External logs are preserved.
-        - Device failures or factory resets destroy local log storage.
-        - SIEM integration requires syslog forwarding to correlate firewall events with other security data sources.
-        - Compliance frameworks universally require centralized, tamper-resistant log storage (PCI DSS 10.5, NIST 800-53 AU-4).
-        - Incident response teams need historical logs that survive device replacement.
+        Local storage is also small and volatile. Many FortiGate models log to memory or to a modest flash partition and roll over within hours under load, so even with no attacker involved the entries covering an incident are frequently gone before anyone goes looking, and a hardware failure takes the rest.
+
+        Forwarding is the only path to correlation as well. Firewall records become useful when they sit alongside identity, endpoint, and server telemetry in one place, and a firewall that keeps its logs to itself contributes nothing to detection rules that span those sources.
+
+        Send syslog over TCP or TLS to a collector the firewall administrators cannot delete from, and monitor for the absence of the stream, because a forwarding destination nobody watches fails silently.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -1443,19 +1474,19 @@ queries:
       fortios.log.syslog.status == "enable" || fortios.log.fortianalyzer.status == "enable"
     docs:
       desc: |
-        This check verifies that at least one external log destination (syslog or FortiAnalyzer) is configured and active. Relying solely on local log storage leaves the organization blind if the device is compromised or fails.
+        This check verifies that the FortiGate sends its logs to at least one destination outside the device, either a syslog collector or a FortiAnalyzer.
+
+        FortiOS can hold logs in memory or on local disk, and it can additionally stream them to an external system. Both external options are configured under **Log & Report > Log Settings**, or in the CLI with `config log syslogd setting` or `config log fortianalyzer setting`, in each case using `set status enable` and naming a server. This check passes when either destination is active.
 
         **Why this matters**
 
-        Without any external log destination:
+        Retention on the device has to survive a compromise that specifically targets the device. Fortinet's advisories describe attackers reaching FortiOS through pre-authentication flaws and then persisting on it, and an attacker in that position edits or discards local logs as routine cleanup. Whether the surviving copy lands in a SIEM or in a FortiAnalyzer matters far less than that a copy exists somewhere the attacker did not just take over.
 
-        - An attacker who gains access to the FortiGate can erase all evidence of the breach.
-        - Hardware failure destroys the only copy of security logs.
-        - No SIEM integration is possible, preventing correlation with other security data.
-        - Incident response is severely limited without historical log data.
-        - Every major compliance framework requires centralized, off-device log retention.
+        Off-device retention also survives the ordinary end of the appliance. Hardware replacement, a return for repair, and a factory reset during recovery all destroy local storage, and those events cluster around exactly the incidents whose logs are worth reading afterward.
 
-        Either syslog or FortiAnalyzer satisfies this requirement. FortiAnalyzer provides additional FortiOS-specific analytics, while syslog integrates with any SIEM.
+        The two destinations answer different needs. A syslog stream feeds whatever platform already holds the rest of the estate's telemetry and is the right choice when correlation across sources drives detection. FortiAnalyzer understands FortiOS log structure natively and gives reporting and long-term storage tuned to the Fortinet stack. Sending to both is common and entirely reasonable.
+
+        Whichever destination is chosen, treat delivery as something to monitor, because a device whose only external destination has quietly stopped accepting logs looks compliant and is not.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -1539,16 +1570,19 @@ queries:
       fortios.log.fortianalyzer.status != "enable" || fortios.log.fortianalyzer.encAlgorithm == "high"
     docs:
       desc: |
-        This check verifies that when FortiAnalyzer logging is enabled, the encryption algorithm is set to "high" for maximum protection of log data in transit. This check passes if FortiAnalyzer is not enabled.
+        This check verifies that a FortiGate logging to FortiAnalyzer negotiates the strong cipher set for that connection.
+
+        The FortiAnalyzer log channel is encrypted and its cipher strength is selectable. The high setting restricts the connection to the stronger algorithms, while lower settings admit legacy ciphers for compatibility with older collectors. It is set in the CLI with `config log fortianalyzer setting` and `set enc-algorithm high`. This check requires the high setting when FortiAnalyzer logging is enabled and passes when it is not in use.
 
         **Why this matters**
 
-        Log data contains sensitive information including IP addresses, usernames, URLs, and security events. If the FortiAnalyzer connection uses weak encryption:
+        The log stream is a running description of the network. It names internal addresses, users, applications, destinations, and the verdicts the inspection engines reached, so an attacker who can read it learns the internal topology, which accounts are active, and which of their own actions the security stack noticed. Weak ciphers put that stream within reach of anyone positioned on the path between the firewall and the collector.
 
-        - Attackers on the network path can intercept and read log data, gaining intelligence about the network's security posture and active defenses.
-        - Log data could be tampered with in transit, allowing an attacker to cover their tracks.
-        - Weak encryption algorithms may have known vulnerabilities that allow decryption.
-        - Compliance frameworks require strong encryption for data in transit (NIST 800-53 SC-8).
+        Weak negotiation is an active opportunity, not only a passive one. An attacker able to influence the handshake pushes both ends onto the weakest mutually supported algorithm and can then tamper with entries in flight as well as read them, suppressing the records of their own activity while the firewall continues reporting a healthy connection.
+
+        The connection routinely crosses network segments, sometimes between sites or over a wide area link, so the assumption that the path is trusted rarely holds for its full length.
+
+        If an older FortiAnalyzer cannot negotiate the high cipher set, upgrade the collector rather than relaxing the setting, and until that happens carry the log traffic inside a tunnel you do control.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -1613,16 +1647,19 @@ queries:
       fortios.log.fortianalyzer.status != "enable" || fortios.log.fortianalyzer.reliable == "enable"
     docs:
       desc: |
-        This check verifies that when FortiAnalyzer logging is enabled, reliable logging mode is active. Reliable mode uses TCP and buffers logs during network interruptions, preventing silent log loss. This check passes if FortiAnalyzer is not enabled.
+        This check verifies that a FortiGate logging to FortiAnalyzer uses reliable delivery rather than fire-and-forget.
+
+        Reliable mode carries log entries over TCP and buffers them locally when the collector is unreachable, retransmitting once it returns. The default unreliable mode sends over UDP, where a lost datagram is simply gone. It is set in the CLI with `config log fortianalyzer setting` and `set reliable enable`. This check requires reliable mode when FortiAnalyzer logging is enabled and passes when it is not in use.
 
         **Why this matters**
 
-        Without reliable logging, FortiOS sends logs over UDP in a fire-and-forget manner:
+        Unreliable delivery loses entries without telling anyone. Congestion on the path, a brief collector restart, or a link flap silently removes whatever was in flight, and because both ends still report a healthy configuration the gap is found only when someone queries a time window and finds nothing there, usually during an investigation.
 
-        - Network congestion, packet loss, or brief outages cause permanent log loss with no notification.
-        - An attacker who can cause network disruption between the FortiGate and FortiAnalyzer can selectively suppress log entries covering their activity.
-        - Compliance audits may reveal gaps in log coverage that cannot be explained or recovered.
-        - Reliable mode uses TCP with local buffering, ensuring logs are retransmitted until confirmed received.
+        That property is directly usable by an attacker. Anyone who can generate load or disrupt the path between the firewall and the collector can open a hole in the record on demand, and whatever happens during that hole leaves no trace at all. A buffered TCP channel turns the same disruption into delayed logs instead of missing ones.
+
+        Losses are also worst exactly when they matter most. Incidents produce log bursts, and bursts are when a datagram-based channel drops the most, so the entries describing an active attack are the ones least likely to arrive.
+
+        Reliable mode makes the firewall hold entries while the collector is away, so size the local buffer for the longest outage you expect and alert on the log stream stopping rather than assuming the buffer will always be enough.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -1686,18 +1723,19 @@ queries:
     mql: fortios.firewall.policies.all(status == "enable")
     docs:
       desc: |
-        This check verifies that no firewall policies are in a disabled state. Disabled policies are dead configuration that clutters the rule base and may be re-enabled accidentally.
+        This check verifies that every firewall policy on the FortiGate is active rather than left in a disabled state.
+
+        A disabled policy stays in the table with its full definition and its place in the match order but is skipped during evaluation. Policy status is visible under **Policy & Objects > Firewall Policy** and in the output of `show firewall policy`, and it is changed with `config firewall policy` and `set status`. This check requires every policy to be enabled.
 
         **Why this matters**
 
-        Disabled firewall policies create operational and security risks:
+        A disabled policy is a permission waiting to be granted by a single click. The policies that get disabled rather than deleted are usually the broad ones created during troubleshooting, so the object most likely to be sitting dormant in the table is also the one whose re-enabling opens the widest path. Anyone with administrative access, including an attacker who has obtained it, can turn one on without creating a new policy and without the change looking like anything more than a routine toggle.
 
-        - A disabled "allow all" policy can be accidentally re-enabled, opening a massive security hole.
-        - Dead policies obscure the effective rule set, making security audits and change management harder.
-        - Administrators may lose track of why a policy was disabled, leading to uncertainty about whether it's safe to remove.
-        - Policy table bloat increases the time required for packet classification and slows firewall throughput.
+        Dead entries also make the effective rule set hard to read, and rule sets that are hard to read are where mistakes live. Reasoning about which policy matches first means mentally filtering out entries that do not participate, and a policy re-enabled later lands back at its original sequence number, ahead of controls added since, permitting traffic that current policy was written to stop.
 
-        Policies should either be active and documented or removed entirely. If a policy is needed for future use, document it in change management rather than leaving it disabled in production.
+        The residue accumulates because nobody remembers why a given policy was switched off, so it is never quite safe to remove and never quite safe to use.
+
+        Policies that are genuinely finished should be deleted, with the definition kept in change management and in the configuration backup in case it is needed again.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -1788,19 +1826,19 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that no firewall policy allows all source addresses, all destination addresses, and all services simultaneously. An any-any-any accept rule effectively turns the firewall into a router.
+        This check verifies that no firewall policy accepts every source, every destination, and every service at once.
+
+        A policy that names the built-in all address object on both sides together with the ALL service object matches every packet that reaches it and permits it. Policies are reviewed under **Policy & Objects > Firewall Policy** or with `show firewall policy`, and their scope is narrowed with `config firewall policy` by setting `srcaddr`, `dstaddr`, and `service` to specific objects. This check requires that no accept policy combines all three.
 
         **Why this matters**
 
-        An allow-all rule is the most common and dangerous firewall misconfiguration:
+        An any-to-any accept policy is not a weak rule, it is the end of the rule set. Anything above it that constrains traffic still runs, but everything the design intended to deny now matches this policy instead and passes, so a firewall reporting a carefully built policy table is in practice forwarding whatever arrives.
 
-        - The firewall provides no security value — all traffic passes uninspected.
-        - Lateral movement from a compromised host is completely unrestricted.
-        - Data exfiltration to any destination on any port is allowed.
-        - The rule typically exists because it was created "temporarily" during troubleshooting and never removed.
-        - Even with UTM profiles enabled, an any-any-any rule violates the principle of least privilege and makes the security posture fragile.
+        For an attacker that removes the two constraints that make a network hard to move through. Lateral movement from a compromised host reaches any segment on any port with no policy to trip over, and exfiltration leaves by whatever protocol and destination is convenient rather than the handful the design allowed. Neither produces a denied session, so the implicit deny log stays quiet throughout.
 
-        Every firewall policy should specify the minimum required source, destination, and service scope.
+        These policies almost always begin as a temporary measure during a cutover or an outage, stay because the traffic works, and then survive years of review because the table is long and the entry looks like the others. Nothing in the policy name reveals the scope.
+
+        If a segment genuinely needs broad connectivity, express it with address groups and service groups that name what is intended, so the permission is auditable and can be tightened later.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -1877,17 +1915,19 @@ queries:
       fortios.firewall.policies.where(action == "accept").all(logtraffic != "disable")
     docs:
       desc: |
-        This check verifies that all firewall accept rules have traffic logging enabled. Accept rules without logging create blind spots where allowed traffic is invisible to security monitoring.
+        This check verifies that every firewall policy that accepts traffic also logs it.
+
+        Logging is set per policy, and a policy with logging disabled forwards its traffic with no record that the sessions ever existed. It is set under **Policy & Objects > Firewall Policy** in the **Logging Options** section, or in the CLI with `config firewall policy` and `set logtraffic all` on each accept policy. This check requires that no accept policy has logging disabled.
 
         **Why this matters**
 
-        Firewall rules that allow traffic without logging it are a significant visibility gap:
+        Denied traffic is only half the picture and it is the less interesting half. A successful intrusion travels along paths the policy set permits, so the sessions that matter during an investigation are precisely the ones an unlogged accept policy declines to record. The result is a firewall that can say what it stopped and nothing about what it let through.
 
-        - Lateral movement through allowed paths is undetectable — the SIEM never sees the connections.
-        - Data exfiltration through allowed services (HTTPS, DNS) leaves no trace.
-        - Incident response teams cannot determine what traffic flowed through the firewall during a breach window.
-        - Capacity planning and traffic analysis are impossible without flow data.
-        - Compliance frameworks require comprehensive logging of network access (PCI DSS 10.2, NIST 800-53 AU-2).
+        That gap is where lateral movement lives. An attacker who has compromised a host inside a segment uses the permitted paths out of it, and if the policy carrying those paths does not log there is no record of which internal systems were reached, in what order, or for how long. Scoping the incident then rests entirely on endpoint evidence the attacker may have removed.
+
+        The same applies to exfiltration over permitted services. Data leaving on an allowed outbound path produces no denied session and, without policy logging, no accepted session either, so the volume and destination that would have made it obvious are never written down.
+
+        Logging every accept policy produces real volume on high-throughput paths. Where that is a genuine constraint, narrow it by recording security events only on the busiest policies rather than switching their logging off, because those are the paths most worth having a record of.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -1953,19 +1993,19 @@ queries:
       fortios.firewall.policies.where(action == "accept").all(utmStatus == "enable")
     docs:
       desc: |
-        This check verifies that all firewall accept rules have UTM (Unified Threat Management) security profiles enabled. Without UTM profiles, allowed traffic passes through without antivirus, IPS, web filtering, or application control inspection.
+        This check verifies that every firewall policy that accepts traffic applies security inspection profiles to it.
+
+        The security profile switch on a policy is what engages the antivirus, intrusion prevention, web filtering, and application control engines for the sessions that policy permits. It is turned on under **Policy & Objects > Firewall Policy** in the **Security Profiles** section, or in the CLI with `config firewall policy` and `set utm-status enable` together with the individual profile assignments. This check requires it on every accept policy.
 
         **Why this matters**
 
-        A next-generation firewall without UTM profiles applied is functionally equivalent to a basic packet filter:
+        With no profiles attached, the policy decides on addresses and ports and nothing else, which is the behavior of a packet filter from the 1990s. Malware delivered over a permitted web or mail session, an exploit aimed at a server the policy allows the internet to reach, and command and control traffic leaving over an allowed port all pass through with nothing looking at the content.
 
-        - Malware delivered over allowed protocols (HTTP, HTTPS, SMTP) passes through uninspected.
-        - Exploit attempts and known attack signatures are not detected by the IPS engine.
-        - Users can access malicious or policy-violating websites through allowed web traffic.
-        - Command-and-control traffic from compromised hosts blends in with legitimate traffic.
-        - The organization is not getting the security value it paid for with the FortiGate NGFW platform.
+        Attackers plan for exactly this. Initial access and command and control are deliberately carried over the protocols every network permits, because the choice of port stopped being a meaningful signal long ago. The engines that recognize the payload rather than the port are the only part of the device positioned to catch it, and a policy without profiles never calls them.
 
-        At minimum, each accept rule should have antivirus, IPS, and web filter profiles applied.
+        The gap is invisible in the obvious places. The policy table looks complete, the device reports healthy subscriptions, and the FortiGuard signature feeds arrive on schedule, while a policy carrying the bulk of the traffic consults none of it.
+
+        Turning the profiles on without also assigning an inspection profile leaves the engines blind to encrypted sessions, so treat the two settings as one change. Where a profile genuinely cannot be applied to a specific flow, narrow that policy to the flow needing the exemption rather than leaving inspection off for everything the policy carries.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -2044,19 +2084,19 @@ queries:
       fortios.firewall.policies.where(action == "accept").all(sslSshProfile != "" && sslSshProfile != "no-inspection")
     docs:
       desc: |
-        This check verifies that all firewall accept rules have an SSL/SSH inspection profile configured. Without SSL inspection, encrypted traffic bypasses all UTM security profiles.
+        This check verifies that every firewall policy that accepts traffic has an SSL and SSH inspection profile assigned.
+
+        The inspection profile determines how much of an encrypted session the security engines can see. Certificate inspection reads the handshake metadata, while deep inspection decrypts the session so the payload can be examined. It is assigned under **Policy & Objects > Firewall Policy** in the **Security Profiles** section, or in the CLI with `config firewall policy` and `set ssl-ssh-profile`. This check requires a profile that is neither empty nor the no-inspection profile.
 
         **Why this matters**
 
-        The majority of internet traffic is now encrypted with TLS. Without SSL inspection:
+        Nearly all traffic that carries a threat is now encrypted, so a policy left on no-inspection hands the security engines a stream they cannot read. Antivirus scanning of a file downloaded over HTTPS sees ciphertext, intrusion prevention signatures cannot match an exploit inside a TLS session, and application control is reduced to guessing from a destination address. Every engine the policy turned on still runs and finds nothing.
 
-        - Antivirus scanning cannot inspect encrypted file transfers — malware delivered over HTTPS is invisible.
-        - IPS signatures cannot match against encrypted payloads — exploits tunneled over TLS evade detection.
-        - Web filtering is limited to SNI/certificate-based decisions — URL-level filtering and content inspection are impossible.
-        - Command-and-control traffic commonly uses HTTPS to blend in with legitimate traffic.
-        - All UTM profiles are effectively bypassed for encrypted sessions, rendering the NGFW equivalent to a basic stateful firewall.
+        Attackers rely on this. Payload delivery, credential theft, and command and control are routinely carried inside TLS precisely because it defeats inspection, and tunneling over SSH is the standard way to move a session past a policy set that would otherwise deny it. Without an inspection profile the firewall records that an encrypted session took place and can say nothing about what it carried.
 
-        Deploy at minimum certificate inspection, and where feasible, full deep inspection with appropriate certificate deployment.
+        The result is a device reporting a complete security stack while operating as a stateful packet filter for the majority of its traffic, which is the most expensive kind of false assurance because it has been bought and licensed.
+
+        Certificate inspection works immediately and gives the engines the destination and certificate context. Deep inspection gives them the payload but requires endpoints to trust the inspection certificate and must exempt flows that are legally sensitive or that pin their certificates. Choose per policy, but choose something other than no inspection.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -2126,18 +2166,19 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that WAN-facing interfaces do not allow management access protocols (HTTP, HTTPS, SSH, telnet, SNMP). Exposing the management plane on internet-facing interfaces is the leading cause of FortiOS compromises.
+        This check verifies that internet-facing interfaces on the FortiGate do not offer management services.
+
+        Each interface carries an access list naming which services it answers on its own address, covering the web interface, SSH, telnet, SNMP, and ping. It is edited under **Network > Interfaces** in the **Administrative Access** section, or in the CLI with `config system interface` and `set allowaccess`. This check requires that interfaces with the WAN role permit none of HTTP, HTTPS, SSH, telnet, or SNMP.
 
         **Why this matters**
 
-        Multiple critical FortiOS vulnerabilities have been exploited via management interfaces exposed to the internet:
+        The FortiOS management plane exposed to the internet is the single most reliably exploited thing about the product. Fortinet has disclosed a series of pre-authentication flaws in the administrative and VPN daemons, and each has been exploited at scale within days of the advisory, against target lists built from internet-wide scans that ran long before the vulnerability was public. An interface answering the administrative service is on those lists whether or not anyone has ever logged in from outside.
 
-        - CVE-2024-55591, CVE-2023-27997, CVE-2022-42475 — all exploited FortiOS management or VPN services accessible from the WAN.
-        - Automated botnets continuously scan for FortiGate admin interfaces on public IPs.
-        - HTTPS admin access on WAN allows brute-force attacks against admin credentials from anywhere on the internet.
-        - SNMP on WAN interfaces leaks device configuration details, firmware versions, and network topology to attackers.
+        Compromise of the device is not compromise of one appliance. The firewall terminates the VPN tunnels, holds the keys and the inspection certificate, and sits on both sides of the segmentation boundary, so an attacker who lands on it reads the traffic crossing it, adds an administrator or a local-in exception to come back, and reaches internal networks with the firewall's own privileges.
 
-        Management access should be restricted to dedicated management interfaces or internal networks, protected by access control lists, and accessed via VPN when remote administration is required.
+        Short of an exploit, an exposed listener is a permanent credential-guessing target, and SNMP exposure hands out the device model, firmware version, interface addressing, and routing detail to anyone who asks, which is the reconnaissance that decides whether the device is worth attacking at all.
+
+        Administer the device from an internal or dedicated management interface, and where remote administration is genuinely needed reach it over a VPN and constrain every administrator account with trusted host entries. Keep only what the WAN interface must answer, such as ping for path monitoring or the FortiManager service on a centrally managed device.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -2213,17 +2254,19 @@ queries:
     mql: fortios.network.interfaces.all(allowaccess != /telnet/)
     docs:
       desc: |
-        This check verifies that no network interface on the FortiOS device allows telnet access. Telnet transmits all data, including credentials, in plaintext and must not be used for device management.
+        This check verifies that no interface on the FortiGate offers telnet.
+
+        Telnet is the unencrypted command line service, and it is offered per interface through the same access list that controls the web interface and SSH. That list is edited under **Network > Interfaces** in the **Administrative Access** section, or in the CLI with `config system interface` and `set allowaccess`. This check requires that telnet appears on no interface.
 
         **Why this matters**
 
-        Telnet is an inherently insecure protocol:
+        Telnet puts the administrator password on the network in the clear, along with every command typed and every line of output returned. Anyone positioned to capture the traffic, on a switch port, on a compromised host in the path, or on a wireless segment, reads the credential directly and then holds full control of the firewall with no exploit to develop and nothing to crack.
 
-        - Admin credentials are transmitted in cleartext, allowing any network observer to capture usernames and passwords.
-        - Session content including configuration commands is visible to anyone performing packet capture on the network path.
-        - There is no encryption, integrity checking, or authentication of the server — man-in-the-middle attacks are trivial.
-        - SSH provides identical functionality with full encryption and should be used in all cases where CLI access is needed.
-        - Compliance frameworks universally prohibit cleartext management protocols (PCI DSS 2.3, NIST 800-53 SC-8).
+        Because the session authenticates neither end, the same position allows interception rather than only observation. An attacker can sit between the administrator and the device, present a convincing prompt, collect the password, and relay commands onward, or inject commands into a live session, and neither end has any means of detecting it.
+
+        The output is often as valuable as the credential. A telnet session in which someone displays the running configuration puts the policy set, the address objects describing the internal network, and any secrets in that output onto the wire in plain text.
+
+        SSH provides the same command line with encryption and server authentication, so removing telnet costs nothing operationally. Remove only the telnet entry from the access list rather than clearing the list, which would drop the management access you are using at the time.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -2309,16 +2352,19 @@ queries:
     mql: fortios.router.bgp.neighbors.length == 0 || fortios.router.bgp.logNeighbourChanges == "enable"
     docs:
       desc: |
-        This check verifies that BGP neighbor state changes are logged. BGP peering changes can indicate route hijacking attempts, network instability, or unauthorized devices on the network.
+        This check verifies that a FortiGate running BGP records peer state changes in its log.
+
+        Neighbor logging writes an entry each time a BGP session comes up or goes down, naming the peer and the reason. It is enabled in the CLI with `config router bgp` and `set log-neighbour-changes enable`. This check requires it on devices with BGP peers configured and passes when no peers exist.
 
         **Why this matters**
 
-        BGP is the routing protocol that determines how traffic flows between networks. Unlogged neighbor changes are a blind spot:
+        BGP decides where traffic goes, which means it decides which traffic passes through inspection and which segments can reach each other at all. A session that comes up unexpectedly, or one that goes down and stays down, changes the shape of the network, and without neighbor logging that change leaves no record on the device that made it.
 
-        - Route hijacking attacks involve establishing unauthorized BGP peerings to redirect traffic — without logging, these go undetected.
-        - Neighbor flaps (repeated up/down transitions) indicate network instability that can affect security zone isolation.
-        - Unauthorized BGP peers on the network can advertise routes that redirect traffic through attacker-controlled paths.
-        - Post-incident investigation of routing-related outages requires historical neighbor state change data.
+        An attacker who establishes an unauthorized session, or who takes over a legitimate peer, pulls traffic onto a path they observe or control while the firewall's policy table remains exactly as written. The peering event is the moment that becomes visible and it is the only moment, because afterward the routes simply exist and look ordinary.
+
+        Repeated transitions are their own signal. A peer that flaps is either an unstable link or something interfering with one, and in both cases traffic swings between paths, which in a segmented network means flows periodically taking a route where the intended controls are not applied.
+
+        After a routing incident the sequence of peer transitions is what reconstructs the event, so enable this alongside forwarding the log off the device, because a record held only on the unit is lost with the unit.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -2380,18 +2426,19 @@ queries:
     mql: fortios.router.bgp.neighbors.length == 0 || fortios.router.bgp.gracefulRestart == "enable"
     docs:
       desc: |
-        This check verifies that BGP graceful restart is enabled. Without graceful restart, a BGP process restart or HA failover causes full route withdrawal, potentially black-holing traffic and disrupting security zones.
+        This check verifies that a FortiGate running BGP negotiates graceful restart with its peers.
+
+        Graceful restart lets a router keep forwarding on its existing routes while its BGP process restarts, and asks its peers to hold the routes it advertised instead of withdrawing them. It is enabled in the CLI with `config router bgp` and `set graceful-restart enable`, alongside the restart and stale path timers. This check requires it on devices with BGP peers configured and passes when no peers exist.
 
         **Why this matters**
 
-        During a BGP process restart or HA failover without graceful restart:
+        Without graceful restart, a control plane restart or a cluster failover withdraws every route the device advertised and discards every route it learned. Traffic that was flowing stops, and for as long as reconvergence takes, which with default timers runs into minutes, packets are either dropped or sent down whatever alternate path exists.
 
-        - All BGP routes are withdrawn from the routing table, causing traffic to be dropped or rerouted.
-        - Security zones that depend on specific routing paths may be bypassed during the convergence period.
-        - Traffic may be black-holed for the duration of the BGP session re-establishment (potentially 90+ seconds with default timers).
-        - Adjacent routers must fully reconverge, amplifying the disruption across the network.
+        The alternate path is the security problem. A network segmented by routing sends flows through the firewall because that is where the routes point, so when those routes disappear traffic that reconverges around the device reaches its destination without passing through inspection at all, and the failure is invisible because nothing was denied.
 
-        Graceful restart allows the forwarding plane to continue using existing routes while the control plane restarts, minimizing traffic disruption.
+        The blackout carries an availability cost that feeds back into security. Administrators who know that touching the routing process breaks the site defer firmware upgrades and cluster maintenance, which is how a perimeter device ends up staying on a vulnerable build.
+
+        Enabling graceful restart renegotiates the capability and resets established sessions, so make the change in a maintenance window and set the stale path timer to a value the peers will honor.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -2460,16 +2507,19 @@ queries:
     mql: fortios.router.ospf.areas.length == 0 || fortios.router.ospf.logNeighbourChanges == "enable"
     docs:
       desc: |
-        This check verifies that OSPF neighbor state changes are logged. OSPF adjacency changes can indicate rogue devices on the network, link failures, or link-state injection attacks.
+        This check verifies that a FortiGate running OSPF records adjacency state changes in its log.
+
+        OSPF forms adjacencies with routers on the same segments and exchanges link state information with them, and neighbor logging writes an entry each time an adjacency forms or is lost. It is enabled in the CLI with `config router ospf` and `set log-neighbour-changes enable`. This check requires it on devices with OSPF areas configured and passes when none exist.
 
         **Why this matters**
 
-        OSPF operates within the internal network and changes to neighbor adjacencies can signal serious issues:
+        OSPF forms adjacencies with whatever speaks the protocol on a connected segment, which makes an unexpected neighbor a direct statement that something new is on an internal network. A host that starts advertising link state can pull internal traffic toward itself, and the adjacency log is where that first appears. The routing table afterward shows only that a prefix is reachable through a next hop, with nothing to indicate that the next hop appeared yesterday.
 
-        - A rogue device advertising OSPF routes can redirect internal traffic through an attacker-controlled path.
-        - Link-state advertisement (LSA) injection attacks can manipulate the routing topology to intercept or disrupt traffic.
-        - Repeated adjacency changes indicate network instability that may affect the reliability of security zone isolation.
-        - Without logging, the first indication of a routing attack may be when users report connectivity issues or data is exfiltrated.
+        Manipulating the link state database is the natural follow-on. An adjacent speaker can advertise a more attractive path to an internal prefix and draw traffic onto it for interception, or advertise unreachability and blackhole a segment. Both begin with an adjacency, and both are hard to explain afterward if no record exists of when the neighbor arrived.
+
+        Adjacency churn among legitimate peers matters too, because each transition reconverges the area, and during reconvergence flows can take paths that skip the segmentation the design depends on.
+
+        The log is useful only if it leaves the device and someone acts on it, so pair this with external log forwarding and an alert on adjacency events involving addresses outside the expected peer set.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -2531,16 +2581,19 @@ queries:
     mql: fortios.system.fortiGuard.antispamLicense != 0 && fortios.system.fortiGuard.antispamExpiration > time.now.unix
     docs:
       desc: |
-        This check verifies that the FortiGuard antispam subscription has not expired. An expired subscription stops receiving spam signature updates, degrading email security.
+        This check verifies that the FortiGate holds a current FortiGuard antispam entitlement.
+
+        The antispam service supplies the sender reputation and message signature data the device consults when it inspects mail. Entitlement status appears under **System > FortiGuard** in the web interface and in the output of `get system fortiguard`, and this check requires the antispam license to be present with an expiration date in the future.
 
         **Why this matters**
 
-        FortiGuard antispam protection relies on continuously updated spam signatures and reputation databases:
+        Mail is still where targeted intrusions start. A lapsed entitlement stops the reputation and signature feeds, so the engine keeps running against data that has aged since the day the contract expired, and the phishing infrastructure stood up this week is not in it. The device continues to inspect mail and continues to pass it.
 
-        - New spam campaigns and phishing attacks emerge daily — stale signatures miss current threats.
-        - Spear-phishing emails are a primary initial access vector for targeted attacks.
-        - Without current signatures, the antispam engine's detection rate degrades significantly over time.
-        - Email-borne malware that would be caught by current signatures passes through to users.
+        That failure is quiet in a specific way. Nothing is denied, no policy changes, and mail flow looks normal, so the loss shows up as a gradual decline in what gets caught rather than as an outage anyone reports. By the time someone notices, the gap covers however many months the renewal has been outstanding.
+
+        An attacker does not need to know the subscription lapsed to benefit from it. Commodity phishing that would have been scored on sender reputation reaches inboxes, and each message is another chance at a credential that leads to the VPN.
+
+        If mail does not traverse this device the entitlement is doing no work and an exception is reasonable. Otherwise treat renewal as a security control with an owner and a date rather than as a procurement detail.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -2614,16 +2667,19 @@ queries:
     mql: fortios.system.fortiGuard.webfilterLicense != 0 && fortios.system.fortiGuard.webfilterExpiration > time.now.unix
     docs:
       desc: |
-        This check verifies that the FortiGuard web filter subscription has not expired. An expired subscription stops receiving URL category updates, rendering web filtering policies ineffective against newly categorized threats.
+        This check verifies that the FortiGate holds a current FortiGuard web filtering entitlement.
+
+        The web filtering service supplies the category ratings the device consults when a policy decides whether to permit a destination. Entitlement status appears under **System > FortiGuard** and in the output of `get system fortiguard`, and this check requires the web filter license to be present with an expiration date in the future.
 
         **Why this matters**
 
-        Web filtering depends on FortiGuard's continuously updated URL categorization database:
+        Web filtering policy is written against categories, so an expired entitlement does not disable the policy, it starves it. Ratings stop being refreshed and newly registered domains carry no category at all, which means the rules blocking malware and phishing categories match nothing for exactly the destinations created for this week's campaign. Attack infrastructure is deliberately short-lived for this reason.
 
-        - Newly registered malicious domains used for phishing, malware distribution, or C2 communication are not categorized without current updates.
-        - Web filter policies that block categories like "Malware" or "Phishing" become ineffective as the database ages.
-        - Compliance policies that restrict access to specific categories (gambling, social media) miss newly categorized sites.
-        - Without current web filter data, users can access recently created malicious sites that would otherwise be blocked.
+        The same starvation opens the outbound path. Command and control that would have been blocked as a rated malicious destination is unrated and therefore permitted, so a host compromised through some other route keeps its channel out through a control the organization believes is watching.
+
+        Category restrictions kept for acceptable-use reasons degrade on the same curve and just as quietly, because a destination with no rating falls through the category rules rather than triggering them.
+
+        Renew before expiry rather than after, and confirm the device has picked the new entitlement up, because a renewal that has not been registered against the serial number leaves the feeds stopped while the contract shows as purchased.
       audit: |
         ### Audit via the FortiGate web interface
 
@@ -2697,16 +2753,19 @@ queries:
     mql: fortios.system.fortiGuard.outbreakPreventionLicense != 0 && fortios.system.fortiGuard.outbreakPreventionExpiration > time.now.unix
     docs:
       desc: |
-        This check verifies that the FortiGuard outbreak prevention subscription has not expired. Outbreak prevention provides rapid response signatures for zero-day malware and emerging threats before traditional AV signatures are available.
+        This check verifies that the FortiGate holds a current FortiGuard outbreak prevention entitlement.
+
+        Outbreak prevention supplies a rapid-response hash and signature feed that the antivirus engine queries for samples too new to be covered by the regular signature package. Entitlement status appears under **System > FortiGuard** and in the output of `get system fortiguard`, and this check requires the outbreak prevention license to be present with an expiration date in the future.
 
         **Why this matters**
 
-        Outbreak prevention fills the gap between a new threat appearing in the wild and traditional AV signature availability:
+        The dangerous window for malware is the first hours of a campaign, before a sample has been analyzed and folded into the regular signature release. Outbreak prevention exists to cover that window, and with the entitlement lapsed the device falls back on whatever the last full package knew, which is exactly the state an attacker distributing a fresh build is counting on.
 
-        - Zero-day malware that has not yet been analyzed by the traditional AV engine can be caught by outbreak prevention signatures.
-        - FortiGuard distributes outbreak prevention signatures within hours of a new threat being identified, compared to the longer cycle for traditional AV signatures.
-        - During active malware campaigns (e.g., new ransomware variants), outbreak prevention provides the fastest protection.
-        - Without an active subscription, the device loses this early-warning detection layer and must rely solely on traditional signatures.
+        Ransomware operators repack constantly for this reason. A new build of a known family is unrecognizable to signature matching but appears in the rapid feed within hours of first being seen elsewhere, so the difference between a current entitlement and an expired one is often the difference between a blocked download and an encrypted file server.
+
+        The loss is silent. The antivirus profile stays attached to the policies, scanning continues, and the device reports that files were inspected, so nothing in normal operation reveals that the layer covering the newest threats has stopped answering.
+
+        This service supplements the regular antivirus feed rather than replacing it, so keep both entitlements current and confirm after any renewal that the device has taken the new contract up.
       audit: |
         ### Audit via the FortiGate web interface
 
