@@ -65,7 +65,46 @@ PVESH_OPTIONS = {
 }
 
 
-def load_proxmox_api() -> dict:
+class ProxmoxAPI:
+    """The Proxmox API grammar, indexed for path resolution.
+
+    A written path can only match a schema path with the same number of
+    segments, so the schema is bucketed by segment count once and each path is
+    split once, rather than re-splitting all 447 of them on every lookup.
+    Buckets preserve the schema's own order, so resolution picks the same
+    candidate it always did.
+    """
+
+    def __init__(self, paths: dict):
+        self.paths = paths
+        self._by_length: dict[int, list[tuple[list[str], str]]] = {}
+        for path in paths:
+            segments = path.strip("/").split("/")
+            self._by_length.setdefault(len(segments), []).append((segments, path))
+
+    def resolve(self, path: str) -> str | None:
+        """Match a written path against the schema, honouring `{param}` segments.
+
+        A remediation writes the concrete path a reader would type
+        (`/nodes/$node/firewall/options`), while the schema declares the
+        template (`/nodes/{node}/firewall/options`). A template segment matches
+        any single written segment; everything else must match literally, so a
+        wrong segment at any depth is still caught.
+        """
+        written = path.strip("/").split("/")
+        for segments, candidate in self._by_length.get(len(written), ()):
+            if all(s.startswith("{") or s == w for s, w in zip(segments, written)):
+                return candidate
+        return None
+
+    def __contains__(self, path: str) -> bool:
+        return path in self.paths
+
+    def __getitem__(self, path: str) -> dict:
+        return self.paths[path]
+
+
+def load_proxmox_api() -> ProxmoxAPI:
     """Load the checked-in Proxmox API grammar."""
     if not PROXMOX_API_FILE.exists():
         print(
@@ -75,26 +114,7 @@ def load_proxmox_api() -> dict:
             file=sys.stderr,
         )
         sys.exit(1)
-    return json.loads(PROXMOX_API_FILE.read_text())["paths"]
-
-
-def resolve_api_path(path: str, api: dict) -> str | None:
-    """Match a written path against the schema, honouring `{param}` segments.
-
-    A remediation writes the concrete path a reader would type
-    (`/nodes/$node/firewall/options`), while the schema declares the template
-    (`/nodes/{node}/firewall/options`). A template segment matches any single
-    written segment; everything else must match literally, so a wrong segment
-    at any depth is still caught.
-    """
-    written = path.strip("/").split("/")
-    for candidate in api:
-        segments = candidate.strip("/").split("/")
-        if len(segments) != len(written):
-            continue
-        if all(s.startswith("{") or s == w for s, w in zip(segments, written)):
-            return candidate
-    return None
+    return ProxmoxAPI(json.loads(PROXMOX_API_FILE.read_text())["paths"])
 
 
 def parse_pvesh_command(cmd: str) -> tuple[str, str, list[str]]:
@@ -120,7 +140,7 @@ def parse_pvesh_command(cmd: str) -> tuple[str, str, list[str]]:
 
 
 def validate_pvesh_command(
-    verb: str, path: str, options: list[str], api: dict
+    verb: str, path: str, options: list[str], api: "ProxmoxAPI"
 ) -> tuple[bool, list[str]]:
     """Validate a parsed pvesh invocation against the API schema."""
     errors = []
@@ -136,7 +156,7 @@ def validate_pvesh_command(
         errors.append(f"'pvesh {verb}' names no API path")
         return False, errors
 
-    resolved = resolve_api_path(path, api)
+    resolved = api.resolve(path)
     if resolved is None:
         errors.append(f"no such Proxmox API path '{path}'")
         return False, errors

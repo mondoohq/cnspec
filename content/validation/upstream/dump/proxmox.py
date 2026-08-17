@@ -25,6 +25,7 @@
 #   python3 content/validation/upstream/dump/proxmox.py
 
 import json
+import re
 import sys
 import urllib.request
 from pathlib import Path
@@ -52,12 +53,22 @@ def fetch(url: str) -> str:
         return resp.read().decode("utf-8")
 
 
+# The one statement in apidata.js: `const apiSchema = [ ... ];`. Anchored on the
+# assignment rather than sliced between the first `[` and the last `]`, so a
+# preamble that ever gains a bracket — a licence header, a comment — fails here
+# with a message naming the file instead of somewhere inside json.loads.
+_API_SCHEMA_ASSIGNMENT = re.compile(r"apiSchema\s*=\s*(\[.*\])\s*;", re.DOTALL)
+
+
 def parse_apidata(text: str) -> list:
     """Extract the JSON array out of `const apiSchema = [...];`."""
-    start, end = text.find("["), text.rfind("]")
-    if start == -1 or end == -1:
-        raise ValueError("apidata.js does not contain a JSON array")
-    return json.loads(text[start:end + 1])
+    m = _API_SCHEMA_ASSIGNMENT.search(text)
+    if not m:
+        raise ValueError(
+            "apidata.js does not contain an `apiSchema = [...];` assignment. "
+            "Upstream changed the file's shape; update _API_SCHEMA_ASSIGNMENT."
+        )
+    return json.loads(m.group(1))
 
 
 def flatten(tree: list) -> dict:
