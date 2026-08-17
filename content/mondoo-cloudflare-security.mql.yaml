@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-cloudflare-security
     name: Mondoo Cloudflare Security
-    version: 1.1.2
+    version: 1.1.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -96,19 +96,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the Cloudflare zone is configured to use SSL/TLS encryption rather than leaving it disabled. By default, newly created zones may inherit settings that leave SSL/TLS turned off, transmitting all traffic between visitors and the origin in plaintext.
+        This check verifies that visitor traffic to the zone is encrypted rather than served in clear text.
+
+        The SSL/TLS encryption mode decides what Cloudflare does with an inbound HTTPS request at the edge, and the **Off** setting turns encryption off entirely: the edge answers on port 80 and redirects HTTPS requests back down to HTTP. Cloudflare calls this **Your SSL/TLS encryption mode**, under SSL/TLS > Overview, and this check requires any value other than **Off**. In Terraform the same value is the `ssl` entry of a `cloudflare_zone_setting` resource.
 
         **Why this matters**
 
-        - **Data exposure:** Plaintext HTTP traffic exposes credentials, session tokens, and personal information to anyone on the network path.
-        - **Man-in-the-middle risk:** Without encryption, on-path attackers can intercept and modify both requests and responses without detection.
-        - **Session hijacking:** Cookies and authentication tokens sent over unencrypted connections can be stolen and replayed by adversaries.
-        - **Regulatory exposure:** Most security and privacy frameworks require encryption in transit; disabled SSL/TLS is a direct violation of those controls.
+        Everything on the wire is readable and editable by anyone who sits between the visitor and the edge. On shared Wi-Fi, a compromised home router, or a hostile upstream network, an attacker captures session cookies and bearer tokens as they pass and replays them to take over the account, and captures the plaintext body of every login form and password reset.
 
-        **Risk mitigation**
+        The same position allows the attacker to rewrite responses rather than just read them. Injecting a script tag into an HTML page delivered over HTTP gives an attacker full execution in the visitor's browser under the site's own name, so any secret the page holds and any action the visitor is authorized to take becomes available.
 
-        - **Credential theft prevention:** Enabling any SSL/TLS mode encrypts the visitor-to-Cloudflare path, preventing passive interception of authentication material.
-        - **Trust signal:** Browsers display security warnings for non-HTTPS pages, harming user trust and flagging the site as unsafe before any attack occurs.
+        Browsers also mark the site as **Not secure** and warn on every form submission, so the failure is visible to users long before it is exploited.
+
+        A zone that passes this check is only guaranteed not to be fully unencrypted. Flexible and Full both satisfy it while leaving the Cloudflare-to-origin leg weak, so pair it with the companion check in this policy that requires Full (Strict). Terraform configurations that never declare the `ssl` setting are not failed here, because the check has nothing to read; the zone then runs on whatever Cloudflare's default or the dashboard last set.
       audit: |
         ### Audit via Dashboard
 
@@ -204,19 +204,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the Cloudflare zone's SSL/TLS encryption mode is set to Full (Strict), which requires a valid, trusted certificate on the origin server for all connections. Lower modes such as Flexible or Full leave part of the connection chain either unencrypted or unauthenticated, creating exploitable gaps even when the visitor-facing connection appears secure.
+        This check verifies that the connection between Cloudflare and the origin server is both encrypted and authenticated against a trusted certificate.
+
+        Cloudflare terminates TLS at the edge and then opens a second connection to the origin, and the encryption mode governs that second leg. **Flexible** leaves it as plain HTTP. **Full** encrypts it but accepts any certificate the origin presents, including a self-signed or expired one. **Full (Strict)** encrypts it and requires a certificate that chains to a trusted authority and matches the hostname. Cloudflare calls this **Your SSL/TLS encryption mode**, under SSL/TLS > Overview, and this check requires **Full (Strict)**. In Terraform it is the `ssl` entry of a `cloudflare_zone_setting` resource, with the value `strict`.
 
         **Why this matters**
 
-        - **End-to-end certificate validation:** Full (Strict) is the only mode that verifies the origin certificate against a trusted authority, preventing origin-level impersonation.
-        - **Flexible mode gap:** In Flexible mode, traffic between Cloudflare and the origin travels in plaintext, making the origin connection as vulnerable as if no encryption existed.
-        - **Full mode gap:** Full mode encrypts the origin connection but accepts self-signed certificates, leaving the channel open to man-in-the-middle attacks at the origin hop.
-        - **Architectural hygiene:** Requiring a valid origin certificate ensures the certificate lifecycle is actively managed, reducing the risk of undetected certificate expiry on the origin.
+        Flexible mode produces the most misleading failure in the product. The visitor sees a padlock and a valid Cloudflare certificate while the request travels the rest of the way to the origin in clear text. Anyone with a position on that path, a cloud provider network neighbor, a transit provider, or an attacker who has landed in the origin's VPC, reads credentials and session tokens off the wire and sees the site as though no encryption existed.
 
-        **Risk mitigation**
+        Full mode closes the plaintext gap but not the identity gap. Because any certificate is accepted, an attacker who can redirect Cloudflare's origin traffic through BGP hijack, DNS manipulation of the origin hostname, or control of an intermediate load balancer terminates that connection with a certificate they generated themselves. Cloudflare connects, encrypts to the attacker, and forwards every request and response through them without raising an error.
 
-        - **Origin impersonation prevention:** Certificate validation stops an attacker from substituting their own server at the origin without detection.
-        - **Compliance alignment:** Full (Strict) satisfies the end-to-end encryption requirements that Flexible and Full mode alone do not meet.
+        Requiring a valid certificate also forces the origin's certificate lifecycle to be managed. An expired origin certificate becomes a visible failure rather than something the edge silently tolerates for months.
+
+        Origins that genuinely cannot present a publicly trusted certificate can use a free Cloudflare Origin CA certificate, which Full (Strict) trusts. Terraform configurations that never declare the `ssl` setting are not failed here, because the check has nothing to read.
       audit: |
         ### Audit via Dashboard
 
@@ -307,19 +307,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the Cloudflare zone is configured to redirect all plaintext HTTP requests to HTTPS automatically. By default, Cloudflare zones do not redirect HTTP traffic unless this setting is explicitly enabled, meaning visitors who type a bare domain name or follow an HTTP bookmark reach the site over an unencrypted connection.
+        This check verifies that plaintext HTTP requests to the zone are redirected to HTTPS at the edge.
+
+        Even on a zone that serves HTTPS correctly, visitors arrive over HTTP constantly: they type a bare hostname, follow an old bookmark or an emailed link, or use a client that defaults to port 80. Without an edge redirect those requests are answered over plain HTTP. Cloudflare calls this **Always Use HTTPS**, under SSL/TLS > Edge Certificates, and this check requires the toggle to be **On**. In Terraform it is the `always_use_https` entry of a `cloudflare_zone_setting` resource.
 
         **Why this matters**
 
-        - **Encryption enforcement:** Automatic redirection ensures no visitor session begins over plaintext, regardless of how the user or client initiated the connection.
-        - **Downgrade attack prevention:** Without forced HTTPS, on-path attackers can intercept the initial HTTP request before any redirect is served and keep the session in plaintext for its duration.
-        - **Cookie and session protection:** Session cookies transmitted over HTTP can be read by any observer on the network; HTTPS redirection prevents that window from opening.
-        - **Mixed-origin risk reduction:** Forcing HTTPS at the zone level is the foundation on which other HTTPS controls such as HSTS and HSTS preload operate effectively.
+        Without the redirect, whatever the visitor sent in that first HTTP request has already been disclosed. A browser that still holds a cookie without the `Secure` attribute attaches it to the plaintext request, so an on-path observer collects a live session token before any secure page is ever served. The requested URL, referrer, and any query-string parameters go the same way.
 
-        **Risk mitigation**
+        Turning the redirect on does not eliminate the exposure, it moves it. The visitor's initial HTTP request still leaves the browser in clear text, and an attacker who can intercept it can answer it themselves instead of letting Cloudflare's redirect through, keeping the visitor on HTTP for the whole session while proxying content from the real site. That is why this control is a floor rather than a solution: it must be paired with the HSTS checks in this policy, which move the enforcement into the browser so the plaintext request is never sent at all.
 
-        - **First-request interception:** Redirecting at the Cloudflare edge closes the window between the client's initial HTTP request and the server's redirect response, eliminating the data visible in that exchange.
-        - **Browser security indicator:** HTTPS pages display the expected secure indicator; HTTP pages display warnings that erode user confidence and can deter legitimate traffic.
+        Redirecting at the edge also means legacy applications and any origin that still emits HTTP links get consistent behavior without an origin code change.
+
+        Zones that intentionally serve a plaintext endpoint, such as an ACME HTTP-01 validation path, should carve that out with a page rule or redirect rule rather than leaving the zone-wide setting off. Terraform configurations that never declare the `always_use_https` setting are not failed here, because the check has nothing to read, and the zone then falls back to Cloudflare's default of no redirect.
       audit: |
         ### Audit via Dashboard
 
@@ -409,19 +409,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the Cloudflare zone accepts no TLS connections below version 1.2. Cloudflare's default minimum allows TLS 1.0 and 1.1 for compatibility with older clients, but both versions contain well-documented cryptographic vulnerabilities that render connections negotiated with them untrustworthy.
+        This check verifies that the zone refuses TLS handshakes below version 1.2.
+
+        Cloudflare's edge will negotiate down to whatever floor the zone sets, and the default floor admits TLS 1.0 and 1.1 for the benefit of very old clients. Cloudflare calls this **Minimum TLS Version**, under SSL/TLS > Edge Certificates, and this check requires **TLS 1.2** or **TLS 1.3**. In Terraform it is the `min_tls_version` entry of a `cloudflare_zone_setting` resource, with the value `1.2` or `1.3`.
 
         **Why this matters**
 
-        - **Known protocol weaknesses:** TLS 1.0 and 1.1 are vulnerable to attacks such as BEAST, POODLE, and SWEET32 that allow an attacker to decrypt or tamper with encrypted traffic.
-        - **Industry deprecation:** The IETF formally deprecated TLS 1.0 and 1.1 in RFC 8996, and major browsers, PCI DSS, and NIST all prohibit their use in environments handling sensitive data.
-        - **Cipher suite hygiene:** TLS 1.0 and 1.1 support cipher suites that are no longer considered secure; raising the minimum version eliminates those suites from negotiation without requiring per-cipher configuration.
-        - **Forward secrecy:** TLS 1.2 with modern cipher suites supports ephemeral key exchange, ensuring past sessions cannot be decrypted if a long-term key is later compromised.
+        TLS 1.0 and 1.1 are broken in ways that have public tooling behind them. BEAST and Lucky 13 attack the CBC cipher modes those versions rely on to recover plaintext a byte at a time, and SWEET32 recovers session cookies from a long-lived 3DES connection using birthday collisions. An attacker who can force a client onto one of these versions works from a decryption position rather than a blind one.
 
-        **Risk mitigation**
+        The floor is what makes forcing possible. As long as the zone accepts TLS 1.0, an on-path attacker can tamper with the handshake so that the client and the edge believe 1.0 is the best both sides support, then attack the weak connection they were pushed into. Removing the older versions removes the target: there is no weaker version left to negotiate.
 
-        - **Downgrade negotiation prevention:** Setting a floor of TLS 1.2 prevents clients and servers from negotiating a weaker version even if both sides claim to support it.
-        - **Scope reduction:** Removing support for deprecated protocol versions reduces the attack surface an adversary can target during the TLS handshake.
+        Raising the floor also removes a large set of weak cipher suites and key exchanges without configuring them individually, and it guarantees ephemeral key exchange, so a later compromise of the certificate's private key does not decrypt traffic already captured.
+
+        The IETF deprecated both versions in RFC 8996, and major browsers have refused them since 2020, so the compatibility argument for keeping them is largely historical. Terraform configurations that never declare the `min_tls_version` setting are not failed here, because the check has nothing to read, and the zone then runs on Cloudflare's permissive default.
       audit: |
         ### Audit via Dashboard
 
@@ -513,19 +513,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that TLS 1.3 support is not disabled on the Cloudflare zone. Cloudflare enables TLS 1.3 by default, but it can be explicitly turned off; doing so forces all connections to TLS 1.2 and denies clients the security and performance improvements the newer protocol provides.
+        This check verifies that the zone offers TLS 1.3 to clients that support it.
+
+        TLS 1.3 is on by default at the Cloudflare edge, but it can be switched off, which pins every connection to TLS 1.2 or lower no matter what the client is capable of. Cloudflare calls this **TLS 1.3**, under SSL/TLS > Edge Certificates, and this check accepts any value other than **Off**, including the **ZRT** setting that additionally enables zero round trip resumption. In Terraform it is the `tls_1_3` entry of a `cloudflare_zone_setting` resource.
 
         **Why this matters**
 
-        - **Stronger cryptography:** TLS 1.3 removes all cipher suites that lack forward secrecy and eliminates legacy algorithms such as RSA key exchange, SHA-1, and RC4 that remain negotiable in TLS 1.2.
-        - **Reduced handshake latency:** TLS 1.3 completes the handshake in one round trip rather than two, improving page-load times and reducing the window during which handshake data is exposed.
-        - **Zero Round Trip resumption:** The optional 0-RTT mode allows returning clients to resume sessions without any additional round trips, improving performance on mobile and high-latency networks.
-        - **Simpler attack surface:** TLS 1.3 eliminates renegotiation, compression, and other protocol features that were sources of past vulnerabilities, making the handshake harder to attack.
+        TLS 1.2 still permits cipher suites and algorithms that an attacker can steer a handshake toward: static RSA key exchange with no forward secrecy, CBC modes with a long history of padding oracle attacks, and SHA-1 signatures. TLS 1.3 removed all of them from the protocol, so a connection negotiated at 1.3 cannot end up on any of them regardless of what the client advertises.
 
-        **Risk mitigation**
+        Turning 1.3 off does not only forgo an improvement, it forces clients backward. A modern browser that would have completed a 1.3 handshake with a mandatory forward-secret exchange instead completes a 1.2 handshake whose properties depend entirely on how well the remaining cipher suites are configured.
 
-        - **Legacy algorithm exclusion:** Enabling TLS 1.3 alongside TLS 1.2 ensures that clients capable of the newer protocol never fall back to weaker cipher suites unless TLS 1.2 is genuinely their maximum.
-        - **Future readiness:** Keeping TLS 1.3 enabled positions the zone to benefit from browser and client improvements without requiring additional configuration changes.
+        The 1.3 handshake also encrypts most of its own negotiation and finishes in one round trip rather than two, so less metadata is exposed on the wire and there is less handshake surface for an attacker to manipulate.
+
+        Zero round trip resumption, the **ZRT** value, trades a small replay risk for latency on repeat connections and should be enabled deliberately rather than by default on endpoints that perform state-changing requests. Terraform configurations that never declare the `tls_1_3` setting are not failed here, because the check has nothing to read.
       audit: |
         ### Audit via Dashboard
 
@@ -616,19 +616,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the Cloudflare zone is configured to automatically rewrite HTTP sub-resource URLs to HTTPS in HTML responses. Mixed content occurs when an HTTPS page loads images, scripts, or stylesheets over HTTP; Automatic HTTPS Rewrites resolves this at the Cloudflare edge without requiring changes to origin server code.
+        This check verifies that HTTP sub-resource URLs in HTML responses are rewritten to HTTPS before they reach the browser.
+
+        A page delivered over HTTPS can still pull its scripts, stylesheets, images, and iframes from `http://` URLs hard-coded in templates, in a CMS database, or in a third-party embed. Cloudflare can rewrite those URLs on the way out when it can confirm the resource is also available over HTTPS. Cloudflare calls this **Automatic HTTPS Rewrites**, under SSL/TLS > Edge Certificates, and this check requires the toggle to be **On**. In Terraform it is the `automatic_https_rewrites` entry of a `cloudflare_zone_setting` resource.
 
         **Why this matters**
 
-        - **Mixed-content elimination:** Plaintext sub-resources loaded by an HTTPS page can be intercepted and replaced by an on-path attacker, injecting malicious scripts or altered images into otherwise secure pages.
-        - **Browser blocking prevention:** Modern browsers block or warn on mixed active content, breaking page functionality when JavaScript or CSS loads over HTTP even though the parent page is HTTPS.
-        - **No origin changes required:** Rewrites happen at the edge, so legacy applications and CMSs that hard-code HTTP asset URLs benefit immediately without a code deployment.
-        - **Defense-in-depth:** This feature works alongside Always Use HTTPS and HSTS to ensure that encryption is consistently applied at every layer of content delivery.
+        A script loaded over HTTP into an HTTPS page is the whole page's security boundary. An attacker on the path between the browser and that resource's host replaces the JavaScript body with their own, and it executes in the origin of the secure page: reading the DOM, reading tokens the page holds, and issuing requests as the logged-in user. The padlock stays in place while it happens.
 
-        **Risk mitigation**
+        Passive sub-resources are a smaller but real problem. Swapping images or fonts lets an attacker alter what the page appears to say, and the requests themselves leak the visitor's browsing to anyone watching, along with cookies for the resource's domain.
 
-        - **Script injection prevention:** Rewriting script and stylesheet URLs to HTTPS removes the on-path injection vector for the most dangerous class of mixed content.
-        - **User trust preservation:** Eliminating browser mixed-content warnings prevents users from seeing security indicators that suggest the page is unsafe.
+        Browsers respond to this by blocking mixed active content outright, so the practical result of unrewritten URLs is usually a page whose scripts and styles simply do not load. Fixing it at the edge means the origin templates do not have to be found and changed first.
+
+        Rewrites only apply where Cloudflare has evidence the HTTPS version exists, so this is a safety net rather than a substitute for fixing the URLs at the source. It also does not cover URLs constructed at runtime by JavaScript. Terraform configurations that never declare the `automatic_https_rewrites` setting are not failed here, because the check has nothing to read.
       audit: |
         ### Audit via Dashboard
 
@@ -718,19 +718,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the Cloudflare Web Application Firewall is enabled on the zone. The WAF is disabled by default on some plan tiers and can be turned off on others; without it, Cloudflare's managed rule sets that block common web attacks are not evaluated against incoming requests.
+        This check verifies that Cloudflare's previous-generation managed web application firewall is switched on for the zone.
+
+        This check reads the legacy `waf` zone setting, the on and off switch for the managed rule sets that shipped before Cloudflare's current WAF. Zones still on that generation expose it under Security > WAF > Managed rules. Zones that have been migrated to the current WAF no longer show the toggle at all, and their protection comes from deployed rulesets such as the **Cloudflare Managed Ruleset** instead. In Terraform the setting is the `waf` entry of a `cloudflare_zone_setting` resource.
 
         **Why this matters**
 
-        - **OWASP Top 10 coverage:** The WAF's managed rule sets detect and block SQL injection, cross-site scripting, and remote code execution attempts that application code may not handle correctly.
-        - **Zero-day mitigation speed:** Cloudflare deploys WAF rule updates centrally; zones with the WAF enabled receive protection against newly disclosed vulnerabilities before patches can be applied to origin servers.
-        - **Bot and scanner blocking:** The WAF filters automated reconnaissance traffic that probes for known vulnerabilities, reducing the data available to attackers about the application's attack surface.
-        - **Defense-in-depth:** The WAF operates independently of application code, providing a layer of protection that remains effective even when application-level input validation has gaps.
+        The managed rule sets are the layer that recognizes an attack payload before the origin has to parse it. Without them, SQL injection strings, path traversal sequences, cross-site scripting payloads, and template injection attempts arrive at the application unfiltered, and whether they succeed depends entirely on how carefully every input path in the codebase was written.
 
-        **Risk mitigation**
+        The response speed to new vulnerabilities is the other half. When a widely used framework or plugin gets a critical remote code execution disclosure, Cloudflare pushes a rule to the edge within hours, which stops exploitation across every zone that has the rule set enabled while the origin is still waiting for a vendor patch and a maintenance window. A zone with the firewall off gets none of that head start.
 
-        - **Exploit chain disruption:** Blocking common attack payloads at the edge prevents the initial exploitation step that would give an attacker a foothold in the application.
-        - **Incident response time:** WAF logs provide immediate visibility into attack attempts, giving security teams evidence to act on before a successful exploitation occurs.
+        Managed rules also absorb the constant background of automated scanning that maps an application's endpoints and framework versions, so the reconnaissance an attacker can complete before a targeted attempt is far less complete.
+
+        Because this check reads the legacy setting, a zone that has migrated to the current WAF and is fully protected by managed rulesets will still be reported as failing. On a migrated zone, confirm the deployed rulesets under Security > WAF before treating the result as an actual gap. Terraform configurations that never declare the `waf` setting are not failed here, because the check has nothing to read.
       audit: |
         ### Audit via Dashboard
 
@@ -825,19 +825,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the Cloudflare zone's security level is not set to Essentially Off, which disables challenge-based protections for visitors with poor IP reputation. The security level controls whether Cloudflare presents a challenge page to requests originating from IP addresses known to be associated with malicious activity.
+        This check verifies that reputation-based challenges are not effectively disabled for the zone.
+
+        Cloudflare scores every client IP address against its threat intelligence, and the security level sets how bad that score has to be before a visitor is challenged instead of passed straight through. **Essentially Off** raises the bar so high that only the very worst-scoring addresses see anything. Cloudflare calls this **Security Level**, under Security > Settings, and this check requires any value other than **Essentially Off**. In Terraform it is the `security_level` entry of a `cloudflare_zone_setting` resource.
 
         **Why this matters**
 
-        - **Bot and scanner exposure:** At Essentially Off, automated tools and scanners that operate from blocklisted IP ranges reach the application without any friction or delay.
-        - **Credential stuffing risk:** Brute-force and credential stuffing attacks rely on high request volumes from known-bad IP ranges; removing challenges makes these attacks faster and cheaper to run.
-        - **Reduced DDoS friction:** Challenge pages impose a computational cost on automated traffic that slows volumetric attacks; disabling them removes that cost entirely.
-        - **Threat intelligence bypass:** Cloudflare continuously updates its IP reputation database; setting the security level to Essentially Off ignores that intelligence for inbound requests.
+        Reputation challenges are what makes bulk attacks expensive. Credential stuffing runs succeed on volume: an operator with a list of leaked username and password pairs needs tens of thousands of login attempts to convert a handful of accounts, and those attempts come overwhelmingly from proxy pools, compromised hosts, and hosting ranges that Cloudflare already scores badly. Removing the challenge lets the entire list be tried at full speed against the origin's login endpoint.
 
-        **Risk mitigation**
+        The same applies to vulnerability scanning. Automated tooling from known-bad ranges enumerates paths, probes for exposed admin panels and backup files, and fingerprints framework versions, and every request it completes is intelligence the attacker uses for a targeted attempt later.
 
-        - **IP reputation enforcement:** Even a Low security level presents challenges to the most threatening IP addresses, creating meaningful friction for automated attacks at minimal cost to legitimate traffic.
-        - **Attack surface narrowing:** Blocking or slowing known-bad actors at the edge reduces the request volume that application-level rate limiting and authentication controls must absorb.
+        Challenges also impose a real cost per request during an application-layer flood, which is what keeps a botnet from converting cheaply into origin load. With that cost removed, the origin absorbs the full request rate and the application's own rate limiting is the only thing left.
+
+        Enterprise zones can additionally select **Off**, which disables the reputation challenge outright; this check does not fail that value, so confirm it separately on Enterprise plans. Zones that serve mostly API clients rather than browsers may legitimately need a lower level to avoid challenging automation, but the right answer there is a WAF skip rule for the known callers rather than switching the level off for everyone. Terraform configurations that never declare the `security_level` setting are not failed here, because the check has nothing to read.
       audit: |
         ### Audit via Dashboard
 
@@ -929,19 +929,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Browser Integrity Check is enabled on the Cloudflare zone. Browser Integrity Check evaluates HTTP request headers against patterns associated with known spam tools, scrapers, and malicious bots, and presents a challenge to requests that match those patterns before allowing them to reach the origin.
+        This check verifies that requests carrying the header signatures of known abusive tools are challenged before they reach the origin.
+
+        Browser Integrity Check inspects the HTTP headers of each request for the patterns that spam tools, scrapers, and off-the-shelf attack frameworks produce: absent or implausible user agents, header orders no real browser emits, and known malicious signatures. Matching requests get a challenge page instead of a proxied response. Cloudflare calls this **Browser Integrity Check**, under Security > Settings, and this check requires the toggle to be **On**. In Terraform it is the `browser_check` entry of a `cloudflare_zone_setting` resource.
 
         **Why this matters**
 
-        - **Bot friction:** Automated clients that lack normal browser headers are challenged before they can interact with the application, slowing scraping, form-spam, and vulnerability-scanning workflows.
-        - **Spam reduction:** Contact forms, registration endpoints, and comment sections are common bot targets; Browser Integrity Check adds a layer of filtering that reduces spam volume without requiring application-side CAPTCHAs.
-        - **Credential stuffing deterrence:** Many credential stuffing tools send simplified headers that Browser Integrity Check identifies and challenges, reducing the success rate of automated login attacks.
-        - **Defense-in-depth with WAF:** Browser Integrity Check operates independently of the WAF and blocks a different class of traffic, providing complementary coverage against automated abuse.
+        Most automated abuse never bothers to look like a browser. Scripted credential stuffing, comment and registration spam, content scraping, and the first pass of vulnerability scanning are typically run from libraries that send a bare request with default headers, and those are exactly what this filter catches. Turning it off hands that traffic a clear path to the application.
 
-        **Risk mitigation**
+        The value is that it costs the attacker something to defeat. A tool that must emulate a full browser header profile runs slower, consumes more resources per request, and is far more likely to be caught by rate limiting and bot scoring at the volumes these attacks need.
 
-        - **Automated reconnaissance reduction:** Bots probing for application vulnerabilities are slowed or blocked before they can complete a scan, reducing attacker intelligence about the application's structure.
-        - **Resource consumption control:** Challenging bot traffic at the edge reduces unnecessary load on origin servers from requests that would otherwise be discarded after consuming compute.
+        It also protects endpoints that application code often leaves unguarded. Contact forms, password reset flows, and search endpoints frequently have no CAPTCHA of their own, and this control adds a layer in front of them without an application change.
+
+        Legitimate API clients, monitoring agents, and webhook senders can send unusual headers and may be challenged, so if the zone serves machine traffic, allow those callers explicitly with a WAF skip rule rather than switching the check off for the whole zone. Terraform configurations that never declare the `browser_check` setting are not failed here, because the check has nothing to read.
       audit: |
         ### Audit via Dashboard
 
@@ -1032,19 +1032,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Email Address Obfuscation is enabled on the Cloudflare zone. When enabled, Cloudflare rewrites email addresses in HTML page content before delivery so that they are invisible to automated harvesting tools while remaining functional for human visitors.
+        This check verifies that email addresses published in the zone's HTML are hidden from automated harvesters.
+
+        When the feature is on, Cloudflare finds email addresses in HTML responses as they leave the edge and replaces them with an encoded form plus a small script that restores the address in the visitor's browser. A person reading the page and clicking a mailto link sees no difference; a crawler reading the raw response body sees no address. Cloudflare calls this **Email Address Obfuscation**, under Scrape Shield, and this check requires the toggle to be **On**. In Terraform it is the `email_obfuscation` entry of a `cloudflare_zone_setting` resource.
 
         **Why this matters**
 
-        - **Harvest prevention:** Email addresses published on websites are a primary source of contact lists used in spam and phishing campaigns; obfuscation removes them from the plaintext visible to crawlers.
-        - **Phishing risk reduction:** Harvested addresses belonging to employees and partners become targets for spear-phishing; reducing the harvestable pool lowers that exposure.
-        - **No user impact:** Cloudflare's obfuscation approach preserves mailto links and display text for human visitors while replacing the raw address in the DOM seen by bots.
-        - **Transparent deployment:** Obfuscation is applied at the Cloudflare edge without any changes to origin server code or templates, making it zero-cost to implement for existing sites.
+        Published addresses are how targeted phishing gets its target list. Harvesters crawl corporate sites for the addresses on team pages, support pages, and press contacts, and the result is a list of real people with their real roles attached, which is precisely what makes a spear-phishing message convincing enough to be clicked.
 
-        **Risk mitigation**
+        Addresses of named individuals are the more damaging half of the exposure. A finance or executive address scraped from a site is what an attacker uses to construct a business email compromise attempt, and the site itself supplies the name, title, and department that make the pretext work.
 
-        - **Spam volume reduction:** Fewer harvested addresses means fewer inbound spam messages to employees and support channels, reducing the chance that a malicious email reaches an end user.
-        - **Phishing infrastructure cost:** Attackers who cannot harvest addresses must purchase or generate target lists by other means, increasing the cost and reducing the precision of targeted email attacks.
+        Removing the address from the crawlable page does not make it unreachable, it removes it from the automated collection that feeds those campaigns, and it does so without touching origin templates.
+
+        This is a friction control, not a boundary. A determined attacker who renders the page in a real browser recovers the address, and it does nothing for addresses already collected or published elsewhere. Visitors with JavaScript disabled will not see the decoded address. Terraform configurations that never declare the `email_obfuscation` setting are not failed here, because the check has nothing to read.
       audit: |
         ### Audit via Dashboard
 
@@ -1133,19 +1133,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Hotlink Protection is enabled on the Cloudflare zone. Hotlink Protection inspects the HTTP Referer header on requests for images and media files, blocking requests that originate from unauthorized external sites embedding those assets directly.
+        This check verifies that images and media served by the zone cannot be embedded directly by unauthorized third-party sites.
+
+        Hotlink Protection inspects the `Referer` header on requests for image and media files and refuses those that come from a page on another domain. Cloudflare calls this **Hotlink Protection**, under Scrape Shield, and this check requires the toggle to be **On**. In Terraform it is the `hotlink_protection` entry of a `cloudflare_zone_setting` resource.
 
         **Why this matters**
 
-        - **Bandwidth protection:** External sites that embed images and media directly consume the zone's bandwidth and CDN capacity without authorization, increasing infrastructure costs.
-        - **Content ownership:** Hotlinking allows third-party pages to serve content they do not own, creating the appearance that assets belong to the embedding site rather than the originating zone.
-        - **Scraper deterrence:** Image scrapers that build derivative sites or product databases rely on direct asset embedding; Hotlink Protection raises the barrier to that abuse.
-        - **CDN cost control:** Uncontrolled hotlinking can cause significant unexpected bandwidth charges, particularly during traffic spikes driven by viral embedding on high-traffic external sites.
+        Without it, any third party can point their pages at the zone's assets and have the zone pay for the delivery. A single embed on a high-traffic site turns into sustained bandwidth and request volume the zone did not ask for, and on metered plans that arrives as a bill.
 
-        **Risk mitigation**
+        Copied storefronts and scam sites are the security-relevant version of this. Cloning a brand's product images and logos directly from the original domain is the fastest way to make a fraudulent store or phishing page look authentic, and it means the counterfeit page's assets stay current as the real site updates them.
 
-        - **Unauthorized distribution prevention:** Blocking Referer-mismatched requests stops third-party sites from distributing the zone's assets without consent or attribution.
-        - **Cost predictability:** Limiting asset delivery to authorized origins makes CDN bandwidth consumption predictable and attributable to legitimate users of the zone.
+        Blocking cross-origin media also breaks the low-effort scraping pattern that builds derivative catalogs and content-farm pages out of another site's assets.
+
+        This is the one check in this policy whose default answer is not obviously yes. Referer-based blocking breaks legitimate embeds, so zones that deliberately serve images to partner sites, syndication feeds, RSS readers, or a separate application domain will see those break, and a CDN or signed-URL arrangement is a better fit for that case. Terraform configurations that never declare the `hotlink_protection` setting are not failed here, because the check has nothing to read.
       audit: |
         ### Audit via Dashboard
 
@@ -1235,19 +1235,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Opportunistic Encryption is enabled on the Cloudflare zone. Opportunistic Encryption advertises HTTP/2 and TLS support for plain HTTP URLs via an Alt-Svc header, allowing supporting browsers to transparently upgrade those connections to an encrypted channel without changing the URL.
+        This check verifies that requests arriving over plain HTTP are offered an encrypted transport to browsers that can take it.
+
+        With the feature on, Cloudflare attaches an `Alt-Svc` header to HTTP responses advertising that the same content is reachable over an encrypted HTTP/2 connection. A supporting browser moves subsequent requests onto that connection without any change to the URL, the redirect chain, or the origin. Cloudflare calls this **Opportunistic Encryption**, under SSL/TLS > Edge Certificates, and this check requires the toggle to be **On**. In Terraform it is the `opportunistic_encryption` entry of a `cloudflare_zone_setting` resource.
 
         **Why this matters**
 
-        - **Encryption without URL changes:** Resources that have not yet been migrated to HTTPS benefit from encryption in transit without requiring changes to links, redirects, or origin configuration.
-        - **Defense-in-depth for legacy content:** Sites with a long tail of HTTP URLs gain an additional encryption layer that reduces the risk of passive interception even before a full HTTPS migration is complete.
-        - **Complementary to HTTPS rewrites:** Opportunistic Encryption and Automatic HTTPS Rewrites address different failure modes; enabling both provides broader coverage against mixed-content and plaintext exposure.
-        - **Transparent to users:** The upgrade happens at the protocol layer and is invisible to users; no redirects, warnings, or URL changes occur for supported browsers.
+        There is always a residual amount of `http://` traffic: bookmarked links, links in old emails and printed material, hard-coded URLs in mobile clients, and inbound links from sites that were never updated. Every one of those requests exposes its URL, headers, and cookies to any observer on the path.
 
-        **Risk mitigation**
+        Encrypting that traffic at the transport layer removes it from passive collection even though the URL still says HTTP. For a network observer building a profile of who visits what, an opportunistically encrypted connection is opaque in the same way an HTTPS one is.
 
-        - **Passive interception reduction:** Encrypting connections that would otherwise be plaintext reduces the data visible to network observers even when full HTTPS enforcement is not yet in place.
-        - **Incremental migration support:** Opportunistic Encryption provides a security improvement while a full transition to HTTPS is being planned and executed, avoiding a gap in protection during the migration period.
+        Because nothing about the URL changes, there is no redirect to intercept and no application behavior to adjust, which is why this can be turned on for legacy content that a full HTTPS migration has not reached yet.
+
+        The protection is opportunistic by design. An active on-path attacker can strip the `Alt-Svc` header and keep the connection in clear text, so this never substitutes for the HTTPS redirect and HSTS checks in this policy; it only reduces what passive observers collect in the meantime. Terraform configurations that never declare the `opportunistic_encryption` setting are not failed here, because the check has nothing to read.
       audit: |
         ### Audit via Dashboard
 
@@ -1336,19 +1336,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that two-factor authentication is enforced for all members of the Cloudflare account. Without enforcement, individual account members can access the account using a password alone, creating a single point of failure for credentials that control DNS records, SSL/TLS configuration, WAF rules, and access policies for every zone.
+        This check verifies that the Cloudflare account requires a second authentication factor from everyone who signs in.
+
+        Cloudflare account members hold the keys to DNS records, TLS configuration, WAF rules, Workers code, and R2 data for every zone in the account. The account-level enforcement toggle makes a second factor mandatory rather than optional for members. Cloudflare calls this **Enforce two-factor authentication**, under Manage Account > Members in the authentication settings, and this check requires it to be enabled. In Terraform it is `settings.enforce_twofactor` on a `cloudflare_account` resource.
 
         **Why this matters**
 
-        - **Credential compromise scope:** A single compromised Cloudflare account password gives an attacker administrative control over every zone in the account, including the ability to modify DNS, disable security features, and redirect traffic.
-        - **Phishing and credential stuffing:** Cloudflare account passwords are targeted by phishing campaigns and credential stuffing attacks; a second factor stops these attacks even when the password is successfully obtained.
-        - **Insider and ex-employee risk:** Enforcing 2FA at the account level ensures that access controls are consistently applied to all members, including those added by others or who have not updated their security settings.
-        - **Privileged access baseline:** Cloudflare account members typically have broad permissions; MFA on privileged access is a foundational control required by nearly every security framework.
+        A Cloudflare account password on its own is a single string that grants control of where the organization's traffic goes. An attacker who obtains one through a phishing page, a password reuse hit from an unrelated breach, or an infostealer on a member's laptop signs in as that member and needs nothing else.
 
-        **Risk mitigation**
+        What they do next is worse than a typical account compromise, because the account sits in front of everything. They repoint DNS to their own infrastructure, request a certificate for the domain, and receive traffic that browsers show as fully valid. They read mail by changing MX records, disable the WAF and security level so a follow-on attack on the origin is unimpeded, or deploy a Worker that quietly copies request bodies, including credentials submitted to the real login page, while the site keeps working normally.
 
-        - **Account takeover prevention:** Two-factor authentication ensures that knowing a password is insufficient to gain access, stopping the most common class of account compromise attack.
-        - **Blast radius containment:** Enforced 2FA reduces the likelihood that a single leaked credential results in unauthorized changes to DNS, routing, or security configuration across all zones.
+        Enforcement at the account level is also what makes the control hold over time. Left optional, coverage depends on each member configuring it and stays incomplete as people join, and there is no way to tell from the outside which members are protected.
+
+        Enforcement applies to members authenticating with a Cloudflare password; members who sign in through SSO are governed by the identity provider's policy instead, which is where MFA must be enforced for them. Because this check reads the account-level toggle rather than each person's configuration, pair it with the companion check in this policy that verifies every member individually.
       audit: |
         ### Audit via Dashboard
 
@@ -1442,19 +1442,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that DNSSEC is active on the Cloudflare zone. DNSSEC adds cryptographic signatures to DNS responses, allowing resolvers to verify that records they receive are authentic and have not been altered in transit or by a compromised upstream resolver. Activation requires publishing a DS record at the registrar to chain trust from the parent zone.
+        This check verifies that DNS answers for the zone are cryptographically signed and the chain of trust back to the parent zone is complete.
+
+        DNSSEC signs a zone's records so a validating resolver can prove an answer came from the zone owner and was not altered on the way. Enabling it has two halves: Cloudflare signs the zone, and the registrar publishes a DS record in the parent zone that links Cloudflare's key into the global chain of trust. Only when both are done does Cloudflare report the status as **Active**, under DNS > Settings, and that is what this check requires. In Terraform the state is a `cloudflare_zone_dnssec` resource whose status is `active`.
 
         **Why this matters**
 
-        - **DNS forgery prevention:** Without DNSSEC, any attacker who can poison a recursive resolver or intercept DNS traffic can return forged records that redirect users to attacker-controlled infrastructure.
-        - **Pre-TLS interception window:** DNS responses are evaluated before TLS starts; a forged A or AAAA record redirects users to an attacker-controlled server before HTTPS can be established, bypassing certificate pinning on a first visit.
-        - **Email infrastructure protection:** MX, SPF, DKIM, and DMARC records are all served via DNS; forged DNS responses can silently redirect mail delivery and undermine anti-spoofing controls.
-        - **HSTS preload bypass:** An attacker with control over DNS can redirect a new user's first request before the browser has received an HSTS header, neutralizing HTTPS enforcement on that visit.
+        DNS is answered before TLS begins, so an attacker who controls the answer controls where the connection goes before any certificate is checked. Cache poisoning against a recursive resolver, a hostile resolver on a captive portal or ISP, or interception of unencrypted DNS on the local network all produce the same result: the visitor's browser opens a connection to an address the attacker chose, and every HTTPS protection the zone configured applies to the attacker's server instead.
 
-        **Risk mitigation**
+        The consequences reach past the website. MX records decide where the domain's mail is delivered, and SPF, DKIM, and DMARC records decide whether spoofed mail is accepted, so forged DNS answers let an attacker receive the organization's mail or make their own forgeries pass authentication. TXT records used for domain validation let an attacker obtain a valid certificate for the domain from a public certificate authority.
 
-        - **Resolver compromise mitigation:** DNSSEC converts a successful resolver compromise from a silent traffic redirect into a detectable signature failure that resolvers and clients can identify and reject.
-        - **Broad client protection:** A single DNSSEC deployment at the zone level protects all users regardless of the resolver they use, turning resolver-level attacks into detected failures for every impacted client.
+        Because the answer is wrong before the browser has any HTTPS policy for the site, this is one of the few attacks that a first-time visitor cannot be protected from by HSTS alone.
+
+        A status of **Pending** means Cloudflare is signing the zone but the DS record has not been published at the registrar, so validation is not yet in effect and this check correctly fails. The DS record must also be updated whenever the key is rolled, or resolvers will start rejecting the zone outright.
       audit: |
         ### Audit via Dashboard
 
@@ -1544,19 +1544,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that HTTP Strict Transport Security is enabled on the Cloudflare zone. HSTS instructs browsers that have previously visited the zone to refuse plaintext HTTP connections for the duration of the configured max-age, eliminating the downgrade window that exists on every first visit when only redirect-to-HTTPS is configured.
+        This check verifies that browsers are told to reach the zone over HTTPS only.
+
+        HTTP Strict Transport Security is a response header that instructs a browser to refuse plaintext connections to the host for a stated period. After one successful HTTPS visit, the browser rewrites `http://` URLs for the host to `https://` internally and will not send the plaintext request at all. Cloudflare emits the header when HSTS is enabled under SSL/TLS > Edge Certificates, in the HSTS section. In Terraform it is the `enabled` field of the `strict_transport_security` block inside the `security_header` entry of a `cloudflare_zone_setting` resource.
 
         **Why this matters**
 
-        - **First-request downgrade prevention:** Without HSTS, a user's first HTTP request to the zone is sent in plaintext before any redirect occurs, giving an on-path attacker an opportunity to intercept it and strip the HTTPS upgrade.
-        - **SSL stripping defense:** HSTS makes browsers enforce HTTPS client-side rather than relying on a server-sent redirect, preventing SSL-strip tools from intercepting the redirect and keeping the session in plaintext.
-        - **Cookie leakage prevention:** Session cookies transmitted in the plaintext first request can be harvested by network observers; HSTS closes this window for returning visitors.
-        - **Redirect chain shortening:** Returning browsers that enforce HSTS connect directly to HTTPS without an initial HTTP request, reducing latency and eliminating the exposed round trip.
+        An edge redirect only reacts to the plaintext request after it has been sent, and that request is where the damage is done. A tool such as sslstrip sits on the path, answers the visitor's HTTP request itself instead of letting Cloudflare's redirect through, and keeps the visitor on HTTP for the whole session while proxying content from the real site over its own HTTPS connection. Everything the visitor types, including credentials, passes through the attacker in clear text, and the browser shows no warning because the visitor never asked for HTTPS.
 
-        **Risk mitigation**
+        HSTS defeats this by moving the decision into the browser. Once the policy is cached, the browser never emits the plaintext request the attacker needs to intercept, so there is nothing on the wire to hijack. It also turns certificate warnings into hard failures for the host, removing the click-through that an attacker with an invalid certificate relies on.
 
-        - **On-path attack mitigation:** Browsers that have cached the HSTS header refuse to connect over HTTP regardless of what DNS or network-level redirection says, blocking the most common SSL-strip attack pattern.
-        - **Foundation for advanced HTTPS controls:** HSTS is a prerequisite for the includeSubDomains directive and preload list enrollment, both of which extend protection to first-time visitors and subdomains.
+        The header additionally protects any cookie that was set without the `Secure` attribute, because there is no longer a plaintext request for the browser to attach it to.
+
+        HSTS applies from the visitor's first successful HTTPS response onward, so a brand-new visitor is still exposed on that one request; the preload check in this policy covers that case. Enabling HSTS is also difficult to reverse quickly, since browsers honor the cached policy until it expires, so confirm that every hostname the policy will cover can serve HTTPS before turning it on.
       audit: |
         ### Audit via Dashboard
 
@@ -1659,19 +1659,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the HSTS max-age directive is set to at least 31,536,000 seconds (one year) on zones where HSTS is enabled. The max-age value is the duration a browser commits to refusing plaintext HTTP connections to the zone after receiving the header; short values provide only temporary protection.
+        This check verifies that a browser's commitment to reaching the zone over HTTPS only lasts at least a year.
+
+        The `max-age` directive in the HSTS header is how long a browser remembers the policy after receiving it. Cloudflare exposes it as **Max Age Header** under SSL/TLS > Edge Certificates, in the HSTS section, and this check requires at least 31,536,000 seconds, which the dashboard offers as **12 months** and is its highest value. In Terraform it is the `max_age` field of the `strict_transport_security` block inside the `security_header` entry of a `cloudflare_zone_setting` resource.
 
         **Why this matters**
 
-        - **Protection window length:** A max-age of 60 seconds protects a returning visitor for 60 seconds; once the header expires from the browser cache, the zone is downgrade-able again until the next successful HTTPS visit.
-        - **Preload list eligibility:** The HSTS preload list, which protects first-time visitors, requires a minimum max-age of one year as a submission prerequisite; shorter values disqualify the zone.
-        - **Intermittent attacker resistance:** Attackers with occasional on-path access can wait out a short max-age window between visits and deliver an SSL-strip attack once the directive expires; a one-year window makes this impractical.
-        - **Operational stability signal:** A long max-age communicates that the zone is committed to serving only HTTPS, reducing the likelihood that future configuration errors inadvertently re-enable plaintext access.
+        The policy protects a visitor only while it is still cached, and the clock restarts on each visit. A max-age of a few hours protects a daily visitor continuously but leaves a monthly visitor unprotected on almost every visit, and the visit where the policy has expired is an ordinary plaintext first request that an on-path attacker can intercept and strip exactly as if HSTS had never been set.
 
-        **Risk mitigation**
+        That makes a short window something an attacker can simply wait for. Someone with recurring access to a target's network, a shared office, a hotel, or a compromised home router, does not need to defeat HSTS; they need to be present the next time the cache is empty, and a short max-age guarantees that moment comes around often.
 
-        - **Cache expiry attack prevention:** One year of HSTS coverage ensures that the gap between a user's visits does not create a downgrade window, even for infrequent visitors.
-        - **Preload path enablement:** Setting max-age to at least one year satisfies the preload submission requirement, allowing the zone to pursue browser preload list enrollment for first-visit protection.
+        A year also crosses the gaps that matter in practice: new devices, reinstalled browsers, cleared profiles, and the long stretches between visits to a site someone uses occasionally rather than daily.
+
+        One year is additionally the minimum the browser preload list accepts, so anything shorter blocks the preload path that the companion check in this policy targets. Note that this check does not fail zones where HSTS is turned off; a separate check in this policy requires HSTS to be enabled in the first place.
       audit: |
         ### Audit via Dashboard
 
@@ -1774,19 +1774,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the HSTS includeSubDomains directive is set on zones where HSTS is enabled. Without includeSubDomains, HSTS protects only the apex domain; every subdomain remains independently downgrade-able on first visit and is not covered by the cached HSTS policy.
+        This check verifies that the zone's HTTPS-only policy extends to every subdomain.
+
+        By default an HSTS policy covers only the exact hostname that served the header. The `includeSubDomains` directive extends it to every name beneath that host, so a browser that has seen the apex policy refuses plaintext connections to all of them. Cloudflare exposes it as **Apply HSTS policy to subdomains** under SSL/TLS > Edge Certificates, in the HSTS section. In Terraform it is the `include_subdomains` field of the `strict_transport_security` block inside the `security_header` entry of a `cloudflare_zone_setting` resource.
 
         **Why this matters**
 
-        - **Subdomain downgrade exposure:** Most application traffic is served from subdomains; apex-only HSTS leaves every subdomain unprotected until it has separately delivered its own HSTS header.
-        - **Cookie scope leakage:** Cookies scoped to the parent domain are sent to all subdomains; a subdomain visited over plaintext HTTP leaks those cookies to network observers even though the apex enforces HTTPS.
-        - **Preload list requirement:** The HSTS preload list requires includeSubDomains as a mandatory field; zones that omit it cannot be submitted and cannot protect first-time visitors at the zone level.
-        - **Consistent policy application:** includeSubDomains ensures that short-lived staging, development, or feature subdomains that lack their own HSTS configuration inherit the zone's HTTPS commitment automatically.
+        Almost nothing important is served from the apex. Logins, APIs, admin consoles, and customer portals live on subdomains, and an apex-only policy protects none of them until each one has independently served its own HSTS header to that browser. The names most worth attacking are the ones left uncovered.
 
-        **Risk mitigation**
+        Cookies are what turn this into a concrete compromise. A session cookie scoped to the parent domain is sent to every subdomain, so an attacker only needs to get the browser to make one plaintext request to any name under the domain, including one that does not exist, to capture it. Forcing that request is straightforward: an image or link pointing at `http://anything.example.com` is enough, and the cookie goes out in clear text.
 
-        - **Subdomain SSL-strip prevention:** Browsers that have received the includeSubDomains directive refuse plaintext connections to all subdomains, closing the attack vector that apex-only HSTS leaves open.
-        - **Session cookie protection:** Extending HSTS to subdomains prevents cookie leakage on subdomains that would otherwise be reachable over HTTP, protecting sessions that span multiple subdomains.
+        Coverage by default is also what protects the names nobody is tracking. Staging hosts, marketing landing pages, vendor-hosted subdomains, and abandoned services rarely have HSTS configured individually, and a single directive at the apex covers all of them at once.
+
+        That breadth is exactly why this needs care before it is switched on: every hostname under the domain must be able to serve HTTPS, including internal and legacy names, or browsers that have cached the policy will refuse to reach them. This check does not fail zones where HSTS is turned off; a separate check in this policy requires HSTS to be enabled.
       audit: |
         ### Audit via Dashboard
 
@@ -1888,19 +1888,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the HSTS preload directive is present on zones where HSTS is enabled. The preload directive is the zone's signal that it wants to be included in the browser preload list, which hardcodes HTTPS enforcement for the zone in browser releases so that first-time visitors are protected before they have ever received an HSTS header.
+        This check verifies that the zone signals it is ready to be added to the browser HTTPS-only preload list, which protects visitors who have never been to the site before.
+
+        Ordinary HSTS only takes effect after a browser has received the header at least once. The preload list closes that gap by shipping the policy inside the browser itself, so the very first request a new visitor makes is already forced to HTTPS. The `preload` directive is how a site declares it consents to that, and it is a prerequisite for submitting the domain at hstspreload.org. Cloudflare exposes it as **Preload** under SSL/TLS > Edge Certificates, in the HSTS section. In Terraform it is the `preload` field of the `strict_transport_security` block inside the `security_header` entry of a `cloudflare_zone_setting` resource.
 
         **Why this matters**
 
-        - **First-visit protection:** Server-side HSTS only protects users after their first successful HTTPS visit; the preload list extends that protection to users who have never previously visited the zone.
-        - **Pre-DNS attack resistance:** Browsers that have the zone in the preload list refuse to make plaintext connections regardless of what DNS or network-level redirection instructs, closing the window before TLS even starts.
-        - **Automated client coverage:** Mobile WebViews, headless browsers, and other automated clients that honor the preload list benefit from the same first-visit protection as desktop browsers.
-        - **Persistent protection:** Preload list entries persist across browser reinstalls and profile resets, unlike the per-browser-instance HSTS cache that standard HSTS relies on.
+        The first visit is the one visit HSTS alone cannot protect, and it is not a rare event. New employees, new customers, a colleague opening a link on a fresh device, and anyone whose browser profile was reset all arrive with an empty policy cache, and their first plaintext request can be intercepted and stripped in the usual way.
 
-        **Risk mitigation**
+        Preloading also holds up when DNS itself is the attack. A browser with the domain on its preload list will not make a plaintext request no matter what address the DNS answer points to, so an attacker who has poisoned a resolver cannot fall back to serving the victim plain HTTP.
 
-        - **Cold-start downgrade prevention:** Including the zone in the preload list eliminates the first-visit SSL-strip window that exists for all users who have not previously received an HSTS header from the zone.
-        - **DNS compromise mitigation:** Preloaded zones are protected even when DNS is compromised or poisoned, because the browser enforces HTTPS independently of the DNS response.
+        Because the list lives in the browser binary rather than a profile, the protection survives cache clears, profile resets, and reinstalls, and it applies to embedded browser components in mobile apps that would otherwise start from nothing on every launch.
+
+        Setting the directive does not enroll the domain; the submission at hstspreload.org is a separate step, and it requires HSTS enabled with a max-age of at least one year and `includeSubDomains` set, both of which are companion checks in this policy. Removal from the list takes months to reach released browsers, so every hostname under the domain must be committed to HTTPS before submitting. This check does not fail zones where HSTS is turned off.
       audit: |
         ### Audit via Dashboard
 
@@ -2001,19 +2001,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Cloudflare R2 bucket has the managed public access path enabled. When public access is turned on, every object in the bucket is reachable at an unauthenticated r2.dev URL with no access controls applied, making the bucket functionally equivalent to an open S3 bucket.
+        This check verifies that no R2 bucket is readable by anonymous callers over Cloudflare's managed public URL.
+
+        R2 buckets are private by default, but each one can be given a managed `r2.dev` subdomain that serves its objects to anyone who knows the URL, with no authentication, no signature, and no access policy in between. Cloudflare exposes it per bucket under R2, in **Settings** > **Public access**, as the **r2.dev subdomain** row, and this check requires it to show **Access Disallowed**. In Terraform the same switch is the `enabled` field of a `cloudflare_r2_managed_domain` resource, which must be `false`.
 
         **Why this matters**
 
-        - **Unrestricted data exposure:** All objects in a publicly accessible R2 bucket are world-readable; buckets accumulate logs, backups, user uploads, and temporary data that were never intended for public distribution.
-        - **Enumerable URL pattern:** The r2.dev URL scheme is predictable; once one object URL is known, other objects in the bucket can be discovered through filename guessing, search-engine indexing, or referrer header leakage.
-        - **Development-to-production drift:** Public access is commonly enabled for a single asset during development and never disabled when the bucket is repurposed or promoted to production use.
-        - **Missing access controls:** The managed r2.dev public path does not support rate limiting, audit logging, or signed URL patterns that are available when a Worker or custom domain fronts the bucket.
+        Turning it on makes every object in the bucket world-readable, not the one asset it was turned on for. Buckets accumulate things nobody meant to publish: database dumps and backups, application and access logs, user-uploaded documents and images, build artifacts, and files left over from a migration. Anonymous read on the bucket exposes all of it at once.
 
-        **Risk mitigation**
+        Discovery is easier than the obscurity of the URL suggests. Once one object URL appears in a page, a support ticket, a mobile app bundle, or a `Referer` header sent to a third party, the bucket's hostname is known, and object names in most applications follow predictable patterns that can be enumerated. Search engines index whatever is linked, and the internet-wide scanners that made open S3 buckets a routine finding work the same way here.
 
-        - **Accidental data exposure prevention:** Disabling the public access path ensures that objects stored in the bucket cannot be read by unauthenticated parties, regardless of what the bucket contains.
-        - **Access control enforcement:** Routing public content through a Cloudflare Worker or custom domain enables authentication, rate limiting, and audit logging that the managed public access path cannot provide.
+        The exposure also tends to outlive its reason. Public access is commonly enabled to unblock one asset during development and never revisited when the bucket is reused for production data.
+
+        The supported way to serve public content is a custom domain or a Worker in front of the bucket, which keeps Cloudflare's caching and access controls, rate limiting, and logging available; the managed `r2.dev` path deliberately offers none of those. One caveat on the result: if the scanning credential cannot list R2 buckets, or the account has no R2 subscription, Cloudflare answers with an error the provider reports as an empty list, and a check over an empty list passes without having examined any bucket.
       audit: |
         ### Audit via Dashboard
 
@@ -2111,19 +2111,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every active Cloudflare API token has an expiration date set. Tokens without an expiration remain valid indefinitely unless manually revoked, meaning that credentials leaked in configuration files, CI logs, or operator terminals retain their full access permissions forever without any automatic remediation.
+        This check verifies that every active Cloudflare API credential stops working on a known date.
+
+        A Cloudflare API token created without a TTL is valid until somebody remembers to delete it. Cloudflare shows this per token in the **Expiration** column under My Profile > API Tokens, where a token with no TTL reads **No Expiration**, and this check requires every token whose status is active to carry an expiry. In Terraform it is the `expires_on` argument of a `cloudflare_api_token` resource.
 
         **Why this matters**
 
-        - **Persistent credential exposure:** A non-expiring token that is leaked once remains a valid attack vector until it is discovered and manually revoked; detection and revocation are rarely prompt enough to prevent abuse.
-        - **Scope accumulation:** Tokens are often issued for a specific task and then retained; over time, the token holder's role changes, but the token's permissions do not, leaving stale entitlements in place.
-        - **Secrets sprawl:** Tokens that never expire appear in more places over time as they are copied into new automation, documentation, and secret stores, increasing the leak surface with each copy.
-        - **Audit simplification:** Tokens with a known expiration have a defined lifecycle that can be tracked and reported; non-expiring tokens require continuous manual auditing to confirm they are still in authorized use.
+        Tokens leak through ordinary means rather than dramatic ones: committed to a repository, printed into a CI job log, pasted into a chat thread or a ticket, left in a shell history, or captured from a developer laptop by an infostealer. None of those events produce an alert, so the window between disclosure and discovery is measured in months when it is measured at all.
 
-        **Risk mitigation**
+        With no expiry, that window has no end. A token exported to a build log in 2023 still authenticates today with whatever permissions it was given, and an API token on a Cloudflare account can change DNS, alter TLS and WAF configuration, or read R2 data. An expiry converts an open-ended compromise into one that closes by itself.
 
-        - **Leaked credential lifetime cap:** An expiration date converts a leaked token from a permanent access grant into a time-limited one, bounding the damage from any single credential disclosure.
-        - **Forced review cadence:** Expiration requires intentional renewal, creating a regular opportunity to verify that the token's scope is still appropriate for its current use.
+        Expiry also forces the periodic review that otherwise never happens. Renewing a token means somebody has to confirm the workload still exists, still needs the token, and still needs that scope, which is how tokens issued for a one-off migration get retired instead of inherited.
+
+        Two limits apply to this result. Cloudflare returns only the tokens belonging to the signed-in user, so account-owned tokens are not read and not assessed by this check. And if the scanning credential cannot list tokens, the provider may report an empty list, and a check over an empty list passes without having examined anything.
       audit: |
         ### Audit via Dashboard
 
@@ -2232,19 +2232,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every active Cloudflare API token has an IP allowlist configured. An IP allowlist constrains which source addresses can authenticate with the token; requests from any address outside the configured CIDRs are rejected before the token's permissions are evaluated.
+        This check verifies that every active Cloudflare API credential can only be used from a defined set of source addresses.
+
+        A Cloudflare API token can carry a condition restricting which client IP addresses may present it, and Cloudflare rejects requests from anywhere else before evaluating the token's permissions at all. Cloudflare calls this **Client IP Address Filtering** on the token's settings under My Profile > API Tokens, and this check requires the **Is in** list to hold at least one address or CIDR. In Terraform it is `condition.request_ip.in` on a `cloudflare_api_token` resource.
 
         **Why this matters**
 
-        - **Leaked token usability reduction:** A token with an IP allowlist can only be used from the specified source ranges; an attacker who obtains the token from a different network cannot authenticate with it.
-        - **Automation scope enforcement:** API tokens used by CI systems, Kubernetes operators, and other automation have predictable source IPs; binding the token to those ranges ensures it cannot be abused from unexpected locations.
-        - **Defense-in-depth with expiration:** IP allowlisting and token expiration address different threat models; combining them ensures that a leaked token is constrained by both origin and time.
-        - **Incident response signal:** Attempts to use a token from an address outside its allowlist generate authentication failures that can be detected and alerted on, providing early warning of credential theft.
+        Possession of the token string is otherwise the whole of the authentication. An attacker who lifts one from a CI log, a committed configuration file, or a developer's machine authenticates from their own infrastructure immediately, and nothing about the request distinguishes it from the legitimate automation that owns the token.
 
-        **Risk mitigation**
+        Binding the token to source addresses removes that. The credential becomes useful only from the network it was issued for, so a copy exfiltrated to an attacker's host or a residential proxy fails at the door, and the attacker has to compromise the actual CI runner or egress network to use what they stole.
 
-        - **Exfiltration prevention:** Tokens stolen from CI logs or configuration files cannot be replayed by attackers operating from arbitrary internet addresses when an IP allowlist is in place.
-        - **Lateral movement containment:** An IP allowlist ensures that a compromised automation credential cannot be used from an attacker's staging environment, limiting the ability to pivot using stolen tokens.
+        Rejected attempts are also a signal worth having. A token presented from an unexpected address produces an authentication failure that can be alerted on, which is often the first evidence that a secret has escaped, and there is rarely any other detection for a stolen token being used correctly.
+
+        This suits automation with stable egress, such as CI runners behind a NAT gateway or a Kubernetes cluster with fixed outbound addresses, and fits poorly where the caller's address is not predictable, which is why it complements rather than replaces the token expiry check in this policy. Two limits apply to the result: Cloudflare returns only the tokens belonging to the signed-in user, so account-owned tokens are not assessed, and if the scanning credential cannot list tokens the provider may report an empty list, which passes without having examined anything.
       audit: |
         ### Audit via Dashboard
 
@@ -2340,19 +2340,19 @@ queries:
       cloudflare.account.members.where(status == "accepted").all(twoFactorAuthenticationEnabled)
     docs:
       desc: |
-        This check ensures that every accepted member of the Cloudflare account has two-factor authentication enabled on their underlying Cloudflare user. The account-level **Enforce two-factor authentication** toggle prevents new sign-ins without 2FA, but it does not retroactively confirm that every existing member has actually configured a second factor on their personal account; sessions established before enforcement and accounts that bypass the toggle can remain single-factor.
+        This check verifies that every person with active access to the Cloudflare account has actually configured a second authentication factor.
+
+        The account-level enforcement toggle is a policy statement about future sign-ins; the per-member flag is the fact on the ground. Cloudflare records two-factor status against each individual Cloudflare user, and the member list shows it in the **Two-Factor Authentication** column under Manage Account > Members. This check reads that per-member flag for every member whose invitation status is accepted and requires it to be true for all of them.
 
         **Why this matters**
 
-        - **Per-user gap behind the account toggle:** The account-level enforcement setting prevents future password-only sign-ins, but members who joined before enforcement or who held active sessions at the time of the change may still authenticate without a second factor. Verifying the per-user flag closes that gap.
-        - **Credential compromise scope:** Each member with broad account permissions can modify DNS, SSL/TLS, WAF, and access policies for every zone. A single compromised password without a second factor allows an attacker the same blast radius as the member's role.
-        - **Phishing and credential stuffing:** Reused or phished passwords are the most common entry point into cloud accounts. A second factor stops these attacks even after a password leak.
-        - **Compliance evidence:** Frameworks that require MFA on privileged access expect proof that each individual identity carries the factor, not only that the account-level toggle is on.
+        Enforcement and reality diverge more often than they should. Members who joined while the toggle was off, members holding sessions established before it was turned on, and members whose access predates a change of ownership can all still be sitting on a password-only identity, and the account-level setting reports as compliant the whole time.
 
-        **Risk mitigation**
+        Each of those identities carries the permissions of its role, so one of them is enough. An attacker who phishes a single member's password, or replays a credential pair leaked from an unrelated service, gains whatever that member can do: repoint DNS, disable the WAF, deploy a Worker that captures request bodies, or read objects out of R2. The rest of the members having strong authentication does not narrow that.
 
-        - **Account takeover prevention:** Confirming that every accepted member has 2FA configured ensures that knowing a password is insufficient to gain account access, regardless of when the member joined.
-        - **Drift detection:** Catches members who joined while enforcement was off, who disabled 2FA on their personal account, or who were invited under an account configuration that did not require it.
+        Verifying identity by identity is also what auditors ask for. A framework that requires multi-factor authentication on privileged access wants evidence that each individual holds the factor, which the account toggle alone cannot supply.
+
+        Two caveats apply to the result. Members who authenticate through an SSO identity provider are governed by that provider's MFA policy rather than a Cloudflare second factor, so a failure there may need to be assessed at the identity provider instead. And if the scanning credential cannot read the account member list, Cloudflare answers with a permission error that the provider reports as an empty list, and a check over an empty list passes without having examined anyone; treat a pass as meaningful only when the scan credential is known to have read access to account membership.
       audit: |
         ### Audit via Dashboard
 
@@ -2432,19 +2432,21 @@ queries:
       cloudflare.apiTokens.where(status == "active").all(time.now - modifiedOn < 365 * time.day)
     docs:
       desc: |
-        This check ensures that every active Cloudflare API token has been rotated within the last 365 days, measured against the token's modifiedOn timestamp. Tokens that have not been rotated for more than a year have typically been copied into multiple systems and pipelines, compounding the potential leak surface over time.
+        This check verifies that every active Cloudflare API credential has been changed within the last year.
+
+        Cloudflare records when each token was last modified, shown as **Last Modified** under My Profile > API Tokens, and this check requires that timestamp to fall within the past 365 days for every token whose status is active. Rolling a token's secret updates it, which is what makes the timestamp usable as a rotation date.
 
         **Why this matters**
 
-        - **Accumulated exposure:** The longer a token's current secret is in service, the more places its plaintext value has been read, cached, or logged; a token issued two years ago has typically passed through pipelines and terminals that are no longer auditable.
-        - **Role and scope drift:** Token holders change roles or leave the organization; a token issued for a specific project is often inherited by successors without a fresh review of whether the original scope is still appropriate.
-        - **Log retention limits:** Security log retention windows rarely span the original issuance of a long-lived token, making it impossible to compare current usage against a historical baseline when investigating anomalous activity.
-        - **Forcing function for hygiene:** Regular rotation requires consumers to update credentials on a defined cadence, reinforcing secrets management discipline and ensuring that token access is actively maintained rather than passively inherited.
+        The exposure of a secret accumulates with the time it stays in service. Over a year a token gets copied into a second CI system, a container image, a secrets manager, a colleague's `.env` file, and a runbook, and it passes through build logs and terminal sessions along the way. Every one of those copies is a place it can leak from, and the count only goes up.
 
-        **Risk mitigation**
+        Rotation is the only action that retroactively closes an unknown leak. Nobody can prove a token has not been exposed, but issuing a new secret invalidates every copy of the old one at once, including the one that was quietly captured months ago and has not been used yet.
 
-        - **Historic leak surface reduction:** Rotating a token invalidates every copy of the previous secret, rendering any credential that was silently leaked over the past year immediately useless.
-        - **Ownership revalidation:** The rotation process requires the current token owner to actively claim the credential and review its permissions, catching scope drift and orphaned tokens before they become a persistent risk.
+        The people around the token change too. Projects get handed over and staff leave, and a token issued for one engineer's automation is often still in place long after they are, holding a scope that was never reviewed against what the workload actually needs today.
+
+        Time also outruns the evidence. Security log retention rarely reaches back a year, so when a token that old is implicated in an incident there is no baseline of normal use to compare against.
+
+        Two limits apply to this result. The timestamp records the last change of any kind, so renaming a token or editing its policies resets the clock without the secret being rolled, and a passing token is not proof of rotation on its own. Cloudflare also returns only the tokens belonging to the signed-in user, so account-owned tokens are not assessed by this check.
       audit: |
         ### Audit via Dashboard
 
