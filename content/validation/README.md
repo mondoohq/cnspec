@@ -90,6 +90,7 @@ Run the one that covers what you touched.
 | `make test/content/remediation/terraform` | one of them (also `/cloudformation`, `/bicep`, `/ansible`, `/powershell`, `/bash`, `/chef`) | that language's linter |
 | `make test/content/commands` | CLI and API calls; `CLOUD=aws` scopes it | that cloud's CLI |
 | `make test/content/upstream` | which pins are behind | network |
+| `make test/content/upstream/unit` | the pin resolvers, against recorded payloads | none |
 | `make test/content/spelling` | `typos` over the repo | `brew install typos-cli` |
 
 Linters the remediation code validators need: `tflint`, `cfn-lint`, the Bicep CLI, `ansible-lint`, `pwsh`, `shellcheck`, `cookstyle`. Each validator prints an install hint and exits non-zero when its linter is missing, so you never get a silent pass.
@@ -331,7 +332,8 @@ Things to know when touching this:
 
 - **A bump is never applied without review.** The tooling does the mechanical half; whether a red CI run means the pin is wrong or the content is remains a judgement call. Closing a bump pull request is a valid answer, and the branch reopens when upstream moves again.
 - **A CLI's version and its checksum can never move apart.** The bumper re-downloads the artifact using the URL read back out of the workflow's own `curl` line and recomputes the digest, so it hashes exactly what CI fetches. `--verify-checksums` re-derives all of them at their *current* pins.
-- **Terraform provider entries hold a constraint, not a version.** `~> 5.0` floats across all of 5.x, so a provider only outgrows it on a major; below 1.0 the minor is the breaking axis, so `~> 0.111` outgrows on a minor. A provider major bump is a content migration, not a dependency bump.
+- **Terraform provider entries hold a constraint, not a version.** A pin is behind when the newest release is one the constraint cannot resolve, not when it is spelled differently to what this repo would write from scratch. Terraform's pessimistic operator lets only the rightmost named component increment, so `~> 5.0` floats across all of 5.x, `~> 0.111` across the rest of 0.x, and a deliberately narrow `~> 1.288` across every later 1.x. A provider major bump is a content migration, not a dependency bump.
+- **Only *released* versions become constraints.** The Terraform Registry's `version` field is the newest version *published*, prereleases included, and terraform will not select a prerelease for a `~>` constraint, so a constraint derived from one resolves to nothing at all. That shipped twice: `aliyun/alicloud` published a 2.0 beta while its released line was 1.x, the bump proposed `~> 2.0`, and tflint never noticed because it does not resolve versions. Every resolver now ends in `stable_token`, and the Terraform one reads the registry's version list rather than that field. Both rules are covered by `make test/content/upstream/unit`.
 - **Grammars are not string bumps.** The pin records which tool produced the checked-in JSON, so it moves by installing that tool and re-running the dump script. `--all` reports them as skipped rather than pretending.
 - **`upstream/dump/vercel.py` is the one place a version is written twice** (its `VERCEL_VERSION` constant and the JSON's `_meta`). `bump.py --sync-dump-pins` pulls the constant back into line after a regeneration.
 

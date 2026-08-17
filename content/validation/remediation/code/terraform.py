@@ -94,9 +94,11 @@ PROVIDER_MAP = {
     # `~> 2.0` matched no released version: the registry carries 2.0.0-beta1 and
     # 2.0.0-beta2 and nothing else in that line, so terraform could not resolve
     # the provider at all. tflint never noticed because it does not resolve
-    # versions. Current stable is 1.288.0, so the pin holds the 1.x line on
-    # purpose rather than by preference. Revisit it once 2.x has a stable
-    # release, otherwise the mirror keeps resolving to 1.x indefinitely.
+    # versions. The pin holds the 1.x line on purpose rather than by
+    # preference, and stays narrow to say so. `~> 1.288` still floats across
+    # every later 1.x, so `upstream/pins.py` asks whether the constraint
+    # resolves the newest release rather than whether it is spelled the way
+    # that file would spell it, and proposes 2.x only once 2.x has one.
     "alicloud": ("aliyun/alicloud", "~> 1.288"),
     "clickhouse": ("ClickHouse/clickhouse", "~> 3.0"),
     "cloudflare": ("cloudflare/cloudflare", "~> 5.0"),
