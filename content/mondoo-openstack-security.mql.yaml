@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-openstack-security
     name: Mondoo OpenStack Security
-    version: 1.5.2
+    version: 1.5.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -133,18 +133,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Keystone application credentials are created with `unrestricted = false`. By default an unrestricted application credential can create further application credentials and trusts, which lets a single leaked secret spawn additional long-lived access.
+        This check verifies that Keystone application credentials cannot create further credentials or delegations of their own.
+
+        An application credential is a long-lived bearer secret a user issues so automation can authenticate as them without their password. Keystone marks a credential unrestricted when it is permitted to create additional application credentials and trusts. The flag is set with `--unrestricted` on `openstack application credential create` or the `unrestricted` argument on the `openstack_identity_application_credential_v3` Terraform resource, and this check requires it to be off.
 
         **Why this matters**
 
-        - **Bounded blast radius:** A restricted credential cannot mint new credentials, so a leak is limited to the access the credential was originally issued for.
-        - **Rotation is enforceable:** Unrestricted credentials defeat rotation because anyone holding one can quietly re-issue replacements before the original is revoked.
-        - **Automation safety:** CI runners and service principals use these long-lived bearer secrets, and restricting them keeps a compromised pipeline from escalating across the project.
+        An attacker who steals a restricted credential gets the roles it was issued with and nothing more. An attacker who steals an unrestricted one issues a fresh credential for themselves before anyone notices the first, then keeps issuing them. Revoking the leaked secret accomplishes nothing, because the replacements are separate objects with their own identifiers and expiry.
 
-        **Risk mitigation**
+        The same property extends to trusts. An unrestricted credential creates a Keystone trust delegating its owner's roles to an identity the attacker controls, and that delegation survives the deletion of every credential involved in making it.
 
-        - **Privilege escalation:** Prevents a stolen credential from being used to create additional credentials and trusts that survive remediation.
-        - **Persistence:** Removes an attacker's ability to establish durable footholds by chaining credential creation.
+        These secrets live in CI runners, configuration files, and container images, where they leak far more readily than an interactive password does. Restricting them keeps a compromised pipeline confined to the work the pipeline was meant to do.
+
+        A credential that legitimately provisions identity resources, such as one driving an automated onboarding workflow, does need the unrestricted flag. Issue that one separately with tightly scoped roles rather than making it the default shape for all automation.
       audit: |
         ### Audit via Horizon
 
@@ -254,20 +255,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Keystone user has `multi_factor_auth_enabled` set to true. Without multi-factor authentication, a single password is the only barrier to a user's access, so a phished, reused, or brute-forced password grants an attacker the full set of roles the account holds.
+        This check verifies that Keystone accounts require a second authentication factor before a token is issued.
+
+        Keystone can require a user to satisfy more than one authentication rule, such as a password followed by a time-based one-time code, before it will issue a token. The requirement is set per user with `openstack user set --multi-factor-auth-enabled` together with the auth rules for that account, or through the `multi_factor_auth_enabled` argument on the `openstack_identity_user_v3` Terraform resource.
 
         **Why this matters**
 
-        - **Password compromise is common:** Credential phishing, reuse, and brute force routinely defeat single-factor authentication, and a privileged Keystone account is a high-value target.
-        - **Roles travel with the account:** A compromised user inherits every project and domain role assigned to it, so the blast radius of a stolen password can be large.
-        - **Defense beyond the password:** Requiring a second factor means a leaked password alone is not enough to authenticate.
+        Keystone is the tenancy boundary for the whole cloud. A token it issues is honored by Nova, Neutron, Cinder, Glance, and every other service, so an attacker who authenticates as a user immediately holds every role that user carries across every project it belongs to.
 
-        **Risk mitigation**
+        With a password as the only factor, that takeover needs nothing more than a phishing page, a password reused from an unrelated breach, or a guessing run against the Keystone token endpoint. None of these require the attacker to reach the operator's network first, because the identity API is the one service that must be reachable by users.
 
-        - **Account takeover:** A second factor blocks an attacker who has only obtained the user's password.
-        - **Lateral movement:** Containing account compromise at the authentication step limits an attacker's ability to assume the account's roles across projects.
+        A second factor breaks the chain at the point of authentication. The stolen password stops being sufficient on its own, and the attacker has to compromise a device the user physically holds rather than a string that may have been exposed years ago.
 
-        Service accounts that authenticate with application credentials rather than interactive logins may be exempted where MFA does not apply to their flow.
+        Machine identities that authenticate with application credentials do not pass through the interactive factor flow, so scope this to human accounts and control automation with credential expiry and role scoping instead.
       audit: |
         ### Audit via Horizon
 
@@ -380,18 +380,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Keystone user has `ignore_lockout_failure_attempts` set to true. When that option is set, the account is exempt from the lockout that normally suspends a user after a configured number of failed authentication attempts, leaving it open to unlimited password guessing.
+        This check verifies that no Keystone account is exempt from suspension after repeated failed logins.
+
+        Keystone's security compliance settings suspend an account after a configured number of consecutive authentication failures, driven by `[security_compliance] lockout_failure_attempts` in `keystone.conf`. A per-user option cancels that domain-wide protection for a single account. Clear it with `openstack user set --no-ignore-lockout-failure-attempts`, or leave `ignore_lockout_failure_attempts` unset on the `openstack_identity_user_v3` Terraform resource.
 
         **Why this matters**
 
-        - **Brute-force exposure:** An account exempt from lockout can be subjected to unlimited online password-guessing attempts with no automatic throttle.
-        - **Silent weakening:** The exemption is a per-user override that quietly removes a domain-wide protection for that account, which is easy to miss in a review.
-        - **High-value targets:** Operators sometimes set the exemption on automation or admin accounts, which are exactly the accounts an attacker most wants to brute force.
+        An exempt account can be guessed against without limit. An attacker points a password list at the Keystone token endpoint and works through it at whatever rate the API accepts, with no threshold that ever stops them and no lockout event for anyone to alert on.
 
-        **Risk mitigation**
+        Operators set the exemption for a practical reason, usually because a service account kept locking itself out through a misconfigured client. The accounts that behave that way are automation and administrative accounts, so the exemption tends to land on exactly the identities an attacker most wants to reach.
 
-        - **Credential guessing:** Keeping lockout in force ensures repeated failed attempts suspend the account rather than continuing indefinitely.
-        - **Consistent policy:** Removing the override re-applies the domain's account-lockout protection uniformly across users.
+        The override is also invisible from the service configuration. Someone reviewing `keystone.conf` sees lockout enabled and concludes the cloud is protected, while individual users sit quietly outside it and nothing in the domain settings reveals which ones.
+
+        If an account locks out because of a broken client rather than an attack, fix the client or move the identity onto an application credential, rather than removing the threshold for that account.
       audit: |
         ### Audit via Horizon
 
@@ -498,18 +499,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Keystone application credential has an `expires_at` timestamp set. Application credentials are created without an expiration unless one is supplied, leaving them valid indefinitely.
+        This check verifies that every Keystone application credential stops working on a fixed date.
+
+        An application credential is a long-lived bearer secret used by automation in place of a user password. Keystone gives one an unlimited lifetime unless the creator supplies an expiration, set with `--expiration` on `openstack application credential create` or the `expires_at` argument on the `openstack_identity_application_credential_v3` Terraform resource.
 
         **Why this matters**
 
-        - **Forced renewal cycle:** An expiration date pushes credentials through a renewal process where stale or unowned secrets naturally fall off.
-        - **Offboarding hygiene:** Non-expiring credentials survive employee departures and project handoffs, leaving access nobody owns.
-        - **Rotation alignment:** A fixed lifetime keeps credentials consistent with any future credential-rotation policy instead of living forever.
+        A credential with no expiry is a permanent key. An attacker who finds one in an old repository, a container image layer, or a backup of a CI server can still authenticate with it years later, long after the person who created it has left, because nothing in Keystone ever invalidates it on its own.
 
-        **Risk mitigation**
+        Non-expiring credentials also accumulate. Nobody audits a secret that never announces itself, so a project ends up holding dozens of live credentials whose owners and purposes are no longer known, and an operator cannot safely delete any of them without risking an outage.
 
-        - **Persistent backdoor:** Prevents a leaked credential from acting as a permanent entry point into the project until someone notices and deletes it.
-        - **Credential sprawl:** Limits the accumulation of forgotten, untracked secrets across the project over time.
+        An expiration converts that into a scheduled event. The credential stops working, the automation that depends on it fails visibly, and someone re-issues it deliberately. That moment is when stale and unowned credentials get pruned, and it is the only moment at which anyone reliably looks.
+
+        Set the expiration to the shortest interval the automation can renew within, and pair it with rotation so each renewal replaces the secret rather than extending the life of the same string.
       audit: |
         ### Audit via Horizon
 
@@ -618,18 +620,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Nova compute server was launched with an SSH keypair through the `key_name` attribute. A server booted without an injected keypair falls back on whatever credentials are baked into the source image.
+        This check verifies that compute instances receive an administrator-controlled SSH public key at boot.
+
+        Nova injects a named keypair into an instance through cloud-init at creation time, which is how first login is established without a password. The keypair is chosen with `--key-name` on `openstack server create` or the `key_pair` argument on the `openstack_compute_instance_v2` Terraform resource.
 
         **Why this matters**
 
-        - **Controlled initial access:** Injecting a keypair binds the server's first login to a per-user public key the project administrator controls.
-        - **No reliance on image defaults:** Servers launched without a keypair depend on baked-in passwords, disabled access, or forgotten operator accounts.
-        - **Foundation for hardening:** A known keypair is the starting point for further SSH hardening such as disabled password authentication, bastion hosts, and MFA.
+        An instance booted without a keypair depends on whatever the source image ships with. For community and vendor images that often means a default account with a documented password, and for images built in house it usually means a credential someone added during testing and forgot. An attacker obtains both by reading documentation rather than by breaking anything.
 
-        **Risk mitigation**
+        Baked-in credentials are also shared. Every instance launched from the image accepts the same secret, so one recovered password unlocks the whole fleet built on that image, and rotating it means rebuilding the image and relaunching everything derived from it.
 
-        - **Default credentials:** Prevents reliance on well-known image passwords that attackers routinely try.
-        - **Unmanaged accounts:** Eliminates dependence on backdoor accounts an operator added once and never removed.
+        An injected keypair binds access to a key the project administrator issued and can revoke per instance, and it gives cloud-init a reason to disable password authentication for the default account at first boot rather than leaving that to a later hardening pass.
+
+        Instances configured entirely through a configuration management system, or ones that permit no interactive login at all, are a reasonable exception provided that is a deliberate design rather than the result of omitting the key.
       audit: |
         ### Audit via Horizon
 
@@ -747,18 +750,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Nova compute server has at least one Neutron security group applied. A server with no security group inherits whatever default policy the underlying network applies, which on many OpenStack clouds is fully open.
+        This check verifies that every compute instance is covered by a network firewall policy.
+
+        A security group is the stateful firewall Neutron applies to an instance's ports. One is attached at boot with `--security-group` on `openstack server create`, added later with `openstack server add security group`, or declared through the `security_groups` argument on the `openstack_compute_instance_v2` Terraform resource. This check requires at least one to be present on every server.
 
         **Why this matters**
 
-        - **Per-VM firewall:** A security group gives the instance an enforceable firewall instead of leaving its exposure to the network plane.
-        - **Tenant network isolation:** An explicit least-privilege group is the minimum bar for keeping instances isolated from untrusted peers.
-        - **Predictable exposure:** Without a group, every service the instance exposes is reachable from any host the network connects it to.
+        Security groups are the only barrier between instances sharing a tenant network. An instance with none applied answers connections from every other instance the network reaches, so a single compromised workload anywhere on that network reaches the unprotected instance's SSH daemon, its database listener, and any debugging service left running on it.
 
-        **Risk mitigation**
+        Operators sometimes assume an instance with no group attached is closed by default. It is not. The group is what closes it, and its absence leaves filtering entirely to whatever the underlying network does, which on many deployments is nothing at all.
 
-        - **Unintended exposure:** Prevents services from being reachable simply because no firewall policy was applied.
-        - **Lateral movement:** Limits the network paths an attacker can use to reach the instance from other hosts on the network.
+        The gap is silent from every angle an operator normally looks. Nothing about a running instance advertises that it has no firewall policy, no console view highlights it, and the omission is usually discovered by the traffic that exploits it.
+
+        Attaching a group with no ingress rules is a valid way to satisfy this while adding permissions deliberately, and it makes the intent visible in the instance's own configuration.
       audit: |
         ### Audit via Horizon
 
@@ -860,20 +864,19 @@ queries:
       openstack.servers.all( exposure.internetReachable == false )
     docs:
       desc: |
-        This check ensures that no Nova compute server is reachable from the public internet. `internetReachable` combines a public edge (a floating IP or a port on an external network) with a security-group rule that actually permits inbound traffic from a public source, so it reports a server as exposed only when both conditions hold — a higher-fidelity "actually exposed" signal than a public-IP flag alone.
+        This check verifies that compute instances have no live path from the public internet to a listening service.
+
+        Reachability here means a public edge and a rule that lets traffic through it at the same time: a floating IP or a port on an external network, together with a security group rule admitting inbound traffic from a public source. Both sides are managed with `openstack floating ip` and `openstack security group rule` commands, and this check requires that the two do not line up on the same instance.
 
         **Why this matters**
 
-        - **Reduced attack surface:** A server with no internet-reachable path keeps its listening services off the public scanning grid entirely.
-        - **Defense in depth:** Combining a public IP with a permissive security-group rule is what turns a reachable address into an exploitable one; removing either side closes the path.
-        - **Fewer false alarms:** Because the signal correlates the IP and the security-group rules, it surfaces servers that are genuinely exposed rather than every server that merely holds a floating IP.
+        An instance meeting both conditions is under continuous scan. Internet-wide scanners reach every routable address within hours of it going live, and any service listening behind an open rule is enumerated, fingerprinted, and tested against known exploits without anyone targeting the operator specifically.
 
-        **Risk mitigation**
+        A compromise there does not stay on the one instance. The attacker lands inside the tenant network holding that instance's own network position, and from there reaches peers whose only protection was that nobody outside could address them.
 
-        - **Internet-wide exploitation:** Prevents listening services from being probed and attacked by arbitrary internet hosts.
-        - **Lateral movement entry:** Removes a public foothold an attacker could use to reach the rest of the project network.
+        Correlating the address with the rules is what makes the finding worth acting on. A floating IP with no permissive ingress rule exposes nothing, and a wide-open group on an instance with no public edge exposes nothing either. The combination is what turns two configuration choices into a reachable service.
 
-        Intentionally public hosts such as bastions and public web servers will fail this check and should be exempted.
+        Bastion hosts, public web servers, and other deliberately published instances will fail this and should be exempted once someone has confirmed that the services listening on them are the ones intended to be public.
       audit: |
         ### Audit via Horizon
 
@@ -956,18 +959,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Neutron security group has an ingress rule that allows TCP traffic on port 22 from a public source. A source counts as public when it is a broad prefix such as `0.0.0.0/0` or `::/0`, when it is a remote address group that holds such a range, or when the rule is left unscoped with no remote at all (which Neutron treats as any source). SSH exposed to the entire internet is a primary target for automated attacks against the SSH daemon.
+        This check verifies that remote shell access over SSH is confined to known source networks.
+
+        A Neutron security group rule opens a port to a source range, and this check looks for ingress rules reaching TCP port 22 from a public source. A source counts as public when it is a broad prefix such as `0.0.0.0/0` or `::/0`, when it is a remote address group holding such a range, or when the rule names no remote at all, which Neutron treats as any source. Rules are managed with `openstack security group rule create` or the `openstack_networking_secgroup_rule_v2` Terraform resource.
 
         **Why this matters**
 
-        - **Reduced attack surface:** Restricting SSH keeps the daemon from being a globally reachable target for credential stuffing and brute-force attempts.
-        - **CVE containment:** Limiting reachable SSH listeners reduces exposure to any future SSH server vulnerability.
-        - **Defense beyond keys:** Even with key-based authentication, an open SSH port still exposes the daemon itself as an attack surface.
+        SSH open to the internet is the most reliably attacked port on any cloud. Automated campaigns sweep address space continuously, and a listener on 22 starts receiving credential attempts within minutes of becoming reachable, drawn from lists of vendor defaults and passwords recovered from unrelated breaches.
 
-        **Risk mitigation**
+        The exposure is never one host. A security group is applied to many instances at once, so a single permissive rule publishes SSH on every instance carrying that group, including ones added to it long after the rule was written and by people who never read it.
 
-        - **Brute-force compromise:** Confines SSH access to trusted CIDRs, a bastion host, or a VPN so login attempts come only from known sources.
-        - **Internet-wide scanning:** Removes the listener from mass-scanning campaigns that probe every reachable SSH port.
+        Key-based authentication helps but does not close the hole. The daemon itself is still reachable, so any vulnerability in the SSH server, and any drift that re-enables password authentication on one instance, is exposed to the entire internet rather than to a single bastion.
+
+        Route administrative access through a bastion host or a VPN and scope the rule to that host's address, so the reachable SSH surface is one hardened instance instead of the fleet.
       audit: |
         ### Audit via Horizon
 
@@ -1090,18 +1094,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Neutron FWaaS v2 firewall policy has `audited` set to true, marking that an administrator has reviewed the policy's ordered rule set. Neutron resets the audited flag to false whenever the policy or any of its rules change, so a policy that reports audited has been reviewed since its last modification.
+        This check verifies that firewall rule sets have been reviewed since they last changed.
+
+        A Neutron FWaaS v2 firewall policy carries an audited flag that an administrator sets with `openstack firewall group policy set --audited` after reviewing the policy's ordered rules. Neutron clears the flag automatically whenever the policy or any rule inside it is modified, so a policy reporting audited has been reviewed in the form it is currently in.
 
         **Why this matters**
 
-        - **Rules drift:** Firewall rule sets accumulate edits over time, and an unreviewed policy may permit access that no one has confirmed is still required.
-        - **Explicit sign-off:** The audited flag records a deliberate review rather than relying on the assumption that the rules are still correct.
-        - **Change detection:** Because the flag clears on any change, an unaudited policy is a signal that rules were modified without a follow-up review.
+        Firewall policies accumulate. Rules are added for a migration, a vendor integration, or a debugging session, and each is justified at the time. Nobody removes them afterward, so the set ends up permitting paths no current system uses, and an attacker already inside the network moves along exactly those paths because no legitimate traffic travels them and nothing is watching.
 
-        **Risk mitigation**
+        Rule order compounds the problem in FWaaS, where an early permissive rule shadows every restrictive rule after it. A policy can read as tight rule by rule and still allow everything, and only a review of the ordered set as a whole surfaces that.
 
-        - **Stale permissive rules:** Requiring review before a policy is marked audited catches rules that have outlived their purpose.
-        - **Unverified changes:** The reset-on-change behavior surfaces edits that have not been reviewed, prompting a fresh look before the policy is trusted.
+        The reset-on-change behavior is what makes the flag worth checking at all. An unaudited policy is not simply one nobody has looked at, it is one that was edited after its last review, which is the state most likely to contain the rule nobody can justify.
+
+        Treat the flag clearing as the trigger for review rather than reviewing on a calendar, and re-audit as part of the change that touched the rules.
       audit: |
         ### Audit via Horizon
 
@@ -1217,18 +1222,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Neutron security group has an ingress rule that allows TCP traffic on port 3389 from a public source. A source counts as public when it is a broad prefix such as `0.0.0.0/0` or `::/0`, when it is a remote address group that holds such a range, or when the rule is left unscoped with no remote at all (which Neutron treats as any source). RDP exposed to the entire internet is one of the most actively exploited remote-management surfaces.
+        This check verifies that Windows remote desktop access is confined to known source networks.
+
+        This check looks for Neutron ingress rules reaching TCP port 3389, the Remote Desktop Protocol listener, from a public source. A source counts as public when it is a broad prefix such as `0.0.0.0/0` or `::/0`, when it is a remote address group holding such a range, or when the rule names no remote, which Neutron treats as any source. Rules are managed with `openstack security group rule create` or the `openstack_networking_secgroup_rule_v2` Terraform resource.
 
         **Why this matters**
 
-        - **High-value target:** Mass-scanning campaigns spray known credentials against any reachable RDP listener.
-        - **Rapid escalation:** Attackers pivot from a compromised RDP session to ransomware deployment within minutes.
-        - **Reduced attack surface:** Keeping RDP off the open internet removes it from automated exploitation entirely.
+        Exposed RDP is the most common initial-access vector in ransomware intrusions. Access brokers buy lists of reachable 3389 listeners, spray credentials harvested from other breaches, and resell the ones that work, so the instance is often compromised by a broker weeks before the attacker who uses it ever sees it.
 
-        **Risk mitigation**
+        What follows is fast. An RDP session is an interactive desktop with the privileges of whichever account logged in, so the attacker needs no exploit chain to move from access to credential dumping, enumeration of connected systems, and encryption of everything the host can write to.
 
-        - **Credential attacks:** Confines RDP access to trusted CIDRs, a bastion host, or a VPN so connections come only from known sources.
-        - **Ransomware entry:** Removes a common initial-access vector that leads directly to data encryption and extortion.
+        Because the permission lives on a security group rather than a host, one permissive rule publishes the desktop of every Windows instance carrying that group, and the rule outlives whatever short-term need produced it.
+
+        Where remote desktop is genuinely required, put it behind a VPN or a remote desktop gateway and scope the rule to that entry point rather than to the internet.
       audit: |
         ### Audit via Horizon
 
@@ -1355,18 +1361,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Neutron security group has an ingress rule that allows TCP traffic on the Windows Remote Management ports 5985 (HTTP) or 5986 (HTTPS) from a public source. A source counts as public when it is a broad prefix such as `0.0.0.0/0` or `::/0`, when it is a remote address group that holds such a range, or when the rule is left unscoped with no remote at all (which Neutron treats as any source). WinRM drives PowerShell Remoting and remote administration on Windows hosts, so an internet-exposed listener is a direct path to remote command execution.
+        This check verifies that the Windows remote management channel is confined to known source networks.
+
+        Windows Remote Management carries PowerShell Remoting and the tooling built on it, listening on TCP port 5985 for the plaintext transport and 5986 for the TLS one. This check looks for Neutron ingress rules reaching either port from a public source, meaning a broad prefix such as `0.0.0.0/0` or `::/0`, a remote address group holding such a range, or a rule naming no remote at all, which Neutron treats as any source. Rules are managed with `openstack security group rule create` or the `openstack_networking_secgroup_rule_v2` Terraform resource.
 
         **Why this matters**
 
-        - **Remote command execution:** WinRM is a management channel that runs commands on the host; an open listener exposes that channel to the entire internet.
-        - **Credential attacks:** Mass-scanning campaigns spray known credentials and NTLM relay attempts against any reachable WinRM endpoint.
-        - **Reduced attack surface:** Keeping WinRM off the open internet removes it from automated exploitation entirely.
+        WinRM is a command execution service. An attacker who authenticates to it runs PowerShell on the host with the rights of the account used, so nothing stands between reaching the listener with valid credentials and controlling the instance outright.
 
-        **Risk mitigation**
+        Port 5985 carries that session without TLS. An on-path observer reads it, and the NTLM authentication commonly used over it is relayable, so an attacker who can influence traffic destined for the host reaches authenticated command execution without ever learning a password.
 
-        - **Lateral movement:** Confines WinRM access to trusted CIDRs, a bastion host, or a VPN so administration comes only from known sources.
-        - **Host takeover:** Removes a remote-management vector that leads directly to full control of the Windows instance.
+        Configuration management tooling opens WinRM during provisioning and the rule regularly outlives the build. A group written so a deployment host could reach new instances stays attached to them, and the source range that was convenient during setup is very often the whole internet.
+
+        Restrict the rule to the address of the configuration management host or a bastion, and prefer 5986 with a valid certificate so the channel stays encrypted even inside the tenant network.
       audit: |
         ### Audit via Horizon
 
@@ -1498,18 +1505,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Neutron security group has an ingress rule that allows traffic from a public source to common database ports, covering MySQL and MariaDB on 3306, PostgreSQL on 5432, MongoDB on 27017, Redis on 6379, Memcached on 11211, Elasticsearch on 9200, Microsoft SQL Server on 1433, and Oracle on 1521. A source counts as public when it is a broad prefix such as `0.0.0.0/0` or `::/0`, when it is a remote address group that holds such a range, or when the rule is left unscoped with no remote at all (which Neutron treats as any source). Database services assume a private network for their authentication, encryption defaults, and patching cadence.
+        This check verifies that database listeners are not reachable from the public internet.
+
+        This check looks for Neutron ingress rules reaching common database ports from a public source: 3306 for MySQL and MariaDB, 5432 for PostgreSQL, 27017 for MongoDB, 6379 for Redis, 11211 for Memcached, 9200 for Elasticsearch, 1433 for Microsoft SQL Server, and 1521 for Oracle. A source counts as public when it is a broad prefix such as `0.0.0.0/0` or `::/0`, a remote address group holding such a range, or a rule naming no remote at all, which Neutron treats as any source. Rules are managed with `openstack security group rule create` or the `openstack_networking_secgroup_rule_v2` Terraform resource.
 
         **Why this matters**
 
-        - **Designed for private networks:** Database authentication and encryption defaults are not built for direct internet exposure.
-        - **High-value target:** A publicly reachable database port invites credential-stuffing and version-specific exploits.
-        - **Tiered architecture:** Database tiers belong behind an application tier, accepting connections only from that tier or trusted internal CIDRs.
+        Several of these services treat the network as the security boundary. Redis and Memcached accept commands with no authentication in their default configuration, and Elasticsearch spent much of its life shipping an open HTTP API, so reaching the port is the entire attack. Scanners that find them read or destroy the contents in a single pass, and the ransom-note campaigns against exposed MongoDB and Elasticsearch instances have run continuously for years.
 
-        **Risk mitigation**
+        The engines that do authenticate are attacked on credentials instead. A reachable MySQL or PostgreSQL listener collects login attempts using default accounts and passwords from other breaches, and a success hands the attacker the data directly rather than through an application that might have limited what it returned.
 
-        - **Data exfiltration:** Prevents accidental data leaks from databases reachable over the internet with weak authentication.
-        - **Targeted exploitation:** Removes database ports from internet-wide scanning that probes for known vulnerable versions.
+        Reaching the port also puts the engine's wire protocol parser in front of untrusted input, so any deserialization or authentication bypass flaw in the running version becomes exploitable by anyone rather than only by traffic that already passed the application tier.
+
+        Databases belong behind the application tier, with the rule scoped to the security group or CIDR of the servers that query them. Where remote administration is needed, reach it through a bastion rather than by widening the rule.
       audit: |
         ### Audit via Horizon
 
@@ -1671,18 +1679,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Neutron security group has an ingress rule that allows traffic from a public source to container and cluster orchestration control planes, covering the Kubernetes API server on 6443, the kubelet API on 10250, etcd on 2379 and 2380, and the Docker daemon on 2375 and 2376. A source counts as public when it is a broad prefix such as `0.0.0.0/0` or `::/0`, when it is a remote address group that holds such a range, or when the rule is left unscoped with no remote at all (which Neutron treats as any source). These endpoints expose cluster control and container runtimes that assume a private management network.
+        This check verifies that container and cluster control plane endpoints are not reachable from the public internet.
+
+        This check looks for Neutron ingress rules reaching orchestration control ports from a public source: 6443 for the Kubernetes API server, 10250 for the kubelet API, 2379 and 2380 for etcd client and peer traffic, and 2375 and 2376 for the Docker daemon. A source counts as public when it is a broad prefix such as `0.0.0.0/0` or `::/0`, a remote address group holding such a range, or a rule naming no remote, which Neutron treats as any source. Rules are managed with `openstack security group rule create` or the `openstack_networking_secgroup_rule_v2` Terraform resource.
 
         **Why this matters**
 
-        - **Cluster takeover:** The Kubernetes API server and kubelet API accept administrative and workload-execution requests; reaching them from the internet invites full cluster compromise.
-        - **Unauthenticated by default:** The plaintext Docker daemon on 2375 and etcd peer traffic on 2380 ship without authentication, so an open port is direct access to the runtime and its data.
-        - **Designed for private networks:** Orchestration control planes expect to sit behind a private network or VPN, not on the open internet.
+        Two of these ports are unauthenticated by design. The Docker daemon on 2375 accepts container creation from anyone who connects, and an attacker uses that to start a privileged container mounting the host filesystem, which is root on the node in a single request. etcd on 2379 and 2380 likewise expects the network to protect it, and it holds every Kubernetes secret in the cluster in a form that can be read straight off the wire.
 
-        **Risk mitigation**
+        The kubelet API on 10250 grants command execution inside running pods wherever anonymous access is still permitted, which older cluster builds allow by default. That is a shell inside a workload without any interaction with the API server or its authorization rules.
 
-        - **Secrets exposure:** Keeps etcd — which stores Kubernetes secrets and cluster state — off the internet where it could be read or tampered with.
-        - **Container escape pivot:** Removes runtime endpoints from internet-wide scanning that probes for exposed Docker and Kubernetes APIs to deploy malicious workloads.
+        The API server on 6443 does authenticate, but publishing it puts cluster authentication in front of the entire internet, where token handling flaws, certificate issues, and any anonymous-access binding left in the cluster's role bindings become globally reachable rather than reachable from the tenant network.
+
+        Reach these endpoints over a private network, a VPN, or a scoped bastion. Where the API server genuinely must be published, front it with a load balancer whose source ranges are restricted instead of opening the port on the nodes.
       audit: |
         ### Audit via Horizon
 
@@ -1836,18 +1845,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Neutron security group has an ingress rule that allows the full port range from a public source. A source counts as public when it is a broad prefix such as `0.0.0.0/0` or `::/0`, when it is a remote address group that holds such a range, or when the rule is left unscoped with no remote at all (which Neutron treats as any source). In Neutron, leaving `port_range_min` and `port_range_max` unset means the rule matches every port.
+        This check verifies that no security group admits public traffic to the entire port range.
+
+        A Neutron ingress rule that leaves `port_range_min` and `port_range_max` unset matches every port, as does an explicit range spanning 1 through 65535. This check flags such a rule when its source is public, meaning a broad prefix such as `0.0.0.0/0` or `::/0`, a remote address group holding such a range, or no remote at all. Rules are managed with `openstack security group rule create` or the `openstack_networking_secgroup_rule_v2` Terraform resource.
 
         **Why this matters**
 
-        - **Equivalent to no firewall:** An allow-all-ports rule is functionally the same as having no security group at all.
-        - **Total service exposure:** Every service on the instance, intended or forgotten, becomes reachable from every host on the internet.
-        - **Highest-severity misconfiguration:** This pattern offers no network isolation and undermines every other control on the instance.
+        A rule of this shape cancels the firewall for every instance carrying the group. Whatever else the group contains, the instance now answers on every port to every host on the internet, so the carefully written rules alongside it describe a policy that is no longer being enforced.
 
-        **Risk mitigation**
+        What that publishes is everything the operator forgot. Debugging listeners bound during troubleshooting, a monitoring agent, an internal metrics endpoint, a database believed to be private, and any service a package enabled at install time are all reachable without anyone having decided to reach them.
 
-        - **Broad attack surface:** Prevents exposure of services the operator never intended to publish.
-        - **Forgotten listeners:** Removes internet reach to legacy or debugging services left running on unexpected ports.
+        Rules like this are usually temporary in intent. Someone opens everything to prove that a connectivity problem is not the firewall, the problem turns out to be elsewhere, and the rule stays in place because nothing breaks when it does and nothing complains about it later.
+
+        Replace it with rules naming the specific ports the workload serves, and where troubleshooting needs a wide rule, scope its source to the operator's own address and remove it the same day.
       audit: |
         ### Audit via Horizon
 
@@ -1977,18 +1987,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Neutron ports owned by compute instances have port security enabled, identified by a `device_owner` value beginning with `compute:`. Port security is what makes security groups and anti-spoofing filters enforceable on a port.
+        This check verifies that Neutron enforces firewall and anti-spoofing filtering on instance network ports.
+
+        Port security is the switch that makes security groups and source address filtering apply to a port at all. It is on by default and is turned off with `openstack port set --disable-port-security`, or through the `port_security_enabled` argument on the `openstack_networking_port_v2` Terraform resource. This check requires it to remain enabled on ports owned by compute instances.
 
         **Why this matters**
 
-        - **Security groups depend on it:** With port security disabled, the attached instance can bypass its security group entirely.
-        - **Anti-spoofing enforcement:** Port security blocks an instance from sourcing traffic with arbitrary MAC or IP addresses.
-        - **Tenant isolation foundation:** The allowed-address-pairs allow-list and the rest of Neutron's isolation rely on port security being on.
+        Disabling port security detaches the instance from its security groups completely. The group is still listed against the instance and still reads as restrictive in any review or report, but nothing enforces it, so every port the instance listens on is open to everything the network can reach.
 
-        **Risk mitigation**
+        It also removes the source address filter. The instance may then emit frames claiming any IP or MAC on the segment, which is what an attacker needs in order to answer ARP for a neighbor's address, intercept its traffic, or impersonate the network gateway and observe everything the other instances send.
 
-        - **Tenant impersonation:** Prevents an instance from impersonating other tenants on the same network.
-        - **Firewall bypass:** Stops an instance from evading its assigned security group rules.
+        On a shared provider network that reaches other projects. Isolation between tenants sharing a segment is precisely this filtering, so one port with it switched off gives that instance a position on the network the tenancy model assumes nobody holds.
+
+        Workloads that legitimately forward traffic for other addresses, such as software routers and load balancers, should be granted specific allowed address pairs rather than having port security turned off wholesale.
       audit: |
         ### Audit via Horizon
 
@@ -2084,18 +2095,19 @@ queries:
       openstack.volumes.all(encrypted == true)
     docs:
       desc: |
-        This check ensures that every Cinder block-storage volume reports `encrypted = true`. An unencrypted volume's blocks sit in plaintext on the storage backend and on any media that backend rotates through.
+        This check verifies that block storage data is encrypted at rest.
+
+        Cinder encrypts a volume when it is created from an encrypted volume type, holding the key in Barbican and writing ciphertext to the storage backend. The type is defined with `openstack volume type create` followed by `openstack volume type set --encryption-provider`, and volumes must be created against that type, since encryption cannot be added to an existing volume in place.
 
         **Why this matters**
 
-        - **Protects data at rest:** Encryption keeps volume contents unreadable on the underlying SAN LUNs and replicated copies.
-        - **Backups and snapshots:** Encrypted volumes carry their protection into snapshots and backup media derived from them.
-        - **Out-of-band exposure:** Volumes back instances, databases, and persistent state, so plaintext storage leaks data without anyone touching the workload.
+        An unencrypted volume is readable by anyone who reaches the storage backend rather than the cloud API. That includes an attacker with access to the Ceph pool or the SAN, a technician handling a failed drive on its way to disposal, and anyone who obtains a backend backup, none of whom pass through Keystone or any project scoping on the way.
 
-        **Risk mitigation**
+        Volumes hold the state that matters. Database files, application data directories, and instance root disks all live there, so a plaintext volume discloses the workload's data without the attacker ever authenticating to the workload or touching the instance.
 
-        - **Lost or stolen media:** Prevents data disclosure if a physical disk leaves the data center unsecured.
-        - **Misrouted copies:** Keeps a misrouted snapshot or under-secured backup from exposing readable data.
+        Encryption also travels with derived copies. Snapshots and backups taken from an encrypted volume remain encrypted, which closes the common gap where the production volume is protected and the copy sitting in object storage is not.
+
+        Confirm Barbican key retention and access before adopting encrypted types widely, because a volume whose key is lost is unrecoverable by design.
       audit: |
         ### Audit via Horizon
 
@@ -2192,18 +2204,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Glance images owned by the scoped project do not have `visibility = "public"`. Vendor cloud images published by the operator are excluded because they belong to the cloud admin project rather than the scanned tenant.
+        This check verifies that images the project owns are not published to every tenant on the cloud.
+
+        Glance visibility controls who can see and boot an image. The value `private` limits it to the owning project, `shared` extends it to explicitly added members, and `public` makes it discoverable and downloadable cloud-wide. It is set with `openstack image set --private` or the `visibility` argument on the `openstack_images_image_v2` Terraform resource. Images belonging to the operator's own project, such as vendor base images, fall outside this check.
 
         **Why this matters**
 
-        - **Images carry sensitive data:** Tenant-uploaded images often embed credentials, internal CA bundles, license keys, and proprietary software.
-        - **Public visibility is broad:** A public image is discoverable and downloadable by every project on the cloud.
-        - **Safe defaults:** Tenant-published images should default to `private` and move to `shared` only with explicit members.
+        A tenant-built image is a filesystem, and it carries whatever was in that filesystem when it was captured. Internal certificate authorities and their keys, cloud-init configuration holding credentials, application config files, license keys, authorized SSH keys, and shell history are all routinely present, because the image was built to run inside the project rather than to be handed out.
 
-        **Risk mitigation**
+        Public visibility hands it out. Any project on the cloud lists it, downloads the whole disk, and reads it offline at leisure, with no interaction with the owning project and nothing in the owner's logs to record that it happened.
 
-        - **Data disclosure:** Prevents secrets and datasets baked into images from leaking to other tenants.
-        - **Intellectual property loss:** Keeps proprietary software and golden-image content from being copied cloud-wide.
+        Images also get published by accident. A build pipeline that sets visibility once and reuses the setting, or an operator reusing a command that included the public flag, publishes every subsequent image without anyone reviewing what went into it.
+
+        Where another project genuinely needs an image, add it as a member of a shared image so the access is enumerable and revocable, and scrub secrets during the build rather than relying on visibility as the only control.
       audit: |
         ### Audit via Horizon
 
@@ -2315,18 +2328,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every active Glance image owned by the scoped project carries the `img_signature` property, the field Nova verifies at boot when image signature verification is enabled. A Glance image is the code that compute instances run.
+        This check verifies that images carry a cryptographic signature Nova can validate before booting them.
+
+        Glance holds an image signature in the `img_signature` property, together with the key reference and hash method that go with it, and Nova validates it at boot when `verify_glance_signatures` is enabled in `nova.conf`. The signature is attached at upload time through `openstack image create`, backed by a certificate stored in Barbican.
 
         **Why this matters**
 
-        - **Boot-time integrity:** A signature lets Nova reject any image whose data does not match the operator-issued signature.
-        - **Tamper detection:** Signing detects modification between image upload and instance boot.
-        - **Verification prerequisite:** The signature must be present on the image record before Nova can verify it at all.
+        An image is the code every instance built from it runs. An attacker who modifies one, whether by reaching the Glance backing store directly or by uploading a replacement under a familiar name, executes their code on every server subsequently launched, holding the project's own credentials and network position, and the whole thing looks like ordinary provisioning.
 
-        **Risk mitigation**
+        Without a signature there is nothing capable of detecting that. Glance reports a checksum it computed over the data it was given, so an attacker who altered the data updated the checksum along with it. Only a signature made with a key the operator holds distinguishes the operator's image from someone else's.
 
-        - **Malicious images:** Prevents a compromised registry mirror or unauthorized upload from booting tampered workloads.
-        - **Supply-chain compromise:** Confirms the image data matches a trusted signature backed by a Barbican-stored certificate.
+        The property also has to exist before validation means anything. Nova can only reject unsigned images once the deployment is configured to require signatures, and a fleet where most images lack the property makes that setting impossible to turn on without breaking provisioning.
+
+        Signing is worth only as much as the key handling behind it, so keep the signing certificate in Barbican with access limited to the build pipeline, and enable Nova signature verification once coverage is complete.
       audit: |
         ### Audit via Horizon
 
@@ -2471,18 +2485,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Swift object-storage container has an `X-Container-Read` ACL containing `.r:*`, which grants unauthenticated read access to every object in the container. Swift containers commonly hold backups, logs, build artifacts, and user uploads.
+        This check verifies that object storage containers do not serve their contents to unauthenticated callers.
+
+        Swift grants anonymous read access through a container read ACL containing `.r:*`, which lets anyone fetch objects over HTTP without presenting a token. The ACL is set with `openstack container set --read-acl` or the `container_read` argument on the `openstack_objectstorage_container_v1` Terraform resource, and removing the wildcard restores the requirement to authenticate.
 
         **Why this matters**
 
-        - **Sensitive asset classes:** Backups, logs, and uploads frequently carry material that should never be public.
-        - **Direct download exposure:** An ACL of `.r:*` makes every object downloadable by anyone who can guess or scrape the URL.
-        - **Common breach pattern:** Cloud-storage exposure of this shape is a routine source of high-impact data breaches.
+        Anonymous read makes the URL the credential, and URLs leak constantly through referrer headers, browser history, shared links, error pages, and search engine crawlers. Once one object address is known the container listing is frequently available too, and everything else follows from a single request.
 
-        **Risk mitigation**
+        What Swift containers hold makes that severe. Database dumps, application logs carrying tokens and session identifiers, build artifacts, customer uploads, and infrastructure backups are the normal contents, and any one of them is a complete breach on its own.
 
-        - **Unauthenticated access:** Prevents anonymous users on the public internet from reading container contents.
-        - **Data leakage:** Keeps logs, artifacts, and uploads from being exposed unless the container is genuinely meant for public distribution.
+        None of the reading looks like an attack from the owner's side. The requests appear as ordinary object retrievals from arbitrary addresses, so exposure of this kind is usually discovered by a third party finding the data rather than by the operator noticing the access.
+
+        Containers meant to serve public assets are a legitimate exception, but keep them separate from containers holding anything else rather than relying on object naming to keep the two apart.
       audit: |
         ### Audit via Horizon
 
@@ -2588,18 +2603,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Octavia listeners terminating TLS with `protocol = "TERMINATED_HTTPS"` do not include SSLv2, SSLv3, TLSv1.0, or TLSv1.1 in their `tls_versions` allow-list. A listener that still negotiates these versions exposes clients to downgrade attacks even when modern versions are available.
+        This check verifies that load balancer TLS termination refuses obsolete protocol versions.
+
+        An Octavia listener with `protocol` set to `TERMINATED_HTTPS` decrypts client traffic at the load balancer, and its `tls_versions` list states which protocol versions it will negotiate. The list is set with `openstack loadbalancer listener set --tls-version` or the `tls_versions` argument on the `openstack_lb_listener_v2` Terraform resource, and this check requires that SSLv2, SSLv3, TLSv1.0, and TLSv1.1 are absent from it.
 
         **Why this matters**
 
-        - **Deprecated protocols:** TLSv1.0 and TLSv1.1 are retired by PCI DSS, NIST, and the IETF because of known cryptographic weaknesses.
-        - **Broken protocols:** SSLv2 and SSLv3 are wholly broken and offer no meaningful protection.
-        - **Modern ciphers only:** Restricting `tls_versions` to TLSv1.2 and TLSv1.3 ensures connections use AEAD ciphers and strong MAC algorithms.
+        Offering an old version does not mean clients choose it. An on-path attacker interferes with the handshake so negotiation falls back to the weakest version both sides accept, and then uses the attacks the newer versions were designed to prevent: POODLE against SSLv3 padding, BEAST against TLSv1.0 record chaining, and the RC4 biases that the older suites still permit.
 
-        **Risk mitigation**
+        What that yields is the session itself. These attacks recover the plaintext the load balancer is terminating, so the attacker walks away with session cookies and authentication headers and then acts as the user without ever needing their password.
 
-        - **Downgrade attacks:** Removes the legacy versions an attacker would force a client onto.
-        - **Known exploits:** Closes exposure to attacks such as BEAST and POODLE that target the deprecated protocols.
+        Keeping the legacy versions listed also pins the whole service to the weakest cipher suites they allow, which rules out the authenticated encryption modes that TLSv1.2 and TLSv1.3 depend on for integrity as well as confidentiality.
+
+        Confirm the client population before removing TLSv1.0 and TLSv1.1, since embedded devices and long-lived appliances are the usual reason they remain, and treat those clients as a migration to plan rather than a permanent exception.
       audit: |
         ### Audit via Horizon
 
@@ -2711,20 +2727,19 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-1-2
     docs:
       desc: |
-        This check ensures that every internet-facing Octavia load balancer terminates or forwards traffic only over encrypted protocols, with no plaintext listener. A load balancer is treated as internet-facing when its VIP sits on an external network or has a floating IP and at least one listener is open to the world. A plaintext listener such as `HTTP`, `TCP`, `UDP`, `SCTP`, or `PROMETHEUS` on such a load balancer carries client traffic in the clear across the public internet.
+        This check verifies that internet-facing load balancers carry client traffic only over encrypted protocols.
+
+        An Octavia load balancer counts as internet-facing when its virtual IP sits on an external network or holds a floating IP and at least one listener accepts traffic from any source. A listener using `HTTP`, `TCP`, `UDP`, `SCTP`, or `PROMETHEUS` on such a load balancer moves that traffic in the clear. Listener protocols are chosen with `--protocol` on `openstack loadbalancer listener create`.
 
         **Why this matters**
 
-        - **Credential and session protection:** A plaintext listener exposes authentication tokens, session cookies, and form data to any host on the network path.
-        - **No transport integrity:** Without TLS, an on-path attacker can read and modify traffic, not just observe it.
-        - **Consistent posture:** Requiring encrypted listeners on every public-facing load balancer removes the gap a single forgotten HTTP listener would leave.
+        Traffic on a plaintext public listener crosses networks the operator does not run. Session cookies, authentication headers, API keys, and form submissions are readable at every hop between the client and the load balancer, and capturing them requires only a position on one of those hops rather than any access to the cloud itself.
 
-        **Risk mitigation**
+        Reading is the smaller problem. Without TLS nothing binds the response to the service, so an attacker on the path rewrites what the client receives, injects script into a page, or steers the client to a host they control, and the client has no way to detect any of it.
 
-        - **Traffic interception:** Encrypting all internet-facing listeners keeps client traffic confidential across untrusted networks.
-        - **Downgrade and injection:** Eliminating plaintext listeners removes the unencrypted path an attacker could steer clients onto.
+        A `PROMETHEUS` listener deserves separate mention, because it publishes the load balancer's own metrics. On a public address that is an unauthenticated feed of backend membership, request rates, and error patterns, which is reconnaissance handed over without any interaction at all.
 
-        A load balancer that is only reachable inside the project network, or one that intentionally redirects HTTP to an HTTPS listener, can be reviewed against its intended design.
+        A plaintext listener that exists only to redirect clients to an HTTPS listener is a reasonable pattern. Confirm it serves nothing else and that the redirect happens before any request body is accepted.
       audit: |
         ### Audit via Horizon
 
@@ -2805,20 +2820,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Octavia listener defines an `allowed_cidrs` allow-list that does not include `0.0.0.0/0` or `::/0`. When `allowed_cidrs` is empty, the listener accepts connections from any source. Defining a restrictive allow-list scopes the listener to the networks that legitimately need it.
+        This check verifies that load balancer listeners accept connections only from stated client networks.
+
+        An Octavia listener carries an `allowed_cidrs` list that Octavia enforces on inbound connections, and when the list is empty the listener accepts every source. It is set with `openstack loadbalancer listener set --allowed-cidr` or the `allowed_cidrs` argument on the `openstack_lb_listener_v2` Terraform resource. This check requires a non-empty list that does not include `0.0.0.0/0` or `::/0`.
 
         **Why this matters**
 
-        - **Reduced exposure:** Scoping a listener to known client networks keeps it off the public scanning grid and out of reach of arbitrary internet hosts.
-        - **Defense in depth:** A source allow-list at the listener supplements security groups and network ACLs, so a gap in one layer does not fully expose the service.
-        - **Administrative endpoints:** Management and internal listeners are frequently left world-open by default when they should only ever be reached from a bastion or an internal range.
+        The listener is the front door to whatever sits behind it, and an unrestricted one puts the entire backend pool within reach of every host on the internet. Anything the application fails to authenticate, and any request-parsing flaw anywhere in the stack behind the load balancer, becomes reachable by arbitrary callers rather than by the networks that were supposed to be talking to it.
 
-        **Risk mitigation**
+        Internal services are the usual casualty. Admin consoles, staging environments, metrics endpoints, and internal APIs each get an Octavia listener because that is simply how services are published on the cloud, and they inherit a source scope nobody consciously chose for them.
 
-        - **Internet-wide scanning:** Restricting source CIDRs removes the listener from mass-scanning campaigns probing every reachable port.
-        - **Targeted abuse:** Limiting which networks can connect narrows who can attempt to exploit the backend the listener fronts.
+        A source list at the listener is also independent of the security groups on the pool members. An attacker who finds a permissive group on a backend instance still cannot reach it through the load balancer, so both layers have to be wrong at once before the service is exposed.
 
-        Listeners that intentionally serve the public internet can be exempted from this check.
+        Listeners that deliberately serve the public internet cannot use this and should be exempted, with their protection coming from authentication and rate limiting at the application instead.
       audit: |
         ### Audit via Horizon
 
@@ -2922,18 +2936,19 @@ queries:
       openstack.trusts.where(impersonation == true).all(expiresAt != null)
     docs:
       desc: |
-        This check ensures that every Keystone trust permitting impersonation carries an expiration timestamp. A trust that allows impersonation lets the trustee act fully as the trustor, and without an `expires_at` value that delegation never lapses on its own.
+        This check verifies that Keystone delegations granting impersonation lapse on a fixed date.
+
+        A Keystone trust delegates a chosen set of the trustor's roles to a trustee. When the trust allows impersonation, tokens the trustee obtains through it are issued in the trustor's name rather than the trustee's own. The lifetime is set with `--expiration` on `openstack trust create`, and without it the delegation never ends.
 
         **Why this matters**
 
-        - **Standing impersonation is high-value:** An impersonating trust grants the trustee the trustor's identity for the delegated roles, so a non-expiring one is a permanent escalation path.
-        - **Forced review cycle:** An expiration date pushes each delegation through renewal, where trusts nobody owns naturally fall away.
-        - **Offboarding hygiene:** Non-expiring trusts survive the departure of the trustor or trustee and leave delegated access that no one is tracking.
+        Impersonation is the strongest delegation Keystone offers. Actions the trustee takes are recorded as the trustor's, so an attacker holding a trustee account uses a non-expiring impersonating trust to act as a privileged user indefinitely while the audit trail points at someone else entirely.
 
-        **Risk mitigation**
+        Trusts are created programmatically by services such as Heat and by automation that must act on a user's behalf, and they routinely outlive the workflows that created them. A trust whose trustor left the organization keeps working for as long as that account exists in Keystone.
 
-        - **Persistent escalation:** Prevents a leaked or forgotten trust from acting as a permanent way to assume another principal's roles.
-        - **Credential sprawl:** Limits the accumulation of long-lived delegations across the project over time.
+        Expiry is the only self-clearing control here. Nothing in Keystone reviews trusts, they do not appear in the usual offboarding checklists, and no role assignment change revokes one, so a delegation with no end date persists until an operator happens to enumerate them.
+
+        Where a workflow genuinely needs standing delegation, prefer a trust without impersonation so the trustee acts under its own identity and the audit trail stays accurate.
       audit: |
         ### Audit via Horizon
 
@@ -3007,18 +3022,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Manila shared file system is created with `is_public = true`. A public share is visible to every project on the cloud, and any project that can see it can mount it within the access rules the share allows.
+        This check verifies that shared file systems are visible only to the project that owns them.
+
+        A Manila share marked public is listed to every project on the cloud, and any project that can see it may attempt to mount it under whatever access rules the share carries. Shares are created without `--public` and the flag is cleared with `openstack share set --no-public`, or by leaving `is_public` unset on the `openstack_sharedfilesystem_share_v2` Terraform resource.
 
         **Why this matters**
 
-        - **Shares hold working data:** Manila exports back home directories, application state, and shared datasets that are not meant for cloud-wide discovery.
-        - **Visibility widens the blast radius:** A public share is enumerable by every tenant, turning a single weak access rule into a cross-tenant exposure.
-        - **Safe defaults:** Shares should stay private to the owning project and be exposed deliberately, not advertised to the whole cloud.
+        Discovery is what changes here. A private share with a loose access rule is exposed to whoever already knows the export exists, while a public one advertises the export path and the share server address to every tenant on the deployment, so a weak rule that would have gone unnoticed becomes something any other project can find just by listing shares.
 
-        **Risk mitigation**
+        The two failures compound directly. Manila access rules are often written against a broad client network because the operator reasoned that only their own project could see the share, and marking the share public invalidates that reasoning without changing a single rule.
 
-        - **Cross-tenant discovery:** Prevents other projects from listing and targeting the share.
-        - **Data disclosure:** Keeps the contents of file shares from being reachable by tenants that should never see them.
+        Shares hold the data instances treat as local. Home directories, application state, and shared datasets sit there, so a mount from an unrelated project reads, and frequently writes, the working data of the project that owns it.
+
+        Where another project needs the data, export it deliberately with access rules naming that project's client addresses, rather than making the share visible cloud-wide and relying on the rules alone.
       audit: |
         ### Audit via Horizon
 
@@ -3123,18 +3139,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Manila share has an IP-based access rule whose `access_to` is `0.0.0.0/0` or `::/0`. An access rule covering every source address lets any host that can route to the share server mount the export, subject only to the protocol's own (often weak) authentication.
+        This check verifies that shared file system exports name the client networks allowed to mount them.
+
+        A Manila access rule of type `ip` grants mount rights to a source address or CIDR, and a value of `0.0.0.0/0` or `::/0` grants them to every address there is. Rules are managed with `openstack share access create` or through the `openstack_sharedfilesystem_share_access_v2` Terraform resource.
 
         **Why this matters**
 
-        - **NFS trusts the network:** NFS access rules grant mount rights by source address, so an all-addresses rule effectively removes the access control entirely.
-        - **Designed for known clients:** Share access rules are meant to enumerate specific client CIDRs, not to publish the export to everything that can reach it.
-        - **Read-write exposure:** A world-scoped rule that grants read-write turns the export into shared, attacker-writable storage.
+        For NFS the access rule is the authentication. The protocol trusts the client to state which user is making each request, so any host that mounts the export presents whatever user and group identifiers it chooses and reads files as their owner. An all-addresses rule therefore does not weaken access control on the share, it removes it.
 
-        **Risk mitigation**
+        What can reach the share server is broader than it appears. Every instance on any network with a route to it qualifies, including workloads belonging to other projects and any instance an attacker starts themselves, so the exposure spans the cloud rather than the owning project.
 
-        - **Unauthorized mounts:** Confines mount rights to the specific client networks that need the share.
-        - **Data tampering:** Stops untrusted hosts from reading or overwriting the contents of the export.
+        Where the rule also grants write, the export becomes shared writable storage for anyone who mounts it. Files that other systems consume, configuration read at boot, and backups relied on for recovery can all be replaced without the owner seeing anything out of the ordinary.
+
+        Scope each rule to the specific client CIDR that mounts the share, and where the client set cannot be pinned down, prefer a share protocol with real authentication over widening the address rule.
       audit: |
         ### Audit via Horizon
 
@@ -3246,18 +3263,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Magnum cluster template sets `tls_disabled = true`. With TLS disabled, the cluster's orchestration API — the Kubernetes API server on a Kubernetes cluster — accepts unauthenticated, unencrypted connections, and every cluster built from the template inherits that posture.
+        This check verifies that clusters built by Magnum authenticate and encrypt their control plane API.
+
+        A Magnum cluster template with `tls_disabled` set to true produces clusters whose orchestration API, the Kubernetes API server on a Kubernetes cluster, listens without TLS and without the client certificate authentication that accompanies it. Leave the flag off when creating the template with `openstack coe cluster template create`, or leave the `tls_disabled` argument unset on the `openstack_containerinfra_clustertemplate_v1` Terraform resource.
 
         **Why this matters**
 
-        - **The control plane is the keys to the cluster:** An unauthenticated orchestration API lets anyone who can reach it schedule workloads, read secrets, and take over every node.
-        - **Plaintext credentials:** Without TLS, client certificates and bearer tokens cross the network in the clear and can be captured on the path.
-        - **Template inheritance:** A single insecure template silently weakens every cluster created from it, so the fix belongs at the template.
+        With TLS disabled the API server has no way to identify callers, so anyone who reaches the port is effectively the cluster administrator. They create privileged pods, read every secret held in etcd, and schedule workloads on any node, which is complete control of the cluster and of the OpenStack credentials the cluster holds for provisioning volumes and load balancers on its own behalf.
 
-        **Risk mitigation**
+        The traffic is readable as well. Kubeconfig bearer tokens and service account tokens cross the network in the clear, so an observer anywhere on the path collects credentials that stay valid long after the connection they were captured from has ended.
 
-        - **Cluster takeover:** Prevents an attacker from issuing API calls against an unauthenticated control plane.
-        - **Credential interception:** Keeps API traffic encrypted so tokens and certificates cannot be sniffed in transit.
+        Because this lives on a template, the setting is not one cluster's problem. Every cluster created from it inherits the posture, including ones built months later by people who never saw the template definition and have no reason to question it.
+
+        Correcting the template does not change clusters already created from it, so remediate by fixing the template and then rebuilding the clusters that inherited the setting.
       audit: |
         ### Audit via Horizon
 
@@ -3379,20 +3397,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Magnum cluster template sets `floating_ip_enabled = true`. When floating IPs are enabled, cluster nodes including the control plane are assigned public addresses at creation time, placing the Kubernetes API server and the nodes directly on the internet. Every cluster built from the template inherits that posture.
+        This check verifies that clusters built by Magnum keep their nodes off public addresses.
+
+        When a Magnum cluster template enables floating IPs, Magnum assigns a public address to each node it creates, control plane nodes included. Create templates without `--floating-ip-enabled`, or leave the `floating_ip_enabled` argument unset on the `openstack_containerinfra_clustertemplate_v1` Terraform resource.
 
         **Why this matters**
 
-        - **Control plane on the internet:** A control-plane node with a floating IP exposes the Kubernetes API server to the public internet, where it becomes a target for credential attacks and API-level exploits.
-        - **Node exposure:** Worker nodes with public addresses widen the attack surface to every service that binds to a node interface.
-        - **Template inheritance:** A single template with floating IPs enabled silently exposes every cluster created from it, so the fix belongs at the template.
+        A control plane node with a public address puts the Kubernetes API server on the internet, where scanners find it within hours. From there an attacker works through credential attacks, any anonymous access binding left in the cluster's role bindings, and known flaws in the API server version, none of which they could attempt from outside the tenant network.
 
-        **Risk mitigation**
+        Worker nodes are no better. The kubelet, the container runtime, node metrics endpoints, and anything a workload binds to the host interface all become reachable, and the kubelet in particular can grant command execution inside running pods when its authorization is misconfigured.
 
-        - **Cluster takeover:** Keeping nodes on the private network removes the direct internet path to the control plane.
-        - **Reduced attack surface:** Without floating IPs, the cluster is reachable only through a deliberately placed load balancer or bastion rather than on every node.
+        The template decides this for every cluster built from it, so the exposure is created by whoever runs the cluster creation command rather than by whoever chose the setting, and those are usually different people working months apart.
 
-        Clusters that genuinely require public node addressing should front the API server with a load balancer and restrict access there rather than assigning floating IPs to every node.
+        Clusters that must be reachable from outside should be fronted by a load balancer with restricted source ranges, so one controlled entry point is published instead of every node in the cluster.
       audit: |
         ### Audit via Horizon
 
@@ -3509,18 +3526,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Magnum cluster template sets an `insecure_registry`. An insecure registry is one the cluster is allowed to pull container images from over plaintext HTTP with no certificate validation, and every cluster built from the template trusts it.
+        This check verifies that clusters built by Magnum pull container images only over authenticated, encrypted connections.
+
+        The `insecure_registry` property of a Magnum cluster template names a registry that cluster nodes may contact over plaintext HTTP with certificate validation skipped. Leave it empty when creating the template with `openstack coe cluster template create`, or leave the `insecure_registry` argument unset on the `openstack_containerinfra_clustertemplate_v1` Terraform resource.
 
         **Why this matters**
 
-        - **Images become attacker-controlled:** Pulling over an unvalidated channel lets a network attacker substitute a malicious image for the one the cluster expected.
-        - **No integrity guarantee:** Without TLS the cluster cannot confirm the registry's identity or that the image arrived unmodified.
-        - **Template inheritance:** Configuring this at the template level silently extends the trusted-registry list to every cluster created from it.
+        Skipping certificate validation means the node cannot tell the registry apart from anything else that answers for its address. An attacker positioned on the network, or one able to influence DNS resolution on the node, serves their own image for the tag the cluster asked for, and the workload starts running attacker code inside the cluster's network with the service account it was given.
 
-        **Risk mitigation**
+        Plaintext exposes the pull itself as well. Registry credentials sent over HTTP are readable on the path, and image layers can be modified in transit with no signature check anywhere in the flow to notice the substitution.
 
-        - **Supply-chain compromise:** Prevents tampered or impersonated images from being pulled into the cluster.
-        - **Man-in-the-middle:** Keeps image pulls on an authenticated, encrypted channel an attacker cannot transparently intercept.
+        Every cluster created from the template carries the entry, so the trusted registry list grows silently. A registry stood up for one experiment stays trusted by clusters built long after the experiment ended, including ones later given production workloads.
+
+        Give the registry a certificate the nodes trust, from a public authority or from an internal CA distributed to the cluster, rather than turning validation off to work around a certificate problem.
       audit: |
         ### Audit via Horizon
 
@@ -3624,18 +3642,19 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that no Trove managed database instance has a network address of type `public`. A database with a public address is reachable from outside the tenant network, exposing the database engine's listener directly to untrusted clients.
+        This check verifies that managed database instances are reachable only from the tenant network.
+
+        A Trove instance takes its addresses from the networks it is created on, and an address of type `public` places the database engine's listener on a routable address outside the tenant network. Networks are chosen with `--nic` on `openstack database instance create`, and this check requires that no instance ends up with a public address.
 
         **Why this matters**
 
-        - **Databases assume a private network:** Trove engine defaults for authentication and encryption are built for a trusted internal network, not direct internet exposure.
-        - **High-value target:** A publicly reachable database listener invites credential-stuffing and version-specific exploits against the engine.
-        - **Tiered architecture:** Managed databases belong behind an application tier and should accept connections only from the private network that hosts that tier.
+        A public database listener is scanned and attacked continuously. The engine's default accounts, credentials from unrelated breaches, and any account created with a convenient password during setup are all tried automatically, and a success delivers the data itself rather than whatever an application would have chosen to return.
 
-        **Risk mitigation**
+        The engine's own defenses assume a private network. Transport encryption is frequently left off, authentication plugins are chosen for compatibility with in-network clients, and connection limits are sized for a known client population, none of which holds up in front of arbitrary internet traffic.
 
-        - **Data exfiltration:** Prevents direct connections to the database from anywhere on the internet.
-        - **Targeted exploitation:** Removes the engine's listener from internet-wide scanning that probes for known vulnerable versions.
+        Reaching the listener also places the engine's protocol parser in front of untrusted input, so an authentication bypass or deserialization flaw in the running version becomes directly exploitable without the attacker needing a foothold anywhere else in the cloud first.
+
+        Keep the instance on private networks and reach it through the application tier or a bastion. Where an external system genuinely must connect, terminate that path on something that authenticates the caller rather than exposing the engine.
       audit: |
         ### Audit via Horizon
 
@@ -3707,18 +3726,19 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-2-5
     docs:
       desc: |
-        This check ensures that Trove managed database instances are not running a MySQL, MariaDB, or PostgreSQL engine version that has reached end of life upstream. End-of-life engines no longer receive security patches, so newly disclosed vulnerabilities in them go unfixed. The version ranges flagged here track the upstream end-of-life dates and may need adjustment as additional versions age out.
+        This check verifies that managed database instances run an engine version that still receives security fixes.
+
+        Trove records the datastore and version an instance runs, chosen at creation with `--datastore` and `--datastore-version` on `openstack database instance create`. This check flags MySQL 5.5 through 5.7, MariaDB 5.5 and 10.0 through 10.5, and PostgreSQL 9.4 through 13, all of which have passed upstream end of life. The list tracks upstream dates and needs revision as further releases age out.
 
         **Why this matters**
 
-        - **No security patches:** An end-of-life database engine does not receive fixes for newly disclosed CVEs, so known vulnerabilities accumulate without remediation.
-        - **Active exploitation:** Known-exploited flaws in older MySQL, MariaDB, and PostgreSQL releases are routinely weaponized against reachable database listeners.
-        - **Compliance exposure:** Most frameworks require software components to receive vendor security support, which end-of-life engines no longer do.
+        An end-of-life engine stops receiving patches while research into it carries on. Vulnerabilities disclosed after the cutoff are published in enough detail to exploit and are never fixed for that release, so the gap between what is publicly known and what is patched on the instance only widens with time.
 
-        **Risk mitigation**
+        These are the flaws attackers prefer, because the target population can be identified. Version banners and behavior fingerprints let a scanner pick out unpatched instances specifically, so an old engine is not merely at risk in a general sense, it is selected for.
 
-        - **Patch coverage:** Moving to a supported major version restores the flow of security patches and closes accumulating CVE exposure.
-        - **Supported upgrade path:** Acting before an engine reaches end of life avoids a more disruptive cold migration later.
+        Upgrading also gets harder the longer it waits. Trove migrations across distant major versions frequently require a dump and reload rather than an in-place upgrade, so a deployment that defers this ends up choosing between running unpatched and taking an outage it could have avoided by moving sooner.
+
+        Plan the move before the version reaches end of life, and where an application pins an old engine, treat the pin as the thing to fix rather than as the reason to stay.
       audit: |
         ### Audit via Horizon
 
@@ -3803,20 +3823,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Swift object storage container grants write access through a wildcard ACL entry such as `*` or `*:*`. Unlike public read (which uses `.r:*`), a wildcard in the container write ACL grants write to every authenticated user in the deployment, which allows arbitrary data to be uploaded, overwritten, or deleted.
+        This check verifies that write access to object storage containers is granted only to named principals.
+
+        A Swift container write ACL lists the accounts and users allowed to upload, overwrite, and delete objects. A wildcard entry such as `*` or `*:*` extends that to every authenticated identity in the deployment. The list is set with `openstack container set --write-acl` or the `container_write` argument on the `openstack_objectstorage_container_v1` Terraform resource.
 
         **Why this matters**
 
-        - **Data tampering:** Any user who can write to the container can overwrite legitimate objects or delete them, corrupting backups and application data.
-        - **Malware staging:** Writable containers are used to stage malicious payloads that are then served to other systems or users.
-        - **Integrity loss:** A wildcard write grant removes accountability — changes cannot be attributed to a specific, authorized principal.
+        On a multi-tenant cloud, every authenticated identity means every other project. Any user of the cloud can write into the container, so an attacker who compromises the least significant account anywhere on the deployment reaches storage belonging to a project they have no relationship with at all.
 
-        **Risk mitigation**
+        Writing is worse than reading for the workloads these containers usually serve. A container holding backups can be silently corrupted so the restore fails at the moment it is finally needed, and a container serving static assets or installer packages becomes a distribution channel for whatever the attacker uploads to paths that clients already trust.
 
-        - **Unauthorized modification:** Scoping the write ACL to named accounts or users ensures only intended principals can change container contents.
-        - **Blast radius:** Removing wildcard grants keeps a single compromised account from being able to tamper with shared storage.
+        A wildcard also erases attribution. The write is authorized, so it looks entirely legitimate in Swift's logs, and there is no principal to trace it back to beyond an account that may itself have been borrowed for the purpose.
 
-        Scope the container write ACL to the specific `account` or `account:user` principals that need it, and never use `*` or `*:*`.
+        Name the specific `account` or `account:user` principals that need write access, and where a workload must accept uploads from untrusted callers, put an application in front of the container rather than widening the ACL.
       audit: |
         ### Audit via Console
 
@@ -3911,20 +3930,19 @@ queries:
       openstack.identityEndpoints.all(url == /^https:/)
     docs:
       desc: |
-        This check ensures that every endpoint registered in the Keystone service catalog uses an `https://` URL. Clients read the service catalog to locate every OpenStack API; an `http://` endpoint causes tokens, credentials, and API payloads for that service to traverse the network in cleartext.
+        This check verifies that the service endpoints clients discover through Keystone are reached over TLS.
+
+        The Keystone service catalog is the directory every client reads to locate the other OpenStack APIs, holding a URL for each service's public, internal, and admin interface. Entries are registered with `openstack endpoint create` and changed with `openstack endpoint set --url`, and this check requires each to use an `https://` scheme.
 
         **Why this matters**
 
-        - **Token interception:** Keystone tokens sent to an `http://` endpoint can be captured on the wire and replayed to impersonate the user.
-        - **Control-plane exposure:** The catalog drives all API traffic, so a single plaintext endpoint exposes an entire service's requests and responses.
-        - **Man-in-the-middle:** Without TLS there is no server authentication, so a network attacker can transparently proxy and modify API calls.
+        A client that reads an `http://` entry sends its Keystone token to that service in cleartext. Anyone on the path, including a compromised host on the management network, lifts the token off the wire and replays it against every other service in the catalog until it expires, acting throughout as the user who leaked it.
 
-        **Risk mitigation**
+        The exposure does not stop at tokens. The requests and responses that follow carry instance configuration, volume data in transit, image content, and injected user data, all readable to the same observer with no further effort.
 
-        - **Confidentiality in transit:** HTTPS encrypts API traffic so credentials and data cannot be read off the network.
-        - **Server authentication:** TLS lets clients verify they are talking to the genuine service rather than an impostor.
+        Plaintext also means no server authentication. An attacker who can answer for the endpoint address stands up a substitute API, harvests tokens from every client that trusts the catalog, and returns whatever responses suit them, with no certificate warning anywhere to give it away.
 
-        Register all catalog endpoints (public, internal, and admin interfaces) with `https://` URLs backed by trusted certificates.
+        Internal and admin interfaces need this as much as the public one, because a control plane on a private network is still fully exposed to any attacker who gains a foothold on that network.
       audit: |
         ### Audit via CLI
 
@@ -3992,20 +4010,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Keystone application credential is granted the `admin` role. Application credentials are long-lived secrets used by automation and services; one that carries `admin` becomes a full-project (and often full-cloud) takeover path the moment it leaks.
+        This check verifies that automation credentials are held to least privilege and cannot act as an administrator.
+
+        An application credential inherits a subset of its owner's role assignments, chosen with `--role` on `openstack application credential create` or the `roles` argument on the `openstack_identity_application_credential_v3` Terraform resource. Requesting `admin` gives the credential the full administrative role within its scope, and this check requires that no credential does so.
 
         **Why this matters**
 
-        - **Blast radius:** An `admin` application credential can perform every administrative action its project scope allows, so a single leaked secret compromises far more than a task-scoped credential.
-        - **Long-lived secret:** Application credentials live in CI systems, config files, and scripts where they are more exposed than interactive logins, and they bypass interactive MFA.
-        - **Least privilege:** Automation almost never needs full administrative rights; granting `admin` violates least privilege by default.
+        An `admin` application credential is the most useful thing an attacker can find in a source repository. It is a single string that authenticates without a second factor, and on most deployments the `admin` role reaches well past the owning project into cloud-wide operations such as reading other tenants' images, listing every instance, and creating users.
 
-        **Risk mitigation**
+        Credentials sit where secrets are hardest to protect: pipeline variables, container images, configuration management vaults, and developer laptops. Pairing that exposure with the highest privilege on the cloud turns a leak from any one of those places into a full compromise rather than a scoped incident.
 
-        - **Credential compromise:** Scoping application credentials to the specific non-admin roles a workload needs limits what an attacker gains from stealing one.
-        - **Separation of duties:** Keeping administrative actions off automation credentials preserves the boundary between human administrators and machine identities.
+        Automation almost never needs the role. A backup job needs to create volume snapshots, a deployment job needs to boot servers, and both work with narrow roles. Granting `admin` is usually a shortcut taken when the specific permission was hard to identify and never revisited afterward.
 
-        Create application credentials with only the specific roles the workload requires, and never with `admin`.
+        Where a task genuinely requires administrative rights, issue a separate short-lived credential for that task alone and keep the general-purpose automation credential scoped to the roles it actually uses.
       audit: |
         ### Audit via CLI
 
@@ -4103,20 +4120,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no IPsec policy uses the bare `ah` transform protocol. The Authentication Header (AH) protocol provides integrity and authentication but performs no encryption, so an IPsec tunnel built on bare `ah` carries its payload in cleartext. Encapsulating Security Payload (`esp`) or `ah-esp` must be used to encrypt tunnel traffic.
+        This check verifies that site-to-site VPN tunnels encrypt their payload rather than only authenticating it.
+
+        The transform protocol of a Neutron VPNaaS IPsec policy decides what the tunnel does to traffic. Authentication Header, written `ah`, provides integrity and origin authentication but no confidentiality, while Encapsulating Security Payload, written `esp`, encrypts, and `ah-esp` does both. It is set with `openstack vpn ipsec policy set --transform-protocol` or the `transform_protocol` argument on the `openstack_vpnaas_ipsec_policy_v2` Terraform resource.
 
         **Why this matters**
 
-        - **Cleartext tunnel:** A site-to-site VPN configured with `ah` transmits payloads without encryption, defeating the primary reason for building the tunnel.
-        - **False assurance:** The connection appears as an established IPsec VPN while providing no confidentiality, so sensitive traffic is exposed without any warning.
-        - **Interception:** Anyone able to observe the path between the endpoints can read the traffic that the VPN was meant to protect.
+        A tunnel built on bare `ah` sends the original packets across the internet readable. Everything the VPN was carrying, database replication, internal API calls, directory traffic, and file transfers between sites, is available to anyone with a position on the path, exactly as though the tunnel had never been built.
 
-        **Risk mitigation**
+        The failure is silent because the tunnel works. The connection establishes, monitoring reports it up, applications on both sides behave normally, and the operator has every reason to believe traffic between the sites is protected.
 
-        - **Confidentiality in transit:** Using `esp` (or `ah-esp`) ensures tunnel payloads are encrypted end to end.
-        - **Defense in depth:** Encrypting VPN traffic protects data even when it crosses untrusted intermediate networks.
+        `ah` also breaks in the environments where it is deployed, because it authenticates the IP header and so any NAT on the path invalidates the packet. That means the configuration frequently fails outright rather than degrading quietly, and the fix applied under time pressure is rarely a careful one.
 
-        Set the IPsec policy transform protocol to `esp` (or `ah-esp` where integrity headers are also required).
+        Use `esp` for encryption, and `ah-esp` only where a specific requirement calls for header authentication alongside it and no NAT sits on the path.
       audit: |
         ### Audit via CLI
 
@@ -4211,20 +4227,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no IKE or IPsec policy uses the DES or 3DES encryption algorithms. DES is trivially brute-forced and 3DES is deprecated (NIST disallowed it after 2023) and vulnerable to birthday attacks such as Sweet32, so a VPN tunnel relying on either provides weak confidentiality.
+        This check verifies that VPN key exchange and tunnel encryption use ciphers still considered strong.
+
+        Both the IKE policy that negotiates the connection and the IPsec policy that protects the traffic carry an encryption algorithm. They are set with `openstack vpn ike policy set --encryption-algorithm` and `openstack vpn ipsec policy set --encryption-algorithm`, or through the `encryption_algorithm` argument on the `openstack_vpnaas_ike_policy_v2` and `openstack_vpnaas_ipsec_policy_v2` Terraform resources. This check requires that neither is `des` or `3des`.
 
         **Why this matters**
 
-        - **Broken cipher:** DES uses a 56-bit key that can be exhausted with modest resources; traffic encrypted with it can be recovered.
-        - **Deprecated cipher:** 3DES has a small 64-bit block that makes long-lived tunnels vulnerable to Sweet32 collision attacks, and it is disallowed by NIST and PCI DSS.
-        - **Site-to-site exposure:** A weak cipher on a VPN tunnel exposes all traffic between the connected networks, not a single session.
+        DES has a 56-bit key and is exhaustible on hardware anyone can rent by the hour. Traffic protected with it is not protected, only delayed by the cost of a brute-force run that is now measured in hours rather than years.
 
-        **Risk mitigation**
+        3DES fails differently. Its 64-bit block size makes collisions likely once a single key has protected enough data, which is the Sweet32 attack, and a site-to-site tunnel is precisely the long-lived, high-volume connection that reaches that threshold. NIST disallowed the algorithm after 2023 and PCI DSS does not accept it.
 
-        - **Confidentiality in transit:** Requiring AES (for example `aes-256`) ensures recorded tunnel traffic cannot be feasibly decrypted.
-        - **Standards alignment:** Removing DES/3DES keeps VPN cryptography within current NIST and PCI DSS requirements.
+        Because this is a site-to-site tunnel, what an attacker recovers is not one user's session. It is everything the two networks exchanged for as long as they have been recording, and recording is cheap enough that the decryption never has to happen at the time.
 
-        Set the IKE and IPsec policy encryption algorithms to a strong cipher such as `aes-256`.
+        Set both policies to AES, using `aes-256` where the peer supports it, and check the remote end at the same time, since IKE negotiates down to whatever both sides will accept.
       audit: |
         ### Audit via CLI
 
@@ -4336,20 +4351,19 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Neutron port defines an allowed address pair with a `/0` mask that covers the entire address space. Allowed address pairs are an exception to Neutron's anti-spoofing enforcement: traffic whose source IP/MAC matches a pair is permitted even though it differs from the port's fixed address. An entry such as `0.0.0.0/0` disables anti-spoofing for every address.
+        This check verifies that anti-spoofing exemptions on a network port name specific addresses rather than the whole address space.
+
+        An allowed address pair tells Neutron to accept traffic from a port using an address other than the one assigned to it, which is how a virtual IP or a failover address is made to work. Pairs are added with `openstack port set --allowed-address` or through the `allowed_address_pairs` block on the `openstack_networking_port_v2` Terraform resource, and this check requires that none of them use a `/0` prefix.
 
         **Why this matters**
 
-        - **Anti-spoofing bypass:** A `/0` allowed address pair lets the attached instance send and receive traffic for any IP or MAC, defeating the protection that keeps instances from impersonating each other.
-        - **Lateral movement:** An instance that can spoof arbitrary addresses can intercept traffic destined for other instances or masquerade as gateways and services.
-        - **Silent scope:** Allowed address pairs are easy to over-broaden (for example while setting up a VIP or VRRP) and then leave wider than intended.
+        A pair of `0.0.0.0/0` is not an exemption, it is a removal. The port may then send traffic as any address on the network, which is the same position as having port security switched off, reached through a setting that reads like a narrow allowance and is reviewed as one.
 
-        **Risk mitigation**
+        An instance in that position answers ARP for its neighbors and for the gateway, so traffic between other instances starts flowing through it. Nothing in their configuration changes and nothing alerts, while the attacker reads sessions, harvests credentials in transit, and returns modified responses to the systems that trusted them.
 
-        - **Address integrity:** Scoping allowed address pairs to the specific addresses a workload legitimately needs preserves Neutron's anti-spoofing guarantees.
-        - **Segmentation:** Preventing arbitrary spoofing keeps a single compromised instance from impersonating others on the network.
+        These entries widen during troubleshooting. A keepalived or VRRP setup fails to pass traffic, the range is broadened until it works, and the working configuration is left in place rather than narrowed once the correct address is known.
 
-        Restrict each allowed address pair to the specific IP or narrow CIDR the workload requires — for example a VIP or a small failover range — never `0.0.0.0/0` or `::/0`.
+        Scope each pair to the exact virtual IP or the smallest failover range the workload needs, and revisit them whenever the addressing behind a virtual IP changes.
       audit: |
         ### Audit via CLI
 
