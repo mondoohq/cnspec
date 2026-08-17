@@ -221,13 +221,15 @@ Remediation that is *code* rather than a CLI invocation gets linted with the too
 | `cloudformation.py` | `id: cloudformation` | cfn-lint |
 | `bicep.py` | `id: bicep` | `bicep build` |
 | `ansible.py` | `id: ansible` | ansible-lint |
-| `powershell.py` | every ```` ```powershell ```` fence, including `audit:` | the PowerShell parser |
-| `bash.py` | `id: bash` / `script` / `sh` | shellcheck |
+| `powershell.py` | every ```` ```powershell ```` fence in every policy, including `audit:` | the PowerShell parser |
+| `bash.py` | `id: bash` / `script` / `sh`, in every policy | shellcheck |
 | `chef.py` | `id: chef` | cookstyle |
 
 Each takes an optional target (`linux`, `windows`, `macos`, `kubernetes`, `chef`, …) and `--github-actions`.
 
-**A validator only sees the policies in its `TARGETS`.** Adding a remediation method to a policy that is not listed there means it ships unlinted and CI stays green, so when a policy gains its first `terraform`/`ansible`/`bash` remediation, add it to that validator's `TARGETS` in the same change. `bash.py` is the exception: it has no allowlist, deliberately, because a `TARGETS` list is a standing invitation to exactly that failure.
+**A validator only sees the policies in its `TARGETS`.** Adding a remediation method to a policy that is not listed there means it ships unlinted and CI stays green, so when a policy gains its first `terraform`/`ansible`/`chef` remediation, add it to that validator's `TARGETS` in the same change.
+
+**`bash.py` and `powershell.py` are the exceptions, deliberately.** Both default to every policy in `content/`, because a `TARGETS` list is a standing invitation to exactly that failure and neither linter needs per-policy setup: shellcheck lints a shell script, and the PowerShell parser parses PowerShell, wherever the fence appears. Their `TARGETS` dicts name groups for running one area locally (`bash.py linux`) and do not define what CI covers, so a new policy needs no entry in either.
 
 For Terraform there is a second step: the resource prefix needs an entry in `PROVIDER_MAP` too. Without one the generated `required_providers` block comes out empty and the `terraform_required_providers` rule fails *every* resource in that policy, which looks like 20 content bugs rather than one missing line.
 
@@ -351,14 +353,14 @@ Register the policy everywhere it applies, in the same change that adds it:
 | `scans/iac_variants_test.go` → `tfVariantPolicies` | the policy has any `-terraform-hcl`, `-terraform-plan`, `-terraform-state`, `-cloudformation` or `-bicep` variant | variants are never scanned, and coverage never asks for fixtures |
 | `scans/iac_variants_test.go` → `init()`'s `extraProviders` | its runtime variant needs a provider outside `terraform`/`k8s`/`aws`/`azure`/`gcp`/`cloudformation` (the base list in `main_test.go`) | parallel subtests race to auto-install it and lose with `cannot find resource for identifier '<provider>'` |
 | `remediation/code/terraform.py` → `TARGETS` **and** `PROVIDER_MAP` for each resource prefix | any `- id: terraform` remediation | snippets are never resolved against the provider schema; with `TARGETS` but no `PROVIDER_MAP` entry, `required_providers` comes out empty and `terraform_required_providers` fails *every* resource in the policy |
-| `remediation/code/{cloudformation,bicep,ansible,powershell,chef}.py` → `TARGETS` | that language appears in a remediation block (`powershell.py` also reads ```` ```powershell ```` fences in `audit:`) | same, for that language |
+| `remediation/code/{cloudformation,bicep,ansible,chef}.py` → `TARGETS` | that language appears in a remediation block | same, for that language |
 | `remediation/commands/` → `CLI_VALIDATORS`, `COBRA_CLIS`, or `API_PROVIDERS` | any `- id: cli` / `- id: api` block, or an `audit:` step that invokes a CLI or REST call | invented commands and endpoints ship unchallenged |
 | `compliance/owasp_mapping_test.go` → `llmAnchoredPolicies` | the policy is AI/LLM-focused | nothing guards its OWASP Top 10 for LLM Applications tags against silently going missing |
 | `typos.toml` → `[default.extend-words]` | the vendor's terminology trips the spell checker | `spell-check.yaml` fails |
 
 A policy in `PROVIDER_MAP` needs a real provider source and a version constraint that resolves; a constraint matching only prereleases silently fails to resolve.
 
-`remediation/code/bash.py` is the exception on purpose and needs no entry — it globs every policy in `content/`, because a `TARGETS` list is a standing invitation to exactly this failure, and the comment on its `TARGETS` says so. The compliance suites glob too (`../../mondoo-*.mql.yaml`), so tag coherence is covered from the first commit.
+`remediation/code/bash.py` and `remediation/code/powershell.py` are the exceptions on purpose and need no entry — both glob every policy in `content/`, because a `TARGETS` list is a standing invitation to exactly this failure, and the comment on each one's `TARGETS` says so. The compliance suites glob too (`../../mondoo-*.mql.yaml`), so tag coherence is covered from the first commit.
 
 ### Group filters and variants do not mix
 

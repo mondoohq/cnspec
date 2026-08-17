@@ -362,6 +362,17 @@ def check_snippet(s: Snippet, analysis: dict) -> list[str]:
 # Targets and main
 # ---------------------------------------------------------------------------
 
+# Like bash.py, and unlike the other code validators, this one has no policy
+# allowlist. A `TARGETS` list is a standing invitation to the failure it is
+# supposed to prevent: a policy gains its first PowerShell snippet, nobody adds
+# it to the list, and the snippet ships unlinted with CI green. Nothing here
+# needs per-policy setup — the PowerShell parser parses PowerShell wherever the
+# fence appears — so the default target is every policy in content/, which is
+# what CI runs.
+#
+# The named groups below stay as a convenience for running one area locally
+# (`remediation/code/powershell.py windows`), not as a definition of what CI
+# covers. Adding a policy here is never required.
 TARGETS = {
     "windows": [
         CONTENT_DIR / "mondoo-windows-security.mql.yaml",

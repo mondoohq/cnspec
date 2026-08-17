@@ -454,7 +454,7 @@ Five things gate a content change, and each fails differently:
 
 Three traps worth knowing before you hit them:
 
-- **A validator only sees the policies in its `TARGETS`.** When a policy gains its first `terraform`/`ansible`/`powershell`/`chef` remediation, add it to that validator's `TARGETS` in the same change — otherwise it ships unlinted and CI stays green. Terraform needs a `PROVIDER_MAP` entry too. (`bash.py` is the exception: it globs every policy, deliberately.)
+- **A validator only sees the policies in its `TARGETS`.** When a policy gains its first `terraform`/`ansible`/`chef` remediation, add it to that validator's `TARGETS` in the same change — otherwise it ships unlinted and CI stays green. Terraform needs a `PROVIDER_MAP` entry too. (`bash.py` and `powershell.py` are the exceptions: both glob every policy, deliberately, so a shell or PowerShell fence is linted wherever it appears.)
 - **A skipped check is a fixture bug, not a pass.** A variant whose filter never matches anything looks identical to one that passes, in every report, forever.
 - **A stale `KNOWN_BUG.md` marker fails the build.** Adding a check means deleting its markers in the same change.
 
@@ -462,7 +462,7 @@ Three traps worth knowing before you hit them:
 
 ### A new policy is not covered until it is registered
 
-A new *check* inherits the coverage its policy already has. A new *policy* inherits nothing. Every validator above is allowlist-driven except `bash.py` and the compliance suites, so a brand-new `*.mql.yaml` is not reported as unvalidated; it is simply never visited. The bundle merges with its variants untested, its HCL unlinted and its CLI commands unverified, and every gate stays green.
+A new *check* inherits the coverage its policy already has. A new *policy* inherits nothing. Every validator above is allowlist-driven except `bash.py`, `powershell.py` and the compliance suites, so a brand-new `*.mql.yaml` is not reported as unvalidated; it is simply never visited. The bundle merges with its variants untested, its HCL unlinted and its CLI commands unverified, and every gate stays green.
 
 This is not hypothetical. The four SaaS policies added in PR #3338 were invisible to the remediation validators. Registering them with `terraform.py` in a follow-up commit failed **8 of their 11** HCL snippets against the real provider schemas, and hand-checking their CLI snippets found an entire invented `hcp vault` / `hcp consul` command surface and two `neonctl` flags that do not exist.
 
@@ -470,7 +470,7 @@ Wire the policy up in the **same change** that adds it. [`validation/README.md`]
 
 - `content/README.md`, the user-facing catalog, always.
 - `tfVariantPolicies` in `validation/scans/iac_variants_test.go`, if it has any IaC variant, plus that file's `extraProviders` if its runtime variant needs a provider beyond the base six.
-- `TARGETS` in each `validation/remediation/code/<language>.py` whose method it ships, and `PROVIDER_MAP` as well for Terraform.
+- `TARGETS` in each `validation/remediation/code/<language>.py` whose method it ships, and `PROVIDER_MAP` as well for Terraform. Not `bash.py` or `powershell.py` — those two glob every policy already.
 - a registry under `validation/remediation/commands/`, if it ships `id: cli` / `id: api` blocks or `audit:` steps that invoke a CLI or REST call.
 - `typos.toml`, if the vendor's terminology trips the spell checker.
 
