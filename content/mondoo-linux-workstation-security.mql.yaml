@@ -166,18 +166,20 @@ queries:
         }
       }
     docs:
-      desc: |-
-        This check verifies that bootloader configuration files such as `grub.cfg`, `menu.lst`, `user.cfg`, and `loader.conf` are owned by `root` and are not readable or writable by group or other users. On UEFI systems, it also verifies that the `/boot/efi` vfat filesystem is mounted with `fmask=0077`.
+      desc: |
+        This check verifies that the boot loader's configuration files are readable only by root, and that a UEFI system partition mounted from vfat carries an equivalent restriction.
+
+        The files covered are `grub.cfg` and `menu.lst` under `/boot/grub` or `/boot/grub2`, the `user.cfg` file that holds GRUB's password hash, and `loader.conf` where systemd-boot is in use. Each must be owned by `root` and carry no group or other access at all. A vfat filesystem has no permission bits of its own, so for `/boot/efi` the restriction comes from the mount options in `/etc/fstab`, where `fmask=0077` denies group and other access to every file on it.
 
         **Why this matters**
 
-        Bootloader configuration files hold boot parameters and, in some cases, the hashed password that protects boot-time menu entries. If these files are exposed to unprivileged users, an attacker with local access can extract sensitive boot settings or alter how the system starts.
+        `user.cfg` holds the hash of the GRUB password, the one that gates editing a boot entry from the menu. If any local account can read that file, the hash goes to a cracking rig off the machine, at whatever rate the attacker's hardware allows and with no failed-attempt record left on the host. Recovering it converts console access into the ability to edit the kernel command line, and the standard edit from there appends `init=/bin/bash` for a root shell with no authentication at all.
 
-        - **Protects boot-time passwords:** Restricting access prevents disclosure of the GRUB password hash that gates editing of boot entries.
-        - **Prevents boot tampering:** Read-only access for non-root users keeps attackers from injecting kernel parameters that disable security controls.
-        - **Reduces local attack surface:** Hardened permissions ensure only privileged users can inspect or modify the boot path.
+        Even without the password, the configuration itself is reconnaissance for the same attack. It names the kernels and initramfs images available, the root device and how it is unlocked, and any command line parameters already in place, including whether SELinux or AppArmor is enforcing, whether the IOMMU is on, and whether the console is redirected to a serial port that reaches beyond the room.
 
-        The vfat filesystem used for `/boot/efi` has no native permission model, so the `fmask` mount option is used to enforce equivalent restrictions.
+        A group-writable or world-writable configuration file removes the need for any of that, because a kernel parameter added to it takes effect on the next reboot with no further access required.
+
+        These permissions defend the boot path against a local account. They do not defend against someone who can detach the disk and attach it to another machine. Full-disk encryption covers that case, and a companion check in this policy requires it.
       audit: |
         Run these commands to inspect the ownership and permissions of the bootloader configuration files present on the system:
 
@@ -341,15 +343,19 @@ queries:
       machine.secureboot.enabled
     docs:
       desc: |
-        This check verifies that UEFI Secure Boot is enabled so the firmware validates the signature of the kernel and boot components before executing them.
+        This check verifies that UEFI Secure Boot is enabled, so the firmware validates the signature of each boot component before executing it.
+
+        Secure Boot builds a chain. The firmware verifies the shim or boot loader against keys held in the platform database, the boot loader verifies the kernel, and the kernel verifies the modules it loads. On Linux this works through a distribution shim signed by Microsoft's UEFI key, which most vendors ship trusted in firmware, and a distribution key that validates the loader and kernel behind it. The check reads the current state, which `mokutil --sb-state` reports.
 
         **Why this matters**
 
-        Secure Boot establishes a chain of trust from the firmware through the bootloader and kernel. Without it, an attacker who can write to the boot path can load a tampered or malicious kernel that runs before any operating-system protections take effect.
+        Everything an operating system does to protect itself starts after the kernel is running. Code that executes before that point decides what the kernel is, which means it can hand control to a kernel modified to hide processes, ignore particular file reads, and accept an attacker's authentication, and no tool running on that system afterwards can report the difference. Secure Boot closes that window, because unsigned code in the boot path is refused rather than executed.
 
-        - **Prevents bootkits:** Signature verification blocks unsigned or modified boot code from running.
-        - **Protects the kernel:** Only kernels signed by a trusted key are allowed to boot.
-        - **Anchors platform integrity:** A verified boot path is the foundation for measured boot and full-disk encryption protections.
+        For a workstation the way in is usually physical rather than remote. Laptops are left in hotel rooms, in checked luggage, and on desks in shared offices, and a few minutes of unattended access with a USB drive is enough to write a modified boot loader onto an unprotected disk. The device boots normally afterwards and behaves normally, which is precisely why the technique is used.
+
+        An attacker who has already reached root locally has the same option available, and it is the one that survives a reinstall of the operating system.
+
+        Secure Boot works alongside full-disk encryption rather than replacing it. Encryption keeps the data unreadable when the disk is removed; Secure Boot keeps the boot path trustworthy when the machine is started. A workstation needs both, and companion checks in this policy require the other pieces.
       audit: |
         Run this command to inspect the Secure Boot state:
 
@@ -399,15 +405,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that the `/` and `/home` filesystems reside on encrypted block devices, confirmed by a `crypt` device type in the `lsblk` device tree.
+        This check verifies that the filesystems holding the operating system and the users' data sit on encrypted block devices.
+
+        It resolves the devices backing `/` and, where it is mounted separately, `/home`, then walks the device stack for each and requires a `crypt` layer, the device-mapper target that an unlocked LUKS volume presents. `lsblk` shows the same relationship, with the crypt device sitting between the physical partition and the mounted filesystem. Where `/home` is part of the root filesystem rather than a separate mount, encrypting the root volume covers both.
 
         **Why this matters**
 
-        Workstations are frequently lost or stolen. Without full-disk encryption, anyone with physical possession of the drive can read every file on it by attaching it to another system.
+        A workstation leaves the building. Laptops are stolen from cars, left in taxis, taken in office break-ins, and lost in transit, and in every one of those cases the attacker ends up holding the disk with unlimited time and no need to defeat anything the operating system does. Login passwords, screen locks, and file permissions are enforced by a running kernel. Remove the drive, attach it to another machine, and none of them are involved: the filesystem mounts and every file is readable.
 
-        - **Protects data at rest:** Encryption renders the contents of `/` and `/home` unreadable without the unlock key.
-        - **Mitigates device theft:** A stolen laptop yields no usable data when its system and home partitions are encrypted.
-        - **Supports compliance:** Encrypting endpoint storage satisfies data-protection requirements for systems that handle sensitive information.
+        What sits on that disk is the reason it matters. A developer or administrator workstation carries SSH private keys, cloud credentials in shell profiles and configuration directories, browser session cookies and saved passwords, VPN certificates, and local copies of whatever the person was working on. A stolen laptop with an unencrypted disk is therefore not an equipment loss, it is a credential compromise, and the attacker walks into the environment as that employee.
+
+        Encrypting root as well as home matters because credentials do not stay in home directories. Service configuration, system-wide credential files, log files, swap, and the temporary directory all sit outside `/home` and all hold material worth reading.
+
+        Encryption protects the disk at rest and nothing more. It gives no protection while the machine is running and unlocked, so pair it with screen locking and with a boot path validated by Secure Boot, which a companion check in this policy requires.
       audit: |
         Run these commands to identify the devices serving `/` and `/home` and confirm they are encrypted:
 
@@ -474,15 +484,17 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that every LUKS-encrypted volume uses an AES cipher in XTS mode, such as `aes-xts-plain64` or `aes-xts-benbi`.
+        This check verifies that every LUKS-encrypted volume uses AES in XTS mode.
+
+        XTS is the mode designed for storage. A disk cipher has to encrypt each sector independently, because sectors are read and written in any order, and it has to do so without letting two sectors holding identical plaintext produce identical ciphertext. XTS achieves that by tweaking the encryption with the sector number. The check reads the cipher from each LUKS header and accepts an AES cipher in XTS mode, written as `aes-xts-plain64` on current systems and `aes-xts-benbi` on some older ones. `cryptsetup luksDump` shows the value in the Cipher field.
 
         **Why this matters**
 
-        The strength of full-disk encryption depends on the cipher protecting the data. A weak or non-standard cipher can leave encrypted volumes vulnerable to cryptographic attack even when encryption appears to be enabled.
+        Full-disk encryption is either sound or it is decoration, and the cipher decides which. A volume set up with a legacy mode inherits attacks that XTS does not have. CBC with a predictable sector-derived initialization vector, which older installers configured, is vulnerable to watermarking: an attacker who can get a chosen file onto the volume, by emailing it or having it downloaded, can afterwards recognize its presence in the raw ciphertext of a stolen disk without holding any key. CBC also gives an attacker with write access to the device controlled bit flips in the following block, which is the basis for tampering with a volume between one boot and the next.
 
-        - **Ensures strong confidentiality:** AES in XTS mode is the established standard for block-device encryption and resists known attacks.
-        - **Avoids weak ciphers:** Confirming the cipher prevents volumes from being protected by deprecated or insecure algorithms.
-        - **Maintains consistent protection:** Verifying every encrypted volume ensures no partition relies on a substandard cipher.
+        Cipher choice is also where an obsolete algorithm hides. A volume created years ago and carried forward through reinstalls keeps whatever cipher it was made with, and nothing in normal operation surfaces it. The header says the disk is encrypted, the machine unlocks, and the strength of what is protecting the data is never questioned.
+
+        Changing the cipher rewrites every sector of the volume. Back the data up first and run the conversion from a live system with the filesystem unmounted, because an interruption partway through leaves the volume unreadable.
       audit: |
         Run this command for each encrypted device to inspect the cipher in use:
 
@@ -542,15 +554,19 @@ queries:
       parse.json(content: command('fwupdmgr get-updates -y --json').stdout).params["Devices"].length == 0
     docs:
       desc: |
-        This check verifies that no firmware updates are pending for the system, using `fwupdmgr` to confirm the BIOS is running the latest available version. The `fwupd` daemon contacts the Internet to retrieve the latest firmware metadata.
+        This check verifies that the system firmware is at the latest version its vendor has published.
+
+        The check queries `fwupdmgr` for pending updates and requires the list to be empty. The `fwupd` daemon retrieves metadata from the Linux Vendor Firmware Service, which most major hardware vendors publish to, and compares the advertised versions against what the machine currently runs. Because it needs that metadata, the check reports accurately only on a host that can reach the service, and it covers every device fwupd manages rather than the system BIOS alone.
 
         **Why this matters**
 
-        Firmware sits below the operating system and is a high-value target. Outdated BIOS firmware can carry unpatched vulnerabilities that allow persistent, OS-independent compromise.
+        Firmware runs before the kernel and keeps running underneath it, in a mode more privileged than the operating system can inspect. A flaw there is not contained by anything the operating system does: it is reachable before Secure Boot's chain begins, it survives a full reinstall, and it survives replacing the disk, because the code lives in flash on the board.
 
-        - **Closes firmware vulnerabilities:** Applying vendor updates remediates known flaws in the BIOS.
-        - **Maintains platform trust:** Current firmware keeps Secure Boot and other platform protections effective.
-        - **Reduces persistent-threat risk:** Patched firmware limits an attacker's ability to establish footholds that survive a reinstall.
+        The vulnerabilities fixed by these updates are of that kind. Firmware update routines that accepted unsigned images, System Management Mode handlers reachable from the operating system that let a local root account write to flash, and boot loader flaws allowing the Secure Boot chain to be bypassed have all shipped in mainstream hardware and been fixed by vendor releases. Until the release is applied, an attacker who reaches root once converts that into a foothold outlasting every response short of replacing the machine.
+
+        Firmware updates also carry the processor microcode that mitigates hardware-level flaws, so a stale BIOS usually means missing mitigations as well as missing fixes.
+
+        Two operational cautions. Updates are staged and applied during a reboot, so a machine that never restarts never receives them. And a firmware update changes the measurements that a TPM-sealed disk encryption key is bound to, so have the recovery passphrase to hand before applying one.
       audit: |
         Run this command to check for pending firmware updates:
 

@@ -55,15 +55,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that `/var/lib/snmp/snmpd.conf` is owned by the `Debian-snmp` user and group and is not readable, writable, or executable by group or other users. This check applies to Debian-based distributions.
+        This check verifies that the file holding SNMPv3 user credentials is readable only by the account the SNMP daemon runs as.
+
+        When SNMPv3 users are created, net-snmp derives localized keys from their authentication and privacy passphrases and writes them into its persistent data file. On Debian-based distributions that file is `/var/lib/snmp/snmpd.conf`, owned by the `Debian-snmp` user and group. The check requires that ownership and no group or other access at all, which is mode `600`. Red Hat-family and SUSE systems run net-snmp under a different account and keep the same data elsewhere, so the equivalent file there needs the same treatment.
 
         **Why this matters**
 
-        The file `/var/lib/snmp/snmpd.conf` stores SNMPv3 user password hashes, which can use algorithms as weak as MD5. If the file is readable by unprivileged users, those hashes can be extracted and cracked offline.
+        The values in that file are not passwords, but they are password-equivalent. SNMPv3 authenticates each request with a keyed hash computed from the localized key, so anyone holding the key can produce valid requests as that user without ever learning the passphrase. Reading the file is the whole attack; there is no further step.
 
-        - **Protects credential hashes:** Restricting access prevents disclosure of SNMPv3 authentication secrets.
-        - **Limits offline cracking:** Keeping the file private denies attackers the material needed to brute-force weak hashes.
-        - **Reduces local attack surface:** Hardened permissions ensure only the SNMP daemon and root can read the file.
+        What that buys depends on the user's view, and on a monitoring account it is usually the entire device tree: interface names and addresses, the process and software inventory, routing and ARP tables, and on network equipment often the running configuration. That is a complete map of the host handed to any local account, and the same credential frequently works on every device the monitoring system polls, because the SNMPv3 user is provisioned identically across the fleet.
+
+        The passphrases themselves are also exposed to offline work, because the localization is a hash construction and net-snmp still permits MD5 as the authentication algorithm. A guessable passphrase falls to a wordlist run off the machine at whatever rate the attacker's hardware allows, with nothing on the host recording so much as one failed attempt.
+
+        Set the ownership and mode, prefer SHA over MD5 for new users, and rotate any SNMPv3 credential that was exposed, because permissions correct the future and do not recall a key that has already been read.
       audit: |
         Run this command to inspect the ownership and permissions of the SNMP user file:
 
@@ -132,15 +136,19 @@ queries:
       snmpd.config.rwCommunities.length == 0
     docs:
       desc: |
-        This check verifies that `/etc/snmp/snmpd.conf` and any files under `/etc/snmp/snmpd.conf.d` contain no `rwcommunity` or `rwcommunity6` directives.
+        This check verifies that the SNMP daemon defines no read-write community strings.
+
+        A community string is the entire authentication mechanism in SNMPv1 and SNMPv2c: a shared word carried in cleartext in every request. The `rwcommunity` and `rwcommunity6` directives grant write access to whoever presents the right word. The check requires that neither appears in `/etc/snmp/snmpd.conf` or in any file under `/etc/snmp/snmpd.conf.d`.
 
         **Why this matters**
 
-        A read-write community string grants full SNMP write access to anyone who knows it. Because SNMPv1 and v2c community strings travel in plaintext and are often left at well-known defaults, an attacker who learns one can reconfigure the host, alter system settings, or disrupt monitored services.
+        Write access over SNMP is not a monitoring feature, it is remote administration with no user, no session, and no meaningful credential. The string travels unencrypted in every request, so anyone able to observe traffic on a path the monitoring system uses reads it straight off the wire. Guessing works about as well, because the defaults are famous and the strings that replace them are usually one word derived from the organization's name.
 
-        - **Prevents unauthorized changes:** Removing write community strings blocks SNMP-based modification of the system.
-        - **Eliminates plaintext write credentials:** No read-write community string can be sniffed off the network.
-        - **Forces stronger access models:** Removing these directives pushes management toward authenticated SNMPv3.
+        With the string in hand, an attacker writes to the MIB. On a server, net-snmp's extend and exec facilities turn a settable object into command execution as the account the daemon runs as, which is often root. On network equipment the same access changes interface state, rewrites routing, and on many platforms triggers a configuration upload or download over TFTP, which both exfiltrates the running configuration and installs a replacement for it.
+
+        None of this requires an exploit or leaves an authentication failure anywhere, because from the daemon's point of view every one of those requests arrived with the correct credential.
+
+        Where a monitoring system genuinely needs read access, use `rocommunity` scoped to the source network it polls from. Where write access is genuinely required, move to SNMPv3 with an authenticated user, which is the model a companion check in this policy also assumes.
       audit: |
         Run this command to search for read-write community string directives:
 
@@ -233,15 +241,19 @@ queries:
       snmpd.config.content.lines.none(/(?i)^\s*rwuser\s+(-s\s+\S+\s+)?\S+\s+noauth(nopriv)?\b/)
     docs:
       desc: |
-        This check verifies that `/etc/snmp/snmpd.conf` and any files under `/etc/snmp/snmpd.conf.d` contain no `rwuser` directives that specify the `noauth` security level.
+        This check verifies that no SNMPv3 user is granted write access without having to authenticate.
+
+        An `rwuser` line names a user and the security level required of its requests. Given `rwuser ... noauth`, or its longer spelling `noauthnopriv`, the daemon accepts write requests carrying that user name with no keyed hash to verify and no encryption, which reproduces the weakness of a community string while wearing the version of the protocol that was meant to fix it. The check requires that no `rwuser` directive in `/etc/snmp/snmpd.conf` or under `/etc/snmp/snmpd.conf.d` specifies that level.
 
         **Why this matters**
 
-        An `rwuser ... noauth` directive grants SNMPv3 write access without requiring authentication. This effectively exposes full management control of the host to any network peer that can reach the SNMP port.
+        The security level, not the protocol version, is what does the work in SNMPv3. A configuration that reads as modern and a configuration that hands the host to the network can differ by one word at the end of a line, and the difference is invisible to any inventory recording only which protocol version is in use.
 
-        - **Requires authentication:** Removing `noauth` directives ensures every SNMPv3 write request is authenticated.
-        - **Prevents unauthorized control:** Authenticated access blocks anonymous peers from reconfiguring the system.
-        - **Enforces SNMPv3 best practice:** Using `authNoPriv` or `authPriv` keeps SNMP management aligned with secure configuration guidance.
+        At `noauth` the user name is the only thing required, and a user name is not a secret. It appears in the monitoring system's configuration, in documentation, in change tickets, and in the headers of ordinary polling traffic on the wire. Anyone who can reach the SNMP port then writes to the MIB as that user, which on a net-snmp host with extend or exec objects defined is command execution as the daemon's account, and on network equipment is a configuration change or a configuration upload to a server the attacker chose.
+
+        These lines are usually left over from bringing the daemon up. Authentication was turned off to get polling working, the passphrase step was deferred, and the line stayed.
+
+        Recreate the user with an authentication passphrase and require `authPriv`, which authenticates and encrypts, or `authNoPriv` where the payload genuinely needs no confidentiality. Note that raising the level on a user created without a passphrase removes that user's access until the credential exists, so create it first.
       audit: |
         Run this command to search for unauthenticated SNMP write directives:
 

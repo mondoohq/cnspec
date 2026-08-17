@@ -1067,14 +1067,19 @@ queries:
         - url: https://learn.microsoft.com/en-us/windows-hardware/design/minimum/windows-processor-requirements
           title: Windows supported processors
       desc: |
-        This check confirms that the installed processor appears on Microsoft's list of processors approved for Windows 11. Microsoft supports Windows 11 only on a defined set of CPU models, and an unlisted processor blocks a supported upgrade.
+        This check verifies that the processor in the device appears on Microsoft's published list of processors supported for Windows 11.
+
+        Windows 11 has a hard compatibility gate that Windows 10 did not. Beyond the memory, storage, firmware, and TPM requirements, Microsoft maintains an explicit list of processor models, and setup refuses to install on a model that is not on it. The check reads the processor name the system reports, which System Information shows as the Processor value and which PowerShell returns from the `Win32_Processor` class, and compares it against that list.
 
         **Why this matters**
 
-        - **Upgrade eligibility:** Windows 11 installs and receives feature updates only on approved processors; an unlisted CPU prevents a supported upgrade path.
-        - **Security feature support:** Approved processors provide the virtualization and platform features Windows 11 security depends on.
-        - **End-of-support exposure:** A device that cannot move to Windows 11 will eventually run an operating system that no longer receives security updates.
-        - **Planning:** Identifying unsupported processors early lets teams budget and schedule hardware replacement before support deadlines.
+        A processor is not a setting. Nothing in Windows, in firmware, or in Group Policy makes an unlisted model eligible, so a device that fails this check will not be upgraded in place. The paths forward are replacing the processor, on the few platforms that allow it, or replacing the device.
+
+        That makes this the check that determines the shape and the cost of the fleet refresh. Every device on the failing list is a hardware purchase with a lead time attached, and discovering them a quarter before Windows 10 support ends turns a planned replacement cycle into emergency procurement at whatever price and delivery date the market happens to offer.
+
+        Leaving those devices in place has a definite end date. Once Windows 10 stops receiving updates, the machines keep running and keep working, and every vulnerability disclosed after that date stays open on them for as long as they remain in service. No configuration mitigates that, because the operating system has stopped being maintained at all.
+
+        Microsoft does allow installation on unsupported hardware through a documented registry override, but the result is an unsupported configuration that Microsoft states may not receive updates. Treat a failing device as one to replace on a schedule, not one to force.
       audit: |
         ### Audit via System Information
 
@@ -1110,14 +1115,19 @@ queries:
         - url: https://learn.microsoft.com/en-us/windows/whats-new/windows-11-requirements
           title: Windows 11 System Requirements
       desc: |
-        This check confirms that the system has enough installed memory to run Windows 11. Windows 11 requires a minimum of 4 GB of RAM, and this check applies a more comfortable workstation threshold of at least 8 GB. The check allows a small margin below the nominal figure so that devices whose firmware reserves a portion of memory still pass.
+        This check verifies that the device has at least 8 GB of installed memory.
+
+        Windows 11 requires a minimum of 4 GB, and this check applies a higher workstation threshold of 8 GB. The comparison allows a small margin below the nominal figure, because firmware and integrated graphics reserve a portion of physical memory before Windows sees it, so an 8 GB device typically reports slightly less than that. Settings shows the value as Installed RAM under Device specifications, and PowerShell returns `TotalPhysicalMemory` from `Win32_ComputerSystem`.
 
         **Why this matters**
 
-        - **Upgrade eligibility:** Windows 11 setup blocks installation on devices that do not meet its minimum memory requirement.
-        - **Usable performance:** Memory below the threshold leads to heavy paging and a poor experience once Windows 11 and modern applications are running.
-        - **Security feature headroom:** Virtualization-based security and other Windows 11 protections consume memory; insufficient RAM forces those features off or degrades the system.
-        - **Planning:** Identifying under-provisioned devices early lets teams add memory or replace hardware before support deadlines.
+        Four gigabytes clears Microsoft's floor and leaves nothing over. Windows 11 itself, a browser with a working set of tabs, a mail client, and a collaboration application together exceed it, and once physical memory is committed the system pages to disk. Paging is orders of magnitude slower than memory, so the device does not fail, it becomes slow in a way that is hard to attribute and expensive in lost time across a fleet.
+
+        The security features are the part that gets sacrificed. Memory integrity and Credential Guard reserve memory for the isolated environment they run in, and on a device already short of it the usual resolution is to turn them off. That leaves the machines with the least capacity as the ones running without the protections, and it makes the baseline inconsistent across the fleet in a way no policy report shows.
+
+        Memory is a hardware property. Some laptops accept additional or larger modules, and many current designs solder memory to the board, in which case the only remedy is replacing the device.
+
+        Use a failing result to decide which of the two applies well before Windows 10 support ends, since a memory upgrade is a small cost with a short lead time and a device replacement is neither.
       audit: |
         ### Audit via Settings
 
@@ -1152,14 +1162,19 @@ queries:
         - url: https://learn.microsoft.com/en-us/windows/whats-new/windows-11-requirements
           title: Windows 11 System Requirements
       desc: |
-        This check confirms that the system disk is large enough to run Windows 11. Windows 11 requires at least 64 GB of storage, and this check applies a more comfortable workstation threshold of at least 120 GB.
+        This check verifies that the system disk is at least 120 GB.
+
+        Windows 11 requires 64 GB of storage, and this check applies a higher workstation threshold of 120 GB. The value read is the total capacity of the boot disk, which File Explorer shows for the system drive and PowerShell returns from `Get-Disk` for the disk marked as the boot disk. It is total capacity rather than free space, so a disk large enough to pass may still need space cleared before an upgrade will run.
 
         **Why this matters**
 
-        - **Upgrade eligibility:** Windows 11 setup needs free space for installation files; an undersized disk blocks the upgrade.
-        - **Update headroom:** Feature updates stage large payloads on disk; a drive near capacity causes update failures.
-        - **Usable workspace:** A drive sized only to the bare minimum leaves little room for applications and user data.
-        - **Planning:** Identifying undersized disks early lets teams upgrade storage or replace hardware before support deadlines.
+        A 64 GB disk technically qualifies and then runs out. Windows itself, the recovery partition, the page file, and hibernation reserve a substantial share of it before any application is installed, and what remains has to hold the applications, the user profile, and cached mail and files.
+
+        Feature updates are where an undersized disk actually fails. A Windows feature update stages a full copy of the new operating system on disk, applies it, and keeps the previous installation for a rollback window. That needs several gigabytes free at once, and a device close to capacity fails the update, retries on the next cycle, fails again, and quietly falls behind on servicing while reporting nothing worse than a drive that is low on space. Devices in that state stop receiving quality updates as well, once the release they are stuck on goes out of support.
+
+        The remedy is capacity, not cleanup. Clearing files buys one update cycle and the next one arrives at the same problem. Where the drive can be replaced with a larger one that resolves it, and where storage is soldered the device needs replacing.
+
+        Identify the undersized devices before Windows 10 support ends, since a drive swap and a device purchase carry very different costs and lead times.
       audit: |
         ### Audit via File Explorer
 
@@ -1194,14 +1209,19 @@ queries:
         - url: https://learn.microsoft.com/en-us/windows/whats-new/windows-11-requirements
           title: Windows 11 System Requirements
       desc: |
-        This check confirms that the processor provides at least the two cores Windows 11 requires; the workstation threshold applied here is four or more cores for comfortable performance.
+        This check verifies that the processor reports at least four physical cores.
+
+        Windows 11 sets its own floor at two cores, and this check applies a higher workstation threshold of four. The value read is the physical core count of the installed processor, which Task Manager shows under Performance and PowerShell returns as `NumberOfCores` from the `Win32_Processor` class. It is a property of the part, not something firmware or Windows can change.
 
         **Why this matters**
 
-        - **Upgrade eligibility:** Windows 11 setup blocks installation on processors that do not meet its minimum core count.
-        - **Responsive performance:** Modern workloads run many processes concurrently; too few cores leads to a sluggish experience.
-        - **Security feature overhead:** Virtualization-based security and background protection consume processor capacity that low-core devices cannot spare.
-        - **Planning:** Identifying under-provisioned processors early lets teams schedule hardware replacement before support deadlines.
+        Two cores clears Microsoft's floor and nothing else. Windows 11 runs a substantially larger set of background work than Windows 10 did, and most of it is not optional: the antimalware engine scanning on access, search indexing, telemetry, update servicing, and on managed devices an endpoint detection agent alongside all of it. On a two-core machine that work competes directly with whatever the person at the keyboard is doing, and the result is a device that meets the requirement on paper and is unpleasant to use in practice.
+
+        Virtualization-based security is where the gap shows most clearly. Memory integrity and Credential Guard run parts of the system inside a hypervisor-isolated environment, which costs processor time on every transition. On a device with adequate cores that cost is small. On one at the minimum it is large enough that the usual response is to turn the protection off, which leaves the fleet inconsistent and the security baseline unmet on exactly the machines least able to absorb an incident.
+
+        The count cannot be raised by configuration. A failing device needs a processor replacement, on a platform that allows one, or replacement of the device.
+
+        Read the result as inventory data for the refresh plan. A device below the threshold today will not improve, and identifying it early is what makes the replacement a budgeted purchase rather than an urgent one.
       audit: |
         ### Audit via Task Manager
 
@@ -1236,14 +1256,19 @@ queries:
         - url: https://learn.microsoft.com/en-us/windows/whats-new/windows-11-requirements
           title: Windows 11 System Requirements
       desc: |
-        This check confirms that the processor runs at a clock speed of 1 GHz or faster, the minimum frequency Windows 11 requires.
+        This check verifies that the processor's base clock speed is at least 1 GHz.
+
+        Windows 11 sets 1 GHz as its minimum frequency. The value compared here is the maximum clock speed the processor reports, which must be `1000` MHz or higher, shown in Task Manager as Base speed and returned by PowerShell as `MaxClockSpeed` from the `Win32_Processor` class. Turbo and boost frequencies do not enter into it; the reported base figure is what setup evaluates.
 
         **Why this matters**
 
-        - **Upgrade eligibility:** Windows 11 setup blocks installation on processors that do not meet its minimum clock-speed requirement.
-        - **Responsive performance:** A processor below the threshold struggles to keep the operating system and applications responsive.
-        - **Security feature overhead:** Background protection features add processing load that slow processors cannot absorb without noticeable lag.
-        - **Planning:** Identifying slow processors early lets teams schedule hardware replacement before support deadlines.
+        Setup enforces this directly, so a device below the threshold cannot be upgraded in place. In practice a processor reporting under 1 GHz is an older low-power part, and the failure is rarely isolated: the same devices usually miss the core count, the memory, or the firmware requirement as well.
+
+        Where a device does otherwise qualify, the frequency still governs how it behaves once Windows 11 is on it. Single-threaded responsiveness, which is what makes an interface feel immediate, tracks clock speed rather than core count, so a slow part produces a machine that is technically supported and visibly sluggish through ordinary work. Background servicing makes that worse, because update installation, on-access scanning, and search indexing all take proportionally longer and end up overlapping with the user's own work instead of finishing between sessions.
+
+        Clock speed is fixed in the part. Firmware power settings can lower it but cannot raise it above what the processor is rated for, so no configuration change resolves a failing result.
+
+        Use the result to plan. Devices that fail this check are replacement candidates, and identifying them well before Windows 10 support ends is what keeps the refresh on a schedule and inside a budget rather than turning it into an emergency.
       audit: |
         ### Audit via Task Manager
 
@@ -1281,14 +1306,17 @@ queries:
         - url: https://learn.microsoft.com/en-us/windows/whats-new/windows-11-requirements
           title: Windows 11 System Requirements
       desc: |
-        This check confirms that the device has a Trusted Platform Module present and reporting specification version 2.0. Windows 11 requires TPM 2.0; earlier versions such as TPM 1.2 do not meet the requirement.
+        This check verifies that the device has a Trusted Platform Module present and reporting specification version 2.0.
+
+        A TPM is a small isolated processor with its own storage, used to generate keys, hold them where software cannot read them, and record measurements of the boot sequence. Windows 11 requires version 2.0. A TPM 1.2 module does not satisfy the requirement, and the older specification lacks the algorithm agility and the key hierarchy that 2.0 introduced. The check reads presence and specification version, which the TPM management console displays and which PowerShell returns from `Get-Tpm` and the `Win32_Tpm` class.
 
         **Why this matters**
 
-        - **Upgrade eligibility:** Windows 11 setup blocks installation on devices without a TPM 2.0 module.
-        - **Hardware-backed security:** TPM 2.0 provides the secure key storage that BitLocker, Windows Hello, and device attestation rely on.
-        - **Credential protection:** A TPM keeps cryptographic keys isolated from the operating system, making credential theft significantly harder.
-        - **Planning:** Identifying devices without TPM 2.0 early lets teams enable a firmware TPM where available or schedule hardware replacement.
+        Setup enforces the requirement, so a device without a TPM 2.0 module is not upgraded in place. The common case, though, is not a missing module. Most processors of the last several years include a firmware TPM that ships disabled, labeled by vendors as fTPM, PTT, Security Device, or Trusted Platform Module. Enabling it in firmware resolves the check at no hardware cost, which makes this the one Windows 11 requirement that a fleet frequently fails for a reason fixable in an afternoon.
+
+        What the module provides is worth having independently of the upgrade. BitLocker binds its volume key to the TPM and to the measured boot state, so the disk unlocks on that machine with unmodified boot components and nowhere else. Windows Hello holds its credentials there, and device attestation lets a management service verify boot integrity before granting access to resources.
+
+        One caution when enabling it. Firmware menus frequently place an option to clear the TPM next to the option to enable it, and clearing destroys the keys the module holds, including BitLocker protectors. Suspend BitLocker before changing firmware settings, do not clear the module, and confirm the recovery key is escrowed first.
       audit: |
         ### Audit via the TPM management console
 
@@ -1332,14 +1360,19 @@ queries:
         - url: https://learn.microsoft.com/en-us/windows/whats-new/windows-11-requirements
           title: Windows 11 System Requirements
       desc: |
-        This check confirms that the system boots with UEFI firmware rather than legacy BIOS, which Windows 11 requires.
+        This check verifies that the device boots through UEFI firmware rather than in legacy BIOS mode.
+
+        UEFI replaced the PC BIOS. It boots from a GPT-partitioned disk through a loader on an EFI system partition, rather than executing whatever code sits in the first sector of an MBR disk. Windows 11 requires it. The check reads the firmware boot type, which System Information shows as BIOS Mode and which the `firmware_type` environment variable reports in PowerShell.
 
         **Why this matters**
 
-        - **Upgrade eligibility:** Windows 11 setup blocks installation on devices booting in legacy BIOS mode.
-        - **Secure Boot dependency:** Secure Boot, itself a Windows 11 requirement, is a UEFI feature and is unavailable under legacy BIOS.
-        - **Boot integrity:** UEFI supports a verified boot chain that legacy BIOS cannot provide, reducing exposure to bootkits.
-        - **Planning:** Identifying devices booting in legacy mode early lets teams convert the disk or schedule replacement before support deadlines.
+        Setup blocks the upgrade on a device booting in legacy mode, and the dependency runs further than that. Secure Boot is a UEFI feature and does not exist under legacy BIOS, so a device in legacy mode fails that requirement as a direct consequence of failing this one. Fixing the firmware mode is the prerequisite for both.
+
+        Unlike the processor and memory requirements, this one is usually fixable on the existing hardware. Most devices that shipped with Windows 10 have UEFI-capable firmware and were installed in legacy or compatibility support mode, often to match an imaging process that predated UEFI. Converting the system disk from MBR to GPT with `mbr2gpt` and then switching the firmware to UEFI resolves it without reinstalling Windows.
+
+        The conversion is the one step in this policy that can leave a device unbootable. The disk layout and the firmware setting have to match: once the disk is GPT the machine will not start in legacy mode, so the firmware change has to follow immediately. Back the device up first, suspend BitLocker so the firmware change does not trigger a recovery prompt, and run the validation pass before the conversion.
+
+        Where the firmware genuinely offers no UEFI mode, the device is old enough that it will fail other requirements too, and replacement is the answer.
       audit: |
         ### Audit via System Information
 
@@ -1389,14 +1422,19 @@ queries:
         - url: https://learn.microsoft.com/en-us/windows/whats-new/windows-11-requirements
           title: Windows 11 System Requirements
       desc: |
-        This check confirms that Secure Boot is enabled. Windows 11 requires UEFI firmware that is Secure Boot capable, and Secure Boot allows the system to start only with trusted, signed boot software.
+        This check verifies that Secure Boot is enabled.
+
+        Secure Boot is the UEFI mechanism that checks a digital signature on each piece of boot code before running it, from the firmware through the boot loader and into the Windows kernel. Anything not signed by a key in the platform's database is refused. Windows 11 requires the device to be Secure Boot capable and expects it turned on. The check reads the current state, which System Information shows as Secure Boot State and `Confirm-SecureBootUEFI` returns in PowerShell.
 
         **Why this matters**
 
-        - **Upgrade eligibility:** Windows 11 setup requires Secure Boot capability and expects it to be enabled.
-        - **Bootkit defense:** Secure Boot blocks unsigned or tampered boot code from loading before the operating system starts.
-        - **Boot chain integrity:** Only firmware and boot loaders trusted by the platform can run, establishing a verified foundation for the system.
-        - **Planning:** Identifying devices with Secure Boot disabled early lets teams enable it or schedule replacement before support deadlines.
+        Setup treats this as a requirement, so a device with Secure Boot off is not upgraded in place. Along with the firmware mode, it is one of the requirements most often failed for a reason that has nothing to do with the hardware: the device is perfectly capable, Secure Boot was left off by an imaging process or turned off years ago to load an unsigned driver, and nothing since has turned it back on.
+
+        What it prevents is boot code running before Windows does. Code loaded at that point runs before the kernel, before the antimalware engine, and before anything else that could observe it, which is what makes it durable across a reinstall of the operating system. Signature verification is the step that closes that position off.
+
+        It is also the foundation the later measurements rest on. BitLocker's TPM protector and device attestation both evaluate the boot state, and a boot sequence that will accept unsigned components gives those measurements nothing dependable to describe.
+
+        Two prerequisites before turning it on. The disk must be GPT with the firmware in UEFI mode, and any unsigned boot-time software on the device, typically an old storage or virtualization driver, has to be removed or replaced with a signed version or the machine will not start. Suspend BitLocker before changing firmware settings so the change does not trigger a recovery prompt.
       audit: |
         ### Audit via System Information
 
