@@ -57,7 +57,7 @@ func init() {
 		"alicloud", "oci", "vsphere", "okta", "openstack", "gitlab", "cloudflare",
 		"github", "digitalocean", "unifi", "portainer", "snowflake",
 		"hetzner", "tailscale", "ms365", "databricks", "vercel",
-		"clickhousecloud", "hcp", "neon", "netlify",
+		"clickhousecloud", "hcp", "neon", "netlify", "stackit",
 	)
 }
 
@@ -105,6 +105,7 @@ var tfVariantPolicies = []tfVariantPolicy{
 	{"mondoo-databricks-security-", "mondoo-databricks-security.mql.yaml", ""},
 	{"mondoo-vercel-security-", "mondoo-vercel-security.mql.yaml", ""},
 	{"mondoo-netlify-security-", "mondoo-netlify-security.mql.yaml", ""},
+	{"mondoo-stackit-security-", "mondoo-stackit-security.mql.yaml", ""},
 }
 
 // checkOutcome distinguishes a check that ran and passed, ran and failed, or was
