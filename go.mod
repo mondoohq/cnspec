@@ -48,7 +48,7 @@ require (
 	github.com/tliron/glsp v0.2.2
 	github.com/zclconf/go-cty v1.19.0
 	go.mondoo.com/mondoo-go v0.0.0-20260808001139-ef2a665833b7
-	go.mondoo.com/mql/v13 v13.33.2
+	go.mondoo.com/mql/v13 v13.34.0
 	go.mondoo.com/ranger-rpc v0.8.1
 	gocloud.dev v0.46.0
 	golang.org/x/sync v0.22.0
@@ -161,7 +161,6 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/dvsekhvalnov/jose2go v1.8.0 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
-	github.com/endobit/oui v0.7.0 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
@@ -377,6 +376,7 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/release-utils v0.12.4 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.0 // indirect
+	software.sslmate.com/src/go-pkcs12 v0.7.0 // indirect
 )
 
 tool (
