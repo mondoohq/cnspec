@@ -68,19 +68,20 @@ queries:
     mql: |
       elasticsearch.cluster.security.enabled == true
     docs:
-      desc: |-
-        This check ensures that the Elasticsearch security features (X-Pack security) are enabled. When security is disabled, the cluster performs no authentication or authorization, so any client that can reach it has full access to every index and cluster operation.
+      desc: |
+        This check verifies that the Elasticsearch security features are enabled on every node in the cluster.
+
+        X-Pack security is the subsystem that gives Elasticsearch its users, roles, TLS settings, and audit trail. It is switched on with `xpack.security.enabled: true` in each node's `elasticsearch.yml`, and the cluster reports the resulting state through the X-Pack usage API. This check requires that state to be enabled.
 
         **Why this matters**
 
-        - **No access control when off:** With security disabled, there are no users, roles, or permissions; the network path is the only thing standing between an attacker and all of your data.
-        - **Foundation for other controls:** Authentication, authorization, TLS, and audit logging all depend on the security features being turned on first.
-        - **Defaults are not safe everywhere:** Some distributions and older versions ship with security off, leaving a fresh cluster fully open.
+        With security off, the cluster authenticates nothing and authorizes nothing. Every request that arrives on the REST port is executed with full privileges, so an attacker who can route a packet to it runs a search across all indices and reads every document the cluster holds, including the application logs that commonly carry session tokens, API keys, and personal data.
 
-        **Risk mitigation**
+        Reading is the mild case. The same unauthenticated caller can register a snapshot repository pointing at storage they control and then trigger a snapshot, which copies the entire cluster out in a single call. They can delete by query or drop indices outright, and because the security features are what enable the audit trail, nothing in the cluster records that any of it happened.
 
-        - **Authenticated access only:** Enabling security forces every request to present a credential tied to a known identity.
-        - **Role-based restrictions:** With security on, roles and privileges can limit what each authenticated identity may read or change.
+        Older distributions and the basic tier of some releases shipped with security off by default, so a cluster nobody has explicitly configured is usually in exactly this state rather than in a hardened one. The absence of a login prompt is not evidence that the network is trusted; it is evidence that the cluster would serve anyone who arrives.
+
+        Turning the features on is only the first step. Set the built-in user passwords afterwards with `elasticsearch-setup-passwords` on a new cluster or `elasticsearch-reset-password` on an existing one, or clients will be authenticating against accounts whose credentials nobody controls. Companion checks in this policy then cover anonymous access, transport encryption, and audit logging, each of which depends on this setting being on first.
       audit: |-
         ### Audit via cURL
 
@@ -139,19 +140,20 @@ queries:
     mql: |
       elasticsearch.cluster.security.anonymousAccessEnabled == false
     docs:
-      desc: |-
-        This check ensures that no anonymous role is configured, so unauthenticated requests are rejected rather than served as an anonymous user. When anonymous access is enabled, any request that arrives without credentials is treated as the anonymous role and carries whatever privileges that role was granted.
+      desc: |
+        This check verifies that Elasticsearch rejects requests arriving without credentials rather than serving them as an anonymous user.
+
+        Elasticsearch can be given an anonymous role through the `xpack.security.authc.anonymous` settings in `elasticsearch.yml`. Any request with no authorization header is then executed with whatever privileges that role carries. This check requires that no such fallback is in effect, so an unauthenticated request is answered with `401` instead of data. Setting `xpack.security.authc.anonymous.authz_exception: true` forces that rejection, and removing the anonymous `roles` setting removes the anonymous identity altogether.
 
         **Why this matters**
 
-        - **Unauthenticated data access:** An anonymous role with read privileges lets anyone on the network path query indices without ever presenting a credential.
-        - **Privilege inheritance:** The anonymous user gets exactly the permissions of its configured roles, which are easy to over-grant and hard to notice.
-        - **Weakens every other control:** Anonymous access bypasses the identity model that authorization, auditing, and rate limiting all rely on.
+        An anonymous role is granted like any other role, and the roles people reach for are broad. Built-in roles such as the monitoring and viewer roles both allow reading index contents, so a caller who has never presented a credential sends a search to the REST port and gets documents back. On a logging cluster that is often the fastest route to credentials for other systems, because applications log request headers, connection strings, and stack traces containing secrets.
 
-        **Risk mitigation**
+        If the role carries write privileges, the same caller indexes documents, so dashboards and alerting rules that read those indices report whatever the attacker chose to put there. Deletion is available on the same terms, and an attacker who wants the cluster quiet rather than plundered can take it out with one request.
 
-        - **Credential enforcement:** Disabling anonymous access forces every client to authenticate before any data is returned.
-        - **Attribution:** Rejecting unauthenticated requests ensures each served request maps to a known identity that can be logged and investigated.
+        Anonymous requests also break attribution. Audit records for them name the anonymous role and not a person or service, so an investigator can establish that data was read and cannot tell which client read it or whose access to revoke.
+
+        The legitimate use for an anonymous role is narrow, such as an unauthenticated health endpoint for a load balancer. Where that is the requirement, scope the load balancer to the cluster health endpoint through a proxy rather than granting an anonymous role inside the cluster, because the role applies to every request that reaches the node and not only to the one you had in mind.
       audit: |-
         ### Audit via cURL
 
@@ -205,19 +207,20 @@ queries:
       elasticsearch.cluster.security.httpTlsEnabled == true
       elasticsearch.cluster.security.transportTlsEnabled == true
     docs:
-      desc: |-
-        This check ensures that TLS is enabled on both the HTTP/REST layer, which protects client credentials and query data, and the transport layer, which protects node-to-node traffic and prevents rogue nodes from joining the cluster. Both layers must be encrypted for the cluster to be safe on an untrusted network.
+      desc: |
+        This check verifies that Elasticsearch encrypts both the HTTP layer that clients use and the transport layer that nodes use to reach each other.
+
+        Two settings control this and the check requires both. `xpack.security.http.ssl.enabled: true` in `elasticsearch.yml` puts the REST API behind TLS. `xpack.security.transport.ssl.enabled: true` does the same for the internal transport port and, together with `xpack.security.transport.ssl.verification_mode: certificate`, requires a joining node to present a certificate signed by the cluster's own certificate authority.
 
         **Why this matters**
 
-        - **Confidentiality of client traffic:** HTTP-layer TLS encrypts the credentials and query data that clients send to the REST API, keeping them off the wire in cleartext.
-        - **Cluster integrity:** Transport-layer TLS authenticates and encrypts node-to-node communication, so an attacker cannot read replicated data or introduce a rogue node into the cluster.
-        - **Defense in depth:** Encrypting only one layer leaves the other exposed; both are needed to protect the full data path.
+        Without HTTP TLS, every client request crosses the network in cleartext, and Elasticsearch clients authenticate with HTTP basic auth. An attacker with a position on the path, a compromised host on the same segment or a switch port they can mirror, reads the encoded username and password out of a single request header and then connects as that user whenever they choose. Query bodies and result sets are readable in the same capture, so the data is exposed even before the credential is reused.
 
-        **Risk mitigation**
+        Without transport TLS the exposure is worse, because the transport port carries replication traffic in the clear and, with no certificate verification, accepts any process that speaks the protocol and knows the cluster name. An attacker starts a node of their own, joins the cluster, and is handed shard copies through ordinary replication. At that point they hold the data without ever having authenticated to the REST API, and the cluster considers them a member in good standing.
 
-        - **No cleartext credentials:** With HTTP TLS on, authentication material is never sent in the clear to the REST API.
-        - **Rogue-node resistance:** Transport TLS with certificate verification blocks unauthorized nodes from joining and intercepting cluster data.
+        Encrypting one layer and leaving the other open protects nothing, since the unencrypted half still carries the same documents.
+
+        Generate the certificates with `elasticsearch-certutil`, which produces a certificate authority and node certificates in the keystore format these settings expect, then restart each node so both layers come up encrypted. Keep the verification mode at certificate or stronger, because TLS without verification encrypts the traffic while still admitting whoever presents any certificate at all.
       audit: |-
         ### Audit via cURL
 
@@ -282,19 +285,20 @@ queries:
     mql: |
       elasticsearch.cluster.security.auditLoggingEnabled == true
     docs:
-      desc: |-
-        This check ensures that security audit logging is enabled so the cluster records authentication successes and failures and access events for detection and investigation. Audit logging is off by default, so a cluster left at its defaults keeps no record of who accessed what.
+      desc: |
+        This check verifies that Elasticsearch records security audit events.
+
+        Audit logging is turned on with `xpack.security.audit.enabled: true` in `elasticsearch.yml` on each node. Once on, the cluster writes an entry for each authentication success, authentication failure, access grant, and access denial, and `xpack.security.audit.logfile.events.include` narrows or widens that set. The setting is off by default, so a cluster nobody has explicitly configured keeps no security record at all.
 
         **Why this matters**
 
-        - **Attributable access:** Audit records tie authentication and access events to source addresses and identities, which is essential for investigating misuse.
-        - **Detection of attacks:** Logged authentication failures reveal brute-force and credential-stuffing attempts that would otherwise go unnoticed.
-        - **Compliance evidence:** Audit frameworks require a record of access to systems that hold sensitive data.
+        Without the audit log there is no way to answer the question that matters after a credential leaks: what did the holder of that credential read. The cluster keeps slow-query and indexing logs, but neither names the authenticated user or the source address, so an investigation can establish that an API key existed and not what it touched. The practical result is that a scoped incident becomes an unscoped one, and every index the key could reach has to be treated as exposed and every downstream secret in those indices rotated.
 
-        **Risk mitigation**
+        The absence is felt before an incident as well. Credential stuffing and brute forcing against the REST API produce nothing but a stream of authentication failures, and those failures are exactly what the audit log records and nothing else does. Without it, an attacker works through a password list against the built-in superuser account for as long as they like and generates no signal anyone can alert on.
 
-        - **Faster incident response:** A record of authentication and access events narrows down the source and timeline of suspicious activity.
-        - **Deterrence and detection:** Auditing supports alerting on anomalous access patterns and off-hours activity.
+        Audit records also capture the case authentication alone cannot: a valid user reading indices outside their normal pattern, at an unusual hour, from an unfamiliar address. Nothing about those requests is malformed, so only the pattern gives them away, and only the log holds the pattern.
+
+        Audit logs are useful in proportion to how far they travel. Ship them to a collector that the cluster's own administrators cannot rewrite, because an attacker who reaches the host reaches the local log file on it just as easily as the data.
       audit: |-
         ### Audit via cURL
 

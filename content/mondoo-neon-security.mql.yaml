@@ -59,19 +59,20 @@ queries:
     mql: |
       neon.organizations.all(requireMfa == true)
     docs:
-      desc: |-
-        This check ensures that every Neon organization the API key can see requires members to use multi-factor authentication. When MFA is required at the organization level, a stolen or guessed password alone cannot access the control plane, because a second factor is always demanded.
+      desc: |
+        This check verifies that every Neon organization requires its members to sign in with a second factor.
+
+        The requirement is set in the Neon Console by opening Organization and then Settings, where multi-factor authentication is turned on for the organization as a whole rather than left to each member. The organization record returned by the Neon API carries the same value as `require_mfa`. This check requires the setting to be on for each organization the API key can see.
 
         **Why this matters**
 
-        - **Credential theft resistance:** Passwords are phished, reused, and leaked constantly; a mandatory second factor stops a valid password from being enough to sign in.
-        - **Organization-wide coverage:** Requiring MFA at the organization level closes the gap left when it is only encouraged, so no member can opt out.
-        - **Control-plane protection:** Organization members can create projects, rotate credentials, and reach databases, so their accounts are high-value targets that warrant strong authentication.
+        A Neon organization member holds the control plane, and for a managed database the control plane is a route to the data rather than a layer above it. A member creates and deletes projects, resets the password of any database role, and reads connection details. So an attacker who signs in as a member never has to break the database itself. They reset a role password from the console, take the connection string, and connect to production Postgres as that role.
 
-        **Risk mitigation**
+        Without a required second factor, the password is the whole of that defense, and passwords leave the user's control routinely. They are reused on sites that get breached, typed into phishing pages that copy the Neon sign-in screen, and scraped out of browsers by infostealer malware. Any one of those hands over a working sign-in, and none of them is visible to you until it is used.
 
-        - **Account-takeover containment:** Even after a password compromise, an attacker without the second factor cannot access the organization.
-        - **Consistent enforcement:** A single organization setting guarantees the control applies to current and future members alike.
+        Branch history makes the exposure larger than the current state of the database. Neon keeps branches and point-in-time history, so a member account also reaches earlier states of the data, including rows that were deleted precisely because they should no longer exist anywhere.
+
+        Set the requirement at the organization rather than asking members to enroll individually, because an organization-wide requirement covers people who join later and leaves nobody able to opt out. Confirm that existing members enroll after the change, since an account that has not yet added a factor is the one an attacker will go looking for.
       audit: |-
         ### Audit via the Neon Console
 
@@ -140,19 +141,20 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that every Neon project blocks public connections. When public connections are blocked, the database is reachable only through the configured private networking or allowed IP ranges rather than from anywhere on the internet.
+      desc: |
+        This check verifies that every Neon project refuses connections arriving from the public internet.
+
+        Neon exposes a project's Postgres endpoint to the internet unless told otherwise. The block is set in the Neon Console by opening the project, then Settings, then Network Security, the same page that holds the allowed IP ranges and the private networking configuration legitimate clients use instead. The Neon CLI sets it with `neon projects update <project_id> --block-public-connections`, and the `neon_project` Terraform resource takes `block_public_connections = "yes"`. This check requires the block to be in effect.
 
         **Why this matters**
 
-        - **Reduced attack surface:** A database open to the public internet is exposed to credential-stuffing, brute-force, and exploitation attempts from any source; blocking public connections removes that exposure.
-        - **Network-layer control:** Restricting access to private networking or an allowlist confines connectivity to known application and operator networks.
-        - **Defense in depth:** Even with strong authentication, keeping the database off the public internet removes an entire class of remote attacks.
+        An open Postgres endpoint is found by scanning, not by leaking. Internet-wide scanners sweep the Postgres port continuously and record every host that completes a handshake, so a project reachable from anywhere lands on a target list within hours of being created, whether or not its hostname was ever published.
 
-        **Risk mitigation**
+        From there an attacker needs only a credential, and credentials escape constantly. A connection string committed to a repository, pasted into an issue, or read out of an application's environment is enough on its own when the endpoint accepts connections from any source. With public connections blocked, that same leaked string is inert from an address the project does not know, which turns a credential leak from an immediate compromise into an incident with room to rotate.
 
-        - **Smaller exposure window:** An attacker who obtains a connection string still cannot reach the database from an unapproved network.
-        - **Contained blast radius:** Private-only connectivity limits lateral movement toward the data even if other controls fail.
+        The open endpoint also hands the attacker unlimited attempts. Password guessing against a database role runs at whatever rate they choose, from as many addresses as they care to rent, with no application in front of it to rate-limit the attempts or record them.
+
+        Blocking public connections needs the private path to exist first, so configure the allowed IP ranges or private networking for the application and for operators before switching it on. Otherwise the change takes the database away from its legitimate clients along with everyone else, and the pressure to reopen it will be immediate.
       audit: |-
         ### Audit via the Neon Console
 
@@ -260,19 +262,20 @@ queries:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
     docs:
-      desc: |-
-        This check ensures that no Neon project has password storage enabled, so Neon does not retain role passwords in a form its API can return. Retaining role passwords widens the blast radius of a control-plane or API-key compromise, because an attacker who reaches the API could read them. Note that some workflows rely on stored passwords for connection-string retrieval, so treat this as a hardening control weighed against that need.
+      desc: |
+        This check verifies that a Neon project does not retain its database role passwords in a form the control plane can hand back.
+
+        When password storage is on, Neon keeps role passwords so that the console and API can return a complete connection string on demand. With it off, a password is shown once when the role is created and never again. The API accepts `store_passwords` only in the request that creates the project, and the `neon_project` Terraform resource takes `store_password = "no"` on the same terms, so this is a decision made at creation rather than a setting to be flipped later. This check requires storage to be off.
 
         **Why this matters**
 
-        - **Reduced secret exposure:** A password that is never stored cannot be read back from the control plane, so an API-key or account compromise does not hand over usable database credentials.
-        - **Smaller blast radius:** Not retaining role passwords limits how far a single control-plane compromise can reach into the databases themselves.
-        - **Least retention:** Keeping only what is necessary reduces the set of secrets an attacker can ever obtain from the platform.
+        Retained passwords turn one leaked API key into database access. A Neon API key that ends up in a CI log, a committed file, or a compromised laptop is by itself control-plane reach and nothing more. Where passwords are stored, the holder of that key queries the projects endpoint, reads back the connection strings for every role in every project the key covers, and connects straight to Postgres with credentials that were never theirs. Nothing is reset, so nothing breaks, and the legitimate application keeps running alongside them with no sign that anyone else is connected.
 
-        **Risk mitigation**
+        With storage off, the same key still permits damage, but the attacker has to reset a role password before they can use the database, and a reset breaks the running application. The noise is the point: it turns a silent read of production data into an outage somebody investigates within minutes.
 
-        - **Credential-theft containment:** With no stored passwords, a leaked API key cannot be turned directly into database access.
-        - **Deliberate trade-off:** Where a workflow needs connection-string retrieval, the exception is explicit and can be scoped rather than applied by default everywhere.
+        The control has a genuine cost. Deploy workflows that fetch a connection string from the API, and console users who expect to copy credentials whenever they need them, both stop working. Route those to a secret manager holding the password captured at creation before turning storage off.
+
+        Because the choice is fixed when the project is created, bringing an existing project into line means creating a replacement with storage off, migrating its databases and roles, and then deleting the original.
       audit: |-
         ### Audit via the Neon Console
 

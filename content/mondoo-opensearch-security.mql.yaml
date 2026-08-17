@@ -61,19 +61,20 @@ queries:
     mql: |
       opensearch.cluster.security.anonymousAccessEnabled == false
     docs:
-      desc: |-
-        This check ensures that anonymous authentication is disabled in the security plugin, so unauthenticated requests are rejected rather than served as the anonymous user. When anonymous access is enabled, any client that can reach the network endpoint is mapped to the anonymous backend role and can act without presenting credentials.
+      desc: |
+        This check verifies that the OpenSearch Security plugin rejects unauthenticated requests instead of mapping them to the anonymous user.
+
+        Anonymous authentication is controlled by `anonymous_auth_enabled` under `config.dynamic.http` in the security plugin's `config.yml`, and this check requires it to be off. The setting lives in the plugin's dynamic configuration rather than in `opensearch.yml`, so an edit takes effect only once it is pushed into the cluster's security index with `securityadmin.sh`. Until that push happens the running cluster keeps its old value no matter what the file on disk says.
 
         **Why this matters**
 
-        - **Data exposure:** Indices often hold logs, application data, and other sensitive records; anonymous read access leaks that data to anyone on the network.
-        - **Data tampering:** Without authentication, an attacker can index, modify, or delete documents that applications depend on.
-        - **Attribution:** Requests served as the anonymous user cannot be tied to a specific identity, undermining detection and investigation.
+        When anonymous authentication is on, a request carrying no credentials is not rejected. It is given the plugin's anonymous backend role and evaluated against whatever roles map to it, so the caller acts inside the cluster's own permission model without ever having proved an identity. Whether that means read access, write access, or both depends entirely on a roles mapping that is easy to widen and hard to notice, because nothing about the mapping announces that it applies to unauthenticated traffic.
 
-        **Risk mitigation**
+        Read access alone is enough for real damage on a search cluster. Indices in these deployments typically hold application and access logs, which carry session identifiers, authorization headers, and internal hostnames. An attacker who can reach the REST port issues a search, pages through the hits, and leaves with the material for the next step of an intrusion.
 
-        - **Authenticated access only:** Rejecting anonymous requests ensures every operation is tied to a known identity.
-        - **Reduced exposure:** Combined with tight network rules, this prevents unauthenticated clients from reaching cluster data.
+        Where the mapping grants writes, the same caller modifies or deletes documents that dashboards and alerting rules depend on, so the detection built on those indices reports whatever the attacker chose to leave behind.
+
+        Requests served anonymously also cannot be attributed. The audit trail records the anonymous role rather than a client, so after the fact there is no credential to revoke and no session to trace back to a source. Turning anonymous authentication off is what makes the plugin's other controls meaningful, since a mapped anonymous role bypasses the authentication domains entirely.
       audit: |-
         ### Audit via cURL
 
@@ -129,19 +130,18 @@ queries:
     mql: |
       opensearch.cluster.security.enabledAuthRealms != empty
     docs:
-      desc: |-
-        This check ensures that at least one authentication realm is enabled in the security plugin, so clients must present credentials that are actually verified against a backend rather than the cluster having no configured authenticator. An authentication domain (authc) ties an HTTP authenticator to a backend that validates the supplied credentials.
+      desc: |
+        This check verifies that the OpenSearch Security plugin has at least one authentication domain enabled, so that credentials a client presents are actually verified against a backend.
+
+        Authentication domains are defined under `config.dynamic.authc` in the security plugin's `config.yml`. Each domain pairs an HTTP authenticator, such as basic authentication with `challenge: true`, with an authentication backend that validates the credential, such as the internal user database, LDAP, or an identity provider reached through SAML or OpenID Connect. A domain participates only when `http_enabled: true` is set on it. This check requires at least one enabled domain, and an edit to the file reaches the cluster only after `securityadmin.sh` pushes the configuration into the security index.
 
         **Why this matters**
 
-        - **Verified identity:** An enabled realm forces clients to prove who they are against an internal user database, LDAP, or an identity provider.
-        - **No open cluster:** Without an enabled realm, credentials are never checked and the cluster effectively accepts any caller.
-        - **Foundation for authorization:** Roles and permissions can only be enforced once a client's identity has been established.
+        A security plugin with no enabled domain never gets to the step where a password is compared against anything. Requests carrying credentials are not checked against a backend, and requests carrying none have nothing to be measured against, so the cluster stops distinguishing between clients. An attacker on the network path sends a search request to the REST port and receives documents, having supplied either nothing at all or a credential that was never validated.
 
-        **Risk mitigation**
+        Everything layered above authentication stops working with it. Role mappings key off a verified username or backend role, so with no verified identity the authorization layer has no subject to evaluate, and the per-index and per-document restrictions that operators believe are shielding sensitive fields do not apply to the request. Audit records have no user to name, which leaves an operator able to see that data moved and unable to say who moved it.
 
-        - **Credential enforcement:** Every request is authenticated against a backend before it is served.
-        - **Attribution:** Verified identities can be logged and tied to actions, supporting detection and investigation.
+        Enabling a domain is the point at which the rest of the plugin becomes enforceable, so pair it with the companion checks in this policy that turn off anonymous authentication and turn on the audit trail. An enabled domain sitting alongside anonymous authentication still lets a caller skip the domain entirely, which is the configuration that looks secure in a review and is not.
       audit: |-
         ### Audit via cURL
 
@@ -203,19 +203,20 @@ queries:
     mql: |
       opensearch.cluster.security.auditLoggingEnabled == true
     docs:
-      desc: |-
-        This check ensures that the security plugin's audit logging is enabled, recording authentication and access events for detection and investigation. Audit logs capture who connected, what they requested, and whether the request was authorized, producing the trail needed to reconstruct activity after an incident.
+      desc: |
+        This check verifies that the OpenSearch Security plugin records audit events.
+
+        Two pieces are involved. `plugins.security.audit.type` in `opensearch.yml` names the sink that receives events, `internal_opensearch` for example writing them to an index inside the cluster, and `config.enabled` in `audit.yml` turns the recording on. This check requires auditing to be enabled, and as with the plugin's other dynamic settings, an edited `audit.yml` reaches the running cluster only when `securityadmin.sh` pushes it.
 
         **Why this matters**
 
-        - **Attributable access:** Audit records tie requests to identities and source addresses, which is essential for investigating misuse.
-        - **Detection:** Logged authentication failures and privileged actions support alerting on brute-force and anomalous activity.
-        - **Compliance evidence:** Audit frameworks require logging of access to systems that hold sensitive data.
+        Audit records are the only source in the cluster that names who made a request. Slow-query and indexing logs show that work happened; they do not carry the authenticated user, the source address, or the privilege decision. So when a credential leaks, an operator with no audit trail cannot bound the incident. Every index that credential could reach has to be assumed read, which turns a contained problem into a full disclosure exercise across whatever those indices held.
 
-        **Risk mitigation**
+        The trail is also what makes an attack visible while it is still running. Password guessing against the REST API shows up as a run of failed authentications and nothing else, and privilege probing shows up as a run of denied requests. Both are recorded only here, so with auditing off an attacker works through a credential list at their own pace and produces no signal for anyone to alert on.
 
-        - **Faster incident response:** A record of requests narrows down the source and timeline of suspicious activity.
-        - **Deterrence and accountability:** Logged access discourages misuse and supports after-the-fact review.
+        The insider case needs it just as much. A valid user reading indices they never normally touch is indistinguishable from ordinary traffic unless requests are attributed and retained long enough to compare against.
+
+        Choose the sink with retention in mind. Writing events to an index in the same cluster is the quickest thing to configure, but an attacker who gains write privileges there can edit the record of their own activity, so an external destination is the stronger choice wherever the organization already collects logs centrally.
       audit: |-
         ### Audit via cURL
 
