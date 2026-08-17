@@ -65,14 +65,19 @@ queries:
     mql: windows.bitlocker.volumes.all( protectionStatus["text"] == "Protected" )
     docs:
       desc: |
-        This check ensures that every disk volume is protected by BitLocker drive encryption. BitLocker encodes data so it is unreadable to anyone who does not hold the decryption key, which keeps information confidential if a workstation is lost or stolen.
+        This check verifies that every BitLocker volume on the workstation reports protection as on.
+
+        BitLocker encrypts a volume at the block level, holding the volume key sealed to the device rather than to a password the user types. On a machine with a TPM, the key is released only when the measured boot state matches, so the disk unlocks on that machine with unmodified boot components and nowhere else. The check reads the protection status of each volume and requires all of them to be protected, not the operating system drive alone.
 
         **Why this matters**
 
-        - **Data theft protection:** An encrypted drive cannot be read by attaching it to another system or booting an alternate operating system.
-        - **Loss and theft resilience:** Laptops are frequently lost or stolen; encryption renders the data on them useless to whoever ends up with the device.
-        - **Tamper resistance:** Pairing BitLocker with a TPM detects offline modification of boot components and blocks unauthorized changes.
-        - **Compliance:** Many regulatory frameworks require encryption of data at rest on end-user devices.
+        The threat here is possession of the hardware. A workstation that is stolen, lost, sent out for repair, or disposed of without the drive being wiped ends up in someone's hands with unlimited time. Windows account passwords have no bearing on it: the attacker removes the drive, attaches it to another machine, and reads the filesystem directly, or boots the device from a USB installer and gets the same result without opening the case.
+
+        What that yields on a work device is not just files. It is saved browser credentials and session cookies, cached domain credentials, VPN and certificate material, mailbox data cached by the mail client, and any documents kept locally. A single unencrypted laptop is therefore a route into the environment as that employee, not merely a lost asset.
+
+        Requiring every volume matters because the data does not stay on one. A second fixed drive used for projects or as a data disk is encrypted separately, and an operating system drive protected while the data drive is not leaves exactly the material an attacker wants in the clear.
+
+        Two conditions before enabling it. Escrow the recovery key to Entra ID, Active Directory, or a Microsoft account first, because without it a TPM fault or a firmware update makes the data unrecoverable. And note that BitLocker is unavailable on Home editions, so a fleet containing them needs an edition change rather than a configuration one.
       audit: |
         ### Audit via Settings
 
@@ -198,14 +203,19 @@ queries:
       machine.secureboot.enabled == true
     docs:
       desc: |
-        This check ensures that Secure Boot is active. Secure Boot is a boot-integrity feature of the Unified Extensible Firmware Interface (UEFI) standard that allows the system to start only with firmware and boot loaders signed by trusted keys.
+        This check verifies that Secure Boot is active on the workstation.
+
+        Secure Boot is the UEFI mechanism that checks a signature on each component in the boot path before running it, refusing anything not signed by a key in the platform's database. The check reads the current state, which System Information reports as Secure Boot State and `Confirm-SecureBootUEFI` returns from PowerShell. Enabling it requires firmware access; it cannot be turned on from inside Windows.
 
         **Why this matters**
 
-        - **Bootkit defense:** Secure Boot blocks unsigned or tampered boot code, preventing malware from loading before the operating system starts.
-        - **Boot chain integrity:** Only software trusted by the firmware can run during startup, establishing a verified foundation for the rest of the system.
-        - **Persistence resistance:** Firmware-level malware that survives operating system reinstalls is far harder to install when Secure Boot is enforced.
-        - **Compliance:** Secure Boot is a baseline configuration requirement in common Windows hardening benchmarks.
+        Code that runs before Windows starts sits above everything Windows can do about it. A bootkit installed in the boot path loads before the kernel, before Microsoft Defender, and before any endpoint agent, which puts it in a position to patch the kernel as it loads, hide its own files and processes from every tool that asks the kernel for them, and survive a reinstall of Windows because the reinstall never touches where it lives. Signature verification is what makes that placement impossible.
+
+        For a workstation, the way in is usually the machine itself. Devices are left unattended in hotels, in checked luggage, and at desks, and with Secure Boot off a few minutes with a USB drive is enough to write a modified boot loader. The device then starts and behaves exactly as it did before.
+
+        Secure Boot is also what gives BitLocker's TPM protector its meaning. The TPM releases the volume key based on measurements of the boot sequence, and a sequence willing to run unsigned components gives those measurements nothing dependable to attest to.
+
+        Check the firmware mode before changing anything. A device installed in legacy BIOS mode on an MBR disk cannot boot with Secure Boot on, and needs the disk converted to GPT and the firmware switched to UEFI first. Suspend BitLocker before the firmware change so it does not trigger a recovery prompt at the next start.
       audit: |
         ### Audit via System Information
 
@@ -273,14 +283,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that the workstation is configured to download and install Windows updates automatically on a daily schedule. Automatic updates close the gap between the release of a security fix and its application to the device.
+        This check verifies that the workstation downloads and installs Windows updates automatically, every day, without waiting for someone to click.
+
+        The setting lives in Group Policy under Computer Configuration, Administrative Templates, Windows Components, Windows Update, as Configure Automatic Updates. Choosing `4`, auto download and schedule the install, and setting the scheduled install day to `0`, every day, writes `AUOptions` and `ScheduledInstallDay` into the Windows Update policy key, which is what the check reads. Options `2` and `3` leave installation waiting on the user and do not satisfy this.
 
         **Why this matters**
 
-        - **Vulnerability remediation:** Security patches close flaws that attackers actively exploit; applying them promptly removes those entry points.
-        - **Reduced exposure window:** Automatic installation shrinks the time a device runs with a known, unpatched vulnerability.
-        - **Consistent posture:** Removing the dependency on users to apply updates keeps the whole fleet at a known patch level.
-        - **Stability:** Updates also resolve defects that cause crashes and data loss, improving reliability alongside security.
+        The interval that matters is the one between a patch being published and it being installed. Microsoft's monthly release is public, and so is the vulnerability detail accompanying it, so working exploits for the more attractive bugs appear within days. Every device still unpatched during that period is exploitable by anyone who read the same bulletin.
+
+        Leaving the decision with the user reliably lengthens that interval. The prompt to restart arrives during work, gets deferred, gets deferred again, and on a laptop that is suspended rather than shut down it can be deferred indefinitely. The device shows as managed and compliant in every inventory, because the policy is present. What is absent is the restart that makes the patch effective.
+
+        The failure is also uneven across the fleet, which is what makes it hard to see. Most devices update, a minority do not, and the ones that do not are not identifiable from a policy report. An attacker needs one of them.
+
+        Automatic installation is not a substitute for reporting. Pair the policy with update compliance reporting, so that devices failing to install repeatedly, usually for lack of disk space or because they are never restarted, become visible rather than staying silently behind.
       audit: |
         ### Audit via Settings
 
@@ -386,14 +401,19 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that an antivirus product is installed, actively running, and using threat signatures updated within the last 25 hours. Current signatures and active scanning are what allow the product to recognize and block recent malware.
+        This check verifies that an antivirus product is installed, actively protecting the device, and running on signatures no more than 25 hours old.
+
+        Windows keeps a central register of security products. The check reads it for a product of type antivirus whose state is on and whose signature state is up to date, with a signature timestamp inside the last 25 hours. The window sits just past a day so that a device updating once daily is not flagged for ordinary variation in when the update lands. Microsoft Defender satisfies this on its own, and a third-party product registers the same way.
 
         **Why this matters**
 
-        - **Real-time protection:** Active antivirus scans files as they are accessed, downloaded, or executed, blocking threats before they can run.
-        - **Malware defense:** Antivirus products detect viruses, trojans, worms, spyware, and ransomware that would otherwise compromise data or disable the system.
-        - **Fresh detection:** Up-to-date signatures are required to recognize newly released malware variants; stale signatures leave the device blind to current threats.
-        - **Baseline control:** Endpoint malware protection is a fundamental security control expected by every major hardening benchmark.
+        Three things have to be true at once, and a device can fail on any one of them while appearing fine from the outside. A product that is installed but not scanning inspects nothing. A product scanning with definitions from three weeks ago inspects everything and recognizes only what was known three weeks ago.
+
+        The stale-signature case is the common one, and it is the reason for the time bound rather than a plain installed-or-not test. Commodity malware is repacked continuously, and detection for a given campaign frequently ships within hours of its first appearance. A device whose definitions stopped updating, because it has been off the network, because a proxy is blocking the update endpoint, or because the update service failed without saying so, executes the current campaign's payload without objection while its console still reports protection as on.
+
+        Real-time protection being off is the more deliberate failure. It is the setting an attacker turns off first after reaching a device, and it is also what a user disables to make a blocked download run. Either way the product stays installed and keeps reporting itself as present.
+
+        Monitor all three properties rather than presence alone, and turn on Tamper Protection so the settings cannot be changed from the device by a script or by whatever has just landed on it.
       audit: |
         ### Audit via Windows Security
 

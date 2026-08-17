@@ -6823,13 +6823,17 @@ queries:
         - url: https://man.freebsd.org/cgi/man.cgi?query=ntpd&sektion=8
           title: FreeBSD ntpd(8)
       desc: |
-        This check verifies that a time synchronization daemon is enabled and running. FreeBSD ships `ntpd` in the base system, but it is not enabled by default; OpenNTPD and chrony are available as alternatives from packages.
+        This check verifies that a time synchronization daemon is enabled and running. FreeBSD ships `ntpd` in the base system but leaves it disabled, and OpenNTPD and chrony are available from packages as alternatives. Any of the three satisfies the check, and each is turned on with its own `_enable` variable in `/etc/rc.conf`.
 
         **Why this matters**
 
-        - **Log and forensic correlation:** Accurate clocks let events from multiple hosts be lined up on a single timeline. Skewed clocks make it impossible to reconstruct the true order of events during an incident investigation.
-        - **Kerberos and certificate validity:** Kerberos authentication rejects tickets when clocks drift beyond a few minutes, and TLS certificate `notBefore`/`notAfter` checks depend on a correct system time. A drifting clock breaks authentication and can cause valid certificates to be rejected or expired ones to be accepted.
-        - **Audit-trail integrity:** Time stamps on audit and system logs are only trustworthy when the clock is synchronized to an authoritative source, which is a prerequisite for many compliance regimes.
+        Every log line and audit record on the host is stamped with the local clock, and a host whose clock has drifted cannot be placed on the same timeline as the firewall, the authentication server, or the other machines in an investigation. The events are all present and their order is wrong, which is worse than missing data because it leads to the wrong conclusion about what happened first.
+
+        Authentication depends on the clock directly. Kerberos rejects tickets outside a tolerance of a few minutes, so a drifting host loses domain authentication. TLS is the more dangerous case, because certificate validity is evaluated against local time through the `notBefore` and `notAfter` fields: a clock set behind real time accepts certificates that have expired or been revoked and replaced, and one set ahead rejects certificates that are perfectly valid.
+
+        An attacker with root can move the clock deliberately for the same reason, to shift the timestamps on the records of what they did, or to push a session or token outside the window in which it would have been questioned.
+
+        Point the daemon at time sources the organization controls or explicitly trusts, and configure more than one so that a single unreachable server does not leave the clock unattended.
       audit: |
         To verify that a time synchronization daemon is active, run the following commands:
 
@@ -6919,19 +6923,17 @@ queries:
         - url: https://man.freebsd.org/cgi/man.cgi?query=pkg.conf&sektion=5
           title: FreeBSD pkg.conf(5)
       desc: |
-        This check verifies that the base FreeBSD pkg repository enforces fingerprint-based signature verification, so that tampered or man-in-the-middle-modified packages are rejected at install time. The default `/etc/pkg/FreeBSD.conf` sets `signature_type: "fingerprints"`; downgrading it to `"none"` disables verification entirely.
+        This check verifies that every configured pkg repository requires a signature before anything is installed from it.
+
+        The base repository is configured in `/etc/pkg/FreeBSD.conf`, which ships with `signature_type: "fingerprints"` and validates packages against the trusted keys in `/usr/share/keys/pkg`. Downgrading that to `signature_type: "none"`, or removing the file, disables verification and fails the check. The check also reads the custom repository definitions in `/usr/local/etc/pkg/repos/*.conf`, and any of those defining a repository with a `url` must declare an enforcing `signature_type` of its own. Both `fingerprints` and `pubkey` are accepted, the latter validating against a configured public key. An omitted `signature_type` means no verification, so a repository declaring none fails exactly as one setting `"none"` does, while a file that only disables a repository and sets no `url` need not declare one. `pkg -vv` reports the effective setting for every repository.
 
         **Why this matters**
 
-        - **Supply-chain integrity:** Packages are downloaded from a network mirror. Without signature verification, an attacker who controls a mirror or sits on the network path can substitute a malicious package that runs with root privileges during installation.
-        - **Tamper detection:** Fingerprint verification checks each package against trusted signing keys, so any modification to the package contents in transit or at rest on the mirror causes the install to fail rather than silently proceed.
-        - **Trusted provenance:** Enforcing signatures guarantees that installed software originates from the official FreeBSD signing infrastructure rather than an unverified source.
+        Package installation runs as root, and post-install scripts execute before anything on the host inspects what arrived. Signature verification is the only step that establishes the package came from the FreeBSD signing infrastructure rather than from whoever answered the request.
 
-        **Scope**
+        Without it, an attacker who controls a mirror or sits on the network path between the host and the repository substitutes a package with the same name and a higher version. The next `pkg upgrade` installs it and its script runs as root. No exploit is involved, and the operation reports success.
 
-        This check inspects the base repository configuration in `/etc/pkg/FreeBSD.conf` **and** any custom repository definitions under `/usr/local/etc/pkg/repos/*.conf`. It fails if `/etc/pkg/FreeBSD.conf` is missing or no longer enforces `signature_type: "fingerprints"` for the official repository. For custom repositories, every `.conf` file that defines a repository with a `url` must positively declare an enforcing `signature_type`.
-
-        FreeBSD's `pkg` supports two verification mechanisms that both enforce signatures. The `fingerprints` type is the official repository's default and validates packages against the trusted keys in `/usr/share/keys/pkg`, while `pubkey` validates against a configured public key. A custom repository using either type is accepted. Because an omitted `signature_type` defaults to no verification, a repository that declares no type at all fails this check just as one setting `signature_type: "none"` does. Configuration files that only disable a repository and set no `url` need not declare a signature type. The audit step shows how to confirm the effective setting across all configured repositories with `pkg -vv`.
+        Verification also catches the ordinary case of a corrupted or partially replaced file on a mirror, which fails the check in the same way a deliberately modified package does.
       audit: |
         To verify that signature verification is enabled for the base repository, inspect its configuration:
 

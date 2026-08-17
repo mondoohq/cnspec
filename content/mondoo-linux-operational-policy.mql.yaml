@@ -39,16 +39,19 @@ queries:
       mount.list.where(fstype != "tmpfs" && fstype != "devtmpfs" && fstype != "squashfs" && fstype != "iso9660" && device != "udev" && device != /^\/dev\/loop/).where(size > 0).all(used * 100 / size < 80)
     docs:
       desc: |
-        This check verifies that every mounted persistent filesystem is using less than 80 percent of its capacity. Pseudo-filesystems such as `tmpfs`, `devtmpfs`, and loopback mounts are excluded.
+        This check verifies that every persistent filesystem on the host is below 80 percent used.
+
+        The check reads the mount table, computes used space as a proportion of size for each entry, and requires the result to stay under 80 percent. Pseudo-filesystems and read-only images are excluded, so `tmpfs`, `devtmpfs`, `squashfs`, `iso9660`, `udev`, and loopback devices do not count against the host. The threshold is a warning level rather than a failure point: a filesystem at 80 percent is working normally and is flagged because the remaining margin has grown thin.
 
         **Why this matters**
 
-        A filesystem that fills up causes write failures that cascade into application crashes, dropped data, and emergency outages. Catching high usage early gives operations teams time to act before a disk reaches capacity.
+        A full filesystem does not degrade gracefully. Writes return an error, and most software handles that error badly. A database refuses transactions or shuts down to protect its files, a log writer drops records without saying so, a package manager aborts partway through an upgrade leaving half-configured packages, and a service that writes its state file at shutdown fails to and comes back with an inconsistent one. The failures arrive at once and are not obviously related to each other, which is what makes the incident take longer to diagnose than it should.
 
-        - **Prevents data loss:** Free space ensures new data and logs can be written without failure.
-        - **Maintains performance:** A filesystem that is not near capacity avoids the slowdowns caused by fragmentation and constrained allocation.
-        - **Supports capacity planning:** Tracking usage trends surfaces growth before it becomes an outage.
-        - **Keeps services available:** Headroom on system and log volumes keeps critical daemons running.
+        The root filesystem filling is the worst version. With no space on `/`, the mechanisms used to recover need space themselves: shells cannot write history, the journal cannot record what happened, and package operations to clean up cannot run. On some configurations even logging in fails.
+
+        Twenty percent of headroom is what turns that into a ticket instead. The gap between crossing the threshold and running out is the time available to find what grew, and where growth is usually logs or an accumulating cache, that is a routine cleanup rather than an outage.
+
+        Treat a failing filesystem as a capacity question and not only as a cleanup. Deleting files buys time, and if usage returns to the threshold within a few weeks, the volume is undersized or something is retaining data it should be rotating.
       audit: |
         Run this command to inspect filesystem usage:
 
@@ -161,16 +164,19 @@ queries:
       command("LC_ALL=C free | awk '/^Mem:/ {print $3/$2 * 100.0}'").stdout.trim < 80.0
     docs:
       desc: |
-        This check verifies that the system is using less than 80 percent of its total physical memory.
+        This check verifies that the host is using less than 80 percent of its physical memory.
+
+        The check reads the totals the kernel reports and compares used memory against the total as a percentage. Memory the kernel holds as page cache and reclaimable buffers is not counted as used, so the figure reflects what processes have actually committed rather than everything that is occupied. A host at 80 percent is not failing; it is running with a margin thin enough that the next allocation spike has nowhere to come from.
 
         **Why this matters**
 
-        When a host exhausts physical memory it falls back to slower swap or triggers the out-of-memory killer, both of which degrade or interrupt service. Watching memory headroom surfaces pressure before it causes an outage.
+        Unlike disk space, memory pressure does not announce itself. Long before anything fails, the kernel starts reclaiming. Page cache is dropped, so file reads that were served from memory go back to the disk, and anonymous pages are pushed out to swap, where every subsequent access costs a disk round trip. Throughput falls and latency turns erratic while every service still reports itself as healthy, which is why the symptom usually arrives as unexplained slowness rather than as a memory alert.
 
-        - **Maintains performance:** Free memory keeps the system from thrashing on slow swap-backed virtual memory.
-        - **Avoids crashes:** Headroom prevents the kernel out-of-memory killer from terminating critical processes.
-        - **Surfaces memory leaks:** Rising utilization over time reveals processes that fail to release memory.
-        - **Informs resource allocation:** Knowing which workloads consume memory guides right-sizing decisions.
+        When the margin is gone entirely, the kernel's out-of-memory killer picks a process and terminates it. Its choice is driven by memory footprint, so it usually selects the largest process on the host, which on a single-purpose machine is the service the machine exists to run. The process disappears without a graceful shutdown, and unless the journal is being read the only record is a kernel message nothing was watching for.
+
+        Sustained high utilization is also the visible form of a leak. A process whose usage climbs steadily and never falls back will reach the limit eventually, and the only open question is whether that happens during working hours or overnight.
+
+        Read a failing result as a question about the workload rather than only about the host. Identify which processes hold the memory and whether the growth is steady, and decide from that between restarting a leaking service, bounding it with a memory limit in its unit file, moving work elsewhere, or adding RAM.
       audit: |
         Run this command to inspect memory utilization:
 

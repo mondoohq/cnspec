@@ -233,19 +233,19 @@ queries:
       package("aide").installed
     docs:
       desc: |
-        This check verifies that the Advanced Intrusion Detection Environment (AIDE) is installed on a Linux system. AIDE functions as a file integrity checker that helps detect unauthorized changes to critical system files and configurations.
+        This check verifies that the Advanced Intrusion Detection Environment is installed, by confirming the `aide` package is present.
+
+        AIDE is a host-based file integrity checker. It records a cryptographic hash, along with size, ownership, permissions, and timestamps, for each file an administrator lists in its configuration, and stores that snapshot in a local database. A later run compares the live filesystem against the database and reports every file that changed. The package is `aide` on yum, dnf, apt-get, and zypper based distributions alike. This check looks only for its presence; a companion check in this policy confirms that the comparison actually runs on a schedule.
 
         **Why this matters**
 
-        AIDE creates a database of cryptographic checksums for important system files and directories. Once initialized, AIDE can be used to scan the system and compare the current state of files against the known-good baseline. This process helps detect file tampering, rootkit installation, or configuration drift that may indicate a security breach.
+        An attacker who reaches root on a host wants to stay. The usual mechanisms are all writes to files: a replaced `sshd` or `login` binary that records passwords, a new setuid executable in a system directory, an added line in a cron file or a systemd unit, a modified shared library loaded by every process. None of these produce an alert on their own. The system keeps running normally, which is exactly the point.
 
-        Without a host-based file integrity monitoring (FIM) solution like AIDE, administrators may not be aware of changes to critical files made by malicious actors or unintended actions by privileged users. This lack of visibility undermines incident response, auditability, and system trustworthiness.
+        File integrity monitoring is what turns those writes into events. When the hash of `/usr/sbin/sshd` no longer matches the baseline and no package transaction explains it, the host has been modified by something outside the software supply chain, and that is worth investigating regardless of what the change was.
 
-        Installing AIDE contributes to the overall integrity assurance of a Linux system and supports compliance with standards such as:
-          - PCI-DSS Requirement 11.5
-          - NIST 800-53 (SI-7: Software, Firmware, and Information Integrity)
+        Detection also matters after the fact. When an incident is being reconstructed, the integrity database is often the only record of which files an intruder touched, and therefore of how far the compromise reached and which hosts need rebuilding rather than cleaning.
 
-        Ensuring AIDE is installed lays the foundation for host-based file integrity monitoring, which is a critical part of a defense-in-depth strategy for detecting intrusions and preserving system integrity.
+        Installing the package is the first half of the control and does nothing on its own. Initialize the database on a known-good system, keep a copy of it somewhere the host cannot write, and schedule the comparison.
       audit: |
         Run this command to confirm the AIDE package is installed:
 
@@ -367,18 +367,19 @@ queries:
       systemd.timer('aidecheck').enabled
     docs:
       desc: |
-        This check verifies that AIDE (Advanced Intrusion Detection Environment) integrity scans are scheduled to run regularly. It passes when daily runs are enabled through `CRON_DAILY_RUN=yes` in `/etc/default/aide`, when the root crontab contains an `aide --check` entry, or when the `aidecheck` systemd timer is enabled.
+        This check verifies that AIDE integrity comparisons run on a schedule rather than only when someone remembers to start one.
+
+        Any of three arrangements satisfies it: `CRON_DAILY_RUN=yes` in `/etc/default/aide`, a root crontab entry that runs `aide --check`, or an enabled `aidecheck` systemd timer. Distributions differ in which they ship, so any one of them is accepted.
 
         **Why this matters**
 
-        Installing AIDE alone is not sufficient to protect a system from unauthorized changes. To be effective, AIDE must run on a schedule so the current system state is routinely compared against its known-good baseline. Regular execution of these checks helps detect file tampering, unauthorized modifications, and early signs of compromise, especially in sensitive directories like /etc, /bin, and /sbin.
+        An integrity database that is never compared against is a file taking up disk space. The control does nothing until something reads the live filesystem, hashes it, and reports the differences, and the interval between those comparisons is the window in which a modified binary goes unnoticed.
 
-        If AIDE is not executed on a regular basis:
-          - Integrity violations may go undetected, exposing the system to persistent threats such as rootkits or malware.
-          - Audit logs and incident response efforts may be incomplete due to a lack of timely data.
-          - Organizations may fail to meet compliance requirements that mandate proactive monitoring of system integrity.
+        That window is where attackers operate. A backdoored `sshd`, a new setuid binary under `/bin` or `/sbin`, a modified init script in `/etc`, or a replaced shared library all keep working indefinitely, and each additional day of silence is a day of collected credentials, a day of lateral movement, and a day of log rotation carrying away the evidence that would have explained the change. Running the comparison daily bounds that window to hours.
 
-        Scheduling recurring AIDE checks turns the integrity baseline into an active detection control that surfaces file tampering shortly after it happens instead of leaving it unnoticed.
+        A schedule also changes the character of the signal. Manual runs happen after someone already suspects a problem, which means the baseline has usually drifted so far through ordinary patching that the report is unreadable. A daily run produces a short list of changes against yesterday, most of which map to a package transaction, and the handful that do not are the ones worth reading.
+
+        Send the output somewhere a person or a pipeline actually reads. A scheduled comparison whose report goes to an unread local mailbox restores the original problem in a less obvious form.
       audit: |
         Run these commands to confirm a periodic AIDE check is scheduled:
 
@@ -3263,18 +3264,19 @@ queries:
       nfs.exports.all(noRootSquash == false)
     docs:
       desc: |
-        This check verifies that no NFS export uses the `no_root_squash` option. With root squashing enabled, which is the default, the root user on a client is mapped to the unprivileged `nfsnobody` account when accessing the export. The `no_root_squash` option turns that protection off and lets a remote root user act as root on the exported files.
+        This check verifies that no NFS export turns off root squashing.
+
+        With root squashing in effect, which is the server default, requests arriving with user ID 0 are remapped to an unprivileged account such as `nfsnobody` before the server touches the filesystem. The `no_root_squash` option in `/etc/exports`, or in a file under `/etc/exports.d/`, removes that remapping and lets a client's root account act as root on the exported files. The check reads the active export table and requires the option to be absent everywhere.
 
         **Why this matters**
 
-        NFS authenticates clients by network address and trusts the user and group IDs they present. When `no_root_squash` is set, a user with root on any permitted client, or anyone able to impersonate one, gains root-equivalent control over the exported data.
+        NFS authenticates the client machine by network address and then trusts whatever user and group IDs that machine puts in each request. The server does not verify that the client's user ID 0 corresponds to anyone in particular; it accepts the number.
 
-        With root squashing disabled, an attacker can:
-          - Create setuid-root binaries inside the export and execute them to escalate privileges.
-          - Read, modify, or delete any file in the export regardless of its ownership.
-          - Overwrite ownership and permissions to establish persistence.
+        That is workable while every access is squashed, because the worst a hostile client can claim is an unprivileged identity. With `no_root_squash`, anyone with root on a permitted client, and anyone who can impersonate one, owns the export. The concrete step is short: mount the share, write a shell binary into it, set it setuid root, then execute it on the server or on any other host that mounts the same export and escalate there. Nothing about the attack requires a vulnerability in NFS.
 
-        Leaving root squashing enabled keeps remote root access mapped to an unprivileged account and preserves the principle of least privilege for networked file systems.
+        The same access reads every file in the export regardless of ownership, which is how credentials, keys, and databases stored on a shared volume leave the network, and it rewrites ownership and permissions to leave a way back in.
+
+        Where a client genuinely needs privileged access to an export, such as a backup host, express that with explicit `anonuid` and `anongid` mappings and restrict the export to that one address, rather than disabling squashing for every client the export permits.
       audit: |
         Run this command to review the active export options:
 
@@ -7013,20 +7015,19 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that kernel auditing is active from the earliest stage of boot, before the `auditd` daemon itself starts.
+        This check verifies that the kernel begins auditing at boot, before the `auditd` daemon has started.
 
-        The check reads the boot loader configuration under `/boot`, and on systems that use it the kernel parameters in `/etc/secboot/config.json`, for the `audit=1` kernel command line parameter.
+        The kernel queues audit events from very early in boot, but only if it is told to. The check reads the boot loader configuration under `/boot`, and on systems that store kernel parameters in `/etc/secboot/config.json` it reads that instead, looking for `audit=1` on the active kernel command line. Setting it means adding the parameter to `GRUB_CMDLINE_LINUX` and regenerating the boot loader configuration, and it takes effect on the next boot.
 
         **Why this matters**
 
-        By default, some processes may start before auditd is initialized, especially during early boot. Without early auditing enabled, actions taken by these processes can go unrecorded, creating a blind spot in audit logs and weakening the system's ability to track critical events.
+        Between the kernel handing control to the init system and `auditd` opening its socket, the host runs a considerable amount of code: the init system itself, mount and udev work, early kernel module loads, and any unit ordered ahead of the audit daemon. Without `audit=1`, none of it is auditable, because the kernel discards audit events instead of holding them until a daemon is listening.
 
-        If the audit=1 kernel parameter is not set:
-          - Early-boot processes such as init systems, kernel modules, or startup scripts may execute without being logged.
-          - Attackers or misconfigurations could exploit this window to perform actions undetected.
-          - The system's audit trail may be incomplete, undermining trust in audit data and complicating incident response or compliance reviews.
+        An attacker who has already reached the host cares about that window, because it is the one place where privileged action leaves no audit record at all. Persistence installed as an early-boot unit, a module loaded before auditing starts, or a filesystem mounted somewhere unexpected all execute inside it, and the audit log opens afterwards showing a clean boot.
 
-        Adding audit=1 to the kernel command line ensures that the Linux kernel begins generating audit records as soon as it starts, capturing all auditable activity regardless of when auditd is fully initialized. This enhances the completeness and integrity of audit logging across the system lifecycle.
+        The gap is a problem in the ordinary case too. An audit trail with a recurring hole at every reboot cannot be used to establish that a file went untouched over a period, because the reboots are exactly the moments it does not cover.
+
+        Note that this parameter only preserves events; the rules still decide what is recorded. Pair it with the syscall and watch rules the rest of this policy requires, and confirm the change survived by reading the running kernel command line after the reboot.
       audit: |
         Run this command to confirm the kernel command line enables auditing of early-boot processes:
 
@@ -7210,18 +7211,19 @@ queries:
         auditd.config.params.max_log_file != 0
     docs:
       desc: |
-        This check verifies that the auditd configuration specifies a maximum storage size for audit logs by ensuring the `max_log_file` parameter in `/etc/audit/auditd.conf` is set to a value greater than zero.
+        This check verifies that a single audit log file has a bounded size, so the audit daemon rotates rather than growing one file without limit.
+
+        The check reads `max_log_file` in `/etc/audit/auditd.conf`, which sets the size in megabytes at which the current log is closed and rotated. The value must be present and non-zero, because zero means no limit at all.
 
         **Why this matters**
 
-        The `max_log_file` setting defines the maximum size (in megabytes) that an audit log file can grow before it is rotated. Without this limit, audit logs can consume excessive disk space, leading to system performance degradation or failures, especially on systems with limited storage or extensive auditing.
+        Audit logs grow quickly on a busy host, and the volume is not under the operator's control. A noisy syscall rule, a batch job that touches many files, or an attacker deliberately generating auditable events can all produce far more records than the daily average suggests.
 
-        If audit log size is not properly configured:
-          - Log files may grow indefinitely and fill the disk, potentially causing services to fail or the system to become unresponsive.
-          - Critical audit data may be lost if the system cannot write to a full disk.
-          - Administrators may be unaware of abnormal log volume trends, missing opportunities for early detection of suspicious activity.
+        Without a rotation threshold, that growth lands in one file on whatever filesystem holds `/var/log/audit`. When the filesystem fills, the effects reach past the audit system. Services that cannot write to `/var/log` start failing, and depending on the configured disk-space actions, the audit daemon either stops recording or takes the host out of service.
 
-        Configuring max_log_file helps maintain system stability by preventing uncontrolled log growth. It also supports log management practices such as automated rotation and retention policies, ensuring that audit data remains available without jeopardizing system operations.
+        There is an attacker-facing side to this as well. Filling the audit partition is a cheap way to blind the host: an unprivileged user who can generate auditable events in a loop pushes the log past the available space, and whatever happens next either goes unrecorded or is buried under millions of generated records. A bounded file size, paired with a rotation count and a dedicated partition, keeps that attempt from taking the whole filesystem with it.
+
+        Set the value against how much history the site needs and how much space is available. Pair it with `num_logs` and with the disk-space actions a companion check in this policy covers, and ship records off the host so that rotation ages out copies rather than the only record.
       audit: |
         Run this command to inspect the audit log file size setting:
 
@@ -7585,18 +7587,19 @@ queries:
         auditd.config.params.admin_space_left_action == /halt|single/
     docs:
       desc: |
-        This check verifies that auditd is configured to respond when audit log disk space runs low by ensuring three parameters in `/etc/audit/auditd.conf` are set: `space_left_action` must be set to `email`, `exec`, `single`, or `halt`; `action_mail_acct` must be set to `root`; and `admin_space_left_action` must be set to `halt` or `single`.
+        This check verifies that the audit daemon is configured to act, rather than silently continue, when the filesystem holding the audit logs runs low on space.
+
+        Three settings in `/etc/audit/auditd.conf` carry that behavior. `space_left_action` fires at the warning threshold and must be `email`, `exec`, `single`, or `halt`. `action_mail_acct` names the recipient of the warning and must be `root`, whose mail an administrator or a forwarding alias actually reads. `admin_space_left_action` fires at the critical threshold and must be `halt` or `single`, so the host powers off or drops to single-user mode instead of running on without a usable audit trail.
 
         **Why this matters**
 
-        The `space_left_action` setting determines what auditd does when disk space for audit logs is low, `action_mail_acct` defines which account is notified when the email action triggers, and `admin_space_left_action` specifies the action when space is critically low. Requiring `halt` or `single` at the critical threshold ensures the system stops normal multi-user operation rather than continuing without reliable audit logging.
+        The default behavior when the audit partition fills is to keep the system running and stop recording. Nothing is logged about the events that follow, because there is nowhere to write them, and the host looks entirely normal while producing no audit trail at all.
 
-        If these parameters are not configured:
-          - Audit records may be silently dropped once the disk fills, leaving gaps in security monitoring.
-          - Administrators receive no warning that audit capacity is running out, so the condition persists unnoticed.
-          - The system may continue operating without proper oversight, increasing the risk of undetected malicious activity and jeopardizing compliance with regulatory audit requirements.
+        An attacker with any local foothold can bring that state about deliberately and cheaply. Auditable events can be generated in a loop from an unprivileged shell, and once the partition is full the rules that would have recorded the next stage of the intrusion have nothing to write to. Blinding the audit system this way needs no privilege and no exploit, only patience and a small partition.
 
-        Configuring these parameters ensures administrators are alerted before audit space is exhausted and that the system halts or drops to single-user mode rather than running without a complete audit trail.
+        Configuring the thresholds removes the payoff. The warning gives an administrator time to act, and the critical action stops the host rather than letting it run unmonitored, which turns an invisible blinding attempt into a loud outage.
+
+        Choose the critical action deliberately, because both options interrupt service. `single` is the less disruptive of the two. Size a dedicated partition for `/var/log/audit` and forward records off the host first, so that the warning threshold is the one you meet in practice.
       audit: |
         Run this command to inspect the audit disk-space actions:
 
@@ -8217,18 +8220,19 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that auditd watch rules are in place for the session tracking files `/var/run/utmp`, `/var/log/wtmp`, and `/var/log/btmp`, so that session starts, login history, and failed login attempts are all recorded in the audit log.
+        This check verifies that the audit system watches the three files that hold the host's login record.
+
+        It requires watch rules with the `wa` permission mask and a non-empty key on `/var/run/utmp`, `/var/log/wtmp`, and `/var/log/btmp`. The `utmp` file lists sessions that are currently open, `wtmp` is the history of logins and logouts that `last` reads, and `btmp` records failed authentication attempts and is read by `lastb`. Rules go in a file under `/etc/audit/rules.d/` and are loaded with `augenrules --load`.
 
         **Why this matters**
 
-        These files form the system's record of who logged in, when, and from where. The `utmp` file tracks active sessions, `wtmp` keeps a history of logins and logouts, and `btmp` records failed login attempts. Together they provide vital context for analyzing user activity.
+        These are binary records that any process running as root can rewrite, and rewriting them is a well-worn step in covering an intrusion. Utilities to do it have shipped in rootkits for decades: they delete the session entry from `wtmp`, remove the current session from `utmp`, and clear the failed attempts from `btmp` that the password guessing produced on the way in. Afterwards `last` and `lastb` report a host that nobody unexpected logged into.
 
-        If changes to these files are not audited:
-          - User activity cannot be reliably correlated to specific sessions, weakening audit trails.
-          - Brute-force attempts recorded in `btmp` and tampering with login history may go undetected.
-          - Compliance with security standards and regulatory frameworks that require session logging may be compromised.
+        Watch rules break that, because the edit itself becomes an audit event with a process, a parent, and an audit ID attached. The attacker is then choosing between leaving the login record intact and leaving a record of having tampered with it, and either outcome is one the investigation can work from.
 
-        By auditing changes to these session files, organizations gain visibility into who accessed the system and when, and can detect attempts to manipulate the login record. This supports effective monitoring, incident investigation, and user accountability.
+        The records are worth having with nobody tampering at all. `btmp` is where a slow password-guessing campaign shows up before it succeeds, and `wtmp` is what answers whether a given account was in use at the time something happened.
+
+        Watching these three files does not protect their contents. Ship the audit records and the login history off the host, because everything discussed here is readable and writable by anyone who has already reached root locally.
       audit: |
         Run this command to confirm the session audit rules are loaded:
 
@@ -8808,18 +8812,19 @@ queries:
           mondoo.com/filter-icon: linux
     docs:
       desc: |
-        This check verifies that the audit system records changes to the system's network identity and core network configuration files. It requires syscall rules for `sethostname` and `setdomainname` on both 32-bit and 64-bit architectures, plus watch rules on `/etc/issue`, `/etc/issue.net`, and `/etc/hosts`. On Debian and Red Hat based systems it also requires a watch rule on the distribution's network configuration location, either `/etc/sysconfig/network` or `/etc/network`.
+        This check verifies that the audit system records changes to the host's network identity and to the files that define its local name resolution and its login banners.
+
+        It requires syscall rules with a non-empty key for `sethostname` and `setdomainname` on both the 32-bit and the 64-bit ABI, and watch rules with the `wa` permission mask on `/etc/issue`, `/etc/issue.net`, and `/etc/hosts`. On Red Hat and Debian based systems it also requires a watch on the distribution's network configuration location, `/etc/sysconfig/network` or `/etc/network`. Rules are written into a file under `/etc/audit/rules.d/` and loaded with `augenrules --load`.
 
         **Why this matters**
 
-        Changes to the system's hostname, domain name, or core network-related files can alter how the system identifies itself and interacts with other hosts. These modifications may indicate reconfiguration, misconfiguration, or unauthorized tampering.
+        `/etc/hosts` is the interesting one. It takes precedence over DNS in a default resolver configuration, so a single added line silently redirects a name to an address of the attacker's choosing for every process on the host. That is how an update server, a package mirror, a log collector, or an internal API endpoint gets repointed without touching DNS, without any network device seeing a change, and without anything in the application logs looking wrong.
 
-        If these events are not audited:
-          - Changes to system identity through the sethostname or setdomainname system calls may go untracked, affecting asset management and security visibility.
-          - Modifications to files like `/etc/hosts` or `/etc/issue` could enable social engineering, redirect network traffic, or disrupt connectivity.
-          - Attackers may exploit these files to mask their activity or persist on the system.
+        `sethostname` and `setdomainname` matter because the hostname is the field that ties a log line to a machine. Renaming a host mid-incident splits its records across two identities in the collector, and Kerberos, certificate validation, and configuration management all key off the same name.
 
-        By auditing these system calls and configuration files, administrators can detect critical network and identity changes. This supports system integrity, operational consistency, and incident investigation efforts.
+        `/etc/issue` and `/etc/issue.net` are displayed before authentication on console and network logins. They are a natural place to add text that steers a user somewhere, and on many sites they carry the legal banner that gives monitoring its authority.
+
+        These rules record that a change happened and who made it, not what the new content is. Pair them with configuration management or file integrity monitoring to recover the content of a change.
       audit: |
         Run this command to confirm the audit rules for network environment modification events are loaded:
 
@@ -10023,29 +10028,19 @@ queries:
       }
     docs:
       desc: |
-        This check ensures that the system is configured to monitor the use of system calls associated with the deletion or renaming of files and file attributes. It verifies that the `unlink`, `unlinkat`, `rename`, and `renameat` system calls are audited, which helps track file deletions and renames.
+        This check verifies that the audit system records file deletions and renames performed by ordinary user accounts.
+
+        It requires syscall rules with a non-empty key, filtered to `auid>=1000` and excluding the unset audit ID, covering `unlinkat` and `renameat` on the 32-bit and 64-bit ABI, and `unlink` and `rename` in addition on architectures that implement them. ARM kernels do not, so those two are not required there. Rules go in a file under `/etc/audit/rules.d/` and are loaded with `augenrules --load`. Where the site has changed `UID_MIN` in `/etc/login.defs`, replace `auid>=1000` with `auid>=<UID_MIN for your system>` so the filter still separates human accounts from service accounts.
 
         **Why this matters**
 
-        Monitoring file deletion and renaming events is critical for maintaining system security and integrity. If these events are not audited:
-          - Unauthorized file deletions or renames may go unnoticed, leading to data loss or tampering.
-          - Malicious actors could exploit this lack of visibility to hide their tracks or disrupt system operations.
-          - Compliance with security standards requiring audit logging may be compromised.
+        Deleting is what an intruder does last. Having used an account to reach data, run a tool, or drop a payload, the tidy-up is removing the tool, removing the payload, and removing whatever the tool wrote. Each of those is an `unlink`, and without a rule there is no record that the file ever existed, so the investigation begins with a host that looks untouched.
 
-        Auditing these system calls ensures that all file deletion and renaming activities are logged, providing visibility into potential security incidents and supporting forensic investigations.
+        Renaming is the same act performed more quietly, and it is worth auditing for a second reason. Moving a file over another one is how a binary gets replaced or a configuration file swapped, because a rename onto an existing path is atomic and leaves no window in which the target is missing.
 
-        **Note**
+        Destruction is also the goal in its own right in ransomware and sabotage, where the record of which paths disappeared and under which login is what scopes the recovery.
 
-        On ARM architectures, the `unlink` and `rename` system calls may not be available, so only the other system calls are checked.
-
-        **Note:**
-        Systems may have been customized to change the default UID_MIN. To confirm the UID_MIN for your system, run this command:
-
-        ```bash
-        awk '/^\s*UID_MIN/{print $2}' /etc/login.defs
-        ```
-
-        If your system's UID_MIN is not `1000`, replace `auid>=1000` with `auid>=<UID_MIN for your system>` in the audit and remediation procedures.
+        The `auid` filter is what keeps these rules usable. Service accounts churn through temporary files constantly, and auditing all of it would bury the events worth reading. Filtering on the audit ID keeps each record tied to the human who logged in, even after they have changed identity with `su` or `sudo`.
       audit: |
         Run this command to confirm the audit rules for file deletion events are loaded:
 
@@ -10747,16 +10742,19 @@ queries:
       sudoers.defaults.where(parameter == "logfile").any(value == "/var/log/sudo.log")
     docs:
       desc: |
-        This check ensures that sudo logs all events to a dedicated log file instead of the default `/var/log/auth.log` file, which contains all authentication events system-wide. Configuring a dedicated log file for sudo events improves the ability to audit and monitor sudo usage effectively.
+        This check verifies that `sudo` writes a dedicated log file rather than only mixing its records in with every other authentication event on the host.
+
+        The check reads the sudo defaults for a `logfile` setting pointing at `/var/log/sudo.log`. Administrators add it as a `Defaults logfile="/var/log/sudo.log"` line, edited through `visudo` in `/etc/sudoers` or in a file under `/etc/sudoers.d/`. The log file itself should be owned by `root` and readable only by its owner.
 
         **Why this matters**
 
-        By default, sudo logs are mixed with other authentication events in `/var/log/auth.log`, making it difficult to identify and analyze sudo-specific failures or activities. Without a dedicated log file:
-          - Sudo failures may go unnoticed due to the volume of unrelated log entries.
-          - Administrators may face challenges in auditing and investigating sudo usage.
-          - Critical security events related to sudo may be obscured, increasing the risk of unauthorized access or privilege escalation.
+        `sudo` is the boundary between an ordinary account and root, so its records answer the question that matters most after an incident: which account ran what as root, and when. By default those lines land in `/var/log/auth.log` alongside every SSH connection, every PAM session open and close, every cron job authentication, and every failed login on the host. On a busy machine the sudo lines are a fraction of a percent of the volume.
 
-        Configuring sudo to log to a dedicated file enhances visibility into sudo activities, supports effective auditing, and strengthens overall system security.
+        That ratio is what an attacker relies on. Commands run through a compromised account are recorded, but they are recorded in a stream nobody reads line by line, and the surrounding noise means an alert on the pattern is either drowned or switched off. A dedicated file makes the entire history of privilege escalation on the host readable in one place, and cheap to ship to a collector and alert on.
+
+        The separation also survives the ordinary failure modes of a shared log. A burst of authentication failures, or aggressive rotation tuned to that volume, ages sudo history out of `/var/log/auth.log` far sooner than anyone intends. A separate file rotates on its own much slower schedule.
+
+        A local log file is evidence for an investigation, not protection from one. Anyone who reaches root can edit or truncate it, so forward the records off the host as well.
       audit: |
         Run this command to confirm sudo is configured to write a log file:
 
@@ -18420,17 +18418,19 @@ queries:
       selinux.mode == "enforcing"
     docs:
       desc: |
-        This check verifies that SELinux is actively enforcing mandatory access control policies on the system.
+        This check verifies that SELinux is currently enforcing its policy rather than merely loaded and logging.
+
+        SELinux is the kernel's mandatory access control system. It labels every process and every object and consults a policy on each access, independently of the file permissions and of the process's user ID. It has three runtime states: enforcing, where a denied access fails; permissive, where the same access is allowed but logged; and disabled, where no policy is consulted. The check reads the running mode, the value `getenforce` reports, and requires it to be enforcing. A companion check in this policy covers the persistent setting that survives a reboot.
 
         **Why this matters**
 
-        SELinux in enforcing mode confines processes to the minimum set of privileges they need, limiting the damage from compromised services or applications. When SELinux is set to permissive or disabled:
+        Discretionary permissions answer whether a process may open a file. SELinux answers whether a process of this type may open a file of that type, which is a much narrower question, and it is the question that constrains a service after it has been exploited.
 
-          - Exploited services can access files and resources beyond their intended scope.
-          - Privilege escalation attacks become significantly easier.
-          - The system loses a critical defense-in-depth layer against zero-day exploits.
+        The difference shows up at the moment it is needed. A web server compromised through its own code runs as its own account and, without SELinux, may read anything that account may read: application configuration holding database credentials, private keys in its own certificate directory, and any world-readable file on the host. Under an enforcing targeted policy the same process is confined to the types its domain permits, so the exploit yields a shell that cannot read the key material, cannot write outside a handful of directories, and cannot connect outbound to a port the policy does not allow.
 
-        Running SELinux in enforcing mode is a baseline requirement for CIS benchmarks and many compliance frameworks including PCI DSS, DISA STIG, and FedRAMP.
+        Permissive mode gives none of that. The denials are written to the audit log and the access proceeds anyway, which is useful while a policy is being developed and worthless as a control.
+
+        Permissive is the right setting while collecting denials for a new workload. Do that for a bounded period, resolve the denials with correct file contexts and booleans rather than a blanket allow, and return the host to enforcing.
       audit: |
         Run this command to inspect the current SELinux mode:
 
@@ -18551,17 +18551,17 @@ queries:
       selinux.configMode == "enforcing"
     docs:
       desc: |
-        This check verifies that the SELinux persistent configuration in `/etc/selinux/config` is set to enforcing mode.
+        This check verifies that the SELinux mode chosen at boot is enforcing, so the protection is still in place after the host restarts.
+
+        The runtime mode and the persistent mode are two separate settings. `setenforce 1` changes the running kernel and nothing else; the mode the host comes back with is the `SELINUX=` line in `/etc/selinux/config`. The check reads that file and requires `SELINUX=enforcing`. A companion check in this policy covers the runtime mode.
 
         **Why this matters**
 
-        Even when SELinux is currently enforcing at runtime, the persistent configuration may be set to permissive or disabled. This means SELinux protection will be lost after the next reboot:
+        A host can pass a runtime check and still be one reboot away from having no mandatory access control at all. That is not an unusual state, it is the normal outcome of a common sequence. Someone hits a denial while installing an application, runs `setenforce 0` to get past it, finishes the work, and never returns the host to enforcing in the file. The runtime mode is later corrected, or the machine is left running untouched for months, and the discrepancy stays invisible until an unrelated reboot removes the confinement.
 
-          - An administrator may have temporarily set enforcing mode with `setenforce 1` without updating the configuration file.
-          - A system update or configuration management drift may have changed the persistent setting.
-          - An attacker with root access may have modified the config to disable SELinux on next reboot.
+        The same discrepancy is worth an attacker's attention precisely because it is quiet. Editing one line in `/etc/selinux/config` changes nothing observable: no service restarts, no denial appears, no monitoring alert fires, and the running system continues to enforce. The confinement disappears at the next reboot, which will be attributed to patching or to a hardware event rather than to the edit that caused it.
 
-        Setting `SELINUX=enforcing` in the persistent configuration ensures that SELinux protection survives reboots and is not silently weakened over time.
+        Moving from disabled to enforcing is not purely a configuration change. The filesystem carries no security labels while SELinux is off, so the next boot performs a full relabel, taking time proportional to the number of files. Plan that reboot rather than discovering the relabel during an incident, and confirm afterwards that the running mode and the file agree.
       audit: |
         Run this command to inspect the persistent SELinux mode:
 
@@ -18665,18 +18665,19 @@ queries:
       chrony.conf.servers != [] || chrony.conf.pools != []
     docs:
       desc: |
-        This check ensures that chrony, the time synchronization daemon, is configured with at least one upstream time source so the system clock is kept accurate. By default a chrony installation may ship without an active `server` or `pool` directive, leaving the host with an unsynchronized clock.
+        This check verifies that chrony has at least one upstream time source configured, so the daemon has something to synchronize the clock against.
+
+        chrony is the time synchronization daemon on most current distributions. It disciplines the system clock against remote reference clocks, but only against the ones it has been given. The check reads the chrony configuration, `/etc/chrony.conf` on Red Hat based systems and `/etc/chrony/chrony.conf` on Debian based ones, and requires at least one `server` or `pool` directive. Some packages ship the daemon with every source commented out, which leaves chrony running, reporting no error, and correcting nothing.
 
         **Why this matters**
 
-        - **Reliable audit trails:** Security events recorded across many hosts can only be correlated and ordered when every clock agrees on the current time.
-        - **Certificate and ticket validity:** TLS certificate expiry and Kerberos ticket lifetimes are evaluated against the local clock, so drift can break authentication or silently accept expired credentials.
-        - **Forensic integrity:** Accurate timestamps are essential when reconstructing the sequence of an incident.
+        Every security record on the host is stamped with the local clock, and a stamp is only useful relative to the stamps on other hosts. When one machine drifts, its events cannot be ordered against the firewall, the authentication server, or the application tier, and the reconstruction of an incident stops at the point where the sequence matters most.
 
-        **Risk mitigation**
+        Authentication depends on the same clock directly. Kerberos rejects a ticket whose timestamp falls outside a tolerance of a few minutes, so a drifting host loses domain authentication outright. TLS is the more dangerous case, because certificate validity is evaluated against local time: a clock set behind real time accepts certificates that have expired or been revoked and replaced, and a clock set ahead rejects valid ones. Time-based one-time passwords fail the same way.
 
-        - **Detect tampering:** A synchronized clock makes it harder for an attacker to disguise the timing of malicious activity.
-        - **Consistent enforcement:** Time-based access controls and scheduled jobs behave predictably when the clock is trustworthy.
+        Drift is also something an attacker can use. Where a host takes time from a source they influence, moving the clock moves the timestamps on the records of what they did, and it can push a session or a token outside the window in which it would have been questioned.
+
+        Point the host at sources the organization controls or explicitly trusts, and configure more than one so a single unreachable server does not leave the clock unattended.
       audit: |
         Run this command to confirm chrony is tracking at least one time source:
 
@@ -18812,18 +18813,19 @@ queries:
       systemd.timesyncd.servers != []
     docs:
       desc: |
-        This check ensures that systemd-timesyncd, when it is the active time synchronization client, has at least one NTP server explicitly configured rather than relying solely on the compiled-in fallback servers. An explicit `NTP=` setting guarantees the host synchronizes against the time sources the operator intends.
+        This check verifies that systemd-timesyncd, where it is the active time client, has its time servers set explicitly rather than falling back on the ones compiled into the distribution package.
+
+        The daemon reads `NTP=` from `/etc/systemd/timesyncd.conf`, or from a drop-in beneath it, and turns to its fallback list only when that setting is empty or unreachable. The check requires a configured server list, which `timedatectl show-timesync --all` reports as the system servers rather than the fallback ones.
 
         **Why this matters**
 
-        - **Reliable audit trails:** Security events recorded across many hosts can only be correlated and ordered when every clock agrees on the current time.
-        - **Operator control:** Defining the NTP servers explicitly ensures the host uses approved, reachable time sources instead of distribution defaults that may be blocked or undesirable.
-        - **Certificate and ticket validity:** TLS certificate expiry and Kerberos ticket lifetimes are evaluated against the local clock, so drift can break authentication or silently accept expired credentials.
+        Falling back is not the same as being unconfigured, and that is what makes it easy to miss. The clock is usually correct, `timedatectl` reports synchronization, and nothing looks wrong. What has actually happened is that the host takes its time from whichever public servers the distribution vendor chose, over the open internet, on a path nobody in the organization designed.
 
-        **Risk mitigation**
+        Three things follow. In a segmented or air-gapped network those servers are unreachable, so the daemon retries and the clock quietly free-runs until the drift is large enough to break authentication. Where they are reachable, the traffic leaves the network unauthenticated and can be answered by anyone in a position to do so, and a supplied offset is enough to make an expired certificate appear valid or to shift the timestamps written into logs. And when time goes wrong across a fleet, the fallback servers are outside the organization's ability to investigate or fix.
 
-        - **Predictable sources:** Pinning the time servers removes any dependency on fallback hosts that the operator does not control.
-        - **Detect tampering:** A synchronized clock makes it harder for an attacker to disguise the timing of malicious activity.
+        Pinning the sources also makes the configuration reviewable. An explicit list can be checked against the network design and against firewall policy; a compiled-in default cannot.
+
+        Set the servers the organization operates or has approved, list more than one, and confirm afterwards that the daemon reports them as its system servers rather than continuing on the fallback list.
       audit: |
         Run this command to display the configured NTP servers and synchronization state:
 
@@ -18959,18 +18961,19 @@ queries:
       systemd.timesyncd.synchronized == true
     docs:
       desc: |
-        This check ensures that when systemd-timesyncd is enabled it is actually running and has synchronized the system clock to a time source. A daemon that is enabled but inactive, or active but unable to reach a server, leaves the clock drifting without anyone noticing.
+        This check verifies that systemd-timesyncd is actually running and has synchronized the system clock, not merely enabled to do so.
+
+        Enabled, active, and synchronized are three different states, and only the last means the clock is correct. The check requires the daemon to be active and to report a synchronized clock, which is what `timedatectl status` shows as an active time service and a synchronized system clock. A companion check in this policy confirms that time servers are configured; this one confirms that reaching them worked.
 
         **Why this matters**
 
-        - **Confirmed accuracy:** A configured time source is only useful if the daemon is running and has successfully synchronized against it.
-        - **Reliable audit trails:** Security events recorded across many hosts can only be correlated and ordered when every clock is actually synchronized.
-        - **Certificate and ticket validity:** TLS certificate expiry and Kerberos ticket lifetimes are evaluated against the local clock, so an unsynchronized clock can break authentication or silently accept expired credentials.
+        The common failure here is silent. The unit is enabled, so every configuration review passes. The daemon started, so the service manager reports it running. But the configured servers are blocked by a firewall rule that closed outbound UDP port 123, or they resolve to nothing on a segmented network, and the daemon retries in the background while the clock free-runs on the hardware oscillator. Nothing logs an error that a human sees, and the drift accumulates at a few seconds a day until something breaks.
 
-        **Risk mitigation**
+        What breaks first is usually authentication. Kerberos rejects tickets once the offset passes a few minutes, so domain logins fail on that host alone, which reads as a host problem rather than a time problem. TLS validation is the more dangerous outcome, because a clock behind real time accepts certificates that have already expired or been replaced.
 
-        - **Detect failures early:** Verifying the synchronized state surfaces daemons that started but never reached a time source.
-        - **Forensic integrity:** Accurate timestamps are essential when reconstructing the sequence of an incident.
+        The audit trail degrades before any of that is noticed. Records written by a drifting host cannot be ordered against records from the rest of the fleet, and the discrepancy is not visible in the log lines themselves, so an investigation reaches the wrong conclusion about what happened first.
+
+        Alert on the synchronized state rather than on the unit being enabled. That is the state that changes when the network path to the time source breaks.
       audit: |
         Run this command to confirm the daemon is active and the clock is synchronized:
 
@@ -19070,18 +19073,19 @@ queries:
       yum.config.gpgcheck == true
     docs:
       desc: |
-        This check ensures that the system-wide `gpgcheck` option is enabled in the yum or dnf configuration so that the package manager verifies the cryptographic signature of every package before installing it. When `gpgcheck` is disabled the system will install packages whose authenticity and integrity have not been verified.
+        This check verifies that the package manager verifies the cryptographic signature of every package before installing it.
+
+        On Red Hat based systems and Amazon Linux, `gpgcheck` in the `[main]` section of `/etc/dnf/dnf.conf`, or of `/etc/yum.conf` on older releases, sets the default for every repository. The check requires it to be enabled. Note that an individual repository definition under `/etc/yum.repos.d/` can still override the global default with its own `gpgcheck=0`, so review those files as well.
 
         **Why this matters**
 
-        - **Authenticity:** Signature verification confirms that a package was produced by the expected vendor and not substituted by an attacker.
-        - **Integrity:** A valid signature guarantees the package was not modified in transit between the repository and the host.
-        - **Supply-chain protection:** A compromised mirror or a manipulated download cannot deliver unsigned malicious software when verification is enforced.
+        Package installation is the most privileged thing that happens routinely on a server. Scriptlets run as root before and after the files are unpacked, and the files themselves land in system directories and are executed by everything on the host. Signature verification is the only step that establishes the package came from the vendor whose key the host trusts.
 
-        **Risk mitigation**
+        With verification off, that assurance is gone and the trust falls back to whatever is protecting the transport. An attacker positioned between the host and the repository, on a compromised mirror, on a caching proxy, or on the network path where a repository is still reached over plain HTTP, substitutes a package with the same name and a higher version. The host installs it on the next update and the scriptlet runs as root. No exploit is involved and nothing on the host reports anything unusual, because from the package manager's point of view the update succeeded normally.
 
-        - **Prevent malicious installs:** Tampered or forged packages are rejected before any code runs.
-        - **Consistent enforcement:** Setting the option in the global `[main]` section applies the control to every repository rather than relying on per-repository settings.
+        The same setting catches a corrupted download or a mirror serving damaged content, which fails a signature check the way a tampered package does.
+
+        Enable it in the `[main]` section so it applies to every repository, then audit the repository definitions for per-repository overrides, and confirm that the vendor keys the host trusts are the ones actually expected.
       audit: |
         Run this command to confirm `gpgcheck` is enabled in the global configuration:
 
@@ -19205,18 +19209,19 @@ queries:
       apt.repos.where(enabled).all(trusted == false)
     docs:
       desc: |
-        This check ensures that no enabled APT repository is marked as trusted, which would bypass cryptographic signature verification. An entry carrying `[trusted=yes]` in a one-line sources file, or `Trusted: yes` in a deb822 `.sources` file, tells APT to install packages from that repository without checking their signatures.
+        This check verifies that no enabled APT repository is marked trusted, which would tell APT to install its packages without checking any signature.
+
+        APT normally refuses a repository whose release file is not signed by a key the host holds. Marking an entry trusted removes that requirement. In a one-line sources file the marker is `[trusted=yes]` in the options field; in a deb822 `.sources` file it is a `Trusted: yes` field. The check reads every enabled repository and requires the marker to be absent. The supported way to add a third-party repository is a `signed-by` option naming a keyring, which trusts one specific key for that one repository.
 
         **Why this matters**
 
-        - **Authenticity:** Signature verification confirms that packages originate from the expected repository owner rather than an impostor.
-        - **Integrity:** A valid signature guarantees that packages were not altered between the repository and the host.
-        - **Supply-chain protection:** A trusted repository accepts packages from a compromised mirror or a manipulated download without objection.
+        `[trusted=yes]` is usually added to make an error go away. The repository's key was never imported, or it was imported into a location APT no longer honors, `apt-get update` failed, and the flag suppressed the failure. What it actually did was switch that repository from cryptographically verified to unverified, permanently, with no further warning.
 
-        **Risk mitigation**
+        An unverified repository is a root shell available to whoever can answer for it. That includes the operator of the mirror, anyone who compromises it, and, where the repository is reached over plain HTTP, anyone on the network path between the host and the server. Substituting a package with the same name and a higher version is enough: `apt-get upgrade` installs it and the maintainer scripts run as root before anything else on the host has a chance to notice.
 
-        - **Prevent malicious installs:** Removing the trusted flag forces APT to reject unsigned or tampered packages.
-        - **Key pinning:** Replacing `[trusted=yes]` with a `signed-by` keyring restricts the repository to a specific signing key.
+        The exposure is wider than the one repository, too. APT resolves dependencies across every configured source, so an unverified repository that offers a higher version of a core library gets to supply it to the whole system.
+
+        Replace the flag with the key it was working around. Fetch the repository's signing key, place it in a keyring under `/usr/share/keyrings/`, and reference that keyring with `signed-by` so the trust is scoped to one key and one repository rather than granted to an address.
       audit: |
         Run this command to list any repository that bypasses signature verification:
 
