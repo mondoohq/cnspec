@@ -3,7 +3,7 @@
 policies:
   - uid: chef-infra-server
     name: Mondoo Chef Infra Server Security
-    version: 1.3.3
+    version: 1.3.4
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -82,18 +82,14 @@ queries:
         permissions.user_readable == true
         permissions.user_writeable == true
         permissions.user_executable == true
-        permissions.group_readable == true
         permissions.group_writeable == false
-        permissions.group_executable == true
-        permissions.other_readable == true
         permissions.other_writeable == false
-        permissions.other_executable == true
       }
     docs:
       desc: |
         This check verifies that only `root` can write to Chef Infra Server's configuration directory.
 
-        `/etc/opscode` holds the files that define the server and authorize it: `chef-server.rb`, the superuser key `pivotal.pem`, the management console key `webui_priv.pem`, and the `private-chef-secrets.json` credential store. The check requires owner `root`, group `root`, and mode `755`, which leaves the directory traversable so server processes can reach files whose own modes restrict them, while allowing only `root` to add, replace, or remove entries.
+        `/etc/opscode` holds the files that define the server and authorize it: `chef-server.rb`, the superuser key `pivotal.pem`, the management console key `webui_priv.pem`, and the `private-chef-secrets.json` credential store. The check requires owner `root`, group `root`, and that neither the group nor other users can write, so only `root` can add, replace, or remove entries. It asserts nothing about read or traverse permission, so `0755`, `0750`, and `0700` all pass and a server that has been tightened beyond the default is not penalized for it.
 
         **Why this matters**
 
@@ -1193,15 +1189,19 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-6-1
       compliance/vda-isa-5: vda-isa-5-5-2-6
     mql: |
-      file("/etc/opscode/chef-server.rb") {
-        content.contains(/postgresql\['listen_address'\]\s*=\s*['"](0\.0\.0\.0|\*)['"]/) == false
-        content.contains(/postgresql\['vip'\]\s*=\s*['"]0\.0\.0\.0['"]/) == false
-      }
+      // An absent setting means the Chef Infra Server default applies, which binds to
+      // loopback, so a config that never names the key passes. Any line that does set it
+      // must set it to a loopback address; a specific routable address is as exposed as
+      // the 0.0.0.0 wildcard.
+      configLines = file("/etc/opscode/chef-server.rb").content.lines
+      loopback = /=\s*['"](127\.0\.0\.1|localhost|::1|\[::1\])['"]\s*$/
+      configLines.where(_ == /^\s*postgresql\['listen_address'\]\s*=/).all(_ == loopback)
+      configLines.where(_ == /^\s*postgresql\['vip'\]\s*=/).all(_ == loopback)
     docs:
       desc: |
         This check verifies that Chef Infra Server's embedded database is reachable only from the server itself.
 
-        The bundled PostgreSQL instance holds everything the server knows: users, organizations, clients and their public keys, node objects with their run lists and attributes, data bag items, and the authorization graph. `postgresql['listen_address']` and `postgresql['vip']` in `/etc/opscode/chef-server.rb` determine what it binds to, and the default is the loopback interface. The check fails when either is set to `0.0.0.0` or `*`.
+        The bundled PostgreSQL instance holds everything the server knows: users, organizations, clients and their public keys, node objects with their run lists and attributes, data bag items, and the authorization graph. `postgresql['listen_address']` and `postgresql['vip']` in `/etc/opscode/chef-server.rb` determine what it binds to, and the default is the loopback interface. The check reads any line that sets either key and requires the value to be a loopback address, so a specific routable address such as `10.0.0.5` fails just as the `0.0.0.0` wildcard does. A configuration that never names the key passes, because the built-in default already binds to loopback.
 
         **Why this matters**
 
@@ -1276,16 +1276,20 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-6-1
       compliance/vda-isa-5: vda-isa-5-5-2-6
     mql: |
-      file("/etc/opscode/chef-server.rb") {
-        content.contains(/opscode_solr4\['ip_address'\]\s*=\s*['"]0\.0\.0\.0['"]/) == false
-        content.contains(/elasticsearch\['listen'\]\s*=\s*['"]0\.0\.0\.0['"]/) == false
-        content.contains(/opensearch\['listen'\]\s*=\s*['"]0\.0\.0\.0['"]/) == false
-      }
+      // An absent setting means the Chef Infra Server default applies, which binds to
+      // loopback, so a config that never names the key passes. Any line that does set it
+      // must set it to a loopback address; a specific routable address is as exposed as
+      // the 0.0.0.0 wildcard.
+      configLines = file("/etc/opscode/chef-server.rb").content.lines
+      loopback = /=\s*['"](127\.0\.0\.1|localhost|::1|\[::1\])['"]\s*$/
+      configLines.where(_ == /^\s*opscode_solr4\['ip_address'\]\s*=/).all(_ == loopback)
+      configLines.where(_ == /^\s*elasticsearch\['listen'\]\s*=/).all(_ == loopback)
+      configLines.where(_ == /^\s*opensearch\['listen'\]\s*=/).all(_ == loopback)
     docs:
       desc: |
         This check verifies that Chef Infra Server's search index is reachable only from the server itself.
 
-        The server indexes every node object so that recipes and `knife` can query the fleet. The engine has changed over time, from Solr through Chef Infra Server 12, to Elasticsearch in versions 13 and 14, and to OpenSearch from version 15, and each is bound to the loopback interface by default. The check fails when `opscode_solr4['ip_address']`, `elasticsearch['listen']`, or `opensearch['listen']` in `/etc/opscode/chef-server.rb` is set to `0.0.0.0`.
+        The server indexes every node object so that recipes and `knife` can query the fleet. The engine has changed over time, from Solr through Chef Infra Server 12, to Elasticsearch in versions 13 and 14, and to OpenSearch from version 15, and each is bound to the loopback interface by default. The check reads any line in `/etc/opscode/chef-server.rb` that sets `opscode_solr4['ip_address']`, `elasticsearch['listen']`, or `opensearch['listen']`, and requires the value to be a loopback address. A specific routable address fails just as the `0.0.0.0` wildcard does. A configuration that never names these keys passes, because each engine already binds to loopback by default.
 
         **Why this matters**
 
@@ -1359,21 +1363,26 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-5
     mql: |
-      file("/var/opt/opscode/local-mode-cache/backup") {
-        user.name == 'root'
-        group.name == 'root'
-        permissions.user_readable == true
-        permissions.user_writeable == true
-        permissions.group_readable == false
-        permissions.group_writeable == false
-        permissions.other_readable == false
-        permissions.other_writeable == false
+      // The directory is not created until the first `chef-server-ctl reconfigure`, so a
+      // freshly installed server has nothing to stat. Guard on existence rather than
+      // failing a server that has simply not reconfigured yet.
+      if (file("/var/opt/opscode/local-mode-cache/backup").exists) {
+        file("/var/opt/opscode/local-mode-cache/backup") {
+          user.name == 'root'
+          group.name == 'root'
+          permissions.user_readable == true
+          permissions.user_writeable == true
+          permissions.group_readable == false
+          permissions.group_writeable == false
+          permissions.other_readable == false
+          permissions.other_writeable == false
+        }
       }
     docs:
       desc: |
         This check verifies that the configuration backup directory Chef Infra Server writes during reconfigure is not readable by unprivileged local users.
 
-        Each `chef-server-ctl reconfigure` copies the previous service configuration into `/var/opt/opscode/local-mode-cache/backup` before writing new files. In Chef Infra Server 12.0 through 15.6.2 that directory was created world readable, which is CVE-2023-28864. The check requires owner `root`, group `root`, and no access for group or other.
+        Each `chef-server-ctl reconfigure` copies the previous service configuration into `/var/opt/opscode/local-mode-cache/backup` before writing new files. In Chef Infra Server 12.0 through 15.6.2 that directory was created world readable, which is CVE-2023-28864. The check requires owner `root`, group `root`, and no access for group or other. The directory does not exist until the first reconfigure runs, so a freshly installed server is skipped rather than failed for a path that has not been created yet.
 
         **Why this matters**
 
