@@ -5,6 +5,7 @@ package policy_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -461,12 +462,19 @@ queries:
 		rpTester.CodeIdReportingJobForMrn(queryMrn("check2")).Notifies(queryMrn("check2")).WithImpact(&policy.Impact{Value: &policy.ImpactValue{Value: 70}})
 		rpTester.CodeIdReportingJobForMrn(queryMrn("check3")).Notifies(queryMrn("check3")).WithImpact(&policy.Impact{Value: &policy.ImpactValue{Value: 80}})
 		rpTester.CodeIdReportingJobForMrn(queryMrn("query1")).Notifies(queryMrn("query1"))
-		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies(policyMrn("policy1"))
-		rpTester.ReportingJobByMrn(queryMrn("check2")).Notifies(policyMrn("policy1"))
-		rpTester.ReportingJobByMrn(queryMrn("check3")).Notifies(policyMrn("policy1"))
-		rpTester.ReportingJobByMrn(queryMrn("query1")).Notifies(policyMrn("policy1"))
-		rpTester.ReportingJobByMrn(queryMrn("check2")).Notifies(policyMrn("policy2"))
-		rpTester.ReportingJobByMrn(queryMrn("check3")).Notifies(policyMrn("policy2"))
+		// The same worst impact also lands on the check -> policy edges, so the
+		// policy's score calculator can tell a medium check from a critical one.
+		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies(policyMrn("policy1")).WithImpact(nil)
+		rpTester.ReportingJobByMrn(queryMrn("check2")).Notifies(policyMrn("policy1")).
+			WithImpact(&policy.Impact{Value: &policy.ImpactValue{Value: 70}})
+		rpTester.ReportingJobByMrn(queryMrn("check3")).Notifies(policyMrn("policy1")).
+			WithImpact(&policy.Impact{Value: &policy.ImpactValue{Value: 80}})
+		rpTester.ReportingJobByMrn(queryMrn("query1")).Notifies(policyMrn("policy1")).
+			WithImpact(&policy.Impact{Scoring: policy.ScoringSystem_IGNORE_SCORE, Action: policy.Action_IGNORE})
+		rpTester.ReportingJobByMrn(queryMrn("check2")).Notifies(policyMrn("policy2")).
+			WithImpact(&policy.Impact{Value: &policy.ImpactValue{Value: 70}})
+		rpTester.ReportingJobByMrn(queryMrn("check3")).Notifies(policyMrn("policy2")).
+			WithImpact(&policy.Impact{Value: &policy.ImpactValue{Value: 80}})
 
 		rpTester.doTest(t, rp)
 	})
@@ -1957,6 +1965,146 @@ policies:
 		}
 	}
 	require.True(t, foundEol, "scored risk factor %s not found in report", eolRiskMrn)
+}
+
+// TestResolveV2_CheckImpactOnPolicyEdge asserts that the check -> policy edge
+// carries the check's severity. The banded score calculator derives a check's
+// critical/high/medium/low band from the impact on that edge, so leaving it
+// nil buckets every check as critical.
+func TestResolveV2_CheckImpactOnPolicyEdge(t *testing.T) {
+	ctx := context.Background()
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- owner_mrn: //test.sth
+  mrn: //test.sth
+  groups:
+  - policies:
+    - uid: policy1
+- uid: policy1
+  groups:
+  - type: chapter
+    filters: "true"
+    checks:
+    - uid: check-no-impact
+    - uid: check-medium
+    - uid: check-group-impact
+      impact: 30
+queries:
+- uid: check-no-impact
+  mql: true == true
+- uid: check-medium
+  mql: true == false
+  impact: 60
+- uid: check-group-impact
+  mql: true == true
+  impact: 80
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy1")}},
+	}, []*policy.Bundle{b})
+
+	rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+		PolicyMrn:    "//test.sth",
+		AssetFilters: []*policy.Mquery{{Mql: "true"}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, rp)
+
+	rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
+	// A check without any impact stays unbanded on the edge.
+	rpTester.ReportingJobByMrn(queryMrn("check-no-impact")).Notifies(policyMrn("policy1")).WithImpact(nil)
+	// The severity declared on the query itself reaches the policy edge.
+	rpTester.ReportingJobByMrn(queryMrn("check-medium")).Notifies(policyMrn("policy1")).
+		WithImpact(&policy.Impact{Value: &policy.ImpactValue{Value: 60}})
+	// The worst impact wins, same as on the code id -> check edge.
+	rpTester.ReportingJobByMrn(queryMrn("check-group-impact")).Notifies(policyMrn("policy1")).
+		WithImpact(&policy.Impact{Value: &policy.ImpactValue{Value: 80}})
+
+	rpTester.doTest(t, rp)
+}
+
+// TestResolveV2_BandedScoringUsesCheckImpact runs the full pipeline for a
+// policy scored with BANDED. Each failing check has to land in the band that
+// matches its own impact: a single failing MEDIUM check must not drag the
+// policy score into the critical band.
+func TestResolveV2_BandedScoringUsesCheckImpact(t *testing.T) {
+	tests := []struct {
+		name     string
+		impact   int
+		expected uint32
+	}{
+		// One failing check out of one, banded by its own severity:
+		// crit -> floor(50*0), high -> floor(50*0)+10, mid -> floor(50*0)+30,
+		// low -> floor(40*0)+60.
+		{name: "critical", impact: 100, expected: 0},
+		{name: "high", impact: 80, expected: 10},
+		{name: "medium", impact: 60, expected: 30},
+		{name: "low", impact: 20, expected: 60},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			runtime := testutils.LinuxMock()
+			_, srv, err := inmemory.NewServices(runtime)
+			require.NoError(t, err)
+
+			b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+  - uid: banded-policy
+    scoring_system: banded
+    groups:
+    - filters: asset.name == "asset1"
+      checks:
+      - uid: failing-check
+        mql: 1 == 2
+        impact: `+strconv.Itoa(test.impact)+`
+`)
+
+			_, err = srv.SetBundle(ctx, b)
+			require.NoError(t, err)
+
+			_, err = srv.Assign(ctx, &policy.PolicyAssignment{
+				AssetMrn:   "asset1",
+				PolicyMrns: []string{policyMrn("banded-policy")},
+			})
+			require.NoError(t, err)
+
+			rp, err := srv.ResolveAndUpdateJobs(ctx, &policy.UpdateAssetJobsReq{
+				AssetMrn:     "asset1",
+				AssetFilters: []*policy.Mquery{{Mql: "asset.name == \"asset1\""}},
+			})
+			require.NoError(t, err)
+			require.NotNil(t, rp)
+
+			err = executor.ExecuteResolvedPolicy(ctx, runtime, srv, "asset1", rp, mql.DefaultFeatures, nil)
+			require.NoError(t, err)
+
+			_, err = policy.WaitUntilDone(srv, "asset1", "asset1", 5*time.Second)
+			require.NoError(t, err)
+
+			report, err := srv.GetReport(ctx, &policy.EntityScoreReq{
+				EntityMrn: "asset1",
+				ScoreMrn:  "asset1",
+			})
+			require.NoError(t, err)
+			require.NotNil(t, report)
+
+			// The check itself is always floored at 100-impact, independent of
+			// the policy's scoring system.
+			checkScore := report.Scores[queryMrn("failing-check")]
+			require.NotNil(t, checkScore, "check score not found in report")
+			assert.Equal(t, uint32(100-test.impact), checkScore.Value, "check score")
+
+			policyScore := report.Scores[policyMrn("banded-policy")]
+			require.NotNil(t, policyScore, "policy score not found in report")
+			assert.Equal(t, test.expected, policyScore.Value, "banded policy score")
+		})
+	}
 }
 
 func TestResolveV2_FrameworkExceptions(t *testing.T) {

@@ -867,6 +867,19 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 						Scoring: ScoringSystem_IGNORE_SCORE,
 						Action:  Action_IGNORE,
 					}
+				} else if i := b.impactOverrides[c.Mrn]; i.GetValue() != nil {
+					// The check's severity has to reach the policy's score
+					// calculator: banded scoring buckets a check into its
+					// critical/high/medium/low band from the impact on this
+					// edge, and decayed scoring scales its weight by it.
+					// Without it every check is treated as critical.
+					//
+					// Only the value is carried. Scoring and weight stay on
+					// the variant/codeId -> check edge, which is where they
+					// are applied; re-applying them here would double up. The
+					// value itself is safe to repeat: it acts as a score floor
+					// (100-impact) that the check score already satisfies.
+					impact = &Impact{Value: &ImpactValue{Value: i.Value.Value}}
 				}
 				b.addEdge(c.Mrn, policy.Mrn, impact)
 			}
