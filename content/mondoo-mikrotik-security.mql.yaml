@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-mikrotik-security
     name: Mondoo MikroTik RouterOS Security
-    version: 1.0.1
+    version: 1.0.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -101,18 +101,19 @@ queries:
       mikrotik.services.where(name == "telnet").all(disabled == true)
     docs:
       desc: |
-        This check verifies that the Telnet management service is disabled. RouterOS ships with a `telnet` service entry, and Telnet transmits all data — including administrator credentials — in clear text. SSH should be used for all remote management.
+        This check verifies that remote administration over Telnet is turned off.
+
+        Telnet is the original RouterOS remote console, and it carries the login exchange and every subsequent command in clear text. RouterOS enables it by default, so a device that has never been hardened is listening on TCP 23. Operators turn it off with `/ip service disable telnet`, or by disabling the `telnet` row under **IP > Services** in WinBox, leaving SSH as the remote console.
 
         **Why this matters**
 
-        - **Credential exposure:** Usernames and passwords sent over Telnet can be captured by anyone able to observe traffic on the network path.
-        - **Session hijacking:** Unencrypted Telnet sessions can be intercepted and taken over, handing an attacker a live administrative session.
-        - **No integrity protection:** Commands and responses can be silently altered in transit because Telnet provides no integrity verification.
+        An attacker positioned anywhere on the path between an administrator and the router reads the password as it is typed. That includes a compromised host on the same LAN running ARP spoofing, an upstream provider, and every hop in between when the device is managed across the internet. Nothing has to be broken for this to work; Telnet simply publishes the credential.
 
-        **Risk mitigation**
+        The credential it publishes is almost always the full-access one. RouterOS administration is rarely privilege-separated on the small deployments these devices serve, so the account an operator logs in with can rewrite the firewall, change the DNS servers handed to every client behind the router, add a new user, or install a hostile firmware image. The Meris botnet and the VPNFilter campaign both grew by collecting MikroTik management credentials at scale and reusing them, and both persisted because these routers are installed once and rarely revisited.
 
-        - **Encrypted management only:** Disabling Telnet forces administrators onto SSH, where credentials and session data are protected.
-        - **Reduced attack surface:** Removing a listening cleartext service eliminates one of the most commonly scanned-for entry points.
+        The same clear-text session can be modified, not only read. An on-path attacker can alter a command in flight or inject one of their own, so an administrator watching a clean-looking terminal has no assurance the router received what was sent.
+
+        If a legacy console server or provisioning tool still requires Telnet, confine it to a serial or dedicated out-of-band path rather than leaving the network service enabled, and confirm SSH access works before disabling Telnet so the device does not become unreachable.
       audit: |
         To verify that the Telnet service is disabled from the RouterOS CLI:
 
@@ -162,18 +163,19 @@ queries:
       mikrotik.services.where(name == "ftp").all(disabled == true)
     docs:
       desc: |
-        This check verifies that the built-in FTP service is disabled. RouterOS exposes an `ftp` service for file transfer that authenticates and transfers data in clear text.
+        This check verifies that file transfer to the device over unencrypted FTP is turned off.
+
+        RouterOS runs an FTP server that authenticates with the same local accounts used for administration and exposes the device's file store, which holds configuration exports, backup files, and firmware packages. It is enabled out of the box. Operators turn it off with `/ip service disable ftp` and move transfers onto SCP or SFTP, which ride the existing SSH service and reach the same files.
 
         **Why this matters**
 
-        - **Credential exposure:** FTP sends login credentials in clear text, allowing interception on the network path.
-        - **Tamperable transfers:** Files moved over FTP — including configuration backups and firmware — can be observed or modified in transit.
-        - **Unnecessary surface:** File transfer to the device can be performed securely over SFTP/SCP, making the FTP listener avoidable.
+        FTP authenticates in clear text, so the password that opens the router's console travels the wire in plain view on every transfer. An attacker who captures it does not gain file access alone; the account is a device administrator.
 
-        **Risk mitigation**
+        The files themselves are worth taking. A RouterOS configuration export names the site's IP ranges, VPN peers, firewall exceptions, and SNMP communities, and a backup file can be restored onto attacker-controlled hardware and studied at leisure. In the other direction, an attacker who can write to the file store can stage a script or a firmware package that the device later runs.
 
-        - **Secure file transfer:** Disabling FTP removes a cleartext transfer path; use SCP/SFTP over the SSH service instead.
-        - **Fewer listeners:** Each disabled service is one less port an attacker can probe.
+        Because FTP provides no integrity protection, a file in transit can be altered rather than merely observed. An operator uploading a firmware package across an untrusted path has no way to tell that what landed differs from what was sent.
+
+        Backup or build systems that only speak FTP are the usual reason this service stays enabled. Point them at SFTP over the SSH service instead; RouterOS serves the same file store through it, so nothing else about the workflow changes.
       audit: |
         To verify that the FTP service is disabled from the RouterOS CLI:
 
@@ -221,18 +223,19 @@ queries:
       mikrotik.services.where(name == "www").all(disabled == true)
     docs:
       desc: |
-        This check verifies that the cleartext WebFig service (`www`) is disabled. The `www` service serves the RouterOS web management interface over plain HTTP, exposing credentials and session data without encryption. The TLS-protected `www-ssl` service should be used instead.
+        This check verifies that the web management interface is not served over unencrypted HTTP.
+
+        WebFig is the RouterOS browser interface, and RouterOS publishes it through two separate service entries: `www` over plain HTTP and `www-ssl` over TLS. Both are configured under `/ip service`, and `www` is the one enabled from the factory. Operators disable it with `/ip service disable www` once `www-ssl` has a certificate attached.
 
         **Why this matters**
 
-        - **Credential exposure:** The `www` interface submits administrator credentials over unencrypted HTTP.
-        - **Session theft:** Web session cookies travel in clear text and can be captured and replayed.
-        - **Content tampering:** Without TLS there is no protection against on-path modification of the management interface.
+        WebFig submits the administrator password to the router as an ordinary form post. Over the `www` service that post is readable by anything on the path, and unlike a console session it is typically issued from a laptop on a shared or wireless network where a hostile neighbor is a realistic assumption rather than a theoretical one.
 
-        **Risk mitigation**
+        After login the session identifier travels the same way. Capturing it lets an attacker resume the administrator's session without ever learning the password, and RouterOS offers no second factor behind the web interface to stop them.
 
-        - **Encrypted web management:** Disabling `www` and using `www-ssl` keeps WebFig traffic encrypted end to end.
-        - **Reduced surface:** Removing the plaintext listener eliminates a common credential-harvesting target.
+        The unprotected direction matters just as much. Plain HTTP gives the browser no assurance that the page came from the router, so an on-path attacker can rewrite the interface, harvest the credential through a page the administrator already trusts, or quietly change the values a form submits back to the device.
+
+        A router that must be administered from a browser should use `www-ssl` with a certificate the administrators actually verify. Disabling `www` before `www-ssl` works leaves only the console paths, so confirm SSH or WinBox access first.
       audit: |
         To verify that the cleartext web service is disabled from the RouterOS CLI:
 
@@ -282,18 +285,19 @@ queries:
       mikrotik.services.where(name == "api").all(disabled == true)
     docs:
       desc: |
-        This check verifies that the cleartext RouterOS API service (`api`, TCP 8728) is disabled. The plain `api` service authenticates and exchanges data without TLS. Automation should use the encrypted `api-ssl` service (TCP 8729) instead.
+        This check verifies that programmatic access to the device is not offered over an unencrypted API port.
+
+        RouterOS exposes its configuration API twice: the plain `api` service on TCP 8728 and `api-ssl` on TCP 8729. Provisioning systems, monitoring tools, and hotspot integrations use it to read and rewrite the running configuration. Operators disable the cleartext listener with `/ip service disable api` and repoint automation at `api-ssl`.
 
         **Why this matters**
 
-        - **Credential exposure:** API logins over the cleartext service can be captured on the network path.
-        - **Command interception:** API calls that change device configuration travel unencrypted and can be observed or altered.
-        - **Automation blast radius:** API credentials often carry broad privileges, making their interception especially damaging.
+        API credentials are worth more than any single administrator's password. Automation accounts are typically shared across an entire fleet, so one capture on one link yields a credential that works on every router the platform manages. They also tend to be granted full access, because narrowing RouterOS group permissions to exactly what a tool needs is fiddly and rarely revisited.
 
-        **Risk mitigation**
+        The cleartext API sends that login and every subsequent call in the clear, so an attacker on the path collects both the credential and a working transcript of how the fleet is configured. The transcript is what turns one capture into a mass compromise: the same calls that add a legitimate firewall rule add an attacker's, and they can be replayed against every device at once.
 
-        - **Encrypted automation:** Disabling `api` and using `api-ssl` protects programmatic access with TLS.
-        - **Reduced surface:** Closing the cleartext API port removes a high-value target from network scans.
+        An attacker with no credential at all still benefits from the open port. TCP 8728 is a distinctive fingerprint that identifies a device as MikroTik to internet-wide scanners, and RouterOS API parsing has been the subject of past remote vulnerabilities, so an exposed listener is a standing target through the long stretch between a disclosure and a firmware update these devices rarely receive.
+
+        Some older tooling only speaks the plain API. Where it cannot be replaced, keep the service off the internet by binding it to a management network with the service's `address` restriction rather than leaving it open to any source.
       audit: |
         To verify that the cleartext API service is disabled from the RouterOS CLI:
 
@@ -346,18 +350,19 @@ queries:
       mikrotik.services.where(disabled == false).all(address != "")
     docs:
       desc: |
-        This check verifies that every enabled management service restricts the source addresses permitted to connect. By default RouterOS services accept connections from any address; setting the `address` field limits access to trusted management networks.
+        This check verifies that every management service the device is running accepts connections only from a defined set of administrative addresses.
+
+        Each entry under `/ip service` carries an `address` field holding the IPv4 and IPv6 prefixes allowed to reach that listener. RouterOS leaves it empty, which means any host that can route to the device may open a session on SSH, WinBox, WebFig, or the API. Operators populate it per service with `/ip service set ssh address=192.168.88.0/24`, or through the **IP > Services** dialog in WinBox.
 
         **Why this matters**
 
-        - **Exposure reduction:** A management service reachable from any address can be brute-forced or exploited by anyone who can route to the device.
-        - **Defense in depth:** Source restrictions protect the management plane even if a service has an unpatched vulnerability or a weak credential.
-        - **Internet-facing risk:** Devices with public IPs expose WinBox, SSH, and the API to internet-wide scanning unless source ranges are constrained.
+        An empty address list on an internet-facing router puts the login prompt in front of every scanner on the internet. These devices are found in minutes; WinBox on TCP 8291 and the API port are unmistakable, and the installed population is large enough that campaigns scanning specifically for MikroTik hardware run continuously. The password then becomes the only thing standing between an attacker and the device.
 
-        **Risk mitigation**
+        Passwords are not the only thing that fails. When a remote vulnerability in a management service is published, an unrestricted listener is exploitable the moment a proof of concept circulates. That is the pattern behind the mass MikroTik compromises: an unpatched management plane reachable from anywhere, on hardware nobody logs into after the day it was installed. A source restriction keeps the flaw out of reach while the fix goes un-applied, which on these devices can mean permanently.
 
-        - **Trusted-network only:** Restricting each service to administrative subnets removes the device's management plane from the reachable attack surface.
-        - **Brute-force containment:** Limiting source addresses sharply reduces the population of hosts that can even attempt authentication.
+        Restricting the source also changes what a stolen credential is worth. A password lifted from a technician's laptop or reused from an unrelated breach only works from inside the listed ranges, which usually means the attacker has to establish a foothold on the management network first.
+
+        Where a service must be reachable from changing locations, terminate a VPN on the device and list the VPN pool rather than opening the service to any address. Include the address you are working from before you apply the change; a restriction that omits it ends the session applying it.
       audit: |
         To verify that management services restrict source addresses from the RouterOS CLI:
 
@@ -411,18 +416,19 @@ queries:
       mikrotik.services.where(disabled == false && name == /ssl/).all(tlsVersion != "" && tlsVersion != "any")
     docs:
       desc: |
-        This check verifies that enabled TLS-protected services (`www-ssl`, `api-ssl`) enforce a minimum TLS version rather than accepting any version. With `tls-version` left at `any`, the service negotiates obsolete protocol versions with weak cryptography.
+        This check verifies that the encrypted management services negotiate a pinned, modern TLS version instead of accepting whatever a client offers.
+
+        `www-ssl` and `api-ssl` each carry a `tls-version` setting under `/ip service`. RouterOS ships it as `any`, which lets the service fall back to obsolete protocol versions for the benefit of old clients. Operators pin it with `/ip service set www-ssl tls-version=only-1.2`, and the same for `api-ssl`.
 
         **Why this matters**
 
-        - **Downgrade resistance:** Accepting any TLS version allows an attacker to force a downgrade to a deprecated protocol with known weaknesses.
-        - **Confidentiality:** Modern TLS versions provide stronger cipher suites and forward secrecy for management traffic.
-        - **Compliance:** Most security baselines require TLS 1.2 or higher and prohibit legacy SSL/TLS.
+        A service willing to speak an obsolete protocol version can be made to do so. An attacker on the path strips the modern options out of the client's handshake, the router agrees to what is left, and the session runs under a protocol whose weaknesses have public tooling. The administrator sees a padlock and a working session throughout.
 
-        **Risk mitigation**
+        What that downgraded session protects is the router's administrative credential and the configuration it carries. Recovering it does not require breaking the negotiated cipher outright; the older protocol versions have practical attacks against the handshake and the record layer that recover selected plaintext, and selected plaintext is enough when the interesting bytes are a password or a session cookie.
 
-        - **Strong negotiation floor:** Pinning a minimum TLS version prevents clients and attackers from negotiating obsolete protocols.
-        - **Protected management plane:** Enforcing modern TLS keeps WebFig and API sessions resistant to interception.
+        Leaving the floor at `any` also hides the problem from anyone auditing by inspection. The service reports itself as TLS-protected and an ordinary browser connects over a current version, so the weakness surfaces only when the attacker, rather than the client, chooses the version.
+
+        Pin the highest version every management client supports. If an old provisioning tool cannot reach the router afterwards, update or replace that tool rather than returning the whole service to `any`.
       audit: |
         To verify the minimum TLS version of TLS-protected services from the RouterOS CLI:
 
@@ -474,18 +480,19 @@ queries:
       mikrotik.users.where(name == "admin").all(disabled == true)
     docs:
       desc: |
-        This check verifies that the factory default `admin` account is disabled or removed. RouterOS ships with a well-known `admin` user; leaving it active gives attackers a known username to target. Administrators should create individually named accounts and disable or delete `admin`.
+        This check verifies that the factory `admin` account can no longer be used to log in.
+
+        RouterOS creates a single local user named `admin` at the factory, and on older releases it has no password until someone sets one. Administration is meant to move to per-person accounts under `/user`, after which the factory account is disabled with `/user disable admin` or deleted with `/user remove admin`.
 
         **Why this matters**
 
-        - **Known target:** The `admin` username is universally known, so attackers only need to guess the password.
-        - **Accountability:** Shared default accounts make it impossible to attribute actions to a specific administrator.
-        - **Credential-stuffing exposure:** Default account names are the first entries in automated password-guessing dictionaries.
+        `admin` is the first username every credential-guessing tool tries against a MikroTik device, so leaving it active hands an attacker half the login for free. The password becomes the entire defense, and on this hardware it is frequently the one an installer chose once and reused across every site they built.
 
-        **Risk mitigation**
+        That reuse is the specific mechanism behind the large MikroTik botnets. VPNFilter and Meris did not need a novel exploit on each device; a known account name combined with a default or shared password recruited routers in bulk, and the routers stayed recruited because nobody logs into them again.
 
-        - **Named accounts:** Replacing `admin` with per-administrator accounts restores accountability and removes a predictable target.
-        - **Reduced guessability:** Disabling the default account forces an attacker to discover both a username and a password.
+        An account nobody owns is also an account nobody watches. A log entry attributing a configuration change to `admin` names no person, so a change made by an intruder reads exactly like routine work by whoever happened to be on shift, and the intrusion is discovered by its effects rather than by its trail.
+
+        Create the replacement account and confirm you can log in with it before disabling `admin`. A device left with no usable full-access account is recovered only by a reset that erases its configuration, and for a router at an unstaffed site that means someone has to drive there.
       audit: |
         To verify that the default admin account is disabled from the RouterOS CLI:
 
@@ -541,18 +548,19 @@ queries:
       mikrotik.users.where(disabled == false).all(address != "")
     docs:
       desc: |
-        This check verifies that every enabled local user account restricts the source addresses it may log in from. RouterOS user accounts accept logins from any address by default; the `address` field constrains where each account can authenticate.
+        This check verifies that each local account able to log in is bound to the networks it may log in from.
+
+        Alongside the per-service restriction under `/ip service`, RouterOS carries an `address` field on every entry in `/user`. It lists the prefixes from which that specific account may authenticate, on any service, and it is empty by default. Operators set it with `/user set netadmin address=192.168.88.0/24`.
 
         **Why this matters**
 
-        - **Defense in depth:** Even with strong passwords, an account reachable from anywhere can be brute-forced from the entire internet.
-        - **Containment:** Tying accounts to administrative networks limits where stolen credentials can be replayed from.
-        - **Layered control:** Per-user source restrictions complement service-level restrictions for finer-grained access control.
+        The service restriction decides which hosts may reach a login prompt; this one decides which hosts a given credential works from. The difference shows up whenever the two should not match: a monitoring account that only one collector should ever use, or a contractor's account that should only work from the site they maintain, can be pinned tightly even though the service itself stays open to the whole management network.
 
-        **Risk mitigation**
+        That turns a stolen password into a much narrower asset. An attacker who lifts an operator's credential from a compromised workstation, recovers it from a configuration backup, or replays one reused from an unrelated breach still has to originate from inside the listed prefixes for it to be worth anything.
 
-        - **Origin pinning:** Restricting each account to trusted subnets ensures credentials are only usable from expected locations.
-        - **Brute-force containment:** Limiting login origins drastically shrinks the set of hosts that can attempt authentication.
+        It also limits what a compromised host on the management network can reach. Management segments accumulate jump boxes, monitoring servers, and technician laptops, and any of them is a plausible foothold. Binding accounts individually means a foothold in one corner of that network cannot use the credentials belonging to another.
+
+        Accounts held by people who roam belong pinned to a VPN pool rather than left open. As with any change that can lock you out, confirm the address you are working from falls inside the range before applying it to your own account.
       audit: |
         To verify that user accounts restrict source addresses from the RouterOS CLI:
 
@@ -603,18 +611,19 @@ queries:
       mikrotik.snmp.trapCommunity != "public"
     docs:
       desc: |
-        This check verifies that the SNMP trap community string is not left at the default value `public`. A default community string is effectively a blank password: anyone who knows it can receive — or, with read-write communities, manipulate — SNMP data.
+        This check verifies that SNMP traps leaving the device are not tagged with the factory community string `public`.
+
+        The trap community is the shared secret RouterOS presents when it sends unsolicited SNMP notifications to a monitoring host, and it names one of the entries defined under `/snmp community`. RouterOS ships that list with a single entry called `public` and points the trap community at it. Operators define a unique community and select it with `/snmp set trap-community=<unique-community-string>`.
 
         **Why this matters**
 
-        - **Predictable secret:** `public` is the universal default community string and is assumed by every SNMP scanner.
-        - **Information disclosure:** SNMP exposes detailed device and network information that aids reconnaissance when protected only by a default community.
-        - **Weak authentication:** SNMP v1/v2c communities are sent in clear text, so a guessable community offers no meaningful protection.
+        In SNMP v1 and v2c the community string is the whole of the authentication scheme, and it crosses the network in clear text. A value of `public` means it is not a secret at all: it is the first string every SNMP scanner sends and the default every tool assumes.
 
-        **Risk mitigation**
+        A monitoring host that accepts traps under `public` accepts them from anyone who can reach it. An attacker forging traps can raise alarms that pull operators toward the wrong part of the network while the real activity happens elsewhere, or flood the receiver until a genuine alert about the intrusion is lost among fabricated ones. Trap data is also commonly fed straight into dashboards and ticketing systems that treat it as trustworthy input and act on it automatically.
 
-        - **Non-default secret:** Setting a unique community string removes the trivially guessed default.
-        - **Stronger SNMP posture:** Pairing a unique community with SNMP v3 and source restrictions closes the most common SNMP exposure.
+        The untouched default usually signals that the read community was never changed either, and a readable SNMP agent hands over interface names, addressing, routing neighbors, uptime, and the exact RouterOS version. That is precisely the reconnaissance an attacker needs to decide whether the device is worth an exploit and which one to reach for.
+
+        Where the monitoring platform supports it, move to SNMP v3 with authentication and privacy instead of a shared community, and restrict the agent to the monitoring hosts using the community's own `address` field.
       audit: |
         To verify the SNMP trap community from the RouterOS CLI:
 
@@ -677,18 +686,19 @@ queries:
       mikrotik.ntpClient.enabled == true
     docs:
       desc: |
-        This check verifies that the NTP client is enabled so the device maintains accurate time. RouterOS devices without a battery-backed clock lose time across reboots; accurate time is essential for correlating logs, validating certificates, and enforcing time-based rules.
+        This check verifies that the device keeps its clock synchronized against a time source.
+
+        Most RouterOS hardware has no battery-backed real-time clock, so a router that is not synchronizing starts from the firmware build date after every reboot and drifts from there. The client lives at `/system ntp client`, and operators turn it on with `/system ntp client set enabled=yes servers=time.cloudflare.com,pool.ntp.org`.
 
         **Why this matters**
 
-        - **Log correlation:** Incident investigation depends on consistent timestamps across devices; clock drift makes correlation unreliable.
-        - **Certificate validation:** TLS certificate expiry and validity checks fail or behave unexpectedly when the device clock is wrong.
-        - **Time-based controls:** Scheduled rules, lease times, and token-based mechanisms depend on accurate time.
+        Without it, the device's log timestamps are fiction. When something does happen on the network, the router's account of it cannot be lined up against the firewall, the switch, or the server logs, and the one device that actually saw the traffic becomes the one device whose evidence is unusable. RouterOS keeps only a small in-memory log by default, so the remote syslog that would have preserved the record inherits the wrong times too.
 
-        **Risk mitigation**
+        A wrong clock also breaks certificate validation. A router whose date sits far in the past accepts certificates that have since expired or been revoked; one wrong in the other direction rejects valid ones, taking down the encrypted resolver, the TLS management services, and certificate-authenticated VPN tunnels at once. Failures of that shape are usually misdiagnosed as network problems and worked around by switching verification off, which is how a clock fault becomes a lasting exposure.
 
-        - **Trustworthy timestamps:** Enabling NTP keeps device time synchronized for reliable auditing and forensics.
-        - **Correct crypto behavior:** Accurate time ensures certificate and other time-sensitive validations work as intended.
+        Anything scheduled stops being dependable as well. Time-based firewall rules, scheduler scripts, DHCP lease expiry, and hotspot session limits all key off a clock that is silently wrong.
+
+        Configure more than one server so a single unreachable source does not leave the device unsynchronized, and prefer sources the router can reach without traversing tunnels whose own certificates depend on the clock.
       audit: |
         To verify that the NTP client is enabled from the RouterOS CLI:
 
@@ -739,18 +749,19 @@ queries:
       mikrotik.dns.useDohServer == "" || mikrotik.dns.verifyDohCert == true
     docs:
       desc: |
-        This check verifies that, when DNS over HTTPS (DoH) is configured, the device validates the DoH server's TLS certificate. Without `verify-doh-cert` enabled, the encrypted DoH connection is established to an unauthenticated endpoint, defeating much of the protection DoH is meant to provide.
+        This check verifies that when the router resolves names over DNS over HTTPS, it authenticates the resolver it is talking to.
+
+        RouterOS can forward DNS queries to a DoH endpoint named in `/ip dns use-doh-server`, and it carries a separate `verify-doh-cert` switch deciding whether that endpoint's TLS certificate is checked against the imported certificate authorities. The switch is off by default, so DoH can be running with no verification behind it. Operators import the trusted roots and set `/ip dns set verify-doh-cert=yes`.
 
         **Why this matters**
 
-        - **Man-in-the-middle risk:** An unverified DoH connection can be intercepted by an on-path attacker presenting any certificate.
-        - **False assurance:** DoH without certificate verification provides confidentiality only against passive observers, not active attackers.
-        - **Resolution integrity:** A spoofed DoH endpoint can return forged DNS answers, redirecting traffic to attacker-controlled hosts.
+        The router is the resolver for everything behind it. Whatever answer it accepts is the answer every client at the site receives, so control of its DNS is control of where the site's traffic goes: the update server, the VPN concentrator, the payment endpoint, the login page.
 
-        **Risk mitigation**
+        With verification off, seizing that control needs no certificate an attacker could not produce themselves. Anything on the path between the router and the provider can present its own certificate, the router accepts it, and the encrypted channel terminates at the attacker. From the router's side this looks exactly like working DoH, which is the trap: an operator who enabled DoH believing it stopped DNS tampering has only stopped the passive observer while handing the active one a clean interception point.
 
-        - **Authenticated resolver:** Verifying the certificate ensures the device talks only to the legitimate DoH provider.
-        - **Trusted resolution:** Certificate validation protects the integrity of DNS answers against active interception.
+        The redirection is durable and hard to spot. It changes no configuration on the router, logs no error, and survives until somebody thinks to inspect the answers coming back rather than the setting that says DoH is on.
+
+        Verification depends on the device holding current CA certificates and a correct clock, so import the resolver's root and confirm time synchronization before enabling it, or name resolution stops entirely.
       audit: |
         To verify DoH certificate validation from the RouterOS CLI:
 
@@ -803,18 +814,19 @@ queries:
       mikrotik.firewallRules.where(chain == "input").any(action == "drop" || action == "reject")
     docs:
       desc: |
-        This check verifies that the IPv4 firewall `input` chain contains a rule that drops or rejects traffic destined to the router itself. Without a default-deny posture on the input chain, the router's management plane and services are reachable by any traffic that is not explicitly handled.
+        This check verifies that traffic addressed to the router itself is denied unless a rule explicitly permits it.
+
+        The `input` chain in `/ip firewall filter` governs packets destined for the router rather than passing through it, and RouterOS accepts anything no rule matches. A default-deny posture therefore has to be written out: accept rules for established connections and for trusted management sources, then a closing `/ip firewall filter add chain=input action=drop` at the end of the chain.
 
         **Why this matters**
 
-        - **Management exposure:** The `input` chain governs traffic to the router; with no drop rule, services like WinBox, SSH, and the API are exposed to all reachable networks.
-        - **Default-allow danger:** RouterOS does not deny input traffic implicitly, so absence of a drop rule means the device is open by default.
-        - **Attack surface:** An unprotected input chain lets attackers probe and exploit every listening service on the device.
+        Everything the device listens on sits behind that chain. Without the closing drop, SSH, WinBox, WebFig, the API, DNS, SNMP, and any VPN responder are reachable from every network the router can be routed from, which on a WAN interface means the whole internet. Disabling the services nobody uses narrows the list, but whatever remains is still exposed to the world rather than to the operators.
 
-        **Risk mitigation**
+        That exposure is what the large MikroTik compromises fed on. Scanners sweep for the distinctive WinBox and API ports continuously, so a device answering from a public address is inventoried long before anyone attacks it. When the next management-plane vulnerability is published, the attacker already holds the target list, and these routers are seldom patched in the window that follows.
 
-        - **Default deny:** A drop/reject rule at the end of the input chain ensures only explicitly permitted management traffic reaches the router.
-        - **Contained services:** Combined with accept rules for trusted sources, a default-deny input chain shrinks the device's exposure to a known set of hosts.
+        An open input chain also makes the device itself a resource to abuse. Its DNS resolver can be enlisted as an amplifier in reflection attacks against third parties, and connection tracking and CPU on small hardware can be consumed by unsolicited traffic until legitimate forwarding suffers.
+
+        The drop rule takes effect the instant it is added, so place the accept rules for established traffic and for your own source address above it and work in Safe Mode. A lockout on a router at an unstaffed site is resolved by a site visit.
       audit: |
         To verify the firewall input chain from the RouterOS CLI:
 
@@ -868,18 +880,19 @@ queries:
       mikrotik.firewallRules.where(action == "drop").any(connectionState == /invalid/)
     docs:
       desc: |
-        This check verifies that the firewall drops packets with an `invalid` connection state. Invalid packets do not belong to any known connection and are commonly used in scanning, spoofing, and evasion techniques; a well-formed RouterOS ruleset drops them early.
+        This check verifies that packets connection tracking cannot associate with any known session are discarded.
+
+        RouterOS marks a packet `invalid` when its connection tracker holds no state matching it: a mid-stream segment for a session the router never saw open, a response with no request, or a packet whose flags contradict the state it claims. The recommended ruleset discards them early with `/ip firewall filter add chain=input connection-state=invalid action=drop`, repeated for the `forward` chain.
 
         **Why this matters**
 
-        - **Evasion resistance:** Invalid packets are used to bypass stateful inspection and probe firewalls; dropping them closes that gap.
-        - **Resource protection:** Discarding invalid traffic reduces processing of malformed or spoofed packets.
-        - **Cleaner state table:** Dropping invalid packets keeps connection tracking focused on legitimate flows.
+        Invalid packets are the raw material of firewall evasion. Scanners send crafted segments belonging to no session precisely because rules written around normal traffic often let them slip past, and whatever comes back reveals which ports are open and what sits behind them. Dropping the class outright ends that line of probing instead of answering it.
 
-        **Risk mitigation**
+        Passing invalid packets along also produces outcomes nobody intended. Later rules evaluate them without state context, so a packet that would be denied on its merits can match an accept rule written for the established traffic it is imitating, and a source-spoofed segment can be forwarded into an internal network on the strength of that match.
 
-        - **Early discard:** A drop rule for `connection-state=invalid` removes malformed traffic before it reaches other rules or the router's services.
-        - **Hardened baseline:** This is a standard component of MikroTik's recommended firewall and complements the default-deny input chain.
+        There is a resource dimension on the small hardware this software usually runs on. Every unsolicited packet costs tracker lookups and CPU, and a sustained stream of them is a cheap way to degrade forwarding for real traffic on a device with little headroom to spare.
+
+        Asymmetric routing is the one arrangement where this rule legitimately causes trouble, because the router genuinely sees only one direction of a flow and marks the other half invalid. Correct the routing or scope the rule to the paths it does not affect, rather than dropping it from the ruleset.
       audit: |
         To verify that invalid packets are dropped from the RouterOS CLI:
 
@@ -931,18 +944,19 @@ queries:
       mikrotik.wifiInterfaces.where(disabled == false && mode == "ap").all(authenticationTypes != empty)
     docs:
       desc: |
-        This check verifies that every enabled WiFi interface operating as an access point requires authentication. An access point with no authentication types is an open network that anyone in range can join.
+        This check verifies that no wireless network the device broadcasts lets clients associate without credentials.
+
+        A RouterOS access-point interface carries a list of authentication types in its security settings, and an empty list means an open network: any device in range associates and lands on the LAN. Operators populate it with `/interface/wifi/set [find name=wifi1] security.authentication-types=wpa2-psk,wpa3-psk` alongside a passphrase.
 
         **Why this matters**
 
-        - **Open access:** An unauthenticated SSID lets any nearby device connect to the network with no credentials.
-        - **Traffic interception:** Open WiFi provides no link-layer encryption, exposing client traffic to anyone in range.
-        - **Pivot point:** Attackers can use an open WLAN as a foothold to reach internal systems.
+        An open SSID puts the internal network within reach of anyone in the parking lot. There is no credential to steal or guess; association is the whole of it, and from there the attacker is an ordinary host on the segment, able to reach the router's own management services, the printers, the point-of-sale terminals, and whatever else shares the VLAN.
 
-        **Risk mitigation**
+        Open networks carry no link-layer encryption either, so every client's traffic is readable out of the air by anyone with a radio, whether or not they associate at all. That includes the credentials clients send to internal systems and the DNS queries that map out what those systems are.
 
-        - **Authenticated access:** Requiring WPA2/WPA3 authentication ensures only credentialed clients can join and that traffic is encrypted.
-        - **Reduced exposure:** Closing open SSIDs removes the simplest path onto the wireless network.
+        Because the access point is usually also the gateway, a foothold gained this way is a foothold on the device that carries the entire site. From an associated position an attacker can work directly against the management plane, and the small sites where these units are deployed rarely have anything watching the wireless segment to notice the attempt.
+
+        A deliberately public network is a legitimate case, but it belongs on its own VLAN and bridge, denied any path to the management addresses or the internal ranges, rather than on an open SSID bridged straight to the LAN.
       audit: |
         To verify WiFi authentication from the RouterOS CLI:
 
@@ -992,18 +1006,19 @@ queries:
       mikrotik.wifiInterfaces.where(disabled == false && mode == "ap").all(authenticationTypes.any(_ == /wpa3/))
     docs:
       desc: |
-        This check verifies that every enabled WiFi access point includes a WPA3 authentication type. WPA3 strengthens wireless authentication and protects against offline password-guessing attacks that affect WPA2-PSK.
+        This check verifies that the wireless networks the device broadcasts offer WPA3 rather than only the older WPA2 pre-shared key.
+
+        WPA3 replaces WPA2's four-way handshake with Simultaneous Authentication of Equals, which exposes nothing an eavesdropper can attack away from the network. RouterOS lists it as an authentication type beside WPA2, so operators enable it with `/interface/wifi/set [find name=wifi1] security.authentication-types=wpa2-psk,wpa3-psk` and can run both while older clients migrate.
 
         **Why this matters**
 
-        - **Offline attack resistance:** WPA3's Simultaneous Authentication of Equals (SAE) resists the offline dictionary attacks that threaten WPA2 pre-shared keys.
-        - **Forward secrecy:** WPA3 provides per-session forward secrecy, so a compromised key does not expose past traffic.
-        - **Modern baseline:** WPA3 is the current wireless security standard; WPA2-only networks rely on aging protections.
+        Against WPA2-PSK an attacker does not need to linger near the network. Capturing one client's association, or forcing one by deauthenticating a client that is already connected, yields material that can be carried away and guessed offline at whatever rate the attacker's hardware allows. Site passphrases are commonly the business name, the street address, or something printed on a card by the door, and those fall in seconds.
 
-        **Risk mitigation**
+        Recovering the passphrase yields more than a way in. Every WPA2 client on that SSID derives its session keys from the same shared secret, so an attacker holding it can decrypt traffic recorded earlier from other clients as well. WPA3 breaks both halves of that: guessing has to happen online against the access point, where it is rate-limited and visible, and each session gets forward secrecy, so a passphrase recovered next year does not open traffic captured today.
 
-        - **Stronger key exchange:** Enabling WPA3 raises the cost of recovering wireless credentials.
-        - **Transitional support:** Offering WPA2/WPA3 mixed mode lets modern clients use WPA3 while older clients remain connected during migration.
+        The exposure lasts as long as the deployment does. A wireless passphrase at a small site is changed almost never, so a capture taken now stays useful for years, and the access point that would have to be reconfigured is the one nobody visits.
+
+        Mixed WPA2 and WPA3 mode keeps legacy clients working, but it leaves the WPA2 path fully available to attack, so treat it as a migration state and retire WPA2 once the client inventory allows.
       audit: |
         To verify WPA3 support from the RouterOS CLI:
 
@@ -1056,18 +1071,19 @@ queries:
       mikrotik.bridges.where(disabled == false).all(protocolMode != "none")
     docs:
       desc: |
-        This check verifies that every enabled bridge runs a spanning-tree protocol (STP, RSTP, or MSTP) rather than `none`. Spanning tree prevents Layer 2 loops and provides a measure of protection against rogue topology changes.
+        This check verifies that each bridge on the device runs a spanning-tree protocol rather than forwarding with no loop protection.
+
+        A RouterOS bridge joins ports into a single Layer 2 domain, and its `protocol-mode` selects `stp`, `rstp`, `mstp`, or `none`. Set to `none`, the bridge forwards frames without exchanging topology information and with no mechanism to block a redundant path. Operators enable it with `/interface bridge set [find name=bridge1] protocol-mode=rstp`.
 
         **Why this matters**
 
-        - **Loop prevention:** Without a spanning-tree protocol, an accidental or malicious loop can flood the broadcast domain and bring down the network.
-        - **Topology stability:** STP/RSTP detects and blocks redundant paths, keeping the Layer 2 topology stable and predictable.
-        - **Availability:** Broadcast storms from loops cause network-wide outages that are disruptive and hard to diagnose.
+        A loop on a bridge with no spanning tree does not degrade the network, it stops it. Broadcast frames circulate with no hop count to retire them, multiply at every pass, and saturate the segment within seconds. The router loses the capacity to answer its own management traffic, so the device an operator would use to fix the problem goes unreachable at the same moment the problem starts.
 
-        **Risk mitigation**
+        Creating that loop takes one patch cable in the wrong pair of ports, and at the small unstaffed sites these devices serve it is as likely to come from a tidy-minded person plugging in a spare lead as from anyone hostile. It is also trivially reproducible by an attacker with a moment of physical access, and it leaves nothing behind afterwards to explain what happened.
 
-        - **Loop-free forwarding:** Enabling RSTP (or MSTP) ensures the bridge converges to a loop-free topology automatically.
-        - **Faster recovery:** RSTP reconverges quickly after topology changes, minimizing disruption.
+        Recovery is the expensive part. There is no remote fix for a saturated segment; somebody has to reach the site and unplug something, and until they do the site is off the network entirely. For infrastructure whose whole appeal is that it can be installed and left alone, an outage that requires a visit is the worst failure mode on offer.
+
+        A bridge with a single uplink and no physical possibility of a second path is the case where `none` is defensible, and even there RSTP costs nothing to leave running. Where the bridge faces user ports, pair it with edge-port and BPDU controls so a device plugged into an access port cannot influence the topology.
       audit: |
         To verify the bridge spanning-tree configuration from the RouterOS CLI:
 
