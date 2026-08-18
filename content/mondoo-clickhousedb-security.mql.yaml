@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-clickhousedb-security
     name: Mondoo ClickHouse Security
-    version: 1.0.0
+    version: 1.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -13,12 +13,17 @@ policies:
     authors:
       - name: Mondoo, Inc.
         email: hello@mondoo.com
-    summary: Harden self-hosted ClickHouse account authentication and transport encryption
+    summary: Harden self-hosted ClickHouse account authentication, network reach, privilege scope, and query quotas
     docs:
       desc: |
-        The Mondoo ClickHouse Security policy connects to a self-hosted ClickHouse server and assesses its authentication and transport posture: whether every account requires a password and whether the secure native TCP port is enabled.
+        The Mondoo ClickHouse Security policy connects to a self-hosted ClickHouse server and assesses the posture of its accounts: how they authenticate, where they may connect from, what they are allowed to reach, and what a single account is allowed to consume.
 
-        Settings are read from the server's `system` tables, so the checks reflect the server's effective configuration rather than a file on disk.
+        This policy provides security checks across three areas:
+        - Authentication, covering both whether an account has a credential and how that credential is stored
+        - Access control, covering the addresses an account may connect from and the scope of the privileges it holds
+        - Resource limits, covering the quotas that bound what any one account can read
+
+        Accounts, grants, and quotas are read from the server's `system` tables, so the checks reflect the server's effective configuration rather than a file on disk. Exposed ClickHouse servers tend to share one shape: a default account reachable from any address, a credential stored in the clear or absent entirely, and server-wide privileges attached to it. These checks are aimed at that shape.
 
         Learn more about scanning databases in the [cnspec documentation](https://mondoo.com/docs/cnspec).
     groups:
@@ -26,10 +31,16 @@ policies:
         filters: asset.platform == "clickhousedb"
         checks:
           - uid: mondoo-clickhousedb-security-users-have-passwords
-      - title: Transport Encryption
+          - uid: mondoo-clickhousedb-security-users-strong-authentication
+      - title: Access Control
         filters: asset.platform == "clickhousedb"
         checks:
-          - uid: mondoo-clickhousedb-security-secure-tcp-port-enabled
+          - uid: mondoo-clickhousedb-security-users-host-restricted
+          - uid: mondoo-clickhousedb-security-users-least-privilege
+      - title: Resource Limits
+        filters: asset.platform == "clickhousedb"
+        checks:
+          - uid: mondoo-clickhousedb-security-quota-applies-to-all-users
     scoring_system: highest impact
 queries:
   - uid: mondoo-clickhousedb-security-users-have-passwords
@@ -100,68 +111,346 @@ queries:
     refs:
       - url: https://clickhouse.com/docs/en/operations/access-rights
         title: ClickHouse access control and account management
-  - uid: mondoo-clickhousedb-security-secure-tcp-port-enabled
+  - uid: mondoo-clickhousedb-security-users-strong-authentication
     filters: asset.platform == "clickhousedb"
-    title: Ensure ClickHouse enables the secure native TCP port
+    title: Ensure no ClickHouse account uses a weak authentication method
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    mql: |
+      clickhousedb.instance.users.all(authTypes.none("no_password") && authTypes.none("plaintext_password"))
+    docs:
+      desc: |
+        This check inspects how each account proves who it is, and fails when any of them uses `no_password` or `plaintext_password`.
+
+        ClickHouse records the method per user in `system.users`. `no_password` means the account authenticates on its name alone. `plaintext_password` means the secret is stored on the server exactly as it was typed — in `users.xml`, in a file under `users.d/`, or in the access-control store on disk.
+
+        `plaintext_password` is easy to arrive at without deciding to. The official container image writes the value of the `CLICKHOUSE_PASSWORD` environment variable into `users.d` as a plaintext password, so a deployment that looks like it set a credential has in fact stored one in the clear, and an account created with `IDENTIFIED BY 'secret'` inherits whatever the server's default method is.
+
+        **Why this matters**
+
+        A check that only asks whether an account has a password answers yes in both of the cases that matter here. The account with `plaintext_password` has a password; the password is simply readable by anyone who can read a configuration file, take a backup, pull the container image layer, or look at the deployment manifest that supplied it. Credentials stored this way are not compromised by an attack on ClickHouse — they are compromised by ordinary access to the systems around it.
+
+        The consequences reach past this server. Database passwords are reused across environments and stored in the same secret managers as everything else, so a plaintext credential recovered from a manifest is worth trying elsewhere, and it is worth trying immediately because nothing about its use will look anomalous.
+
+        `no_password` needs less explanation: the account is open to anyone who can reach the port and knows the name, and combined with an unrestricted host list it is precisely the configuration behind the ClickHouse instances that turn up exposed on the public internet.
+
+        Prefer `bcrypt_password`, which applies a work factor that makes an offline attack against a recovered hash expensive. `sha256_password` is salted and acceptable; it is fast to compute, which is what an attacker with the hash wants.
+      audit: |-
+        ### Audit via clickhouse-client
+
+        1. List each account and how it authenticates:
+
+           ```bash
+           clickhouse-client --query "SELECT name, auth_type FROM system.users ORDER BY name"
+           ```
+
+        Any account whose method is `no_password` or `plaintext_password` fails the check.
+
+        2. Check whether a container deployment wrote a plaintext credential into the configuration:
+
+           ```bash
+           grep -rl '<password>' /etc/clickhouse-server/users.d/
+           ```
+      remediation:
+        - id: config
+          desc: |-
+            To move an account onto a hashed credential:
+
+            1. Reissue the credential with bcrypt:
+
+               ```sql
+               ALTER USER app IDENTIFIED WITH bcrypt_password BY 'REPLACE_WITH_A_STRONG_SECRET';
+               ```
+            2. Update the clients that use it, then confirm the change took effect:
+
+               ```sql
+               SELECT name, auth_type FROM system.users WHERE name = 'app';
+               ```
+            3. Remove any plaintext value left behind in `users.xml` or under `users.d/`. Altering the user does not delete a credential that a configuration file still declares.
+
+            For accounts defined by a configuration file rather than by SQL, replace the `<password>` element with `<password_bcrypt_hash_hex>` and delete the plaintext one.
+        - id: cli
+          desc: |-
+            Reissue the credentials and verify none are left in a weak form:
+
+            ```bash
+            clickhouse-client --query "ALTER USER app IDENTIFIED WITH bcrypt_password BY 'REPLACE_WITH_A_STRONG_SECRET'"
+            clickhouse-client --query "SELECT name, auth_type FROM system.users WHERE auth_type IN ('no_password', 'plaintext_password')"
+            ```
+
+            The second command should return no rows. If a container deployment supplied the credential through `CLICKHOUSE_PASSWORD`, remove that variable and manage the account with SQL, or the plaintext entry is rewritten on the next start.
+    refs:
+      - url: https://clickhouse.com/docs/en/operations/access-rights
+        title: ClickHouse access control and account management
+      - url: https://clickhouse.com/docs/en/operations/external-authenticators
+        title: ClickHouse external authenticators
+  - uid: mondoo-clickhousedb-security-users-host-restricted
+    filters: asset.platform == "clickhousedb"
+    title: Ensure ClickHouse accounts are restricted to known hosts
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      clickhousedb.instance.users.all(anyHost == false)
+    docs:
+      desc: |
+        This check verifies that every account names the addresses it may connect from, rather than accepting connections from anywhere. ClickHouse expresses the restriction with the `HOST` clause on a user, and an account created without one is stored as `HOST ANY` — recorded in `system.users` as the address range `::/0`.
+
+        **Why this matters**
+
+        The host list is the last control that stands between a reachable port and an account, and it is the one that keeps working when the others fail. A credential that leaks, a password that was chosen badly, an account someone forgot to remove after a contract ended: each of those is an authentication problem, and each of them stops mattering if the connection is refused before the credential is examined because it arrived from an address the account is not allowed to use.
+
+        It also constrains the damage a legitimate credential can do in the wrong place. An analytics account scoped to the reporting subnet cannot be used from a compromised web server, even with the correct password, so lateral movement has to solve a second problem rather than reuse the first solution.
+
+        This is the setting at the centre of most ClickHouse data exposures. An instance reachable from the internet, with a default account that accepts connections from any address and has no meaningful credential, gives a complete read of the database to anyone who finds the port. Nothing else has to go wrong, and the host list is what makes finding the port insufficient.
+
+        Set the host list to the networks the account is used from. Where the server sits behind a proxy or a service mesh, restrict to the proxy's addresses; the account should still not be reachable from anywhere else.
+      audit: |-
+        ### Audit via clickhouse-client
+
+        1. List each account with the addresses it may connect from:
+
+           ```bash
+           clickhouse-client --query "SELECT name, host_ip, host_names FROM system.users ORDER BY name"
+           ```
+
+        An account whose `host_ip` contains `::/0` or `0.0.0.0/0` accepts connections from any address and fails the check.
+
+        2. Confirm what the server is actually listening on:
+
+           ```bash
+           clickhouse-client --query "SELECT getServerPort('tcp_port'), getServerPort('tcp_port_secure')"
+           ```
+      remediation:
+        - id: config
+          desc: |-
+            To restrict an account to known networks:
+
+            1. Determine which addresses the account is used from.
+            2. Replace its host list:
+
+               ```sql
+               ALTER USER app HOST IP '10.0.1.0/24', IP '10.0.2.0/24';
+               ```
+            3. Confirm the clients still connect, then repeat for the remaining accounts.
+
+            For accounts defined in `users.xml` or under `users.d/`, set the `<networks>` element to the specific ranges and remove any `<ip>::/0</ip>` entry.
+
+            Restrict the built-in `default` account too, or remove it once a named administrative account exists. It is the account an attacker tries first.
+        - id: cli
+          desc: |-
+            Apply the restriction and confirm no account is left unrestricted:
+
+            ```bash
+            clickhouse-client --query "ALTER USER app HOST IP '10.0.1.0/24'"
+            clickhouse-client --query "SELECT name FROM system.users WHERE has(host_ip, '::/0')"
+            ```
+
+            The second command should return no rows. Existing sessions are not dropped by the change, so verify from a permitted address before assuming clients are unaffected.
+    refs:
+      - url: https://clickhouse.com/docs/en/operations/access-rights
+        title: ClickHouse access control and account management
+      - url: https://clickhouse.com/docs/en/operations/settings/settings-users
+        title: ClickHouse user settings
+  - uid: mondoo-clickhousedb-security-users-least-privilege
+    filters: asset.platform == "clickhousedb"
+    title: Ensure no ClickHouse account holds server-wide privileges
     impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      clickhousedb.instance.users.all(grants.none(/ ON \*\.\*/))
+    docs:
+      desc: |
+        This check looks at the privileges granted directly to each account and fails when any of them is scoped to `*.*` — every table in every database, including databases that do not exist yet.
+
+        ClickHouse scopes a grant at three levels: `ON *.*` for the whole server, `ON analytics.*` for one database, and `ON analytics.events` for one table. It also supports roles, so a set of privileges can be defined once, reviewed as a unit, and granted to the accounts that need it.
+
+        **Why this matters**
+
+        A grant at `*.*` is not a large permission, it is an open-ended one. It covers tables created next month by a team that has never heard of this account, so the access review that approved it cannot describe what it will eventually reach. When a new database is added for data with different handling requirements, every account holding a server-wide grant already has access to it, and no grant was made at that moment for anyone to notice.
+
+        The privileges that come with the built-in `default` account illustrate the scope. A stock installation grants it everything at `*.*`, which includes `SYSTEM` for operations such as shutting down merges, the table-engine privileges that let a query read from `file()`, `url()`, and remote hosts, and `INTROSPECTION`. An account with that set does not merely read the data — it can use the server to reach other systems, and `displaySecretsInShowAndSelect` lets it read back the credentials stored in table definitions and named collections.
+
+        A dedicated administrative account will legitimately hold server-wide privileges; that is what it is for. The intent of this check is that such accounts are few, named, deliberately created, and reviewed — not that a service account acquired the set because granting at `*.*` was the quickest way to unblock a deployment.
+
+        Grant to roles rather than to accounts. A role makes the privilege set a reviewable object, and moving an account between roles is a change someone can read.
+      audit: |-
+        ### Audit via clickhouse-client
+
+        1. List every privilege granted at server scope:
+
+           ```bash
+           clickhouse-client --query "SELECT user_name, role_name, access_type FROM system.grants WHERE database IS NULL AND user_name IS NOT NULL"
+           ```
+
+        Any row naming a user account fails the check.
+
+        2. Review what a single account holds, including privileges reached through roles:
+
+           ```bash
+           clickhouse-client --query "SHOW GRANTS FOR app"
+           ```
+      remediation:
+        - id: config
+          desc: |-
+            Replace server-wide grants with scoped ones, held through a role:
+
+            1. Create a role describing what the workload needs:
+
+               ```sql
+               CREATE ROLE analytics_reader;
+               GRANT SELECT ON analytics.* TO analytics_reader;
+               ```
+            2. Grant the role to the account and revoke the broad privilege:
+
+               ```sql
+               GRANT analytics_reader TO app;
+               REVOKE ALL ON *.* FROM app;
+               ```
+            3. Confirm the account still works, then repeat for the remaining accounts.
+
+            Add the role before revoking, so the account never loses access it is using.
+        - id: cli
+          desc: |-
+            Apply the change and confirm the result:
+
+            ```bash
+            clickhouse-client --query "CREATE ROLE IF NOT EXISTS analytics_reader"
+            clickhouse-client --query "GRANT SELECT ON analytics.* TO analytics_reader"
+            clickhouse-client --query "GRANT analytics_reader TO app"
+            clickhouse-client --query "REVOKE ALL ON *.* FROM app"
+            clickhouse-client --query "SHOW GRANTS FOR app"
+            ```
+
+            Keep server-wide privileges on a named administrative account only, and restrict that account's host list so it cannot be used from anywhere on the network.
+    refs:
+      - url: https://clickhouse.com/docs/en/operations/access-rights
+        title: ClickHouse access control and account management
+      - url: https://clickhouse.com/docs/en/sql-reference/statements/grant
+        title: ClickHouse GRANT statement
+  - uid: mondoo-clickhousedb-security-quota-applies-to-all-users
+    filters: asset.platform == "clickhousedb"
+    title: Ensure a ClickHouse quota applies to every account
+    impact: 40
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-24
-      compliance/nis-2: nis-2-21-2-h
-      compliance/nist-csf-1: nist-csf-1-pr-ds-2
-      compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
-      compliance/pci-dss-4: pcidss-requirement-4-2-1
-      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
       compliance/vda-isa-5: vda-isa-5-5-2-6
     mql: |
-      clickhousedb.instance.serverSettings.where(name == "tcp_port_secure").any(value != "0" && value != "")
+      clickhousedb.instance.quotas.any(appliesToAll == true)
     docs:
       desc: |
-        This check verifies that ClickHouse offers its native protocol over TLS.
+        This check verifies that at least one quota is applied to every account rather than to a named list, so an account created later inherits a limit instead of starting unbounded.
 
-        The native protocol has two listeners. `tcp_port` is the plain one, conventionally 9000, and `tcp_port_secure` is the encrypted one, conventionally 9440. Setting `tcp_port_secure` to a non-zero port in `config.xml` or a file in `config.d/`, alongside an `openSSL` block naming a `certificateFile` and a `privateKeyFile`, brings the encrypted listener up. This check reads the effective value from the `system.server_settings` table and requires it to name a port rather than being zero or unset.
+        A ClickHouse quota bounds what an account may consume over an interval: queries, errors, rows read, bytes read, execution time. It is attached either to specific users and roles or, with `TO ALL`, to everyone.
 
         **Why this matters**
 
-        Without the secure listener, native clients have nowhere to connect except the plain port, and the native protocol sends the credential at the start of the session. An attacker positioned anywhere on that path, on a compromised host in the same subnet, at a mirrored switch port, or on any hop between an application in one region and a cluster in another, captures the username and password from the handshake of a single connection and then authenticates as that account whenever they like, from wherever they like.
+        A quota that covers everybody is a floor, and floors are what survive changes nobody told you about. Attaching limits to a named list is a control that decays: it is correct on the day it is written and stops being correct the first time an account is added by a different team, by an onboarding script, or during an incident. The account that ends up outside the list is the one nobody chose to exempt.
 
-        The same capture yields the data without the credential being used at all. Query text and result blocks travel in the clear on the plain port, so an observer reads exactly the rows the legitimate application is reading, for as long as they hold the position.
+        The consequence in an analytics database is not only cost. ClickHouse is fast enough that a single unbounded query over a large table will read hundreds of gigabytes and saturate the storage path for everyone else, so one account without a limit is a denial-of-service condition available to any credential that reaches it — no exploit, just a `SELECT` without a `WHERE` clause.
 
-        Cleartext also permits modification rather than only observation. An on-path attacker who can rewrite packets alters a query before it reaches the server or alters the result on its way back, which is the difference between someone who learns what a dashboard says and someone who decides what it says.
+        The exfiltration case is the one that makes this a security control rather than a capacity one. An attacker with a valid credential wants the whole table, and reading the whole table is exactly what quota limits on rows and bytes make impossible to do quietly. A bulk read against a quota fails partway through and leaves a record of an account that hit its ceiling — a signal that arrives during the theft rather than after it.
 
-        Bringing up `tcp_port_secure` does not stop clients using the plain listener. Once the secure port is serving and clients have moved to it, remove or zero `tcp_port` as well. Use a certificate from an authority the clients actually verify rather than a self-signed one they are configured to ignore, because an unverified certificate encrypts the session while leaving impersonation wide open.
+        Set the default quota to values a normal workload stays under, and grant deliberate exemptions to the accounts that genuinely need them.
       audit: |-
         ### Audit via clickhouse-client
 
-        1. Read the configured secure TCP port from the `system.server_settings` table:
+        1. List the quotas and what they apply to:
 
-           ```sql
-           SELECT name, value FROM system.server_settings WHERE name = 'tcp_port_secure';
+           ```bash
+           clickhouse-client --query "SELECT name, apply_to_all, apply_to_list, apply_to_except FROM system.quotas"
            ```
 
-        If `tcp_port_secure` is set to a non-zero port, the check passes. If it is `0` or unset, the check fails.
+        If no quota has `apply_to_all` set, accounts are covered only by name and the check fails.
+
+        2. Review the limits each quota actually sets:
+
+           ```bash
+           clickhouse-client --query "SELECT quota_name, duration, max_queries, max_result_rows, max_read_rows, max_execution_time FROM system.quota_limits"
+           ```
       remediation:
         - id: config
           desc: |-
-            To enable the secure native TCP port, configure TLS and set `tcp_port_secure` in the server configuration (`config.xml` or a file in `config.d/`), then restart:
+            To apply a baseline quota to every account:
 
-            ```xml
-            <clickhouse>
-              <tcp_port_secure>9440</tcp_port_secure>
-              <openSSL>
-                <server>
-                  <certificateFile>/etc/clickhouse-server/server.crt</certificateFile>
-                  <privateKeyFile>/etc/clickhouse-server/server.key</privateKeyFile>
-                </server>
-              </openSSL>
-            </clickhouse>
+            1. Choose limits a normal workload stays under. Start from what the busiest legitimate account consumes in an hour, with headroom.
+            2. Create the quota and apply it to everyone:
+
+               ```sql
+               CREATE QUOTA org_default
+                 FOR INTERVAL 1 hour
+                 MAX queries = 5000, read_rows = 5000000000, execution_time = 3600
+                 TO ALL EXCEPT etl_loader;
+               ```
+            3. Exempt only the accounts that need it, by name, so the exemption is visible.
+
+            Pair the quota with a settings profile that bounds an individual query — `max_memory_usage`, `max_rows_to_read`, and `max_result_bytes` — so one query cannot consume the whole interval's allowance at once.
+        - id: cli
+          desc: |-
+            Create the quota and confirm it applies to everyone:
+
+            ```bash
+            clickhouse-client --query "CREATE QUOTA IF NOT EXISTS org_default FOR INTERVAL 1 hour MAX queries = 5000, read_rows = 5000000000 TO ALL"
+            clickhouse-client --query "SELECT name, apply_to_all FROM system.quotas"
+            clickhouse-client --query "SELECT quota_name, quota_key, queries, read_rows FROM system.quota_usage"
             ```
+
+            Watch `system.quota_usage` for a few intervals before tightening the limits, so a legitimate workload is not cut off by a number chosen in the abstract.
     refs:
-      - url: https://clickhouse.com/docs/en/guides/sre/configuring-ssl
-        title: ClickHouse configuring SSL-TLS
+      - url: https://clickhouse.com/docs/en/operations/quotas
+        title: ClickHouse quotas
+      - url: https://clickhouse.com/docs/en/operations/settings/query-complexity
+        title: ClickHouse query complexity restrictions
