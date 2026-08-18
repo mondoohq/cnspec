@@ -28,7 +28,7 @@ in, used, and written back out before the scan.
 
 import hashlib
 
-from common import Exec, Fixture, Restart, Scan, Suite, WaitFor, Write, credential
+from common import Exec, Fixture, Restart, Scan, Suite, WaitFor, Write, credential, mint_certs
 
 # Accounts are declared with sha256 hashes rather than <password> elements,
 # because a plaintext element is exactly what the strong-authentication check
@@ -78,6 +78,25 @@ def _users_xml(admin: bool, admin_sha: str, scanner_sha: str) -> str:
 # no authentication method. Verified — it is a startup crash, not a warning.
 _USERS_D = "/etc/clickhouse-server/users.d/zz-cnspec-live.xml"
 
+# Listeners are configured in config.d rather than users.d, and only the
+# hardened fixture brings the secure one up — the two others exist to be found
+# serving in the clear.
+_CONFIG_D = "/etc/clickhouse-server/config.d/zz-cnspec-live-tls.xml"
+
+_TLS_CONFIG = """\
+<clickhouse>
+  <tcp_port_secure>9440</tcp_port_secure>
+  <https_port>8443</https_port>
+  <openSSL>
+    <server>
+      <certificateFile>/tls/server.crt</certificateFile>
+      <privateKeyFile>/tls/server.key</privateKeyFile>
+      <verificationMode>none</verificationMode>
+      <cacheSessions>true</cacheSessions>
+    </server>
+  </openSSL>
+</clickhouse>
+"""
 
 # A bootstrap account for the permissive fixture. The account the image creates
 # has no access management, so there is no way to add the passwordless user that
@@ -121,6 +140,7 @@ def build_suite(workdir):
     scanner_password = credential()
     admin_sha = hashlib.sha256(admin_password.encode()).hexdigest()
     scanner_sha = hashlib.sha256(scanner_password.encode()).hexdigest()
+    certs = mint_certs(workdir)
     return Suite(
         provider="clickhousedb",
         policy="mondoo-clickhousedb-security.mql.yaml",
@@ -159,6 +179,7 @@ def build_suite(workdir):
                             "mondoo-clickhousedb-security-users-host-restricted": "fail",
                             "mondoo-clickhousedb-security-users-least-privilege": "fail",
                             "mondoo-clickhousedb-security-quota-applies-to-all-users": "fail",
+                            "mondoo-clickhousedb-security-secure-tcp-port-enabled": "fail",
                         },
                     )
                 ],
@@ -190,6 +211,9 @@ def build_suite(workdir):
                             "mondoo-clickhousedb-security-users-host-restricted": "fail",
                             "mondoo-clickhousedb-security-users-least-privilege": "fail",
                             "mondoo-clickhousedb-security-quota-applies-to-all-users": "fail",
+                            # getServerPort() predates the users tables this
+                            # fixture cannot read, so this one answers on 24.8.
+                            "mondoo-clickhousedb-security-secure-tcp-port-enabled": "fail",
                         },
                     )
                 ],
@@ -202,9 +226,14 @@ def build_suite(workdir):
                 # No CLICKHOUSE_PASSWORD: setting it makes the entrypoint write a
                 # plaintext default account back in on every start, which would
                 # undo this fixture at the restart below.
+                mounts={
+                    "/tls/server.crt": certs["server.crt"],
+                    "/tls/server.key": certs["server.key"],
+                },
                 setup=[
                     WaitFor(["clickhouse-client", "--query", "SELECT 1"], timeout=120),
                     Write(_USERS_D, _users_xml(True, admin_sha, scanner_sha)),
+                    Write(_CONFIG_D, _TLS_CONFIG),
                     Restart(),
                     _ready_as("admin", admin_password),
                     _client(
@@ -228,6 +257,7 @@ def build_suite(workdir):
                             "mondoo-clickhousedb-security-users-host-restricted": "pass",
                             "mondoo-clickhousedb-security-users-least-privilege": "pass",
                             "mondoo-clickhousedb-security-quota-applies-to-all-users": "pass",
+                            "mondoo-clickhousedb-security-secure-tcp-port-enabled": "pass",
                         },
                     )
                 ],
