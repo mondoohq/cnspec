@@ -563,13 +563,17 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-3-1
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
+    # peer-cert-mode is what decides whether the backend certificate is validated at all.
+    # `authenticate` is the authentication frequency and takes only "always" or "once", so
+    # the previous assertion, none(authenticate == "none"), compared against a value the
+    # field cannot hold and passed on every device.
     mql: |
-      bigip.serverSslProfiles.none(authenticate == "none")
+      bigip.serverSslProfiles.all(peerCertMode == "require")
     docs:
       desc: |
-        This check verifies that authentication of backend servers is not switched off in the BIG-IP's server SSL profiles.
+        This check verifies that the BIG-IP validates the certificate presented by the backend servers it re-encrypts traffic to.
 
-        When the BIG-IP re-encrypts traffic toward a pool member, two settings on the server SSL profile decide how much it trusts what that member presents, and both live under **Local Traffic > Profiles > SSL > Server** with the **Configuration** selector on **Advanced**. **Server Certificate**, in the **Server Authentication** section, decides whether the backend certificate is validated at all; in `tmsh modify ltm profile server-ssl` it is the `peer-cert-mode` field, with the values `ignore` and `require`. How often that authentication is performed is the separate `authenticate` setting, and it is the value this check reads, failing any profile where it is set to none. A hardened profile sets **Server Certificate** to **require** and points **Trusted Certificate Authorities** at a bundle containing the issuer of the backend certificates.
+        When the BIG-IP re-encrypts traffic toward a pool member, two settings on the server SSL profile decide how much it trusts what that member presents, and both live under **Local Traffic > Profiles > SSL > Server** with the **Configuration** selector on **Advanced**. **Server Certificate**, in the **Server Authentication** section, decides whether the backend certificate is validated at all; in `tmsh modify ltm profile server-ssl` it is the `peer-cert-mode` field, with the values `ignore` and `require`. It defaults to `ignore`, and it is the value this check reads, failing any profile that does not require a certificate. How often an already-required certificate is re-checked is the separate `authenticate` setting, which this check does not read. A hardened profile sets **Server Certificate** to **require** and points **Trusted Certificate Authorities** at a bundle containing the issuer of the backend certificates.
 
         **Why this matters**
 
@@ -581,7 +585,9 @@ queries:
 
         Requiring verification tightens lateral movement as well. A host compromised elsewhere in the data center cannot simply take over a pool member's address, because it has no certificate that chains to the configured bundle and the connection is dropped rather than served.
 
-        Configure the trusted certificate authority bundle in the same change: requiring verification without one drops every pool member and stops traffic through the affected virtual servers immediately. Where backend certificates come from an internal certificate authority, import that authority first and confirm that each member's certificate chains to it and presents a name the profile expects.
+        Configure the trusted certificate authority bundle in the same change: requiring verification without one drops every pool member and stops traffic through the affected virtual servers immediately. Where backend certificates come from an internal certificate authority, import that authority first and confirm that each member's certificate chains to it and presents a name the profile expects. The check reads the peer-certificate mode alone and does not assert that a bundle is configured, so confirm the **Trusted Certificate Authorities** setting during the audit rather than reading a pass as covering it.
+
+        A device with no server SSL profiles at all passes, because it terminates nothing toward a backend over TLS and there is no re-encryption to verify.
       audit: |
         ### Audit via the BIG-IP Configuration utility
 
