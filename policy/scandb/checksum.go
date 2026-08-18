@@ -356,15 +356,12 @@ func applyChecksums(ctx context.Context, tx *sql.Tx, updateSQL string, entries [
 		return nil
 	}
 
-	// Self-healing stage lifecycle: reset any leftover stage before creating
-	// (so a previous call's failed drop can never resurface here as a
-	// misleading "table already exists"), and drop error-checked on the
-	// success path. Error paths return without dropping — the caller's
-	// rollback undoes the CREATE TEMP TABLE along with everything else, and
-	// the reset here covers even the case where it somehow does not.
-	if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS _checksum_stage`); err != nil {
-		return fmt.Errorf("failed to reset checksum stage: %w", err)
-	}
+	// Stage lifecycle, resting on two verified SQLite facts: ROLLBACK undoes
+	// CREATE TEMP TABLE, so error paths return without cleanup and a failed
+	// pass can never leave a stage behind; COMMIT does not — a temp table
+	// outlives the transaction on its pooled connection — so the success
+	// path must drop, error-checked, because the next call's CREATE depends
+	// on it.
 	if _, err := tx.ExecContext(ctx,
 		`CREATE TEMP TABLE _checksum_stage (rid INTEGER NOT NULL, checksum INTEGER NOT NULL)`); err != nil {
 		return fmt.Errorf("failed to create checksum stage: %w", err)
