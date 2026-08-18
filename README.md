@@ -115,24 +115,24 @@ cnspec vuln vsphere user@host --ask-pass
 cnspec vuln local
 ```
 
-| Platform                 | Versions                       |
-| ------------------------ | ------------------------------ |
-| Alpine                   | 3.10 - 3.23                    |
-| AlmaLinux                | 8, 9, 10                       |
-| Amazon Linux             | 1, 2, 2023                     |
-| Arch Linux               | Rolling                        |
-| CentOS                   | 6, 7, 8, Stream                |
-| Debian                   | 8, 9, 10, 11, 12, 13           |
-| Fedora                   | 30 - 43                        |
-| openSUSE                 | Leap 15, Leap 16               |
-| Oracle Linux             | 6, 7, 8, 9, 10                 |
-| Photon Linux             | 2, 3, 4, 5                     |
-| Red Hat Enterprise Linux | 6, 7, 8, 9, 10                 |
-| Rocky Linux              | 8, 9, 10                       |
-| SUSE Linux Enterprise    | 12, 15, 16                     |
-| Ubuntu                   | 18.04, 20.04, 22.04, 24.04     |
-| VMware vSphere ESXi      | 6, 7, 8                        |
-| Windows                  | 10, 11, 2016, 2019, 2022, 2025 |
+| Platform                 | Versions                          |
+| ------------------------ | --------------------------------- |
+| Alpine                   | 3.10 - 3.23                       |
+| AlmaLinux                | 8, 9, 10                          |
+| Amazon Linux             | 1, 2, 2023                        |
+| Arch Linux               | Rolling                           |
+| CentOS                   | 6, 7, 8, Stream                   |
+| Debian                   | 8, 9, 10, 11, 12, 13              |
+| Fedora                   | 30 - 43                           |
+| openSUSE                 | Leap 15, Leap 16                  |
+| Oracle Linux             | 6, 7, 8, 9, 10                    |
+| Photon Linux             | 2, 3, 4, 5                        |
+| Red Hat Enterprise Linux | 6, 7, 8, 9, 10                    |
+| Rocky Linux              | 8, 9, 10                          |
+| SUSE Linux Enterprise    | 12, 15, 16                        |
+| Ubuntu                   | 18.04, 20.04, 22.04, 24.04, 26.04 |
+| VMware vSphere ESXi      | 6, 7, 8                           |
+| Windows                  | 10, 11, 2016, 2019, 2022, 2025    |
 
 ## cnspec interactive shell
 
