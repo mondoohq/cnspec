@@ -13,6 +13,7 @@ The policies are the product. A check that compiles but never matches an asset, 
 | **[`compliance/`](compliance)** | Are the framework tags internally coherent? | Go, static | `compliance/*_test.go` |
 | **[`remediation/code/`](remediation/code)** | Is the fix we ship well-formed in its own language? | Python + each language's linter | `remediation/code/*.py` |
 | **[`remediation/commands/`](remediation/commands)** | Do the CLI and API calls we ship actually exist? | Python + CLI grammars / OpenAPI specs | `remediation/commands/*.py` |
+| **[`live/`](live)** | Does this check reach the verdict we claim, against the real database? | Python + Docker | `live/*.py` |
 | **[`upstream/`](upstream)** | Is what we validate *against* still current? | Python, network | `upstream/*.py` |
 | **Spelling** | Typos in policy prose | `typos` | `typos.toml` at the repo root |
 
@@ -37,6 +38,12 @@ content/validation/
 │
 ├── compliance/                static Go suites, no providers
 │   └── owasp_mapping_test.go
+│
+├── live/                      runtime database policies, scanned in Docker
+│   ├── verify.py                 entry point, dispatch, and the coverage gate
+│   ├── common.py                 fixture model, docker driver, cnspec scan
+│   └── redisdb.py cassandra.py clickhousedb.py
+│                                 the fixtures and their expected verdicts
 │
 ├── remediation/
 │   ├── code/                  one validator per remediation language
@@ -75,6 +82,7 @@ That covers lint, the bundle smoke scans, and the compliance mappings. Three gro
 - `test/content/iac` downloads providers and runs thousands of scans.
 - `test/content/remediation` needs each language's linter installed.
 - `test/content/commands` needs each cloud's CLI on PATH.
+- `test/content/live` needs Docker, and starts real database servers.
 
 Run the one that covers what you touched.
 
@@ -90,6 +98,8 @@ Run the one that covers what you touched.
 | `make test/content/remediation` | all seven remediation code-block validators | see below |
 | `make test/content/remediation/terraform` | one of them (also `/cloudformation`, `/bicep`, `/ansible`, `/powershell`, `/bash`, `/chef`) | that language's linter |
 | `make test/content/commands` | CLI and API calls; `CLOUD=aws` scopes it | that cloud's CLI |
+| `make test/content/live` | the runtime database policies, against real servers | Docker, cnspec, ~6 min |
+| `make test/content/live/redisdb` | one of them (also `/cassandra`, `/clickhousedb`) | Docker, cnspec |
 | `make test/content/upstream` | which pins are behind | network |
 | `make test/content/upstream/unit` | the pin resolvers, against recorded payloads | none |
 | `make test/content/spelling` | `typos` over the repo | `brew install typos-cli` |
@@ -133,6 +143,8 @@ python3 content/validation/remediation/commands/validate.py ?     # any unknown 
 Every suite goes through the same `runFixtureSuite`, so every one of them shards; the counts differ only because the suites differ in size. Currently terraform runs across 12 runners, the closed loop across 6, cloudformation across 4, bicep across 3, and dockerfile and kubernetes on one each. Size a count from measured scan time rather than from the number of variants: a job spends about 55 seconds on checkout, Go and the cache restores before it reaches the first scan, so a shard carrying under roughly two minutes of scans spends more of its life starting up than testing. (That floor used to be nearer two minutes: TestMain's seven provider installs were about 57 seconds of it until the workflow started caching them.) The number to divide is the per-shard `Run <suite> variant tests` step time in a recent run, minus that shared prep.
 
 The fixture-coverage job runs no scans at all. It compares the IaC variants each policy declares against the fixtures on disk, which is why it is cheap enough to gate on.
+
+`live/` is the one area with no workflow. It needs a Docker daemon and pulls several database images, and the Cassandra fixtures put a floor of a few minutes on any run, so it is run locally when one of the three runtime database policies changes. See [Live database scans](#live-database-scans-live) for what that buys and what wiring it up would cost.
 
 ## The suites in detail
 
@@ -207,6 +219,52 @@ The first two failures usually share one cause: a snippet that documents only th
 The remaining cause is a value the HCL parser cannot resolve statically. A `jsonencode` body collapses to an empty list if any leaf inside it is a resource reference, and a policy supplied through an `aws_iam_policy_document` data source arrives as the reference string. Either reads as absent rather than as the value it becomes at apply time, so a snippet whose correctness lives inside one has to spell that part out literally.
 
 A failed scan is retried before it is believed. Under the suite's concurrency a provider subprocess occasionally dies mid-request (`rpc error: code = Unavailable`), which is contention rather than a property of the snippet; a deterministic error reproduces on every attempt and is reported after the last one.
+
+### Live database scans (`live/`)
+
+Three policies in `content/` assess a *running server* rather than a file: `mondoo-redis-security`, `mondoo-cassandra-security`, and `mondoo-clickhousedb-security`. Nothing else in this directory can reach them. The IaC suites scan checked-in source; the bundle smoke scans need a scannable project; lint proves only that a query compiles against the provider schema. A check that compiles and reads the wrong field is invisible to every other gate here — it ships, and it is wrong on every asset.
+
+So this suite starts the real database in Docker, brings it to a known configuration, runs the shipped policy against it, and requires each check to reach the verdict the fixture claims.
+
+```bash
+make test/content/live                  # all three
+make test/content/live/redisdb          # one of them
+python3 content/validation/live/verify.py cassandra --keep   # leave containers up
+```
+
+Fixture modules are discovered, not registered: every `.py` in `live/` that is not `verify.py` or `common.py` is a database suite, and each exports `build_suite(workdir)`. A registry would be the thing someone forgets — a module sitting in the directory looking complete and never running.
+
+The model is two types deep:
+
+```
+Fixture   one container, brought to a configuration
+  Scan    one `cnspec scan` against it, with the verdict expected per check
+```
+
+A fixture carries several scans when the states differ by a few statements. The Cassandra `secured` fixture is scanned twice — once hardened, once after a handful of statements walk it backwards — because starting a second Cassandra costs ninety seconds and running the statements costs one.
+
+**Expectations are exhaustive, and `error` is one of them.** A scan that returns a check the fixture makes no claim about is a failure, so a new check cannot appear without someone deciding what it does against a live server. `error` is a real expectation rather than a tolerated failure: the ClickHouse 24.8 fixture expects four checks to error, because the provider cannot decode `system.users.auth_type` on that line. When that is fixed, the fixture fails and someone comes back here.
+
+**Both sides, or a written reason.** The coverage gate requires every check in the policy to be observed passing *and* failing across the fixtures. A check that is only ever seen failing is a check nobody has proven can be satisfied, which is exactly how a permanently-failing check ships; a check only ever seen passing has not been shown to discriminate. An `error` counts as neither. Where a single-container fixture genuinely cannot reach a side, the reason goes in `no_pass_fixture` or `no_fail_fixture` on the suite and is printed on every run — an exemption nobody reads is an exemption that stops being a decision. An exemption for a check that no longer exists fails the gate.
+
+Three Cassandra checks are exempted on the pass side: client and internode encryption need JKS keystores built into the image, and a `system_auth` replication factor of three needs three nodes. That last one is worth knowing before you try it — setting a replication factor above the node count makes the `LOCAL_QUORUM` read Cassandra performs during authentication unsatisfiable, and locks every account out of the cluster.
+
+**What the fixtures have caught.** Both of these compiled, linted, and read plausibly:
+
+- `mondoo-clickhousedb-security-secure-tcp-port-enabled` filtered `serverSettings` for `tcp_port_secure`. That setting is not in `system.server_settings` on any ClickHouse version, so the query was `[].any()` — false on every server, forever. The check was removed; restore it when the provider can answer through `getServerPort()`.
+- `mondoo-redis-security-plaintext-port-disabled` read `redisdb.instance.port == 0`. Redis reports `tcp_port` in `INFO` for whichever listener is active, so on a server with `port 0` and a TLS listener — the exact configuration the check told operators to adopt — the provider returned 6379 and the check failed. `CONFIG GET port` returns 0 there. The check was removed; restore it when `redisdb.instance.port` reads from CONFIG.
+
+Neither was reachable without running the policy against a real server in the state its own remediation recommends.
+
+**Fixture details that are load-bearing**, each learned by watching it fail:
+
+- Readiness is a query round trip, not an open port. Cassandra binds 9042 well before `system_auth` holds the default superuser, and a scan in that window fails to authenticate for reasons that have nothing to do with the policy.
+- The hardened Redis fixture sits on its own Docker network with a fixed address. A container on the default bridge is assigned an address only at start, so a configuration file baked beforehand cannot name one, and `bind` would have to stay a wildcard — leaving the bound-address check with no pass fixture at all.
+- The ClickHouse users file is named `zz-cnspec-live.xml`. Files in `users.d` merge in filename order, and the official image writes its own `default-user.xml` there; a name sorting before it lets that fragment re-add a `default` account with no authentication method, and the server refuses to start.
+- The hardened ClickHouse fixture writes a bootstrap account in, uses it to create the quota, and writes it back out before scanning. An account with access management is the only way to create a quota, and it would then be the one thing failing the least-privilege check.
+- Cassandra audit logging is set in `cassandra.yaml`, not with `nodetool enableauditlog`. `nodetool` changes the running state without touching `system_views.settings`, which is where the provider reads, so the check stays failing on a node that is demonstrably auditing.
+
+**Not wired into CI.** It needs a Docker daemon and pulls several database images, and the Cassandra fixtures put a floor of a few minutes on any run. Run it locally when you touch one of the three policies. Wiring it up is a reasonable next step — the suite exits nonzero on any mismatch and prints in the same `[PASS]`/`[FAIL]` shape as the other Python validators — but that is a decision about runner minutes rather than about the harness.
 
 ### Compliance tag mappings (`compliance/`)
 
@@ -370,6 +428,7 @@ Register the policy everywhere it applies, in the same change that adds it:
 | `remediation/code/terraform.py` → `TARGETS` **and** `PROVIDER_MAP` for each resource prefix | any `- id: terraform` remediation | snippets are never resolved against the provider schema; with `TARGETS` but no `PROVIDER_MAP` entry, `required_providers` comes out empty and `terraform_required_providers` fails *every* resource in the policy |
 | `remediation/code/{cloudformation,bicep,ansible,chef}.py` → `TARGETS` | that language appears in a remediation block | same, for that language |
 | `remediation/commands/` → `CLI_VALIDATORS`, `COBRA_CLIS`, or `API_PROVIDERS` | any `- id: cli` / `- id: api` block, or an `audit:` step that invokes a CLI or REST call | invented commands and endpoints ship unchallenged |
+| `live/` → a fixture module named for the provider | the policy assesses a running server rather than a file | no gate ever runs the checks against the thing they describe |
 | `compliance/owasp_mapping_test.go` → `llmAnchoredPolicies` | the policy is AI/LLM-focused | nothing guards its OWASP Top 10 for LLM Applications tags against silently going missing |
 | `typos.toml` → `[default.extend-words]` | the vendor's terminology trips the spell checker | `spell-check.yaml` fails |
 
@@ -402,6 +461,7 @@ When no registry fits because the vendor has no non-interactive surface at all, 
 4. `make test/content/iac/terraform -run` scoped to your check — the fixture asserts what you think it does, and is not silently *skipped*.
 5. If the check recommends an IaC fix, the closed loop will scan that snippet and require the check to pass. Run it before you find out in CI.
 6. Delete any `KNOWN_BUG.md` marker your change fixes, in the same change. A stale marker fails the build.
+7. If the policy has a `live/` suite — Redis, Cassandra, ClickHouse — add the check to the `expect` map of every fixture, and make sure some fixture sees it pass and some fixture sees it fail. `make test/content/live/<database>` enforces both.
 
 See [`../CLAUDE.md`](../CLAUDE.md) for the authoring rules: bundle structure, variants, compliance tags, and MQL idioms.
 

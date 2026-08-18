@@ -155,6 +155,7 @@ VALIDATION := content/validation
 .PHONY: test/content/remediation/bicep test/content/remediation/ansible test/content/remediation/powershell
 .PHONY: test/content/remediation/bash test/content/remediation/chef
 .PHONY: test/content/commands test/content/upstream test/content/upstream/unit
+.PHONY: test/content/live test/content/live/redisdb test/content/live/cassandra test/content/live/clickhousedb
 
 # The checks that run with nothing installed but Go and cnspec. Two groups are
 # deliberately left out, each for its own reason:
@@ -162,6 +163,7 @@ VALIDATION := content/validation
 #   test/content/iac         downloads providers and runs thousands of scans
 #   test/content/remediation each validator needs its language's linter, and
 #   test/content/commands    each cloud needs that cloud's CLI on PATH
+#   test/content/live        needs Docker, and starts real database servers
 #
 # CI runs all of them; locally, run the one that covers what you touched.
 test/content: test/content/lint test/content/scans test/content/compliance
@@ -281,6 +283,26 @@ test/content/remediation/chef:
 CLOUD ?= all
 test/content/commands:
 	python3 $(VALIDATION)/remediation/commands/validate.py $(CLOUD)
+
+# The runtime database policies — Redis, Cassandra, ClickHouse — scanned against
+# the real database running in Docker. Nothing else in this directory can reach
+# them: the IaC suites scan source files, and lint only proves a query compiles.
+#
+# Left out of `make test/content` because it pulls database images and starts
+# real servers. Cassandra dominates the runtime at about ninety seconds per
+# container before it will accept a connection, so scope a run to the database
+# you touched.
+test/content/live:
+	python3 $(VALIDATION)/live/verify.py all
+
+test/content/live/redisdb:
+	python3 $(VALIDATION)/live/verify.py redisdb
+
+test/content/live/cassandra:
+	python3 $(VALIDATION)/live/verify.py cassandra
+
+test/content/live/clickhousedb:
+	python3 $(VALIDATION)/live/verify.py clickhousedb
 
 # Reports which upstreams the validators are pinned behind. Hits the network;
 # reports only, never fails the build.
