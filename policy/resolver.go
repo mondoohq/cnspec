@@ -258,6 +258,18 @@ func (s *LocalServices) ReportUploadCompleted(ctx context.Context, req *ReportUp
 	return globalEmpty, nil
 }
 
+// GetDownloadURL is GetUploadURL's mirror: it provides a signed GET for a
+// server-held artifact of this scope (initially the scan manifest).
+func (s *LocalServices) GetDownloadURL(ctx context.Context, req *GetDownloadURLReq) (*GetDownloadURLResp, error) {
+	// Only forward to upstream if we have one and are not in incognito mode
+	if s.Upstream != nil && !s.Incognito {
+		return s.Upstream.GetDownloadURL(ctx, req)
+	}
+
+	// Local services hold no server-side artifacts — nothing is ever served.
+	return nil, status.Error(codes.Unimplemented, "local services do not support download URLs")
+}
+
 // GetReport retrieves a report for a given asset and policy
 func (s *LocalServices) GetReport(ctx context.Context, req *EntityScoreReq) (*Report, error) {
 	return s.DataLake.GetReport(ctx, req.EntityMrn, req.ScoreMrn)

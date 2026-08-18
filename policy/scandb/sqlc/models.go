@@ -18,8 +18,9 @@ type AssetFilter struct {
 }
 
 type Datum struct {
-	CodeID string `json:"code_id"`
-	Data   []byte `json:"data"`
+	CodeID   string `json:"code_id"`
+	Data     []byte `json:"data"`
+	Checksum int64  `json:"checksum"`
 }
 
 type Metadata struct {
@@ -28,9 +29,10 @@ type Metadata struct {
 }
 
 type Resource struct {
-	Name string `json:"name"`
-	ID   string `json:"id"`
-	Data []byte `json:"data"`
+	Name     string `json:"name"`
+	ID       string `json:"id"`
+	Data     []byte `json:"data"`
+	Checksum int64  `json:"checksum"`
 }
 
 type Score struct {
@@ -42,6 +44,7 @@ type Score struct {
 	Message     sql.NullString `json:"message"`
 	RiskFactors []byte         `json:"risk_factors"`
 	Sources     []byte         `json:"sources"`
+	Checksum    int64          `json:"checksum"`
 }
 
 type ScoredRiskFactor struct {
@@ -49,4 +52,5 @@ type ScoredRiskFactor struct {
 	Risk       float64 `json:"risk"`
 	IsToxic    bool    `json:"is_toxic"`
 	IsDetected bool    `json:"is_detected"`
+	Checksum   int64   `json:"checksum"`
 }

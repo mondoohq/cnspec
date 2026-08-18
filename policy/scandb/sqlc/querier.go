@@ -14,11 +14,13 @@ type Querier interface {
 	GetMetadata(ctx context.Context) ([]Metadata, error)
 	GetMetadataByKey(ctx context.Context, key string) (string, error)
 	GetResource(ctx context.Context, arg GetResourceParams) ([]byte, error)
-	GetRiskFactor(ctx context.Context, mrn string) (ScoredRiskFactor, error)
-	GetScore(ctx context.Context, qrID string) (Score, error)
-	// Asset operations (added in schema 1.1)
+	GetRiskFactor(ctx context.Context, mrn string) (GetRiskFactorRow, error)
+	GetScore(ctx context.Context, qrID string) (GetScoreRow, error)
+	// Asset operations (optional table, announced by its presence;
+	// schema_version stays 1.0 - see SchemaVersion in scan_data_store.go)
 	InsertAsset(ctx context.Context, data []byte) error
-	// Asset filter code_id operations (added in schema 1.1)
+	// Asset filter code_id operations (optional table, announced by its
+	// presence; schema_version stays 1.0 - see SchemaVersion)
 	InsertAssetFilter(ctx context.Context, codeID string) error
 	// Data operations
 	InsertData(ctx context.Context, arg InsertDataParams) error
@@ -33,10 +35,10 @@ type Querier interface {
 	// Scores operations
 	InsertScore(ctx context.Context, arg InsertScoreParams) error
 	StreamAssetFilters(ctx context.Context) ([]string, error)
-	StreamData(ctx context.Context) ([]Datum, error)
-	StreamResources(ctx context.Context) ([]Resource, error)
-	StreamRiskFactors(ctx context.Context) ([]ScoredRiskFactor, error)
-	StreamScores(ctx context.Context) ([]Score, error)
+	StreamData(ctx context.Context) ([]StreamDataRow, error)
+	StreamResources(ctx context.Context) ([]StreamResourcesRow, error)
+	StreamRiskFactors(ctx context.Context) ([]StreamRiskFactorsRow, error)
+	StreamScores(ctx context.Context) ([]StreamScoresRow, error)
 }
 
 var _ Querier = (*Queries)(nil)
