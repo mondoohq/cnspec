@@ -194,42 +194,60 @@ test/content/compliance:
 # conservative to avoid provider-subprocess contention; override with
 # IAC_VARIANT_PARALLEL.
 #
-# To fan a suite (in practice the large Terraform one) out across parallel CI
-# runners, set IAC_SHARD_TOTAL to the runner count and IAC_SHARD_INDEX to each
-# runner's 0-based slot; the harness then runs only the scenarios that hash into
-# that shard. Unset means run everything. See .github/workflows/content-iac-tests.yaml.
+# To fan a suite out across parallel CI runners, set IAC_SHARD_TOTAL to the
+# runner count and IAC_SHARD_INDEX to each runner's 0-based slot; the harness
+# then runs only the scenarios that hash into that shard. Unset means run
+# everything. Every suite supports it. See .github/workflows/content-iac-tests.yaml.
 IAC_VARIANT_PARALLEL ?= 4
-IAC_TEST := go test -tags iac_variants -parallel $(IAC_VARIANT_PARALLEL) ./$(VALIDATION)/scans
 
-test/content/iac: prep/tools
-	$(IAC_TEST) -timeout 30m -run 'TestTerraformVariants|TestCloudFormationVariants|TestBicepVariants|TestDockerfileVariants|TestKubernetesManifestVariants'
+# How long a suite may run before the test binary gives up. The value that
+# matters is not "long enough for the scans" -- it is "short enough to be a
+# useful failure". The coordinator lock ordering documented in
+# content/validation/scans/main_test.go deadlocks rather than errors, and a
+# deadlocked run does not fail, it stops; the timeout is what turns that into a
+# goroutine dump naming the two blocked stacks.
+#
+# The default is sized for an unsharded local run of the largest suite. CI runs
+# one shard per job and overrides it to something well under the workflow's
+# timeout-minutes, so a stuck shard dumps its goroutines (which the job timeout
+# would not) and still ends in minutes rather than an hour.
+IAC_TIMEOUT ?= 60m
 
-test/content/iac/terraform: prep/tools
-	$(IAC_TEST) -timeout 30m -run '^TestTerraformVariants$$'
+# These targets run plain `go test`; they deliberately do not depend on
+# prep/tools, which installs gotestsum and golangci-lint at @latest. Neither is
+# used here, and paying two module-proxy resolutions on every one of the ~28
+# shard jobs bought nothing.
+IAC_TEST := go test -tags iac_variants -parallel $(IAC_VARIANT_PARALLEL) -timeout $(IAC_TIMEOUT) ./$(VALIDATION)/scans
 
-test/content/iac/cloudformation: prep/tools
-	$(IAC_TEST) -timeout 30m -run '^TestCloudFormationVariants$$'
+test/content/iac:
+	$(IAC_TEST) -run 'TestTerraformVariants|TestCloudFormationVariants|TestBicepVariants|TestDockerfileVariants|TestKubernetesManifestVariants'
 
-test/content/iac/bicep: prep/tools
-	$(IAC_TEST) -timeout 30m -run '^TestBicepVariants$$'
+test/content/iac/terraform:
+	$(IAC_TEST) -run '^TestTerraformVariants$$'
 
-test/content/iac/dockerfile: prep/tools
-	$(IAC_TEST) -timeout 30m -run '^TestDockerfileVariants$$'
+test/content/iac/cloudformation:
+	$(IAC_TEST) -run '^TestCloudFormationVariants$$'
 
-test/content/iac/kubernetes: prep/tools
-	$(IAC_TEST) -timeout 30m -run '^TestKubernetesManifestVariants$$'
+test/content/iac/bicep:
+	$(IAC_TEST) -run '^TestBicepVariants$$'
+
+test/content/iac/dockerfile:
+	$(IAC_TEST) -run '^TestDockerfileVariants$$'
+
+test/content/iac/kubernetes:
+	$(IAC_TEST) -run '^TestKubernetesManifestVariants$$'
 
 # Closed loop: scans each IaC variant's own remediation snippet and requires the
-# check that recommends it to pass. Sharded like the terraform suite, since it
-# runs one provider-backed scan per variant.
-test/content/iac/remediation: prep/tools
-	$(IAC_TEST) -timeout 60m -run '^TestRemediationSatisfiesCheck$$'
+# check that recommends it to pass. Sharded like every other suite, since it runs
+# one provider-backed scan per variant.
+test/content/iac/remediation:
+	$(IAC_TEST) -run '^TestRemediationSatisfiesCheck$$'
 
 # Fixture-coverage gate. Runs no scans: it compares the IaC variants declared in
 # each policy against the fixtures on disk and fails if any variant lacks a pass
 # or a fail fixture. Coverage is at 100%, so this holds it there.
-test/content/iac/coverage: prep/tools
-	$(IAC_TEST) -timeout 10m -v -run '^TestTerraformVariantCoverage$$'
+test/content/iac/coverage:
+	$(IAC_TEST) -v -run '^TestTerraformVariantCoverage$$'
 
 # Remediation code blocks, linted in their own language. Each target needs that
 # language's linter installed; see content/validation/README.md.
