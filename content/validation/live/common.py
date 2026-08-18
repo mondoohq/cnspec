@@ -203,8 +203,24 @@ class Suite:
 # --------------------------------------------------------------------------
 
 
-def _run(argv: list[str], timeout: int = 300) -> subprocess.CompletedProcess:
-    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+# Everything this suite executes, and the whole list of it. The harness drives
+# containers and runs scans; it has no reason to reach any other binary, and
+# nothing it passes along is ever interpreted as a command name — arguments are
+# always list elements, and no call goes through a shell.
+#
+# The allowlist is not defence against the fixtures, which are checked-in code.
+# It is a boundary that makes that property enforced rather than merely true
+# today: a later fixture that tried to run something else fails here, loudly,
+# instead of quietly widening what this suite can do.
+_EXECUTABLES = frozenset({"docker", "cnspec", "openssl"})
+
+
+def _run(argv: list[str], timeout: int = 300, cwd: Path | None = None) -> subprocess.CompletedProcess:
+    """Run one allowed command. No shell, arguments as a list, never a string."""
+    if not argv or argv[0] not in _EXECUTABLES:
+        named = argv[0] if argv else "<nothing>"
+        raise ValueError(f"live harness may only execute {sorted(_EXECUTABLES)}, not {named!r}")
+    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=cwd)
 
 
 def docker_available() -> str | None:
@@ -390,7 +406,7 @@ def mint_certs(workdir: Path) -> dict[str, str]:
     that the server will load it.
     """
     def openssl(*argv: str) -> None:
-        done = subprocess.run(["openssl", *argv], capture_output=True, text=True, cwd=workdir)
+        done = _run(["openssl", *argv], timeout=120, cwd=workdir)
         if done.returncode != 0:
             raise RuntimeError(f"openssl {' '.join(argv)} failed: {done.stderr.strip()}")
 

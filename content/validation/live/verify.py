@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
-import subprocess
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -199,7 +199,7 @@ def main() -> int:
             print(f"live database verification needs Docker: {unavailable}")
             print("Install Docker Desktop or start the daemon, then re-run.")
             return 1
-        if subprocess.run(["which", "cnspec"], capture_output=True).returncode != 0:
+        if shutil.which("cnspec") is None:
             print("live database verification needs cnspec on PATH (make cnspec/install)")
             return 1
 
