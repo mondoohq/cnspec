@@ -2545,6 +2545,9 @@ queries:
         properties['ResourcesVpcConfig']['EndpointPrivateAccess'] == true &&
         properties['ResourcesVpcConfig']['EndpointPublicAccess'] == false
       )
+  # No CloudFormation variant: the root user is outside CloudFormation's model. `AWS::IAM::AccessKey` takes a
+  # `UserName` that must resolve to an IAM user, so a template can neither create nor describe a root access key,
+  # and a variant over it could only ever restate what the deployment already rejects.
   - uid: mondoo-aws-security-iam-root-access-key-check
     title: Ensure no root user account access key exists
     impact: 90
@@ -2837,6 +2840,8 @@ queries:
   - uid: mondoo-aws-security-root-account-mfa-enabled-aws
     filters: asset.platform == "aws"
     mql: aws.iam.credentialReport.where(properties.user == "<root_account>").all(mfaActive == true)
+  # No CloudFormation variant: the IAM account password policy has no CloudFormation resource type. It is set
+  # through the UpdateAccountPasswordPolicy API, which Terraform reaches with `aws_iam_account_password_policy`.
   - uid: mondoo-aws-security-iam-password-policy
     title: Ensure strong account password policy requirements are used
     impact: 60
@@ -3073,6 +3078,8 @@ queries:
   # It is not expressible from HCL source, and in `terraform plan` JSON it is "(known after
   # apply)" rather than a concrete timestamp. Only the -terraform-state variant above can
   # evaluate it, because state captures the real creation time from the AWS API.
+  # No CloudFormation variant: key age is derived from the access key's creation timestamp, which a template never
+  # carries. The terraform-state variant works only because state records `create_date` once the key exists.
   - uid: mondoo-aws-security-access-keys-rotated
     title: Ensure IAM user access keys are rotated
     impact: 70
@@ -3249,6 +3256,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-mfa-enabled-for-iam-console-access-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that every IAM user who can sign in to the AWS Management Console has multi-factor authentication active. It reads the account credential report and requires `mfa_active` to be true for every row where `password_enabled` is true. A console-enabled user authenticates with a user name and password alone, so without a second factor one stolen credential is enough to log in and do anything that user's policies permit.
@@ -3380,11 +3391,20 @@ queries:
 
             ```yaml
             Resources:
+              ConsoleUser:
+                Type: AWS::IAM::User
+                Properties:
+                  UserName: analyst
+                  LoginProfile:
+                    Password: !Ref InitialPassword
+                    PasswordResetRequired: true
               EnforceMFAPolicy:
                 Type: AWS::IAM::ManagedPolicy
                 Properties:
                   ManagedPolicyName: EnforceMFA
                   Description: Require MFA for all IAM users with console access
+                  Users:
+                    - !Ref ConsoleUser
                   PolicyDocument:
                     Version: '2012-10-17'
                     Statement:
@@ -3444,6 +3464,20 @@ queries:
         values.policy.contains('aws:MultiFactorAuthPresent') &&
         values.policy.contains('false')
       )
+  - uid: mondoo-aws-security-mfa-enabled-for-iam-console-access-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::IAM::User" && properties['LoginProfile'] != empty)
+    mql: |
+      mfaDenyPolicies = cloudformation.template.resources.where(type == /^AWS::IAM::(ManagedPolicy|Policy|RolePolicy|UserPolicy|GroupPolicy)$/).where(
+        properties['PolicyDocument']['Statement'] != null
+      ).where(
+        properties['PolicyDocument']['Statement'].where(_['Effect'] == "Deny").where(
+          _['Condition']['Bool']['aws:MultiFactorAuthPresent'] == "false" ||
+          _['Condition']['Bool']['aws:MultiFactorAuthPresent'] == false ||
+          _['Condition']['BoolIfExists']['aws:MultiFactorAuthPresent'] == "false" ||
+          _['Condition']['BoolIfExists']['aws:MultiFactorAuthPresent'] == false
+        ) != empty
+      )
+      mfaDenyPolicies.length > 0
   - uid: mondoo-aws-security-iam-group-has-users-check
     title: Ensure IAM groups are utilized by assigning at least one user
     impact: 30
@@ -3479,6 +3513,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-iam-group-has-users-check-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that every IAM group has at least one member. A group with policies attached but no users is a pre-staged permission set: anyone holding `iam:AddUserToGroup` can activate it by joining the group, without writing a policy that an access review would notice.
@@ -3630,6 +3668,16 @@ queries:
       terraform.state.resources.where(type == "aws_iam_group_membership").all(
         values.users != empty
       )
+  - uid: mondoo-aws-security-iam-group-has-users-check-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::IAM::UserToGroupAddition")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::IAM::UserToGroupAddition").all(
+        properties['Users'] != empty
+      )
+  # No CloudFormation variant: grouping keys by owner is not expressible. Templates name the owner with `!Ref`,
+  # which reaches the query as a `{Ref: ...}` object rather than a string, and MQL's `duplicates` requires an array
+  # of basic types. Mapping the objects yields a list of nulls that collide with each other, which would fail any
+  # template holding two access keys regardless of who owns them.
   - uid: mondoo-aws-security-iam-users-only-one-access-key
     title: Ensure IAM users have only one active access key
     impact: 70
@@ -3844,6 +3892,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-iam-user-no-inline-policies-check-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that IAM users receive their permissions through group membership rather than through policies attached directly to the user, requiring both `inlinePolicyDetails` and `attachedPolicies` on each user to be empty. Direct grants bypass the group-based access model and create per-user permission grants that survive credential rotation and are invisible to bulk policy review.
@@ -4032,6 +4084,13 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_iam_user")
     mql: |
       terraform.state.resources.none(type == "aws_iam_user_policy")
+  - uid: mondoo-aws-security-iam-user-no-inline-policies-check-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::IAM::User" || type == "AWS::IAM::UserPolicy")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::IAM::UserPolicy") == empty
+      cloudformation.template.resources.where(type == "AWS::IAM::User").all(
+        properties['Policies'] == empty
+      )
   - uid: mondoo-aws-security-vpc-default-security-group-closed
     title: Ensure the default security group of every VPC restricts all traffic
     impact: 80
@@ -4212,6 +4271,8 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
       properties['SecurityGroupIngress'] == empty && properties['SecurityGroupEgress'] == empty
       )
+  # No CloudFormation variant: EBS encryption by default is a per-region account setting with no CloudFormation
+  # resource type. Terraform reaches it through an API-backed resource, `aws_ebs_encryption_by_default`.
   - uid: mondoo-aws-security-ec2-ebs-encryption-by-default
     title: Ensure EBS volume encryption is enabled by default
     impact: 90
@@ -4367,6 +4428,8 @@ queries:
       terraform.state.resources.where(type == "aws_ebs_encryption_by_default").all(
         values.enabled == true
       )
+  # No CloudFormation variant: the account-level S3 public access block has no CloudFormation resource type.
+  # `AWS::S3::Bucket.PublicAccessBlockConfiguration` is the per-bucket setting, which is a different control.
   - uid: mondoo-aws-security-s3-buckets-account-level-block-public-access
     title: Ensure public access to S3 buckets is blocked at the account level
     impact: 100
@@ -5201,6 +5264,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-vpc-bpa-enabled-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that VPC Block Public Access is turned on at the account level, requiring the internet gateway block mode to be anything other than `off`. With it disabled, any user with sufficient permissions can attach an internet gateway or add a public route to any VPC and expose workloads that were designed to be private.
@@ -5329,6 +5396,13 @@ queries:
     mql: |
       terraform.state.resources.where( type == "aws_vpc_block_public_access_options" ).all(
         values.internet_gateway_block_mode != "off"
+      )
+  - uid: mondoo-aws-security-vpc-bpa-enabled-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::VPC" || type == "AWS::EC2::VPCBlockPublicAccessOptions")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::VPCBlockPublicAccessOptions") != empty
+      cloudformation.template.resources.where(type == "AWS::EC2::VPCBlockPublicAccessOptions").all(
+        properties['InternetGatewayBlockMode'] != "off"
       )
   - uid: mondoo-aws-security-vpc-flow-logs-enabled
     title: Ensure VPC flow logging is enabled in all VPCs
@@ -5960,6 +6034,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-lambda-function-public-access-prohibited-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that the resource-based policy on each AWS Lambda function grants no unscoped invocation rights to the wildcard principal `*`. A function starts with no resource-based policy, but policies added for service integrations or cross-account access can include a wildcard principal that exposes the function to any AWS identity unless it is constrained by a condition on `AWS:SourceArn`, `AWS:SourceAccount`, or `aws:PrincipalOrgID`.
@@ -6160,6 +6238,25 @@ queries:
       ) &&
       terraform.state.resources.where(type == "aws_lambda_permission").where(values.principal == "*" && values.principal_org_id != empty).all(
         values.principal_org_id != "*"
+      )
+  - uid: mondoo-aws-security-lambda-function-public-access-prohibited-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Lambda::Permission")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Lambda::Permission").where(properties['Principal'] == "*").all(
+        properties['SourceArn'] != empty ||
+        properties['SourceAccount'] != empty ||
+        properties['PrincipalOrgID'] != empty
+      )
+      # Validate each provided scope separately after requiring at least one scope.
+      # Partial source ARN wildcards are intentionally treated as broad access.
+      cloudformation.template.resources.where(type == "AWS::Lambda::Permission").where(properties['Principal'] == "*" && properties['SourceArn'] != empty).all(
+        properties['SourceArn'] != /\*/
+      )
+      cloudformation.template.resources.where(type == "AWS::Lambda::Permission").where(properties['Principal'] == "*" && properties['SourceAccount'] != empty).all(
+        properties['SourceAccount'] != "*"
+      )
+      cloudformation.template.resources.where(type == "AWS::Lambda::Permission").where(properties['Principal'] == "*" && properties['PrincipalOrgID'] != empty).all(
+        properties['PrincipalOrgID'] != "*"
       )
   # No Terraform variants: Pending OS updates are runtime telemetry on the live instance (`pendingMaintenanceActions`), not configuration. There is no Terraform attribute that represents pending maintenance actions.
   - uid: mondoo-aws-security-rds-instance-no-pending-os-upgrades
@@ -6894,6 +6991,8 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.html
         title: Amazon RDS Security
+  # No Terraform or CloudFormation variants: recommendations are operational findings that Amazon RDS generates by
+  # observing a running cluster; they have no static configuration analog in either language.
   - uid: mondoo-aws-security-rds-cluster-no-active-security-recommendations
     title: Ensure RDS clusters have no active security recommendations
     impact: 90
@@ -7257,6 +7356,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-rds-cluster-public-access-check-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that an Amazon RDS cluster is not configured for public accessibility, requiring the cluster-level flag to be off and every member DB instance to have `publiclyAccessible` false. Aurora exposes public accessibility on the member instances rather than on the cluster, while non-Aurora Multi-AZ DB clusters also expose a cluster-level field, so both are evaluated.
@@ -7477,6 +7580,12 @@ queries:
       ) &&
       terraform.state.resources.where(type == "aws_rds_cluster_instance").all(
         values.publicly_accessible != true
+      )
+  - uid: mondoo-aws-security-rds-cluster-public-access-check-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::RDS::DBCluster")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::RDS::DBCluster").all(
+        properties['PubliclyAccessible'] != true
       )
   - uid: mondoo-aws-security-rds-instance-public-access-check
     title: Ensure all RDS instances are not publicly accessible
@@ -8305,6 +8414,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that EBS snapshots owned by the account are not publicly restorable, by asserting that no `createVolumePermission` entry names the group `all`. Snapshots are private by default and accessible only to the owning account, but the permission can be changed to let any AWS account copy or restore the snapshot.
@@ -8417,6 +8530,12 @@ queries:
         type == "aws_ebs_snapshot_block_public_access"
           && values.state == "block-all-sharing"
       )
+  - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SnapshotBlockPublicAccess")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::SnapshotBlockPublicAccess").all(
+        properties['State'] == "block-all-sharing"
+      )
   - uid: mondoo-aws-security-ebs-snapshot-encrypted
     title: Ensure EBS Snapshots are configured to be encrypted at-rest
     impact: 70
@@ -8452,6 +8571,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-ebs-snapshot-encrypted-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that EBS snapshots are encrypted at rest using AWS KMS. Snapshots inherit the encryption status of their source volume, so a snapshot taken from an unencrypted volume stays unencrypted unless it is explicitly encrypted during a copy, and it persists in that state until somebody deletes it.
@@ -8619,6 +8742,12 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_ebs_snapshot").all(
         values.encrypted == true
+      )
+  - uid: mondoo-aws-security-ebs-snapshot-encrypted-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::Volume")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::Volume").all(
+        properties['Encrypted'] == true
       )
   - uid: mondoo-aws-security-ec2-encrypted-volumes
     title: Ensure attached EBS volumes are configured to be encrypted at-rest
@@ -12417,6 +12546,8 @@ queries:
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress'].where(_['IpProtocol'] == "-1").none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
+  # No CloudFormation variant: provider blocks are a Terraform concept. A CloudFormation template carries no
+  # provider configuration, so there is nothing for this check to read.
   - uid: mondoo-aws-security-no-static-credentials-in-providers
     title: Ensure Terraform AWS providers do not contain hard-coded credentials
     impact: 90
@@ -12758,6 +12889,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-api-gw-execution-logging-enabled-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Amazon API Gateway REST API stages emit execution logs to CloudWatch Logs, by requiring the method-settings logging level to be `ERROR` or `INFO` rather than `OFF`. Execution logging is disabled on a new stage, so request and response details are not captured anywhere unless the level is set deliberately.
@@ -12896,6 +13031,14 @@ queries:
           _["logging_level"] != empty && _["logging_level"] != "OFF"
         )
       )
+  - uid: mondoo-aws-security-api-gw-execution-logging-enabled-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ApiGateway::Stage")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::ApiGateway::Stage").all(
+        properties['MethodSettings'].where(_['ResourcePath'] == "/*" && _['HttpMethod'] == "*").where(
+          _['LoggingLevel'] != empty && _['LoggingLevel'] != "OFF"
+        ) != empty
+      )
   - uid: mondoo-aws-security-api-gw-require-authentication
     title: Ensure API Gateway methods require authentication
     impact: 80
@@ -12927,6 +13070,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-api-gw-require-authentication-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Amazon API Gateway REST API methods are not callable anonymously. Every non-`OPTIONS` method whose `authorization` is `NONE` must set `api_key_required` to `true`, so that no method is left with neither an authorizer nor a key requirement. `OPTIONS` methods are excluded because CORS preflight requests are unauthenticated by design.
@@ -13071,6 +13218,14 @@ queries:
       terraform.state.resources
         .where(type == "aws_api_gateway_method" && values.authorization.upcase == "NONE" && values.http_method.upcase != "OPTIONS")
         .all(values.api_key_required == true)
+  - uid: mondoo-aws-security-api-gw-require-authentication-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ApiGateway::Method")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::ApiGateway::Method").where(
+        properties['AuthorizationType'].upcase == "NONE" && properties['HttpMethod'].upcase != "OPTIONS"
+      ).all(
+        properties['ApiKeyRequired'] == true
+      )
   - uid: mondoo-aws-security-api-gw-tls
     title: Ensure API Gateway uses TLS 1.2 or higher
     impact: 80
@@ -13598,6 +13753,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-iam-no-wildcards-policies-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that IAM Allow statements name the actions and resources they grant, rather than using wildcards. It inspects attachable customer-managed policies in their default version and the inline policies embedded in IAM roles, users, and groups, and fails any Allow statement whose `Action` or `Resource` contains `*`. Deny statements are exempt, because a wildcard Deny narrows access rather than widening it.
@@ -13792,6 +13951,15 @@ queries:
           _.contains('"Resource": "*"') == false || _.contains('"Effect": "Deny"')
         }
       }
+  - uid: mondoo-aws-security-iam-no-wildcards-policies-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::IAM::ManagedPolicy" || type == "AWS::IAM::Policy" || type == "AWS::IAM::RolePolicy" || type == "AWS::IAM::UserPolicy" || type == "AWS::IAM::GroupPolicy")
+    mql: |
+      cloudformation.template.resources.where(type == /^AWS::IAM::(ManagedPolicy|Policy|RolePolicy|UserPolicy|GroupPolicy)$/).where(properties['PolicyDocument']['Statement'] != null).all(
+        properties['PolicyDocument']['Statement'].all(
+          _['Effect'].downcase == "deny" ||
+          [_['Resource']].flat.any(_.contains("*")) == false && [_['Action']].flat.any(_.contains("*")) == false
+        )
+      )
   - uid: mondoo-aws-security-s3-bucket-versioning-enabled
     title: Ensure S3 bucket versioning is enabled
     impact: 60
@@ -14332,6 +14500,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-s3-bucket-public-read-prohibited-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Amazon S3 bucket access control lists grant no `READ` or `FULL_CONTROL` permission to the `AllUsers` group, identified by the grantee URI `http://acs.amazonaws.com/groups/global/AllUsers`. Buckets are private when created, but the ACL can be set to `public-read` or `public-read-write` at creation time or through a later API call, making every object freely downloadable.
@@ -14457,6 +14629,16 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_s3_bucket_acl").all(
         values.acl.downcase != /public-read/
+      )
+  - uid: mondoo-aws-security-s3-bucket-public-read-prohibited-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::S3::Bucket")
+    # CloudFormation names the canned ACLs `PublicRead` and `PublicReadWrite`,
+    # not Terraform's `public-read`, so the two spellings are enumerated here
+    # rather than matched with the sibling variant's hyphenated regex.
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::S3::Bucket").all(
+        properties['AccessControl'] == null ||
+        properties['AccessControl'] != "PublicRead" && properties['AccessControl'] != "PublicReadWrite"
       )
   - uid: mondoo-aws-security-s3-bucket-static-website-hosting-disabled
     title: Ensure S3 bucket static website hosting is disabled
@@ -19325,6 +19507,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-securityhub-enabled-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that AWS Security Hub is enabled in the account, requiring at least one hub to exist. Security Hub aggregates findings from multiple AWS security services and third-party tools into a single view of security posture.
@@ -19408,6 +19594,12 @@ queries:
   - uid: mondoo-aws-security-securityhub-enabled-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_securityhub_account")
     mql: terraform.state.resources.where(type == "aws_securityhub_account").length > 0
+  - uid: mondoo-aws-security-securityhub-enabled-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SecurityHub::Hub" || type == "AWS::Organizations::Organization")
+    mql: cloudformation.template.resources.where(type == "AWS::SecurityHub::Hub").length > 0
+  # No CloudFormation variant: `AWS::Config::ConfigurationRecorder` declares the recorder but exposes no property
+  # for whether recording is running. Recording is started by the StartConfigurationRecorder API, which Terraform
+  # models as `aws_config_configuration_recorder_status`.
   - uid: mondoo-aws-security-config-recorder-enabled
     title: Ensure AWS Config recorder is enabled and recording
     impact: 80
@@ -22560,6 +22752,8 @@ queries:
       cloudformation.template.resources.where(type == "AWS::CloudFront::Distribution").all(
       properties['DistributionConfig']['WebACLId'] != empty
       )
+  # No CloudFormation variant: `AWS::RDS::DBSnapshot` is not a CloudFormation resource type, so a manual snapshot
+  # and its encryption state cannot be expressed in a template.
   - uid: mondoo-aws-security-rds-snapshot-encrypted
     title: Ensure RDS snapshots are encrypted at rest
     impact: 70
@@ -22711,6 +22905,9 @@ queries:
   # encrypted: its value will be decided automatically". A snapshot inherits encryption from
   # its source database, which `rds-instance-encryption-at-rest` reads from the HCL. The plan
   # and state variants stay because both see the resolved value.
+  # No CloudFormation variant: AMI launch permissions have no CloudFormation resource type, and neither does the
+  # account-level AMI block public access setting. Both are reached only through the ModifyImageAttribute and
+  # EnableImageBlockPublicAccess APIs.
   - uid: mondoo-aws-security-ec2-ami-public-sharing-prohibited
     title: Ensure AMIs owned by the account are not publicly shared
     impact: 90
@@ -23977,6 +24174,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-guardduty-all-features-enabled-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Amazon GuardDuty has its protection features enabled, requiring `S3_DATA_EVENTS`, `EKS_AUDIT_LOGS`, `EBS_MALWARE_PROTECTION`, `RDS_LOGIN_EVENTS`, `LAMBDA_NETWORK_LOGS`, and `RUNTIME_MONITORING` to report `ENABLED`. Each covers a specific service, and a disabled feature is a blind spot in threat detection.
@@ -24163,6 +24364,13 @@ queries:
       terraform.state.resources.where(type == "aws_guardduty_detector_feature").all(
         values.status == "ENABLED"
       )
+  - uid: mondoo-aws-security-guardduty-all-features-enabled-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::GuardDuty::Detector")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::GuardDuty::Detector").all(
+        properties['Features'].length >= 6 &&
+        properties['Features'].all(_['Status'] == "ENABLED")
+      )
   - uid: mondoo-aws-security-neptune-cluster-iam-authentication
     title: Ensure Neptune DB clusters have IAM database authentication enabled
     impact: 80
@@ -24323,6 +24531,8 @@ queries:
       cloudformation.template.resources.where(type == "AWS::Neptune::DBCluster").all(
       properties['IamAuthEnabled'] == true
       )
+  # No CloudFormation variant: `AWS::KMS::Grant` is not a CloudFormation resource type. Grants are created by the
+  # CreateGrant API, which only Terraform models, as `aws_kms_grant`.
   - uid: mondoo-aws-security-kms-grants-no-create-grant
     title: Ensure KMS key grants do not include the CreateGrant permission
     impact: 80
@@ -24470,6 +24680,8 @@ queries:
       terraform.state.resources.where(type == "aws_kms_grant").all(
       values.operations.none(_ == "CreateGrant")
       )
+  # No CloudFormation variant: `AWS::KMS::Grant` is not a CloudFormation resource type. Grants are created by the
+  # CreateGrant API, which only Terraform models, as `aws_kms_grant`.
   - uid: mondoo-aws-security-kms-no-wildcard-grant-principals
     title: Ensure KMS key grants do not use wildcard principals
     impact: 80
@@ -25165,6 +25377,9 @@ queries:
       cloudformation.template.resources.where(type == "AWS::ElastiCache::ServerlessCache").all(
       properties['KmsKeyId'] != empty
       )
+  # No CloudFormation variant: enabling Amazon Inspector for a resource type has no CloudFormation resource.
+  # `AWS::InspectorV2` exposes CisScanConfiguration, CodeSecurityIntegration, CodeSecurityScanConfiguration, and
+  # Filter only; the account enablement that Terraform models as `aws_inspector2_enabler` is absent.
   - uid: mondoo-aws-security-inspector-ec2-scanning-enabled
     title: Ensure Amazon Inspector is enabled for EC2 instance scanning
     impact: 80
@@ -25290,6 +25505,9 @@ queries:
       terraform.state.resources.where(type == "aws_inspector2_enabler").all(
       values.resource_types.contains("EC2")
       )
+  # No CloudFormation variant: enabling Amazon Inspector for a resource type has no CloudFormation resource.
+  # `AWS::InspectorV2` exposes CisScanConfiguration, CodeSecurityIntegration, CodeSecurityScanConfiguration, and
+  # Filter only; the account enablement that Terraform models as `aws_inspector2_enabler` is absent.
   - uid: mondoo-aws-security-inspector-ecr-scanning-enabled
     title: Ensure Amazon Inspector is enabled for ECR container image scanning
     impact: 80
@@ -25414,6 +25632,9 @@ queries:
       terraform.state.resources.where(type == "aws_inspector2_enabler").all(
       values.resource_types.contains("ECR")
       )
+  # No CloudFormation variant: enabling Amazon Inspector for a resource type has no CloudFormation resource.
+  # `AWS::InspectorV2` exposes CisScanConfiguration, CodeSecurityIntegration, CodeSecurityScanConfiguration, and
+  # Filter only; the account enablement that Terraform models as `aws_inspector2_enabler` is absent.
   - uid: mondoo-aws-security-inspector-lambda-scanning-enabled
     title: Ensure Amazon Inspector is enabled for Lambda function scanning
     impact: 80
@@ -25970,6 +26191,8 @@ queries:
       cloudformation.template.resources.where(type == "AWS::DMS::ReplicationInstance").all(
       properties['KmsKeyId'] != empty
       )
+  # No CloudFormation variant: Elastic Disaster Recovery has no CloudFormation resource types at all, so a
+  # replication configuration template cannot be expressed.
   - uid: mondoo-aws-security-drs-replication-ebs-encrypted
     title: Ensure DRS replication configurations use EBS encryption
     impact: 80
@@ -26645,6 +26868,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-nacl-no-unrestricted-ssh-rdp-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that no VPC network ACL contains an inbound `allow` entry reaching port `22` or port `3389` from `0.0.0.0/0` or `::/0`, including an entry with protocol `-1` that covers every port. Leaving these management ports open at the network ACL level removes a defense-in-depth layer and exposes every subnet associated with that ACL.
@@ -26793,6 +27020,21 @@ queries:
       values.from_port == 3389 && values.cidr_block == "0.0.0.0/0" ||
       values.from_port == 3389 && values.ipv6_cidr_block == "::/0"
       )
+  - uid: mondoo-aws-security-nacl-no-unrestricted-ssh-rdp-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::NetworkAclEntry")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::NetworkAclEntry").where(
+        properties['Egress'] != true && properties['RuleAction'] == "allow"
+      ).where(
+        properties['CidrBlock'] == "0.0.0.0/0" || properties['Ipv6CidrBlock'] == "::/0"
+      ).none(
+        properties['Protocol'] == -1 ||
+        properties['PortRange'] == null ||
+        properties['PortRange']['From'] <= 22 && properties['PortRange']['To'] >= 22 ||
+        properties['PortRange']['From'] <= 3389 && properties['PortRange']['To'] >= 3389
+      )
+  # No CloudFormation variant: CloudFormation cannot adopt a VPC's default network ACL. `AWS::EC2::NetworkAcl`
+  # always creates a new ACL, so a template can never describe the default one this check is about.
   - uid: mondoo-aws-security-default-nacl-restrictive
     title: Ensure the default network ACL restricts all traffic
     impact: 80
@@ -30634,6 +30876,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-ec2-no-paravirtual-instances-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that running EC2 instances use Hardware Virtual Machine virtualization rather than paravirtual, requiring `virtualizationType` to be `hvm`. Paravirtual instances use older virtualization technology with a larger attack surface and are not supported on modern instance types.
@@ -30758,6 +31004,12 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_instance").none(
         values.instance_type == /^(t1|m1|m2|c1|cc1|cc2|cg1|cr1|hi1|hs1)\./
+      )
+  - uid: mondoo-aws-security-ec2-no-paravirtual-instances-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::Instance")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::Instance").none(
+        properties['InstanceType'] == /^(t1|m1|m2|c1|cc1|cc2|cg1|cr1|hi1|hs1)\./
       )
   # No Terraform variants: This check correlates account-level `aws.ec2.ebsEncryptionByDefault` with per-instance `hibernationConfigured`. The account-level EBS-encryption-by-default setting has no first-class Terraform resource (it's a regional API call), so this combination cannot be replicated against an HCL/plan/state asset.
   - uid: mondoo-aws-security-ec2-hibernation-encrypted-check
@@ -30925,6 +31177,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-route53-dnssec-enabled-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Amazon Route 53 public hosted zones have DNSSEC signing enabled, requiring the DNSSEC status to be `SIGNING`. Private hosted zones do not support DNSSEC and are excluded. DNSSEC adds cryptographic signatures to DNS records so resolvers can verify that responses were not tampered with in transit.
@@ -31053,6 +31309,13 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_route53_hosted_zone_dnssec")
     mql: |
       terraform.state.resources.where(type == "aws_route53_hosted_zone_dnssec").length > 0
+  - uid: mondoo-aws-security-route53-dnssec-enabled-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Route53::HostedZone")
+    mql: |
+      signedZones = "|" + cloudformation.template.resources.where(type == "AWS::Route53::DNSSEC").map(properties['HostedZoneId']['Ref']).join("|") + "|"
+      cloudformation.template.resources.where(type == "AWS::Route53::HostedZone").where(properties['VPCs'] == null).all(
+        signedZones.contains("|" + name + "|")
+      )
   # No Terraform variants: the check evaluates the operational status Route 53
   # reports for each key signing key, which drifts to ACTION_NEEDED or
   # INTERNAL_FAILURE when the backing KMS key policy or grant breaks. Terraform
@@ -31519,6 +31782,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-route53-query-logging-enabled-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Amazon Route 53 public hosted zones have DNS query logging configured. Query logging sends information about queries against the zone to Amazon CloudWatch Logs.
@@ -31653,6 +31920,12 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_route53_query_log")
     mql: |
       terraform.state.resources.where(type == "aws_route53_query_log").length > 0
+  - uid: mondoo-aws-security-route53-query-logging-enabled-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Route53::HostedZone")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Route53::HostedZone").where(properties['VPCs'] == null).all(
+        properties['QueryLoggingConfig'] != empty
+      )
   - uid: mondoo-aws-security-route53-health-check-not-disabled
     title: Ensure Route 53 health checks are not disabled
     impact: 50
@@ -32772,6 +33045,8 @@ queries:
       cloudformation.template.resources.where(type == "AWS::AppStream::ImageBuilder").all(
       properties['EnableDefaultInternetAccess'] != true
       )
+  # No CloudFormation variant: `AWS::DirectoryService::MicrosoftAD` exposes `Edition` but no `OSVersion` property,
+  # so the underlying Windows Server release cannot be asserted from a template.
   - uid: mondoo-aws-security-directoryservice-os-version
     title: Ensure Directory Service directories use SERVER_2019 or newer
     impact: 60
@@ -34797,6 +35072,8 @@ queries:
       cloudformation.template.resources.where(type == "AWS::Cognito::IdentityPool").all(
       properties['AllowClassicFlow'] != true
       )
+  # No CloudFormation variant: Route 53 Domains has no CloudFormation resource types, so a registered domain's
+  # transfer lock cannot be expressed in a template.
   - uid: mondoo-aws-security-route53-domain-transfer-lock
     title: Ensure Route 53 registered domains have transfer lock enabled
     impact: 90
@@ -34941,6 +35218,8 @@ queries:
       terraform.state.resources.where(type == "aws_route53domains_registered_domain").all(
         values["transfer_lock"] == true
       )
+  # No CloudFormation variant: Route 53 Domains has no CloudFormation resource types, so a registered domain's
+  # contact privacy settings cannot be expressed in a template.
   - uid: mondoo-aws-security-route53-domain-contact-privacy
     title: Ensure Route 53 registered domains have contact privacy protection enabled
     impact: 50
@@ -35086,6 +35365,8 @@ queries:
       terraform.state.resources.where(type == "aws_route53domains_registered_domain").all(
         values["admin_privacy"] == true && values["registrant_privacy"] == true && values["tech_privacy"] == true
       )
+  # No CloudFormation variant: Route 53 Domains has no CloudFormation resource types, so a registered domain's auto-
+  # renew setting cannot be expressed in a template.
   - uid: mondoo-aws-security-route53-domain-auto-renew
     title: Ensure Route 53 registered domains have auto-renew enabled
     impact: 80
@@ -36765,6 +37046,9 @@ queries:
       cloudformation.template.resources.where(type == "AWS::WorkSpaces::Workspace").all(
       properties['RootVolumeEncryptionEnabled'] == true && properties['UserVolumeEncryptionEnabled'] == true
       )
+  # No CloudFormation variant: `AWS::WorkSpaces::Directory` is not a CloudFormation resource type. `AWS::WorkSpaces`
+  # covers Workspace, WorkspaceIpGroup, ConnectionAlias, and WorkspacesPool only, none of which carry the
+  # directory's access properties.
   - uid: mondoo-aws-security-workspaces-directory-web-access-disabled
     title: Ensure WorkSpaces directories deny web access by default
     impact: 60
@@ -36907,6 +37191,9 @@ queries:
       values.workspace_access_properties != empty &&
       values.workspace_access_properties.all(device_type_web == "DENY")
       )
+  # No CloudFormation variant: `AWS::WorkSpaces::Directory` is not a CloudFormation resource type. `AWS::WorkSpaces`
+  # covers Workspace, WorkspaceIpGroup, ConnectionAlias, and WorkspacesPool only, none of which carry the
+  # directory's workspace creation properties.
   - uid: mondoo-aws-security-workspaces-directory-maintenance-mode
     title: Ensure WorkSpaces directories have maintenance mode enabled
     impact: 50
@@ -40492,6 +40779,8 @@ queries:
   - uid: mondoo-aws-security-documentdb-snapshot-encrypted-aws
     filters: asset.platform == "aws"
     mql: aws.documentdb.snapshots.all(storageEncrypted == true)
+  # No CloudFormation variant: `AWS::MemoryDB::Snapshot` is not a CloudFormation resource type, so a snapshot's KMS
+  # key cannot be expressed in a template.
   - uid: mondoo-aws-security-memorydb-snapshot-cmk-encryption
     title: Ensure MemoryDB snapshots are encrypted with a customer-managed KMS key
     impact: 70
@@ -41645,6 +41934,10 @@ queries:
         tags:
           mondoo.com/filter-title: AWS SageMaker Processing Job
           mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-sagemaker-processing-job-network-isolation-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Amazon SageMaker processing jobs have `enableNetworkIsolation` set to true. Processing jobs handle data transformation, feature engineering, and model evaluation, and they frequently operate on raw data containing personal information. Network isolation is off by default, so a processing container can make outbound internet calls unless it is enabled.
@@ -41719,6 +42012,12 @@ queries:
     filters: asset.platform == "aws-sagemaker-processingjob"
     mql: |
       aws.sagemaker.processingjob.enableNetworkIsolation == true
+  - uid: mondoo-aws-security-sagemaker-processing-job-network-isolation-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SageMaker::ProcessingJob")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::SageMaker::ProcessingJob").all(
+        properties['NetworkConfig']['EnableNetworkIsolation'] == true
+      )
   # No Terraform variants: SageMaker processing jobs are imperative API calls; the inter-container traffic encryption flag has no Terraform resource analog.
   - uid: mondoo-aws-security-sagemaker-processing-job-encryption
     title: Ensure SageMaker processing jobs encrypt inter-container traffic
@@ -41744,6 +42043,10 @@ queries:
         tags:
           mondoo.com/filter-title: AWS SageMaker Processing Job
           mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-sagemaker-processing-job-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Amazon SageMaker processing jobs have `enableInterContainerTrafficEncryption` set to true. Distributed processing jobs run across multiple instances that exchange intermediate data, and that traffic is not encrypted between containers by default.
@@ -41817,6 +42120,12 @@ queries:
     filters: asset.platform == "aws-sagemaker-processingjob"
     mql: |
       aws.sagemaker.processingjob.enableInterContainerTrafficEncryption == true
+  - uid: mondoo-aws-security-sagemaker-processing-job-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SageMaker::ProcessingJob")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::SageMaker::ProcessingJob").all(
+        properties['NetworkConfig']['EnableInterContainerTrafficEncryption'] == true
+      )
   # No Terraform variants: SageMaker processing jobs are imperative API calls (`CreateProcessingJob`); per-job VPC configuration has no Terraform resource analog.
   - uid: mondoo-aws-security-sagemaker-processing-job-vpc-configured
     title: Ensure SageMaker processing jobs are deployed within a VPC
@@ -41842,6 +42151,10 @@ queries:
         tags:
           mondoo.com/filter-title: AWS SageMaker Processing Job
           mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-sagemaker-processing-job-vpc-configured-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Amazon SageMaker processing jobs specify a VPC configuration. Processing containers communicate over the public internet unless `VpcConfig` is set inside `NetworkConfig`, which means data read from and written to AWS services takes an internet-routed path.
@@ -41916,6 +42229,12 @@ queries:
     filters: asset.platform == "aws-sagemaker-processingjob"
     mql: |
       aws.sagemaker.processingjob.vpc != empty
+  - uid: mondoo-aws-security-sagemaker-processing-job-vpc-configured-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SageMaker::ProcessingJob")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::SageMaker::ProcessingJob").all(
+        properties['NetworkConfig']['VpcConfig']['Subnets'] != empty
+      )
   - uid: mondoo-aws-security-sagemaker-domain-kms-encryption
     title: Ensure SageMaker domains are encrypted with a KMS key
     impact: 70
@@ -42454,6 +42773,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-sagemaker-code-repository-uses-secret-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that every SageMaker code repository references a Secrets Manager secret for its Git credentials. A repository without one either clones anonymously, which is acceptable only for genuinely public repositories, or relies on credentials embedded in lifecycle configurations, environment variables, or Git URL query strings.
@@ -42569,6 +42892,12 @@ queries:
       terraform.state.resources.where(type == "aws_sagemaker_code_repository").all(
         values["git_config"].any(_["secret_arn"] != null && _["secret_arn"] != "")
       )
+  - uid: mondoo-aws-security-sagemaker-code-repository-uses-secret-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SageMaker::CodeRepository")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::SageMaker::CodeRepository").all(
+        properties['GitConfig']['SecretArn'] != empty
+      )
   - uid: mondoo-aws-security-sagemaker-monitoring-job-network-config
     title: Ensure SageMaker monitoring jobs enforce network isolation and encryption
     impact: 70
@@ -42605,6 +42934,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-sagemaker-monitoring-job-network-config-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that every SageMaker monitoring job definition enables both network isolation and inter-container traffic encryption in its `networkConfig`. It covers data quality, model quality, model bias, and model explainability job definitions. Monitoring jobs continuously read captured endpoint inference traffic, which contains the same sensitive inputs and outputs the production endpoint handles.
@@ -42810,6 +43143,13 @@ queries:
         values["network_config"].any(
           _["enable_network_isolation"] == true && _["enable_inter_container_traffic_encryption"] == true
         )
+      )
+  - uid: mondoo-aws-security-sagemaker-monitoring-job-network-config-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SageMaker::DataQualityJobDefinition" || type == "AWS::SageMaker::ModelQualityJobDefinition" || type == "AWS::SageMaker::ModelBiasJobDefinition" || type == "AWS::SageMaker::ModelExplainabilityJobDefinition")
+    mql: |
+      cloudformation.template.resources.where(type == /^AWS::SageMaker::(DataQuality|ModelQuality|ModelBias|ModelExplainability)JobDefinition$/).all(
+        properties['NetworkConfig']['EnableNetworkIsolation'] == true &&
+        properties['NetworkConfig']['EnableInterContainerTrafficEncryption'] == true
       )
   # No Terraform variants: Verifying that the role does not attach `AdministratorAccess` requires resolving an IAM role and walking `aws_iam_role_policy_attachment` resources — a multi-resource correlation that the variant pattern does not express. Audit IAM role attachments via `iam-no-admin-policies` instead.
   - uid: mondoo-aws-security-sagemaker-domain-default-role-not-admin
@@ -48668,6 +49008,10 @@ queries:
   - uid: mondoo-aws-security-iam-expired-certificates-aws
     filters: asset.platform == "aws"
     mql: aws.iam.serverCertificates.none(parse.date(_['Expiration'].string) < time.now)
+  # No CloudFormation variant: the only shape available reproduces the design gap tracked in issue #3118. The
+  # Terraform sibling filters on the AWSSupportAccess attachment and then re-asserts it, so it can never fail, and
+  # the CloudFormation equivalent over `AWS::IAM::Role.ManagedPolicyArns` would inherit that. Broadening the filter
+  # to every template declaring a role would instead fail every stack that is not the account's IAM baseline.
   - uid: mondoo-aws-security-iam-support-role
     title: Ensure a support role has been created for AWS Support access
     impact: 30
@@ -54105,6 +54449,9 @@ queries:
           _['Principal'] == "*" || _['Principal']['AWS'] == "*"
         )
       )
+  # No CloudFormation variant: `AWS::EC2::LaunchTemplate.LaunchTemplateData.UserData` must be base64-encoded, so the
+  # credential patterns this check matches are not present as plaintext. A variant would pass on any pre-encoded
+  # payload, which is worse than no coverage.
   - uid: mondoo-aws-security-ec2-launch-template-no-secrets
     title: Ensure EC2 launch templates do not contain secrets
     impact: 90
@@ -54324,6 +54671,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform HCL
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-cloudtrail-is-logging-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that AWS CloudTrail trails have logging actively enabled. It scopes to multi-region trails, because those provide the broadest visibility across regions and are therefore the most consequential to keep running. A trail that exists with logging stopped provides no visibility into API activity while still appearing in the console as a configured trail.
@@ -54438,6 +54789,15 @@ queries:
         # enable_logging defaults to true in the AWS provider, so != false (rather than == true) still passes when the argument is omitted
         arguments.enable_logging != false
       )
+  - uid: mondoo-aws-security-cloudtrail-is-logging-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::CloudTrail::Trail")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").all(
+        properties['IsLogging'] == true
+      )
+  # No CloudFormation variant: snapshot create-volume permissions have no CloudFormation resource type.
+  # `AWS::EC2::SnapshotBlockPublicAccess` covers only the account-level setting, which the CloudFormation variant of
+  # `mondoo-aws-security-ebs-snapshot-public-restorable-check` already asserts.
   - uid: mondoo-aws-security-ec2-snapshot-not-public
     title: Ensure EBS snapshots are not publicly shared
     impact: 90
@@ -58399,6 +58759,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-ecr-no-overly-permissive-policy-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Amazon ECR repository policies do not grant access through a wildcard principal with no scoping condition. It evaluates `Allow` statements that have no `Condition` and fails any whose principal is `*` or `{"AWS": "*"}`, so a wildcard bounded by a condition such as `aws:PrincipalOrgID` is not reported.
@@ -58548,6 +58912,14 @@ queries:
       terraform.state.resources.where(type == "aws_ecr_repository_policy").all(
         values.policy != /\"Principal\"\s*:\s*\"\*\"/ &&
         values.policy != /\"Principal\"\s*:\s*\{\s*\"AWS\"\s*:\s*\"\*\"\s*\}/
+      )
+  - uid: mondoo-aws-security-ecr-no-overly-permissive-policy-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ECR::Repository")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::ECR::Repository").where(properties['RepositoryPolicyText'] != empty).all(
+        properties['RepositoryPolicyText']['Statement'].where(_['Effect'] == "Allow").where(_['Condition'] == empty).none(
+          _['Principal'] == "*" || [_['Principal']['AWS']].flat.any(_ == "*")
+        )
       )
   - uid: mondoo-aws-security-elasticache-cmk-encryption
     title: Ensure ElastiCache clusters use CMK encryption
@@ -59609,6 +59981,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-vpc-dhcp-custom-dns-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that a VPC's DHCP options set points instances at organization-controlled DNS servers rather than at `AmazonProvidedDNS`. Custom resolvers are what make DNS-level filtering, logging, and threat detection possible inside the VPC.
@@ -59748,6 +60124,13 @@ queries:
       terraform.state.resources.where(type == "aws_vpc_dhcp_options").all(
         values["domain_name_servers"] == null ||
         values["domain_name_servers"].none(_ == "AmazonProvidedDNS")
+      )
+  - uid: mondoo-aws-security-vpc-dhcp-custom-dns-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::DHCPOptions")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::DHCPOptions").all(
+        properties['DomainNameServers'] == null ||
+        properties['DomainNameServers'].none(_ == "AmazonProvidedDNS")
       )
   # No Terraform variants: hasWildcardPolicy is a runtime-computed verdict that parses the endpoint's effective policy document and expands wildcard actions/resources; Terraform HCL, plan, and state assets carry the raw policy JSON with no equivalent resolved field. The Terraform remediation still shows how to attach a scoped policy.
   - uid: mondoo-aws-security-vpc-endpoint-no-wildcard-policy
@@ -59911,6 +60294,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-vpc-endpoint-security-groups-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that every VPC interface endpoint has at least one security group attached. Interface endpoints present an elastic network interface inside your subnets, and without a security group there is no control over which resources in the VPC can reach the AWS service through it.
@@ -60026,6 +60413,12 @@ queries:
       terraform.state.resources.where(type == "aws_vpc_endpoint").where(values["vpc_endpoint_type"] == "Interface").all(
         values["security_group_ids"] != null && values["security_group_ids"].length > 0
       )
+  - uid: mondoo-aws-security-vpc-endpoint-security-groups-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::VPCEndpoint")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::VPCEndpoint").where(properties['VpcEndpointType'] == "Interface").all(
+        properties['SecurityGroupIds'] != empty
+      )
   - uid: mondoo-aws-security-vpc-endpoint-service-acceptance-required
     title: Ensure VPC endpoint services require acceptance
     impact: 80
@@ -60061,6 +60454,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-vpc-endpoint-service-acceptance-required-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that VPC endpoint service configurations require manual acceptance of connection requests. These are the provider side of AWS PrivateLink. Without acceptance required, any AWS principal that knows the endpoint service name can create a connection to your internal service.
@@ -60172,6 +60569,12 @@ queries:
       terraform.state.resources.where(type == "aws_vpc_endpoint_service").all(
         values["acceptance_required"] == true
       )
+  - uid: mondoo-aws-security-vpc-endpoint-service-acceptance-required-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::VPCEndpointService")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::VPCEndpointService").all(
+        properties['AcceptanceRequired'] == true
+      )
   # No Terraform variants: VPC subnet flow-log enrollment is determined by `aws_flow_log` resources whose `subnet_id` references the subnet — a cross-resource correlation that requires inventorying every flow-log resource in the file. The runtime check inspects each subnet's resolved flow-logs at scan time; the equivalent variant pattern would have many false negatives without a graph of subnet-to-flow-log references.
   - uid: mondoo-aws-security-vpc-subnet-flow-logs-enabled
     title: Ensure VPC subnets have flow logs enabled
@@ -60200,6 +60603,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform HCL
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-vpc-subnet-flow-logs-enabled-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that individual subnets have at least one flow log attached, giving traffic visibility at the subnet level rather than only across the VPC as a whole.
@@ -60301,6 +60708,11 @@ queries:
 
             ```yaml
             Resources:
+              MainSubnet:
+                Type: AWS::EC2::Subnet
+                Properties:
+                  VpcId: !Ref MainVpc
+                  CidrBlock: 10.0.1.0/24
               SubnetFlowLog:
                 Type: AWS::EC2::FlowLog
                 Properties:
@@ -60325,6 +60737,13 @@ queries:
     mql: |
       flowLogRefs = terraform.resources.where(nameLabel == "aws_flow_log").map(arguments["subnet_id"]).join(" ")
       terraform.resources.where(nameLabel == "aws_subnet").all(flowLogRefs.contains("aws_subnet." + labels[1] + "."))
+  - uid: mondoo-aws-security-vpc-subnet-flow-logs-enabled-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::Subnet")
+    mql: |
+      loggedSubnets = "|" + cloudformation.template.resources.where(type == "AWS::EC2::FlowLog").where(properties['ResourceType'] == "Subnet").map(properties['ResourceId']['Ref']).join("|") + "|"
+      cloudformation.template.resources.where(type == "AWS::EC2::Subnet").all(
+        loggedSubnets.contains("|" + name + "|")
+      )
   - uid: mondoo-aws-security-vpc-flow-logs-iam-role
     title: Ensure VPC flow logs have an IAM role for CloudWatch delivery
     impact: 60
@@ -60360,6 +60779,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-vpc-flow-logs-iam-role-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that every VPC flow log delivering to CloudWatch Logs has an IAM role attached. Without one, the flow log cannot write to CloudWatch and delivery fails silently while the flow log continues to appear enabled.
@@ -60502,6 +60925,14 @@ queries:
       ).all(
         values["iam_role_arn"] != null && values["iam_role_arn"] != ""
       )
+  - uid: mondoo-aws-security-vpc-flow-logs-iam-role-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::FlowLog")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::FlowLog").where(
+        properties['LogDestinationType'] == null || properties['LogDestinationType'] == "cloud-watch-logs"
+      ).all(
+        properties['DeliverLogsPermissionArn'] != empty
+      )
   - uid: mondoo-aws-security-client-vpn-security-groups
     title: Ensure Client VPN endpoints have security groups
     impact: 80
@@ -60537,6 +60968,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-client-vpn-security-groups-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that AWS Client VPN endpoints have at least one security group attached, so that traffic from connected VPN clients into the VPC is subject to network controls. Without one, clients can reach any resource in the associated VPC.
@@ -60668,6 +61103,12 @@ queries:
       terraform.state.resources.where(type == "aws_ec2_client_vpn_endpoint").all(
         values["security_group_ids"] != null && values["security_group_ids"].length > 0
       )
+  - uid: mondoo-aws-security-client-vpn-security-groups-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::ClientVpnEndpoint")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::ClientVpnEndpoint").all(
+        properties['SecurityGroupIds'] != empty
+      )
   - uid: mondoo-aws-security-prefix-list-no-broad-cidrs
     title: Ensure managed prefix lists do not contain overly broad CIDRs
     impact: 70
@@ -60703,6 +61144,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-prefix-list-no-broad-cidrs-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that customer-managed prefix lists contain no entry for `0.0.0.0/0` or `::/0`. AWS-owned prefix lists are excluded. Prefix lists are referenced from security group rules and route tables, so a broad CIDR inside one effectively opens access to the entire internet wherever it is used.
@@ -60855,6 +61300,16 @@ queries:
           _["cidr"] != "0.0.0.0/0" && _["cidr"] != "::/0"
         )
       )
+  - uid: mondoo-aws-security-prefix-list-no-broad-cidrs-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::PrefixList")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::PrefixList").all(
+        properties['Entries'] == null ||
+        properties['Entries'].none(_['Cidr'] == "0.0.0.0/0" || _['Cidr'] == "::/0")
+      )
+  # No CloudFormation variant: `AWS::SSM::Document` exposes no sharing or permissions property. Document sharing is
+  # set through the ModifyDocumentPermission API, which Terraform models as the `permissions` argument on
+  # `aws_ssm_document`.
   - uid: mondoo-aws-security-ssm-document-not-public
     title: Ensure SSM documents are not publicly shared
     impact: 90
@@ -61392,6 +61847,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-cloudwatch-log-destination-restrict-access-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that CloudWatch Logs cross-account destinations have a non-empty access policy that does not contain a wildcard principal. A destination whose policy allows `*` accepts log data from any AWS account.
@@ -61529,6 +61988,13 @@ queries:
       terraform.state.resources.where(type == "aws_cloudwatch_log_destination_policy").all(
         values.access_policy.contains('"*"') == false
       )
+  - uid: mondoo-aws-security-cloudwatch-log-destination-restrict-access-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Logs::Destination")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Logs::Destination").all(
+        properties['DestinationPolicy'] == null ||
+        properties['DestinationPolicy'].contains('"*"') == false
+      )
   # No Terraform variants: Allowed principals on a VPC endpoint service are managed through `aws_vpc_endpoint_service_allowed_principal` resources — one per principal — keyed by the service ID. Verifying that at least one principal exists and none equals `*` requires graph traversal across resources that the variant pattern does not express.
   - uid: mondoo-aws-security-vpc-endpoint-service-restrict-principals
     title: Ensure VPC endpoint services restrict allowed principals
@@ -61557,6 +62023,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform HCL
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-vpc-endpoint-service-restrict-principals-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that VPC endpoint service configurations name an explicit, non-wildcard list of allowed principals. The list must be non-empty and must not contain `*`. Principals attach either inline through `allowed_principals` or through separate allowed-principal resources, and both forms count.
@@ -61688,6 +62158,15 @@ queries:
       )
       terraform.resources("aws_vpc_endpoint_service_allowed_principal").all(
         arguments['principal_arn'] != "*"
+      )
+  - uid: mondoo-aws-security-vpc-endpoint-service-restrict-principals-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::VPCEndpointService")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::VPCEndpointServicePermissions").all(
+        properties['AllowedPrincipals'] != empty
+      )
+      cloudformation.template.resources.where(type == "AWS::EC2::VPCEndpointServicePermissions").all(
+        properties['AllowedPrincipals'].none(_ == "*")
       )
   - uid: mondoo-aws-security-sfn-logging-enabled
     title: Ensure Step Functions state machines have logging enabled
@@ -63382,6 +63861,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-identitycenter-session-duration-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that AWS IAM Identity Center permission sets bound how long a federated session stays valid, requiring a session duration of 12 hours or less. The session duration determines how long the temporary credentials issued through a permission set remain usable before the user must authenticate again.
@@ -63498,6 +63981,14 @@ queries:
       terraform.state.resources.where(type == "aws_ssoadmin_permission_set").all(
         values["session_duration"] == null || values["session_duration"] <= "PT12H"
       )
+  - uid: mondoo-aws-security-identitycenter-session-duration-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SSO::PermissionSet")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::SSO::PermissionSet").all(
+        properties['SessionDuration'] == null ||
+        properties['SessionDuration'].find(/[0-9]+/).length == 0 ||
+        int(properties['SessionDuration'].find(/[0-9]+/).first) <= 12
+      )
   - uid: mondoo-aws-security-identitycenter-no-inline-policy
     title: Ensure Identity Center permission sets use managed policies
     impact: 50
@@ -63533,6 +64024,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-identitycenter-no-inline-policy-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that AWS IAM Identity Center permission sets grant access only through managed policies, with no inline policy attached. Inline policies embedded in a permission set are hiding spots for backdoor permissions that are significantly harder to find during an access review, which lets an attacker with Identity Center administrative access plant persistent, stealthy access across multiple AWS accounts.
@@ -63653,6 +64148,12 @@ queries:
   - uid: mondoo-aws-security-identitycenter-no-inline-policy-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == /^aws_/)
     mql: terraform.state.resources.where(type == "aws_ssoadmin_permission_set_inline_policy") == empty
+  - uid: mondoo-aws-security-identitycenter-no-inline-policy-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SSO::PermissionSet")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::SSO::PermissionSet").all(
+        properties['InlinePolicy'] == empty
+      )
   - uid: mondoo-aws-security-identitycenter-group-assignments
     title: Ensure Identity Center uses group-based assignments
     impact: 60
@@ -63688,6 +64189,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-identitycenter-group-assignments-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that AWS IAM Identity Center grants account access through groups rather than to individual users, requiring every account assignment to name a principal type of `GROUP`. Direct user-level assignments are a stealthy persistence mechanism, because an attacker with Identity Center administrative access can grant a compromised user account access that is invisible to group-based reviews and that survives group membership cleanup during incident response.
@@ -63811,6 +64316,12 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_ssoadmin_account_assignment").all(
         values["principal_type"] == "GROUP"
+      )
+  - uid: mondoo-aws-security-identitycenter-group-assignments-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SSO::Assignment")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::SSO::Assignment").all(
+        properties['PrincipalType'] == "GROUP"
       )
   - uid: mondoo-aws-security-secretsmanager-no-public-policy
     title: Ensure Secrets Manager secrets do not have public policies
@@ -65135,6 +65646,8 @@ queries:
           _['Principal']['AWS'] != null && _['Principal']['AWS'].contains("*")
         )
       )
+  # No CloudFormation variant: Elastic Disaster Recovery has no CloudFormation resource types at all, so a
+  # replication configuration template cannot be expressed.
   - uid: mondoo-aws-security-drs-private-replication
     title: Ensure DRS uses private IP for data replication
     impact: 70
@@ -65280,6 +65793,8 @@ queries:
       terraform.state.resources.where(type == "aws_drs_replication_configuration_template").all(
         values["data_plane_routing"] == "PRIVATE_IP"
       )
+  # No CloudFormation variant: Elastic Disaster Recovery has no CloudFormation resource types at all, so a
+  # replication configuration template cannot be expressed.
   - uid: mondoo-aws-security-drs-no-public-recovery-ip
     title: Ensure DRS recovery instances have no public IPs
     impact: 70
@@ -68084,6 +68599,10 @@ queries:
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress'].where(_['FromPort'] <= 2380 && _['ToPort'] >= 2379).none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
+  # No CloudFormation variant: the internet-facing part of this check is the runtime correlation between a security
+  # group and the public IPs of the network interfaces using it, which a template cannot express. What remains
+  # without it is "no 0.0.0.0/0 on 22 or 3389", which the CloudFormation variants of `mondoo-aws-security-secgroup-
+  # restricted-ssh` and `-secgroup-restricted-rdp` already assert.
   - uid: mondoo-aws-security-secgroup-internet-facing-restrict-admin-ports
     title: Ensure security groups on internet-facing resources restrict SSH and RDP
     impact: 95
@@ -68255,6 +68774,10 @@ queries:
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       )
+  # No CloudFormation variant: the internet-facing part of this check is the runtime correlation between a security
+  # group and the public IPs of the network interfaces using it, which a template cannot express. What remains
+  # without it is already asserted by the CloudFormation variants of the per-port `mondoo-aws-security-secgroup-
+  # restricted-*` checks.
   - uid: mondoo-aws-security-secgroup-internet-facing-restrict-database-ports
     title: Ensure internet-facing security groups restrict database ports
     impact: 95
@@ -69434,6 +69957,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that the `embedHostDomains` allowlist on each AppStream 2.0 stack contains only specific fully qualified domain names, with no wildcard entries and no empty strings. That list controls which host pages may embed the streaming session in an iframe.
@@ -69542,6 +70069,13 @@ queries:
         values["embed_host_domains"] == null ||
         values["embed_host_domains"].none(_.contains("*") || _ == "")
       )
+  - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::AppStream::Stack")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::AppStream::Stack").all(
+        properties['EmbedHostDomains'] == null ||
+        properties['EmbedHostDomains'].none(_.contains("*") || _ == "")
+      )
   - uid: mondoo-aws-security-workspaces-web-ip-access-no-public
     title: Ensure WorkSpaces Web IP access settings exclude public CIDR ranges
     impact: 90
@@ -69577,6 +70111,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-workspaces-web-ip-access-no-public-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that WorkSpaces Web IP access settings do not include the unrestricted `0.0.0.0/0` or `::/0` ranges. An allowlist that admits any source address provides no network restriction on browser session access.
@@ -69693,6 +70231,12 @@ queries:
       terraform.state.resources.where(type == "aws_workspacesweb_ip_access_settings").all(
         values["ip_rule"] == null ||
         values["ip_rule"].all(_["ip_range"] != "0.0.0.0/0" && _["ip_range"] != "::/0")
+      )
+  - uid: mondoo-aws-security-workspaces-web-ip-access-no-public-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::WorkSpacesWeb::IpAccessSettings")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::WorkSpacesWeb::IpAccessSettings").all(
+        properties['IpRules'].none(_['IpRange'] == "0.0.0.0/0" || _['IpRange'] == "::/0")
       )
   # No Terraform variants: certificate expiry is operational telemetry on the ACM certificate behind the origin mTLS reference, not a configuration argument on `aws_cloudfront_distribution`.
   - uid: mondoo-aws-security-cloudfront-origin-mtls-cert-not-expired
@@ -69837,6 +70381,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-cloudfront-trust-store-not-empty-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that CloudFront trust stores configured for viewer mTLS contain at least one CA certificate. A trust store with zero CA certificates is referenced by the distribution but has no anchors to validate viewer client certificates against.
@@ -69945,6 +70493,12 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_cloudfront_trust_store").all(
         values["ca_certificates_bundle_source"] != null && values["ca_certificates_bundle_source"] != empty
+      )
+  - uid: mondoo-aws-security-cloudfront-trust-store-not-empty-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::CloudFront::TrustStore")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::CloudFront::TrustStore").all(
+        properties['CaCertificatesBundleSource'] != empty
       )
   # No Terraform variants: this check correlates origin domain heuristics against optional origin mTLS configuration; the heuristic is best applied at runtime where origin DNS resolution is observable.
   - uid: mondoo-aws-security-cloudfront-private-origin-mtls
@@ -70338,6 +70892,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-transfer-connector-logging-role-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Transfer Family connectors have a `loggingRole` configured. Without one, transfer events for the connector are not delivered to CloudWatch Logs, so outbound SFTP and AS2 file movements have no durable audit trail.
@@ -70459,6 +71017,12 @@ queries:
       terraform.state.resources.where(type == "aws_transfer_connector").all(
         values["logging_role"] != null && values["logging_role"] != ""
       )
+  - uid: mondoo-aws-security-transfer-connector-logging-role-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Transfer::Connector")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Transfer::Connector").all(
+        properties['LoggingRole'] != empty
+      )
   - uid: mondoo-aws-security-transfer-web-app-not-public
     title: Ensure Transfer Family Web Apps are not exposed via PUBLIC endpoints
     impact: 90
@@ -70494,6 +71058,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-transfer-web-app-not-public-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Transfer Family Web Apps are not configured with `endpointType=PUBLIC`. A public endpoint exposes the browser-based file transfer front door directly to the internet.
@@ -70614,6 +71182,12 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_transfer_web_app").all(
         values["endpoint_details"] != null && values["endpoint_details"] != empty
+      )
+  - uid: mondoo-aws-security-transfer-web-app-not-public-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Transfer::WebApp")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Transfer::WebApp").all(
+        properties['EndpointDetails'] != empty
       )
   - uid: mondoo-aws-security-transfer-workflow-exception-handling
     title: Ensure Transfer workflows with DECRYPT or COPY define onExceptionSteps
@@ -72700,6 +73274,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-lightsail-database-not-public-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Lightsail managed databases are unreachable from the internet, by requiring public mode to be disabled. A Lightsail database created with public mode enabled receives a public IP and answers on its default engine port, leaving database credentials as the only barrier between the internet and the data.
@@ -72813,6 +73391,12 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_lightsail_database").all(
         values.publicly_accessible == false || values.publicly_accessible == null
+      )
+  - uid: mondoo-aws-security-lightsail-database-not-public-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Lightsail::Database")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Lightsail::Database").all(
+        properties['PubliclyAccessible'] != true
       )
   - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer
     title: Ensure API Gateway v2 routes require an authorizer
@@ -73933,6 +74517,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-apigateway-cors-not-wildcard-with-credentials-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that an API Gateway HTTP API never pairs a wildcard CORS origin with credential support, by failing any API whose CORS configuration sets `AllowCredentials` to `true` while `AllowOrigins` contains `*`. Such an API answers cross-origin requests with `Access-Control-Allow-Origin: *` and `Access-Control-Allow-Credentials: true` on the same response. The CORS specification forbids this combination outright, because a wildcard origin plus credentials would let any website issue authenticated cross-origin requests on behalf of a signed-in user, which is precisely the attack CORS exists to stop.
@@ -74048,6 +74636,15 @@ queries:
           _['allow_origins'] == null ||
           _['allow_origins'].contains("*") == false
         )
+      )
+  - uid: mondoo-aws-security-apigateway-cors-not-wildcard-with-credentials-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ApiGatewayV2::Api")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::ApiGatewayV2::Api").all(
+        properties['CorsConfiguration'] == empty ||
+        properties['CorsConfiguration']['AllowCredentials'] != true ||
+        properties['CorsConfiguration']['AllowOrigins'] == null ||
+        properties['CorsConfiguration']['AllowOrigins'].none(_ == "*")
       )
   # No Terraform variants: scoping routes to their parent WebSocket API requires
   # cross-resource correlation (route -> aws_apigatewayv2_api.protocol_type ==
@@ -74416,6 +75013,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-glue-connection-no-plaintext-credentials-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that AWS Glue connections do not store a `PASSWORD` value in `connection_properties`. Glue supports a `SECRET_ID` property referencing an AWS Secrets Manager secret, which is the secure way to supply a password or token to a connection.
@@ -74529,6 +75130,13 @@ queries:
         values.connection_properties == null ||
         values.connection_properties["PASSWORD"] == null
       )
+  - uid: mondoo-aws-security-glue-connection-no-plaintext-credentials-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Glue::Connection")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Glue::Connection").all(
+        properties['ConnectionInput']['ConnectionProperties'] == null ||
+        properties['ConnectionInput']['ConnectionProperties']['PASSWORD'] == null
+      )
   # No runtime variant: the mql aws provider does not expose aws.cloud9
   # resources. Revisit if a Cloud9 resource set is added.
   - uid: mondoo-aws-security-cloud9-environment-no-ingress
@@ -74562,6 +75170,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-cloud9-environment-no-ingress-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that AWS Cloud9 EC2 environments use `CONNECT_SSM` as their connection type. The legacy `CONNECT_SSH` mode opens an inbound SSH listener on the underlying EC2 instance, which requires the instance to sit in a subnet reachable from the developer's network and exposes port 22 to whatever security group and network ACL governs that path.
@@ -74670,6 +75282,12 @@ queries:
       terraform.state.resources.where(type == "aws_cloud9_environment_ec2").all(
         values.connection_type == "CONNECT_SSM"
       )
+  - uid: mondoo-aws-security-cloud9-environment-no-ingress-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Cloud9::EnvironmentEC2")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Cloud9::EnvironmentEC2").all(
+        properties['ConnectionType'] == "CONNECT_SSM"
+      )
   - uid: mondoo-aws-security-elasticbeanstalk-environment-https-listener
     title: Ensure Elastic Beanstalk environments expose an HTTPS listener
     impact: 70
@@ -74705,6 +75323,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-elasticbeanstalk-environment-https-listener-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Elastic Beanstalk environments have an HTTPS listener enabled on their managed load balancer, requiring an option setting in the `aws:elbv2:listener:443` or `aws:elb:listener:443` namespace with `ListenerEnabled` set to `true`. Beanstalk creates a load balancer with only an HTTP listener by default.
@@ -74862,6 +75484,16 @@ queries:
           _['namespace'] == /^aws:elbv2?:listener:443$/ &&
           _['name'] == "ListenerEnabled" &&
           _['value'] == "true"
+        ) != empty
+      )
+  - uid: mondoo-aws-security-elasticbeanstalk-environment-https-listener-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ElasticBeanstalk::Environment")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::ElasticBeanstalk::Environment").all(
+        properties['OptionSettings'].where(
+          _['Namespace'] == /^aws:elbv2?:listener:443$/ &&
+          _['OptionName'] == "ListenerEnabled" &&
+          _['Value'] == "true"
         ) != empty
       )
   - uid: mondoo-aws-security-route53-resolver-query-logging-enabled
@@ -76741,6 +77373,10 @@ queries:
           _['Condition']['Bool']['aws:SecureTransport'] == false
         )
       )
+  # No CloudFormation variant: a template does not associate a custom domain with a protocol. Domain names reach
+  # their API through `AWS::ApiGatewayV2::ApiMapping`, so scoping to WebSocket APIs would need a three-hop
+  # correlation, and the result would restate `mondoo-aws-security-apigatewayv2-domain-tls-1-2-cloudformation`,
+  # which already requires TLS_1_2 on every `AWS::ApiGatewayV2::DomainName`.
   - uid: mondoo-aws-security-apigatewayv2-websocket-tls-1-2-minimum
     title: Ensure API Gateway v2 WebSocket custom domains require TLS 1.2 or higher
     impact: 70
@@ -77326,6 +77962,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-iot-domain-configuration-tls-1-2-minimum-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that AWS IoT Core domain configurations refuse deprecated TLS versions, by requiring `tls_config.security_policy` to name a current `IoTSecurityPolicy_TLS13_*` or `IoTSecurityPolicy_TLS_1_2_*` value. IoT Core can fall back to the legacy `IoTSecurityPolicy_TLS_1_0_*` policies on existing endpoints, which lets devices that have not been re-provisioned negotiate TLS 1.0 or TLS 1.1 against the MQTT broker.
@@ -77447,6 +78087,13 @@ queries:
           _['security_policy'] == /^IoTSecurityPolicy_TLS_1_2_/
         )
       )
+  - uid: mondoo-aws-security-iot-domain-configuration-tls-1-2-minimum-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::IoT::DomainConfiguration")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::IoT::DomainConfiguration").all(
+        properties['TlsConfig'] != empty &&
+        properties['TlsConfig']['SecurityPolicy'] == /^IoTSecurityPolicy_(TLS13|TLS_1_2)_/
+      )
   - uid: mondoo-aws-security-secretsmanager-rotation-lambda-in-vpc
     title: Ensure Secrets Manager rotation Lambdas run inside a VPC
     impact: 60
@@ -77482,6 +78129,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-secretsmanager-rotation-lambda-in-vpc-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that the Lambda function attached to each Secrets Manager secret with rotation enabled runs inside a customer VPC, requiring the rotation Lambda to name subnets. The rotation function authenticates to the backing database using the secret it is rotating, so without a VPC configuration it reaches the database over the AWS-managed network rather than through subnets and security groups you control.
@@ -77633,6 +78284,15 @@ queries:
       ).all(
         values.vpc_config != empty &&
         values.vpc_config.all(_['subnet_ids'] != empty)
+      )
+  - uid: mondoo-aws-security-secretsmanager-rotation-lambda-in-vpc-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Lambda::Function")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Lambda::Function").where(
+        properties['FunctionName'] == /rotation|rotate/i
+      ).all(
+        properties['VpcConfig'] != empty &&
+        properties['VpcConfig']['SubnetIds'] != empty
       )
   # No runtime variant: the mql aws provider does not expose AWS CodeArtifact
   # domains. Revisit when an aws.codeartifact resource set is added.
@@ -78177,6 +78837,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-backup-vault-no-public-access-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that AWS Backup vault access policies grant no access to anonymous or wildcard principals. A vault policy naming `"*"` or `{"AWS": "*"}` lets any AWS account list, copy, or restore the recovery points stored in the vault.
@@ -78300,6 +78964,14 @@ queries:
           _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
         )
       )
+  - uid: mondoo-aws-security-backup-vault-no-public-access-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Backup::BackupVault")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Backup::BackupVault").where(properties['AccessPolicy'] != empty).all(
+        properties['AccessPolicy']['Statement'].where(_['Effect'] == "Allow").none(
+          _['Principal'] == "*" || [_['Principal']['AWS']].flat.any(_ == "*")
+        )
+      )
 
   - uid: mondoo-aws-security-efs-filesystem-no-public-access
     title: Ensure EFS file system policies do not grant public access
@@ -78336,6 +79008,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-efs-filesystem-no-public-access-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Amazon EFS file system policies grant no access to anonymous or wildcard principals. A file system policy allowing `"*"` or `{"AWS": "*"}` exposes the NFS file system to any AWS account.
@@ -78457,6 +79133,14 @@ queries:
       terraform.state.resources.where(type == "aws_efs_file_system_policy").all(
         values["policy"]["Statement"].where(_["Effect"] == "Allow").none(
           _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
+        )
+      )
+  - uid: mondoo-aws-security-efs-filesystem-no-public-access-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EFS::FileSystem")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EFS::FileSystem").where(properties['FileSystemPolicy'] != empty).all(
+        properties['FileSystemPolicy']['Statement'].where(_['Effect'] == "Allow").none(
+          _['Principal'] == "*" || [_['Principal']['AWS']].flat.any(_ == "*")
         )
       )
 
@@ -78654,6 +79338,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform HCL
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-apprunner-service-not-public-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that AWS App Runner services are not reachable from the public internet through a public ingress endpoint. When public network access is enabled, the service URL is served to any client on the internet.
@@ -78728,6 +79416,14 @@ queries:
           blocks.where(type == "ingress_configuration").all(arguments.is_publicly_accessible == false)
         )
       )
+  - uid: mondoo-aws-security-apprunner-service-not-public-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::AppRunner::Service")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::AppRunner::Service").all(
+        properties['NetworkConfiguration'] != empty &&
+        properties['NetworkConfiguration']['IngressConfiguration'] != empty &&
+        properties['NetworkConfiguration']['IngressConfiguration']['IsPubliclyAccessible'] == false
+      )
 
   - uid: mondoo-aws-security-appsync-api-not-public
     title: Ensure AppSync GraphQL APIs use private visibility
@@ -78764,6 +79460,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-appsync-api-not-public-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that AWS AppSync GraphQL APIs use `PRIVATE` visibility, so the endpoint is reachable only from within a VPC through interface endpoints, rather than `GLOBAL` visibility which exposes it on the public internet.
@@ -78854,7 +79554,15 @@ queries:
       terraform.state.resources.where(type == "aws_appsync_graphql_api").all(
         values.visibility == "PRIVATE"
       )
+  - uid: mondoo-aws-security-appsync-api-not-public-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::AppSync::GraphQLApi")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::AppSync::GraphQLApi").all(
+        properties['Visibility'] == "PRIVATE"
+      )
 
+  # No CloudFormation variant: the EMR account-level block public access configuration has no CloudFormation
+  # resource type. Terraform reaches it through an API-backed resource, `aws_emr_block_public_access_configuration`.
   - uid: mondoo-aws-security-emr-block-public-access-enabled
     title: Ensure EMR account-level block public access is enabled
     impact: 80
@@ -79790,6 +80498,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform HCL
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-lakeformation-no-iam-allowed-principals-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Lake Formation `CreateDatabaseDefaultPermissions` and `CreateTableDefaultPermissions` do not grant to the `IAM_ALLOWED_PRINCIPALS` group. That group makes Lake Formation defer to coarse IAM permissions instead of enforcing its own fine-grained grants.
@@ -79887,6 +80599,17 @@ queries:
         blocks.where(type == "create_table_default_permissions").all(arguments.principal != "IAM_ALLOWED_PRINCIPALS") &&
         blocks.where(type == "create_database_default_permissions").all(arguments.principal != "IAM_ALLOWED_PRINCIPALS")
       )
+  - uid: mondoo-aws-security-lakeformation-no-iam-allowed-principals-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::LakeFormation::DataLakeSettings")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::LakeFormation::DataLakeSettings").all(
+        properties['CreateTableDefaultPermissions'] == null ||
+        properties['CreateTableDefaultPermissions'].none(_['Principal']['DataLakePrincipalIdentifier'] == "IAM_ALLOWED_PRINCIPALS")
+      )
+      cloudformation.template.resources.where(type == "AWS::LakeFormation::DataLakeSettings").all(
+        properties['CreateDatabaseDefaultPermissions'] == null ||
+        properties['CreateDatabaseDefaultPermissions'].none(_['Principal']['DataLakePrincipalIdentifier'] == "IAM_ALLOWED_PRINCIPALS")
+      )
 
   - uid: mondoo-aws-security-dsql-cluster-cmk-encryption
     title: Ensure Aurora DSQL clusters are encrypted with a customer-managed key
@@ -79974,6 +80697,8 @@ queries:
     filters: asset.platform == "aws"
     mql: aws.dsql.clusters.all(encryptionType == "CUSTOMER_MANAGED_KMS_KEY")
 
+  # No CloudFormation variant: Storage Gateway file shares have no CloudFormation resource types.
+  # `AWS::StorageGateway` exposes TapePool only, so neither the NFS nor the SMB file share can be expressed.
   - uid: mondoo-aws-security-storagegateway-fileshare-kms-encryption
     title: Ensure Storage Gateway file shares are encrypted with a KMS key
     impact: 70
@@ -82092,7 +82817,9 @@ queries:
       cloudformation.template.resources.where(type == "AWS::AmazonMQ::Broker").all(properties['AutoMinorVersionUpgrade'] == true)
 
   # No Terraform variants: this check follows the processing job's execution role into its attached managed-policy documents; that cross-resource IAM correlation cannot be replicated structurally, and processing jobs have no Terraform resource (imperative CreateProcessingJob API call).
-  # No CloudFormation variant: no AWS::SageMaker processing-job resource exists and the same cross-resource IAM correlation is required.
+  # No CloudFormation variant: `AWS::SageMaker::ProcessingJob` does exist and carries `RoleArn`, but resolving that
+  # role into its attached managed-policy documents is the same cross-resource IAM correlation the Terraform note
+  # above describes, and it cannot be expressed structurally in a template.
   - uid: mondoo-aws-security-sagemaker-processing-job-role-no-wildcards
     title: Ensure SageMaker processing job execution roles avoid wildcard permissions
     impact: 70
@@ -82250,6 +82977,10 @@ queries:
         tags:
           mondoo.com/filter-title: AWS SageMaker Processing Job
           mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-sagemaker-processing-job-no-plaintext-secrets-env-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Amazon SageMaker processing jobs carry no environment variable whose name suggests a secret, matching `password`, `secret`, `token`, `credential`, `apikey`, `api_key`, `access_key`, and `private_key`. The environment map is stored with the job definition and returned verbatim by the describe API, so anything passed this way is visible to every principal that can read the job.
@@ -82324,6 +83055,13 @@ queries:
         title: Amazon SageMaker - CreateProcessingJob API Reference
       - url: https://docs.aws.amazon.com/secretsmanager/latest/userguide/intro.html
         title: AWS Secrets Manager - User Guide
+  - uid: mondoo-aws-security-sagemaker-processing-job-no-plaintext-secrets-env-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SageMaker::ProcessingJob")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::SageMaker::ProcessingJob").all(
+        properties['Environment'] == empty ||
+        properties['Environment'].keys.none(_ == /(?i)(password|secret|token|credential|apikey|api_key|access_key|private_key)/)
+      )
   - uid: mondoo-aws-security-sagemaker-processing-job-role-no-wildcards-aws
     filters: asset.platform == "aws-sagemaker-processingjob"
     mql: |
@@ -86412,6 +87150,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-guardrail-cmk-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Amazon Bedrock guardrails are encrypted at rest under a customer managed KMS key (CMK). A guardrail stores the blocked-topic definitions, denied-word lists, and sensitive-information filters that govern how models may be used, and by default Bedrock protects that configuration with an AWS-owned key the customer cannot rotate, audit, or revoke independently.
@@ -86524,6 +87266,12 @@ queries:
       terraform.state.resources.where(type == "aws_bedrock_guardrail").all(
         values.kms_key_arn != null && values.kms_key_arn != ""
       )
+  - uid: mondoo-aws-security-bedrock-guardrail-cmk-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Bedrock::Guardrail")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Bedrock::Guardrail").all(
+        properties['KmsKeyArn'] != empty
+      )
   - uid: mondoo-aws-security-bedrock-agent-cmk-encryption
     title: Ensure Bedrock agents use a customer-managed KMS key
     impact: 80
@@ -86560,6 +87308,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agent-cmk-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Amazon Bedrock agents are encrypted at rest under a customer managed KMS key (CMK). An agent stores its instructions, session state, and the references to the knowledge bases and action groups it is allowed to invoke, and by default Bedrock protects that data with an AWS-owned key the customer cannot rotate, audit, or revoke independently.
@@ -86672,6 +87424,12 @@ queries:
       terraform.state.resources.where(type == "aws_bedrockagent_agent").all(
         values.customer_encryption_key_arn != null && values.customer_encryption_key_arn != ""
       )
+  - uid: mondoo-aws-security-bedrock-agent-cmk-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Bedrock::Agent")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Bedrock::Agent").all(
+        properties['CustomerEncryptionKeyArn'] != empty
+      )
   - uid: mondoo-aws-security-bedrock-flow-cmk-encryption
     title: Ensure Bedrock flows use a customer-managed KMS key
     impact: 80
@@ -86708,6 +87466,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-flow-cmk-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that Amazon Bedrock flows are encrypted at rest under a customer managed KMS key (CMK). A flow defines a multi-step orchestration graph that wires prompts, knowledge bases, Lambda functions, and conditional logic together, and by default Bedrock protects that definition with an AWS-owned key the customer cannot rotate, audit, or revoke independently.
@@ -86816,6 +87578,12 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_bedrockagent_flow").all(
         values.customer_encryption_key_arn != null && values.customer_encryption_key_arn != ""
+      )
+  - uid: mondoo-aws-security-bedrock-flow-cmk-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Bedrock::Flow")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Bedrock::Flow").all(
+        properties['CustomerEncryptionKeyArn'] != empty
       )
   # No Terraform variants: the aws_sagemaker_domain docker_settings block exposes
   # only enable_docker_access and vpc_only_trusted_accounts, not the rootless
@@ -87449,6 +88217,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-sagemaker-endpoint-data-capture-cmk-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that when an Amazon SageMaker endpoint has data capture enabled, the captured request and response payloads are encrypted with a KMS key. Endpoints with no data capture configuration, or with capture disabled, are not evaluated. Data capture writes live inference inputs and outputs to S3 for monitoring and model quality analysis.
@@ -87588,6 +88360,14 @@ queries:
           _['enable_capture'] == false || _['kms_key_id'] != null && _['kms_key_id'] != ""
         )
       )
+  - uid: mondoo-aws-security-sagemaker-endpoint-data-capture-cmk-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SageMaker::EndpointConfig")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::SageMaker::EndpointConfig").all(
+        properties['DataCaptureConfig'] == empty ||
+        properties['DataCaptureConfig']['EnableCapture'] != true ||
+        properties['DataCaptureConfig']['KmsKeyId'] != empty
+      )
   - uid: mondoo-aws-security-sagemaker-domain-vpc-only
     title: Ensure SageMaker domains use VPC-only network access
     impact: 70
@@ -87624,6 +88404,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-sagemaker-domain-vpc-only-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that every Amazon SageMaker Studio domain uses `VpcOnly` app network access rather than the default `PublicInternetOnly`. In `PublicInternetOnly` mode, SageMaker creates an AWS-managed elastic network interface that gives notebooks and apps direct outbound internet access, bypassing the customer VPC entirely. In `VpcOnly` mode, all traffic traverses subnets and security groups in your VPC, so egress is governed by your routing, endpoints, and firewall rules.
@@ -87739,6 +88523,12 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_sagemaker_domain").all(
         values.app_network_access_type == "VpcOnly"
+      )
+  - uid: mondoo-aws-security-sagemaker-domain-vpc-only-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SageMaker::Domain")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::SageMaker::Domain").all(
+        properties['AppNetworkAccessType'] == "VpcOnly"
       )
   # No Terraform variants: this check asserts account-level posture (that at least one guardrail exists), not a per-resource configuration value, so there is no single Terraform resource whose arguments express it.
   - uid: mondoo-aws-security-bedrock-guardrails-configured
