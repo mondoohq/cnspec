@@ -145,6 +145,12 @@ var serveCmd = &cobra.Command{
 					log.Error().Err(err).Msg("could not update providers")
 				}
 			}
+
+			// Reload the inventory before every cycle so a service that's
+			// already running picks up an inventory.yml that was added or
+			// edited after startup, without requiring a restart.
+			reloadInventory(cliConfig, scanConf)
+
 			// check in the managed client when running a scan
 			if checkInHandler != nil {
 				log.Info().Msg("performing check-in")
@@ -202,19 +208,6 @@ func getServeConfig() (*scanConfig, *cnspec_config.CliConfig, error) {
 		AgentMrn:     opts.AgentMrn,
 	}
 
-	// detect CI/CD runs and read labels from runtime and apply them to all assets in the inventory
-	runtimeEnv := execruntime.Detect()
-	if opts.AutoDetectCICDCategory && runtimeEnv.IsAutomatedEnv() || opts.Category == "cicd" {
-		log.Info().Msg("detected ci-cd environment")
-		// NOTE: we only apply those runtime environment labels for CI/CD runs to ensure other assets from the
-		// inventory are not touched, we may consider to add the data to the flagAsset
-		if runtimeEnv != nil {
-			runtimeLabels := runtimeEnv.Labels()
-			conf.Inventory.ApplyLabels(runtimeLabels)
-		}
-		conf.Inventory.ApplyCategory(inventory.AssetCategory_CATEGORY_CICD)
-	}
-
 	serviceAccount := opts.GetServiceCredential()
 	if serviceAccount != nil {
 		// determine information about the client
@@ -227,20 +220,8 @@ func getServeConfig() (*scanConfig, *cnspec_config.CliConfig, error) {
 		}
 	}
 
-	optAnnotations := opts.Annotations
-	if optAnnotations == nil {
-		optAnnotations = map[string]string{}
-	}
 	var err error
-
-	asset := &inventory.Asset{
-		Connections: []*inventory.Config{{
-			Type: "local",
-		}},
-		Annotations: optAnnotations,
-	}
-
-	conf.Inventory, err = inventoryloader.ParseOrUse(asset, viper.GetBool("insecure"), optAnnotations)
+	conf.Inventory, err = loadInventory(opts)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "could not load configuration")
 	}
@@ -254,6 +235,76 @@ func getServeConfig() (*scanConfig, *cnspec_config.CliConfig, error) {
 	}
 
 	return &conf, opts, nil
+}
+
+// loadInventory parses the inventory fresh from disk (or the piped/templated
+// source, per --inventory-file / --inventory-template) and applies CI/CD
+// labels detected from the runtime environment.
+//
+// getServeConfig calls this once at startup. The background scan loop in
+// serveCmd.RunE calls it again before every cycle, so `cnspec serve` picks
+// up an inventory.yml that was added or edited after the service started,
+// without requiring a restart.
+func loadInventory(opts *cnspec_config.CliConfig) (*inventory.Inventory, error) {
+	optAnnotations := opts.Annotations
+	if optAnnotations == nil {
+		optAnnotations = map[string]string{}
+	}
+
+	asset := &inventory.Asset{
+		Connections: []*inventory.Config{{
+			Type: "local",
+		}},
+		Annotations: optAnnotations,
+	}
+
+	inv, err := inventoryloader.ParseOrUse(asset, viper.GetBool("insecure"), optAnnotations)
+	if err != nil {
+		return nil, err
+	}
+
+	// detect CI/CD runs and read labels from runtime and apply them to all assets in the inventory
+	runtimeEnv := execruntime.Detect()
+	if opts.AutoDetectCICDCategory && runtimeEnv.IsAutomatedEnv() || opts.Category == "cicd" {
+		log.Info().Msg("detected ci-cd environment")
+		// NOTE: we only apply those runtime environment labels for CI/CD runs to ensure other assets from the
+		// inventory are not touched, we may consider to add the data to the flagAsset
+		if runtimeEnv != nil {
+			runtimeLabels := runtimeEnv.Labels()
+			inv.ApplyLabels(runtimeLabels)
+		}
+		inv.ApplyCategory(inventory.AssetCategory_CATEGORY_CICD)
+	}
+
+	return inv, nil
+}
+
+// reloadInventory refreshes scanConf.Inventory from disk before a scan
+// cycle. It's called from the background scan loop in serveCmd.RunE before
+// every RunScan, so an inventory.yml added or edited after the service
+// started is picked up without a restart.
+//
+// It skips the reload when the inventory came from stdin
+// (--inventory-file -): stdin can only be read once, so a second read
+// returns nothing and inventoryloader.ParseOrUse would silently fall back
+// to the local-only default asset, dropping every asset the piped inventory
+// defined. The inventory parsed at startup is kept for the life of the
+// process in that case, matching pre-reload behavior.
+//
+// On any other parse error (for example the file is mid-edit and
+// momentarily invalid YAML), it logs the error and leaves scanConf.Inventory
+// as the last-known-good inventory rather than failing the cycle.
+func reloadInventory(cliConfig *cnspec_config.CliConfig, scanConf *scanConfig) {
+	if viper.GetString("inventory-file") == "-" {
+		return
+	}
+
+	fresh, err := loadInventory(cliConfig)
+	if err != nil {
+		log.Error().Err(err).Msg("could not reload inventory; scanning with the last-known-good inventory")
+		return
+	}
+	scanConf.Inventory = fresh
 }
 
 func logClientInfo(spaceMrn string, clientMrn string, serviceAccountMrn string) {
