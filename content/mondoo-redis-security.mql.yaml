@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-redis-security
     name: Mondoo Redis Security
-    version: 1.0.0
+    version: 1.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -13,15 +13,16 @@ policies:
     authors:
       - name: Mondoo, Inc.
         email: hello@mondoo.com
-    summary: Harden Redis and Valkey authentication, network exposure, and transport encryption
+    summary: Harden Redis and Valkey authentication, network exposure, transport encryption, and durability
     docs:
       desc: |
         The Mondoo Redis Security policy connects to a running Redis or Valkey server and assesses its effective, runtime state. It reads the server's live `INFO` output, its `CONFIG GET` parameters, and the access-control users from `ACL LIST`, so the checks reflect the configuration the server is actually enforcing rather than a file on disk.
 
-        This policy provides security checks across three areas:
-        - Authentication strength, enforced through access-control (ACL) passwords
-        - Network exposure, governed by protected mode
-        - Transport encryption for client connections via TLS
+        This policy provides security checks across four areas:
+        - Authentication strength, enforced through access-control (ACL) passwords and the state of the built-in `default` user
+        - Network exposure, governed by protected mode and by the addresses the server binds to
+        - Transport encryption for client connections via TLS, including the plaintext listener and client-certificate policy
+        - Durability and resource limits, covering persistence to disk and the ceiling on memory the server will consume
 
         Left with a passwordless default user, protected mode off, and no TLS, a Redis or Valkey server on a reachable network hands full read and write access to anyone who can open a socket to its port, with every command and credential crossing the wire in cleartext.
 
@@ -31,14 +32,23 @@ policies:
         filters: asset.platform == "redisdb"
         checks:
           - uid: mondoo-redis-security-tls-enabled
+          - uid: mondoo-redis-security-plaintext-port-disabled
+          - uid: mondoo-redis-security-tls-client-certificate-auth
       - title: Authentication
         filters: asset.platform == "redisdb"
         checks:
           - uid: mondoo-redis-security-authentication-required
+          - uid: mondoo-redis-security-default-user-disabled
       - title: Network Surface Area
         filters: asset.platform == "redisdb"
         checks:
           - uid: mondoo-redis-security-protected-mode-enabled
+          - uid: mondoo-redis-security-not-bound-to-all-interfaces
+      - title: Durability & Resource Limits
+        filters: asset.platform == "redisdb"
+        checks:
+          - uid: mondoo-redis-security-persistence-enabled
+          - uid: mondoo-redis-security-memory-limit-set
     scoring_system: highest impact
 queries:
   - uid: mondoo-redis-security-tls-enabled
@@ -250,3 +260,472 @@ queries:
     refs:
       - url: https://redis.io/docs/latest/operate/oss_and_stack/management/security/
         title: Redis security
+  - uid: mondoo-redis-security-plaintext-port-disabled
+    filters: asset.platform == "redisdb"
+    title: Ensure Redis disables the plaintext listener
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    mql: |
+      redisdb.instance.port == 0
+    docs:
+      desc: |
+        This check verifies that the ordinary, unencrypted listener is switched off, which Redis expresses by setting the `port` parameter to zero.
+
+        Enabling TLS does not replace the plaintext listener; it adds a second one. A server configured with `tls-port 6379` and the default `port 6379` accepts both encrypted and cleartext connections, and nothing in the server's own logs distinguishes a client that chose the weaker one. The plaintext listener is closed only by setting `port 0` explicitly.
+
+        **Why this matters**
+
+        A listener that no one is supposed to use is still a listener. Every client library defaults to plaintext, so a service that is redeployed with its TLS settings dropped, a debugging session opened with a bare `redis-cli`, or a sidecar whose certificate bundle failed to mount will all connect successfully over cleartext and keep working. The failure is silent by design: the fallback is not an error, it is the default.
+
+        That matters here more than for most protocols because Redis authenticates in the clear. The `AUTH` command carries the password as an ordinary argument, so one cleartext connection is enough to hand over the credential in full, along with whatever keys and values the session touches.
+
+        An attacker positioned on the network does not need to break the TLS listener when a plaintext one is bound beside it. They downgrade instead, and the server cooperates.
+      audit: |-
+        ### Audit via redis-cli
+
+        1. Read the configured plaintext port:
+
+           ```bash
+           redis-cli CONFIG GET port
+           ```
+
+        If `port` is `0`, the plaintext listener is disabled and the check passes. Any other value means the server is still accepting unencrypted connections.
+      remediation:
+        - id: config
+          desc: |-
+            To close the plaintext listener:
+
+            1. Confirm the TLS listener is configured and every client can reach it. Closing the plaintext port before clients are migrated makes the server unreachable.
+            2. In `redis.conf`, set the ordinary port to zero and keep the TLS listener bound:
+
+               ```ini
+               port 0
+               tls-port 6379
+               ```
+            3. Restart the server.
+        - id: cli
+          desc: |-
+            Close the plaintext listener at runtime and persist the change:
+
+            ```bash
+            redis-cli CONFIG SET port 0
+            redis-cli CONFIG REWRITE
+            ```
+
+            Run this only over the TLS listener. Issuing it over the plaintext connection closes the socket the command arrived on.
+    refs:
+      - url: https://redis.io/docs/latest/operate/oss_and_stack/management/security/encryption/
+        title: Redis TLS
+      - url: https://redis.io/docs/latest/operate/rs/security/recommended-security-practices/
+        title: Redis recommended security practices
+  - uid: mondoo-redis-security-tls-client-certificate-auth
+    filters: asset.platform == "redisdb"
+    title: Ensure Redis requires client certificates on TLS connections
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    mql: |
+      redisdb.instance.tlsAuthClients == "yes"
+    docs:
+      desc: |
+        This check verifies that the server demands a certificate from every client that opens a TLS connection, which Redis controls with the `tls-auth-clients` parameter.
+
+        The parameter takes three values. `yes`, the default, requires a certificate signed by a CA the server trusts. `optional` accepts a certificate when the client offers one and accepts the connection when it does not. `no` never asks. Operators commonly set it to `no` while working around a client library that cannot present a certificate, and the setting outlives the problem it was meant to solve.
+
+        **Why this matters**
+
+        Server-side TLS proves to the client which server it reached. It proves nothing to the server about who is calling. Without client certificates the only thing standing between a reachable TLS port and the data behind it is the password, and a password is a single secret that travels through configuration files, environment variables, deployment pipelines, and the logs of anything that mishandles them.
+
+        Client certificate authentication changes what an attacker needs. A leaked password alone stops being enough, because the connection is refused at the TLS handshake before a single command is parsed. This is the control that keeps a credential found in a stale repository or a container image layer from becoming a live session.
+
+        Redis's own guidance for production deployments names client certificate authentication explicitly, on the grounds that it is what limits database access to authorized hosts rather than to whoever holds the shared secret.
+
+        Note that this parameter has a default of `yes`, so a server with TLS switched off entirely still reports `yes` here. Read this check alongside the TLS listener check rather than on its own.
+      audit: |-
+        ### Audit via redis-cli
+
+        1. Read the client-certificate policy:
+
+           ```bash
+           redis-cli CONFIG GET tls-auth-clients
+           ```
+
+        If the value is `yes`, the server requires a client certificate and the check passes. `optional` and `no` both fail: the first makes the certificate advisory, the second ignores it.
+      remediation:
+        - id: config
+          desc: |-
+            To require client certificates:
+
+            1. Issue a certificate to each client from the CA the server trusts, and distribute the key material to those hosts.
+            2. In `redis.conf`, point the server at the CA and require the certificate:
+
+               ```ini
+               tls-auth-clients yes
+               tls-ca-cert-file /etc/redis/tls/ca.crt
+               ```
+            3. Restart the server.
+
+            Issue the client certificates before switching the parameter. A client that cannot present one is refused at the handshake.
+        - id: cli
+          desc: |-
+            Require client certificates at runtime and persist the change:
+
+            ```bash
+            redis-cli CONFIG SET tls-auth-clients yes
+            redis-cli CONFIG REWRITE
+            ```
+
+            Existing connections are unaffected; the requirement applies to new handshakes, so a client without a certificate fails at its next reconnect.
+    refs:
+      - url: https://redis.io/docs/latest/operate/rs/security/recommended-security-practices/
+        title: Redis recommended security practices
+      - url: https://redis.io/docs/latest/operate/oss_and_stack/management/security/encryption/
+        title: Redis TLS
+  - uid: mondoo-redis-security-default-user-disabled
+    filters: asset.platform == "redisdb"
+    title: Ensure the built-in Redis default user is deactivated
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    mql: |
+      redisdb.instance.users.where(isDefault == true).all(enabled == false)
+    docs:
+      desc: |
+        This check verifies that the built-in `default` user is switched off, so every connection has to authenticate as a named access-control user.
+
+        `default` exists for compatibility with clients written before Redis 6 introduced access control lists. It is enabled on a fresh server and, unless it has been reconfigured, it carries `~*`, `&*`, and `+@all`: every key, every pub/sub channel, and every command. A client that connects without sending `AUTH` is this user.
+
+        **Why this matters**
+
+        The default user is the account that nobody owns. It is not issued to a service, it does not appear in an access review, and no application's configuration names it, which means revoking it breaks nothing that anyone can point to and leaving it costs nothing that anyone notices. It is also the account every scanner and every piece of commodity malware tries first, because it is the one account whose name is known in advance on every Redis server in the world.
+
+        Its permissions are the second half of the problem. A named user issued to a cache service is normally scoped to the key prefixes that service owns; `default` is scoped to everything, including `CONFIG`, `SHUTDOWN`, `FLUSHALL`, and the replication commands. An attacker who reaches it does not get access to one application's data, they get the server.
+
+        Deactivating it also makes the audit trail honest. Once every connection authenticates as a named user, `ACL WHOAMI` and the slow log attribute activity to an identity that maps to a system, and a credential can be rotated or revoked for one consumer without touching the others.
+
+        Deactivate `default` only once the named users that replace it exist and the clients have been migrated to them. A server with `default` off and no other user configured cannot be reached.
+      audit: |-
+        ### Audit via redis-cli
+
+        1. List the configured access-control users:
+
+           ```bash
+           redis-cli ACL LIST
+           ```
+
+        The line beginning `user default` shows the account's state. If it reads `off`, the default user is deactivated and the check passes. If it reads `on`, the check fails.
+      remediation:
+        - id: config
+          desc: |-
+            To deactivate the default user:
+
+            1. Define the named users that replace it, each scoped to the keys, channels, and commands it needs. In `redis.conf` or in the file named by `aclfile`:
+
+               ```ini
+               user appcache on >REPLACE_WITH_A_STRONG_SECRET ~cache:* &* +@read +@write
+               user default off
+               ```
+            2. Migrate every client to a named user and its password.
+            3. Restart the server, or reload the ACL file.
+        - id: cli
+          desc: |-
+            Create the replacement user, migrate the clients, then switch the default user off:
+
+            ```bash
+            redis-cli ACL SETUSER appcache on '>REPLACE_WITH_A_STRONG_SECRET' '~cache:*' '&*' +@read +@write
+            redis-cli ACL SETUSER default off
+            redis-cli ACL SAVE
+            ```
+
+            `ACL SAVE` persists the rules to the file named by `aclfile`. When the users are defined in `redis.conf` instead, use `CONFIG REWRITE`. Verify a named user can connect before disconnecting the last client that relies on `default`.
+    refs:
+      - url: https://redis.io/docs/latest/operate/rs/security/recommended-security-practices/
+        title: Redis recommended security practices
+      - url: https://redis.io/docs/latest/operate/oss_and_stack/management/security/acl/
+        title: Redis ACL
+  - uid: mondoo-redis-security-not-bound-to-all-interfaces
+    filters: asset.platform == "redisdb"
+    title: Ensure Redis does not listen on every network interface
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      redisdb.instance.bindsAllInterfaces == false
+    docs:
+      desc: |
+        This check verifies that the server binds to named addresses rather than to every interface on the host. Redis controls this with `bind`, and a value of `*` — or an empty value — means every address the machine holds.
+
+        A shipped `redis.conf` binds to the loopback address. Operators widen it to `*` when a client on another host cannot connect, because it is the change that makes the error go away. What it actually does is bind the listener to every interface the host has, present and future: the private network the client needed, and also the public one, the management network, and whatever a later cloud migration attaches.
+
+        **Why this matters**
+
+        Redis's guidance is that the server belongs on a trusted network and should not be reachable from the public internet. A wildcard bind is how that guidance gets broken without anyone deciding to break it, because the exposure follows the host's addresses rather than an operator's intent. Adding a public IP to the machine publishes the database, and nothing in the Redis configuration changes at that moment.
+
+        The consequence is well documented. Internet-reachable Redis servers are found and exploited within minutes by automated scanners that try the default port, connect as the default user, and use `CONFIG SET dir` together with `SAVE` to write an SSH key or a cron entry onto the host. Authentication and protected mode are the controls that stop that once it starts; binding to a specific address is the control that keeps it from starting.
+
+        Bind to the interface the clients actually use. Where the clients are local, keep the loopback address. Where they are on a private network, name that address and let the host firewall handle the rest.
+      audit: |-
+        ### Audit via redis-cli
+
+        1. Read the configured bind addresses:
+
+           ```bash
+           redis-cli CONFIG GET bind
+           ```
+
+        A value of `*`, `0.0.0.0`, or an empty string means the server listens on every interface and the check fails. A list of specific addresses passes.
+
+        2. Confirm what the server is actually listening on:
+
+           ```bash
+           ss -lntp | grep redis-server
+           ```
+      remediation:
+        - id: config
+          desc: |-
+            To bind the server to specific addresses:
+
+            1. Identify the address the clients connect to.
+            2. In `redis.conf`, name it explicitly and keep the loopback address for local administration:
+
+               ```ini
+               bind 127.0.0.1 10.0.1.20 -::1
+               protected-mode yes
+               ```
+            3. Restart the server.
+
+            The `-` prefix marks an address as optional, so the server still starts when it is not present on the host.
+        - id: cli
+          desc: |-
+            Rebind at runtime and persist the change:
+
+            ```bash
+            redis-cli CONFIG SET bind "127.0.0.1 10.0.1.20"
+            redis-cli CONFIG REWRITE
+            ```
+
+            Redis rebinds the listener immediately, so a client connected through an address that is no longer bound is dropped. Confirm the new address list covers every client before applying it.
+    refs:
+      - url: https://redis.io/docs/latest/operate/rs/security/recommended-security-practices/
+        title: Redis recommended security practices
+      - url: https://redis.io/docs/latest/operate/oss_and_stack/management/security/
+        title: Redis security
+  - uid: mondoo-redis-security-persistence-enabled
+    filters: asset.platform == "redisdb"
+    title: Ensure Redis persists its data set to disk
+    impact: 40
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
+      compliance/dora: dora-art-12
+      compliance/hipaa: hipaa-security-ss164-308-a-7-ii-a-contingency-plan-data-backup-plan
+      compliance/iso-27001-2022: iso-27001-2022-a-8-13
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ip-4
+      compliance/nist-csf-2: nist-csf-2-pr-ds-11
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
+      compliance/nist-sp-800-171: nist-sp-800-171--3-8-9
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc9-1-1
+      compliance/vda-isa-5: vda-isa-5-3-1-2
+    mql: |
+      redisdb.instance.config.rdbEnabled == true || redisdb.instance.config.appendOnly == true
+    docs:
+      desc: |
+        This check verifies that at least one of the two persistence mechanisms is active: RDB snapshots, configured through `save`, or the append-only file, configured through `appendonly`.
+
+        Redis holds its data set in memory. Without persistence the contents exist only for as long as the process does, and a restart — planned, crashed, or triggered by the kernel's out-of-memory killer — returns an empty database.
+
+        **Why this matters**
+
+        Whether that is a problem depends entirely on what the server is holding, and the answer drifts. A deployment that began as a pure cache accumulates state that nothing else has a copy of: rate-limit counters, deduplication sets, queued jobs, session data, feature-flag overrides, distributed locks. Each of those was added because Redis was already there, and none of them came with a decision about what happens when the process restarts.
+
+        The security consequences are the ones that outlast the outage. Losing rate-limit and lockout counters removes the brake on credential stuffing at exactly the moment the service comes back up. Losing a distributed lock lets two workers act on the same record. Losing a queue drops the work items that were in flight, and if any of them were revocations or audit events, the record of them goes with them.
+
+        Persistence is also what makes recovery possible after an attack rather than only after a crash. An RDB file or an AOF gives an incident responder a copy of the data set as it was, which is the difference between restoring a service and reconstructing it.
+
+        Deployments that genuinely use Redis as a disposable cache in front of a durable store may exempt this check. Confirm that is what the server is doing before doing so; it usually is not.
+      audit: |-
+        ### Audit via redis-cli
+
+        1. Read both persistence settings:
+
+           ```bash
+           redis-cli CONFIG GET save
+           redis-cli CONFIG GET appendonly
+           ```
+
+        An empty `save` value together with `appendonly no` means the data set exists only in memory and the check fails. Either a non-empty `save` schedule or `appendonly yes` passes.
+
+        2. Confirm the last snapshot actually succeeded:
+
+           ```bash
+           redis-cli INFO persistence | grep -E 'rdb_last_bgsave_status|aof_last_write_status'
+           ```
+      remediation:
+        - id: config
+          desc: |-
+            To enable persistence:
+
+            1. Choose the mechanism that matches the durability the data needs. The append-only file loses at most one second of writes; RDB snapshots lose everything since the last one.
+            2. In `redis.conf`:
+
+               ```ini
+               appendonly yes
+               appendfsync everysec
+               save 3600 1 300 100 60 10000
+               ```
+            3. Confirm the directory named by `dir` is writable by the Redis account and sits on a volume with room for the data set.
+            4. Restart the server.
+        - id: cli
+          desc: |-
+            Enable the append-only file at runtime and persist the change:
+
+            ```bash
+            redis-cli CONFIG SET appendonly yes
+            redis-cli CONFIG REWRITE
+            ```
+
+            Redis starts an initial rewrite immediately, which reads the whole data set; on a large instance, do this outside peak hours.
+    refs:
+      - url: https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/
+        title: Redis persistence
+      - url: https://redis.io/docs/latest/operate/rs/security/recommended-security-practices/
+        title: Redis recommended security practices
+  - uid: mondoo-redis-security-memory-limit-set
+    filters: asset.platform == "redisdb"
+    title: Ensure Redis caps the memory it will consume
+    impact: 30
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    mql: |
+      redisdb.instance.config.maxmemory > 0
+    docs:
+      desc: |
+        This check verifies that `maxmemory` is set to a nonzero value, so the server has an upper bound on how much memory it will take.
+
+        The default is `0`, which Redis reads as no limit. The server keeps accepting writes until the host runs out of memory, at which point the outcome is decided by the kernel rather than by Redis.
+
+        **Why this matters**
+
+        An unbounded in-memory database is a denial-of-service primitive available to anyone who can write to it. A client that can insert keys — an authenticated application with a bug, or an attacker with a valid credential and a scoped key pattern — can grow the data set until the host's memory is gone. Nothing has to be exploited; the server is doing exactly what it was asked to do.
+
+        What happens next is worse than a Redis outage. The Linux out-of-memory killer selects the largest process, which is the Redis server, and terminates it with SIGKILL. There is no clean shutdown and no final snapshot, so any data written since the last save is gone. On a host that is not dedicated to Redis, the pressure lands on the neighbours first, and unrelated services fail before the database does.
+
+        A limit turns that into a bounded, recoverable condition. With `maxmemory` set and an eviction policy chosen, the server sheds keys according to a rule the operator picked. With `noeviction`, it refuses writes and returns an error the client can see and report, which is a far better failure than a process that disappears.
+
+        Set the limit below the memory available to the process, leaving headroom for replication buffers and for the copy-on-write that a background save performs.
+      audit: |-
+        ### Audit via redis-cli
+
+        1. Read the memory limit and the eviction policy:
+
+           ```bash
+           redis-cli CONFIG GET maxmemory
+           redis-cli CONFIG GET maxmemory-policy
+           ```
+
+        A `maxmemory` of `0` means the server is unbounded and the check fails.
+
+        2. Compare the limit against what the server is currently using:
+
+           ```bash
+           redis-cli INFO memory | grep -E 'used_memory_human|maxmemory_human'
+           ```
+      remediation:
+        - id: config
+          desc: |-
+            To bound the server's memory:
+
+            1. Decide the ceiling. On a dedicated host, leave enough headroom for the fork a background save performs; on a container, set it below the cgroup limit so Redis reacts before the runtime kills it.
+            2. Choose the behaviour at the limit. `allkeys-lru` evicts, which suits a cache; `noeviction` refuses writes, which suits a data store where silent key loss is unacceptable.
+            3. In `redis.conf`:
+
+               ```ini
+               maxmemory 2gb
+               maxmemory-policy allkeys-lru
+               ```
+            4. Restart the server.
+        - id: cli
+          desc: |-
+            Apply the limit at runtime and persist it:
+
+            ```bash
+            redis-cli CONFIG SET maxmemory 2gb
+            redis-cli CONFIG SET maxmemory-policy allkeys-lru
+            redis-cli CONFIG REWRITE
+            ```
+
+            The limit takes effect immediately. If the data set already exceeds it, the server begins evicting — or refusing writes, under `noeviction` — as soon as the value is applied.
+    refs:
+      - url: https://redis.io/docs/latest/operate/oss_and_stack/management/config/
+        title: Redis configuration
+      - url: https://redis.io/docs/latest/develop/reference/eviction/
+        title: Redis key eviction
