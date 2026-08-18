@@ -2651,7 +2651,19 @@ queries:
             ```
         - id: terraform
           desc: |
-            To ensure no root user account access key exists in Terraform, AWS does not allow direct management of the root user's access key via Terraform. However, you should enforce IAM policies that prevent the creation of root access keys:
+            Terraform cannot manage the root user's access keys, so the key itself is removed in the console under **My Security Credentials**. What Terraform controls is whether a configuration issues access keys to the root account at all: bind every `aws_iam_access_key` to a named IAM user.
+
+            ```hcl
+            resource "aws_iam_user" "automation" {
+              name = "ci-automation"
+            }
+
+            resource "aws_iam_access_key" "automation" {
+              user = aws_iam_user.automation.name
+            }
+            ```
+
+            A Deny policy on `iam:CreateAccessKey` is worth adding as defense in depth, but it does not bind the root principal:
 
             ```hcl
             resource "aws_iam_policy" "deny_root_access_keys" {
@@ -2704,21 +2716,17 @@ queries:
       aws.iam.credentialReport.where(properties.user == "<root_account>").all(accessKey1Active == false)
       aws.iam.credentialReport.where(properties.user == "<root_account>").all(accessKey2Active == false)
   - uid: mondoo-aws-security-iam-root-access-key-check-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.providers.any(nameLabel == "aws")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_access_key")
     mql: |
       terraform.resources("aws_iam_access_key").all(arguments["user"] != "root")
   - uid: mondoo-aws-security-iam-root-access-key-check-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == /^aws_/)
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_access_key")
     mql: |
-      policyPlan = terraform.plan.resourceChanges.where(type == "aws_iam_policy").map(change.after.policy).first
-      policyPlan.contains('Action') && policyPlan.contains('iam:CreateAccessKey')
-      policyPlan.contains('Effect') && policyPlan.contains('Deny')
+      terraform.plan.resourceChanges.where(type == "aws_iam_access_key").all(change.after.user != "root")
   - uid: mondoo-aws-security-iam-root-access-key-check-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == /^aws_/)
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_iam_access_key")
     mql: |
-      policyState = terraform.state.resources.where(type == "aws_iam_policy").map(values.policy).first
-      policyState.contains('Action') && policyState.contains('iam:CreateAccessKey')
-      policyState.contains('Effect') && policyState.contains('Deny')
+      terraform.state.resources.where(type == "aws_iam_access_key").all(values.user != "root")
   # No Terraform variants: Root-user MFA enrollment is a console-only runtime operation; no Terraform resource can enable or represent MFA on the root account, and IAM policies never bind the root principal, so any aws_iam_policy proxy is unrelated to this control.
   - uid: mondoo-aws-security-root-account-mfa-enabled
     title: Ensure MFA is enabled for the "root user" account
@@ -3429,7 +3437,7 @@ queries:
       )
       mfaDenyPolicies.length > 0
   - uid: mondoo-aws-security-mfa-enabled-for-iam-console-access-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == /^aws_/)
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_user_login_profile")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_iam_policy").any(
         change.after.policy.contains('Deny') &&
@@ -3437,7 +3445,7 @@ queries:
         change.after.policy.contains('false')
       )
   - uid: mondoo-aws-security-mfa-enabled-for-iam-console-access-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == /^aws_/)
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_iam_user_login_profile")
     mql: |
       terraform.state.resources.where(type == "aws_iam_policy").any(
         values.policy.contains('Deny') &&
@@ -4349,9 +4357,8 @@ queries:
     mql: aws.ec2.ebsEncryptionByDefault.values.all(_ == true)
   # enabled == null passes deliberately: the AWS provider defaults aws_ebs_encryption_by_default.enabled to true, so declaring the resource without the argument still enables account-level encryption.
   - uid: mondoo-aws-security-ec2-ebs-encryption-by-default-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.providers.contains(nameLabel == "aws")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ebs_encryption_by_default")
     mql: |
-      terraform.resources.where(nameLabel == "aws_ebs_encryption_by_default").length > 0
       terraform.resources.where(nameLabel == "aws_ebs_encryption_by_default").where(arguments["enabled"] != /^(var|local|module|data|each)\./).all(
         arguments["enabled"] == null || arguments["enabled"] == true
       )
@@ -4359,13 +4366,13 @@ queries:
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ebs_encryption_by_default")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_ebs_encryption_by_default").all(
-        change.after.enabled == true
+        change.after.enabled != false
       )
   - uid: mondoo-aws-security-ec2-ebs-encryption-by-default-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_ebs_encryption_by_default")
     mql: |
       terraform.state.resources.where(type == "aws_ebs_encryption_by_default").all(
-        values.enabled == true
+        values.enabled != false
       )
   - uid: mondoo-aws-security-s3-buckets-account-level-block-public-access
     title: Ensure public access to S3 buckets is blocked at the account level
@@ -4507,9 +4514,8 @@ queries:
       aws.s3control.accountPublicAccessBlock != empty &&
       aws.s3control.accountPublicAccessBlock.values.all(_ == true)
   - uid: mondoo-aws-security-s3-buckets-account-level-block-public-access-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.providers.contains(nameLabel == "aws")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_account_public_access_block")
     mql: |
-      terraform.resources("aws_s3_account_public_access_block").length > 0
       terraform.resources("aws_s3_account_public_access_block").all(
         arguments["block_public_acls"] == true &&
         arguments["ignore_public_acls"] == true &&
