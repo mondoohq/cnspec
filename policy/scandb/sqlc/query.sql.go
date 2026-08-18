@@ -91,9 +91,16 @@ SELECT mrn, risk, is_toxic, is_detected
 FROM scored_risk_factors WHERE mrn = ?
 `
 
-func (q *Queries) GetRiskFactor(ctx context.Context, mrn string) (ScoredRiskFactor, error) {
+type GetRiskFactorRow struct {
+	Mrn        string  `json:"mrn"`
+	Risk       float64 `json:"risk"`
+	IsToxic    bool    `json:"is_toxic"`
+	IsDetected bool    `json:"is_detected"`
+}
+
+func (q *Queries) GetRiskFactor(ctx context.Context, mrn string) (GetRiskFactorRow, error) {
 	row := q.queryRow(ctx, q.getRiskFactorStmt, getRiskFactor, mrn)
-	var i ScoredRiskFactor
+	var i GetRiskFactorRow
 	err := row.Scan(
 		&i.Mrn,
 		&i.Risk,
@@ -108,9 +115,20 @@ SELECT qr_id, risk_score, type, value, weight, message, risk_factors, sources
 FROM scores WHERE qr_id = ?
 `
 
-func (q *Queries) GetScore(ctx context.Context, qrID string) (Score, error) {
+type GetScoreRow struct {
+	QrID        string         `json:"qr_id"`
+	RiskScore   int64          `json:"risk_score"`
+	Type        int64          `json:"type"`
+	Value       int64          `json:"value"`
+	Weight      int64          `json:"weight"`
+	Message     sql.NullString `json:"message"`
+	RiskFactors []byte         `json:"risk_factors"`
+	Sources     []byte         `json:"sources"`
+}
+
+func (q *Queries) GetScore(ctx context.Context, qrID string) (GetScoreRow, error) {
 	row := q.queryRow(ctx, q.getScoreStmt, getScore, qrID)
-	var i Score
+	var i GetScoreRow
 	err := row.Scan(
 		&i.QrID,
 		&i.RiskScore,
@@ -128,7 +146,8 @@ const insertAsset = `-- name: InsertAsset :exec
 INSERT OR REPLACE INTO asset (id, data) VALUES (0, ?)
 `
 
-// Asset operations (added in schema 1.1)
+// Asset operations (optional table, announced by its presence;
+// schema_version stays 1.0 - see SchemaVersion in scan_data_store.go)
 func (q *Queries) InsertAsset(ctx context.Context, data []byte) error {
 	_, err := q.exec(ctx, q.insertAssetStmt, insertAsset, data)
 	return err
@@ -138,24 +157,26 @@ const insertAssetFilter = `-- name: InsertAssetFilter :exec
 INSERT OR REPLACE INTO asset_filters (code_id) VALUES (?)
 `
 
-// Asset filter code_id operations (added in schema 1.1)
+// Asset filter code_id operations (optional table, announced by its
+// presence; schema_version stays 1.0 - see SchemaVersion)
 func (q *Queries) InsertAssetFilter(ctx context.Context, codeID string) error {
 	_, err := q.exec(ctx, q.insertAssetFilterStmt, insertAssetFilter, codeID)
 	return err
 }
 
 const insertData = `-- name: InsertData :exec
-INSERT OR REPLACE INTO data (code_id, data) VALUES (?, ?)
+INSERT OR REPLACE INTO data (code_id, data, checksum) VALUES (?, ?, ?)
 `
 
 type InsertDataParams struct {
-	CodeID string `json:"code_id"`
-	Data   []byte `json:"data"`
+	CodeID   string `json:"code_id"`
+	Data     []byte `json:"data"`
+	Checksum int64  `json:"checksum"`
 }
 
 // Data operations
 func (q *Queries) InsertData(ctx context.Context, arg InsertDataParams) error {
-	_, err := q.exec(ctx, q.insertDataStmt, insertData, arg.CodeID, arg.Data)
+	_, err := q.exec(ctx, q.insertDataStmt, insertData, arg.CodeID, arg.Data, arg.Checksum)
 	return err
 }
 
@@ -178,24 +199,30 @@ func (q *Queries) InsertMetadata(ctx context.Context, arg InsertMetadataParams) 
 }
 
 const insertResource = `-- name: InsertResource :exec
-INSERT OR REPLACE INTO resources (name, id, data) VALUES (?, ?, ?)
+INSERT OR REPLACE INTO resources (name, id, data, checksum) VALUES (?, ?, ?, ?)
 `
 
 type InsertResourceParams struct {
-	Name string `json:"name"`
-	ID   string `json:"id"`
-	Data []byte `json:"data"`
+	Name     string `json:"name"`
+	ID       string `json:"id"`
+	Data     []byte `json:"data"`
+	Checksum int64  `json:"checksum"`
 }
 
 // Resource operations
 func (q *Queries) InsertResource(ctx context.Context, arg InsertResourceParams) error {
-	_, err := q.exec(ctx, q.insertResourceStmt, insertResource, arg.Name, arg.ID, arg.Data)
+	_, err := q.exec(ctx, q.insertResourceStmt, insertResource,
+		arg.Name,
+		arg.ID,
+		arg.Data,
+		arg.Checksum,
+	)
 	return err
 }
 
 const insertRiskFactor = `-- name: InsertRiskFactor :exec
-INSERT OR REPLACE INTO scored_risk_factors (mrn, risk, is_toxic, is_detected)
-VALUES (?, ?, ?, ?)
+INSERT OR REPLACE INTO scored_risk_factors (mrn, risk, is_toxic, is_detected, checksum)
+VALUES (?, ?, ?, ?, ?)
 `
 
 type InsertRiskFactorParams struct {
@@ -203,6 +230,7 @@ type InsertRiskFactorParams struct {
 	Risk       float64 `json:"risk"`
 	IsToxic    bool    `json:"is_toxic"`
 	IsDetected bool    `json:"is_detected"`
+	Checksum   int64   `json:"checksum"`
 }
 
 // Risk factor operations
@@ -212,14 +240,15 @@ func (q *Queries) InsertRiskFactor(ctx context.Context, arg InsertRiskFactorPara
 		arg.Risk,
 		arg.IsToxic,
 		arg.IsDetected,
+		arg.Checksum,
 	)
 	return err
 }
 
 const insertScore = `-- name: InsertScore :exec
 INSERT OR REPLACE INTO scores (
-    qr_id, risk_score, type, value, weight, message, risk_factors, sources
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    qr_id, risk_score, type, value, weight, message, risk_factors, sources, checksum
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertScoreParams struct {
@@ -231,6 +260,7 @@ type InsertScoreParams struct {
 	Message     sql.NullString `json:"message"`
 	RiskFactors []byte         `json:"risk_factors"`
 	Sources     []byte         `json:"sources"`
+	Checksum    int64          `json:"checksum"`
 }
 
 // Scores operations
@@ -244,6 +274,7 @@ func (q *Queries) InsertScore(ctx context.Context, arg InsertScoreParams) error 
 		arg.Message,
 		arg.RiskFactors,
 		arg.Sources,
+		arg.Checksum,
 	)
 	return err
 }
@@ -279,15 +310,20 @@ const streamData = `-- name: StreamData :many
 SELECT code_id, data FROM data ORDER BY code_id
 `
 
-func (q *Queries) StreamData(ctx context.Context) ([]Datum, error) {
+type StreamDataRow struct {
+	CodeID string `json:"code_id"`
+	Data   []byte `json:"data"`
+}
+
+func (q *Queries) StreamData(ctx context.Context) ([]StreamDataRow, error) {
 	rows, err := q.query(ctx, q.streamDataStmt, streamData)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Datum
+	var items []StreamDataRow
 	for rows.Next() {
-		var i Datum
+		var i StreamDataRow
 		if err := rows.Scan(&i.CodeID, &i.Data); err != nil {
 			return nil, err
 		}
@@ -306,15 +342,21 @@ const streamResources = `-- name: StreamResources :many
 SELECT name, id, data FROM resources ORDER BY name, id
 `
 
-func (q *Queries) StreamResources(ctx context.Context) ([]Resource, error) {
+type StreamResourcesRow struct {
+	Name string `json:"name"`
+	ID   string `json:"id"`
+	Data []byte `json:"data"`
+}
+
+func (q *Queries) StreamResources(ctx context.Context) ([]StreamResourcesRow, error) {
 	rows, err := q.query(ctx, q.streamResourcesStmt, streamResources)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Resource
+	var items []StreamResourcesRow
 	for rows.Next() {
-		var i Resource
+		var i StreamResourcesRow
 		if err := rows.Scan(&i.Name, &i.ID, &i.Data); err != nil {
 			return nil, err
 		}
@@ -334,15 +376,22 @@ SELECT mrn, risk, is_toxic, is_detected
 FROM scored_risk_factors ORDER BY mrn
 `
 
-func (q *Queries) StreamRiskFactors(ctx context.Context) ([]ScoredRiskFactor, error) {
+type StreamRiskFactorsRow struct {
+	Mrn        string  `json:"mrn"`
+	Risk       float64 `json:"risk"`
+	IsToxic    bool    `json:"is_toxic"`
+	IsDetected bool    `json:"is_detected"`
+}
+
+func (q *Queries) StreamRiskFactors(ctx context.Context) ([]StreamRiskFactorsRow, error) {
 	rows, err := q.query(ctx, q.streamRiskFactorsStmt, streamRiskFactors)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ScoredRiskFactor
+	var items []StreamRiskFactorsRow
 	for rows.Next() {
-		var i ScoredRiskFactor
+		var i StreamRiskFactorsRow
 		if err := rows.Scan(
 			&i.Mrn,
 			&i.Risk,
@@ -367,15 +416,26 @@ SELECT qr_id, risk_score, type, value, weight, message, risk_factors, sources
 FROM scores ORDER BY qr_id
 `
 
-func (q *Queries) StreamScores(ctx context.Context) ([]Score, error) {
+type StreamScoresRow struct {
+	QrID        string         `json:"qr_id"`
+	RiskScore   int64          `json:"risk_score"`
+	Type        int64          `json:"type"`
+	Value       int64          `json:"value"`
+	Weight      int64          `json:"weight"`
+	Message     sql.NullString `json:"message"`
+	RiskFactors []byte         `json:"risk_factors"`
+	Sources     []byte         `json:"sources"`
+}
+
+func (q *Queries) StreamScores(ctx context.Context) ([]StreamScoresRow, error) {
 	rows, err := q.query(ctx, q.streamScoresStmt, streamScores)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Score
+	var items []StreamScoresRow
 	for rows.Next() {
-		var i Score
+		var i StreamScoresRow
 		if err := rows.Scan(
 			&i.QrID,
 			&i.RiskScore,

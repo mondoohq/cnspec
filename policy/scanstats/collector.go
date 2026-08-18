@@ -61,6 +61,20 @@ const (
 	MetricCPUGCFraction       = "cnspec.scan.cpu.gc_fraction"       // gc / busy
 	MetricCPUUtilization      = "cnspec.scan.cpu.utilization"       // busy / available
 	MetricCPUGOMAXPROCS       = "cnspec.scan.cpu.gomaxprocs"        // unit: count
+
+	// Write-time scan-content checksums (feature-gated; see the sqlite
+	// datalake and scandb.WithWriteTimeChecksums). Shadow mode exists to
+	// measure the cost fleet-wide before comparison ships enabled, and
+	// duration is that measurement: pure accumulated hashing time across
+	// the scan's writes (there is no separate pass to time). Errors is the
+	// count of rows whose hash failed — checksum work never fails a scan
+	// (the row is stored without a checksum and the file stays unstamped,
+	// fail-open), so this uploaded count is the only way a silent hashing
+	// problem becomes visible fleet-wide. Per-kind row counts stay in the
+	// local log only — row volume is already visible upstream through the
+	// scan database itself.
+	MetricChecksumDuration = "cnspec.scan.checksum.duration" // unit: ms
+	MetricChecksumErrors   = "cnspec.scan.checksum.errors"   // unit: count
 )
 
 // Collector accumulates scan metrics. It is safe for concurrent use.
