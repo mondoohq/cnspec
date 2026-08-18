@@ -32,9 +32,13 @@ import (
 //
 // The CLIENT hashes at write time (see WithWriteTimeChecksums in
 // scan_data_store.go) — no second pass over the database during a scan.
-// This file is the post-pass over ALREADY-WRITTEN files: server-side
-// stamping and verification, backfill, tooling, benchmarks. Both paths are
-// bit-identical by construction and pinned so by TestWriteTimeChecksumParity.
+// This file is the post-pass, and it has exactly one production consumer:
+// SERVER-SIDE BACKFILL of already-written files whose rows carry no
+// checksums (feature-off scans, hash failures; pre-checksum-schema files
+// are refused with ErrNoChecksumColumns). The server imports this package
+// for that rather than reimplementing the algorithm; nothing in cnspec's
+// scan path calls it. Both paths are bit-identical by construction and
+// pinned so by the parity tests — the post-pass's only in-repo callers.
 //
 // The row checksums come from mql's llx/checksum (data, resources) and
 // cnspec's policy/checksum (scores, risks) — never from local code.
@@ -78,9 +82,9 @@ func (d ChecksumCounts) String() string {
 }
 
 // OpenForChecksums opens an existing scan database read-write without
-// re-initializing the schema — for re-running ComputeChecksums over an
-// already-written file (server-side stamping, tooling, benchmarks). Files
-// from pre-checksum clients open fine but fail ComputeChecksums with
+// re-initializing the schema — the server-side backfill entry point for
+// running ComputeChecksums over an already-written file. Files from
+// pre-checksum clients open fine but fail ComputeChecksums with
 // ErrNoChecksumColumns. A missing path is an error — this entry point's
 // contract is an EXISTING file, so it must never fabricate one.
 func OpenForChecksums(filePath string) (*SqliteScanDataStore, error) {
@@ -150,10 +154,10 @@ func (s *SqliteScanDataStore) ensureChecksumColumns(ctx context.Context) error {
 //
 // The scanning client does NOT run this: it hashes at write time
 // (WithWriteTimeChecksums), which produces bit-identical columns. This
-// pass exists for already-written files — server-side stamping and
-// verification recompute, backfill, tooling — and reads with row-at-a-time
-// cursors (never whole-table loads), hashing each stored row exactly as a
-// reader decodes it.
+// pass exists solely for server-side backfill of already-written files
+// whose rows carry no checksums, and reads with row-at-a-time cursors
+// (never whole-table loads), hashing each stored row exactly as a reader
+// decodes it.
 func (s *SqliteScanDataStore) ComputeChecksums(ctx context.Context) (ChecksumCounts, error) {
 	if s.readOnly {
 		return ChecksumCounts{}, fmt.Errorf("cannot compute checksums in read-only mode")
