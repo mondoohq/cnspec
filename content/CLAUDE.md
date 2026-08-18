@@ -74,6 +74,52 @@ The parts whose behavior is not obvious from reading a policy file:
 
 Anchor to a sibling check in the same policy whenever possible — if you're adding an encryption-at-rest check next to five others at `impact: 70`, use 70 unless you can justify why this one differs. Cite a sibling UID in the PR description.
 
+## Version-lifecycle checks use an allowlist
+
+A check that asks "is this runtime, engine, or product version still supported?" can be
+written two ways, and they fail in opposite directions.
+
+**A denylist fails open.** It names the versions that have expired:
+
+```mql
+# don't
+["14.x", "16.x", "18.x"].contains(vercel.project.nodeVersion) == false
+```
+
+The day a new major reaches end of life, the check keeps reporting clean, and it keeps
+reporting clean until somebody edits the array. Nothing signals that an edit is due. The
+check is most wrong exactly when it matters most, which is the window right after an
+end-of-life date, when newly published vulnerabilities stop being fixed.
+
+**An allowlist fails closed.** It names the versions that are still supported:
+
+```mql
+# do
+vercel.project.nodeVersion == empty || vercel.project.nodeVersion.in(["22.x", "24.x"])
+```
+
+A version that leaves maintenance starts failing on its own. A version the vendor adds
+also fails, until someone reviews it and adds it here. That second case is a false
+failure, and it is the price of the first case being caught, which is the right trade: a
+false failure gets reported and fixed, while a false pass is silent.
+
+Three things go with it:
+
+- **A `MAINTENANCE:` comment above the query** naming the source the list came from, the
+  vendor's list of available versions, and the upstream end-of-life dates, so the next
+  person can re-derive it rather than guess.
+- **A guard for the absent value**, since an unset version normally means the vendor
+  default applies, which is the newest offered release and therefore a pass. Write
+  `field == empty ||` ahead of the membership test; `.in()` on null is false, so without
+  the guard an unconfigured asset fails.
+- **A fixture for the version the vendor still offers but upstream no longer maintains.**
+  That gap is the one a denylist misses, so it is the regression test that proves the
+  shape.
+
+Use `value.in([...])` rather than `[...].contains(value)`. `.contains()` opens a binder
+scope where `_` is the list element, so a field read inside it resolves against that
+element instead of the outer resource, and a Terraform variant will not compile.
+
 ## UID and naming conventions
 
 **Pattern**: `mondoo-<provider>-security-<resource>-<rule>`
