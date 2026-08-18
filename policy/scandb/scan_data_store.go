@@ -11,13 +11,18 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/v13/policy/checksum"
 	"go.mondoo.com/cnspec/v13/policy/scandb/sqlc"
 	"go.mondoo.com/mql/v13/llx"
+	llxchecksum "go.mondoo.com/mql/v13/llx/checksum"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"google.golang.org/protobuf/proto"
 )
@@ -64,7 +69,26 @@ type ScanDataStore interface {
 	ScanDataStoreWriter
 }
 
+// SchemaVersion is the scandb schema written by this client. The per-row
+// `checksum` columns and checksum metadata keys (see checksum.go) are
+// deliberately NOT a version bump: they are additive and invisible to older
+// readers (explicit-column queries everywhere), while today's server ingest
+// validates the version with an exact match — a bump would make every
+// upload from this client unprocessable by servers that haven't shipped
+// checksum support. Checksum presence is announced by the
+// checksum_algo_version metadata key instead.
 const SchemaVersion = "1.0"
+
+// readOnlyDSN builds a DSN that SQLite itself enforces as read-only. The
+// file: URI form is required: with a plain-path DSN the driver ignores the
+// query string entirely and opens READWRITE|CREATE — silently creating
+// missing files and letting raw SQL write through a handle the code
+// believes is read-only. The checksum ownership contract (checksums are
+// written by the scan owner, never a consumer) rests on this being real.
+// ToSlash keeps the URI valid on Windows paths.
+func readOnlyDSN(filePath string) string {
+	return "file:" + filepath.ToSlash(filePath) + "?mode=ro"
+}
 
 // SqliteScanDataStore implements ScanDataStore using SQLite with sqlc-generated queries
 type SqliteScanDataStore struct {
@@ -73,10 +97,119 @@ type SqliteScanDataStore struct {
 	assetMrn string
 	filePath string
 	readOnly bool
+
+	// computeChecksums makes every Write* hash its row inline (see
+	// WithWriteTimeChecksums). checksumStats tracks that activity.
+	computeChecksums bool
+	checksumStats    writeChecksumCounters
+}
+
+// writeChecksumCounters accumulates write-time checksum activity. Atomic:
+// writes may arrive from concurrent executor callbacks.
+type writeChecksumCounters struct {
+	data, scores, risks, resources atomic.Int64
+	errors                         atomic.Int64
+	nanos                          atomic.Int64
+}
+
+// WriteChecksumStats is a snapshot of a store's write-time checksum
+// activity. Counts are hash operations (an upserted row counts once per
+// write); Duration is pure accumulated hashing time.
+type WriteChecksumStats struct {
+	Counts   ChecksumCounts
+	Errors   int64
+	Duration time.Duration
+}
+
+// WriteChecksumStats snapshots the write-time checksum counters.
+func (s *SqliteScanDataStore) WriteChecksumStats() WriteChecksumStats {
+	return WriteChecksumStats{
+		Counts: ChecksumCounts{
+			Data:      int(s.checksumStats.data.Load()),
+			Scores:    int(s.checksumStats.scores.Load()),
+			Risks:     int(s.checksumStats.risks.Load()),
+			Resources: int(s.checksumStats.resources.Load()),
+		},
+		Errors:   s.checksumStats.errors.Load(),
+		Duration: time.Duration(s.checksumStats.nanos.Load()),
+	}
+}
+
+// StoreOption configures a SqliteScanDataStore at construction.
+type StoreOption func(*SqliteScanDataStore)
+
+// WithWriteTimeChecksums makes every Write* compute the row's content
+// checksum inline and store it with the row — no second pass over the
+// database. Correct under upserts by construction (INSERT OR REPLACE
+// rewrites the row's checksum with the row) and bit-identical to the
+// post-pass recompute (pinned by TestWriteTimeChecksumParity; the
+// nil-vs-empty normalizations in policy/checksum and mql's llx/checksum
+// are what make in-memory and round-tripped rows hash the same).
+//
+// Checksum work can never fail a scan: a hash error is counted and
+// logged, the row is stored with checksum 0, and Finalize then skips the
+// checksum_algo_version stamp so a partially checksummed file is never
+// announced as checksummed — consumers treat it exactly like a
+// pre-checksum file (full upload), fail-open.
+func WithWriteTimeChecksums() StoreOption {
+	return func(s *SqliteScanDataStore) { s.computeChecksums = true }
+}
+
+// rowChecksum runs one write-time hash, never failing the write: on error
+// it counts, logs, and returns 0 (the schema default, meaning "no
+// checksum"). Timing is accumulated so the true hashing cost is reported
+// per scan.
+func (s *SqliteScanDataStore) rowChecksum(kind, key string, counter *atomic.Int64, hash func() (uint64, error)) int64 {
+	if !s.computeChecksums {
+		return 0
+	}
+	start := time.Now()
+	sum, err := hash()
+	s.checksumStats.nanos.Add(time.Since(start).Nanoseconds())
+	if err != nil {
+		s.checksumStats.errors.Add(1)
+		log.Warn().Err(err).Str("kind", kind).Str("key", key).
+			Msg("failed to compute scan content checksum; row stored without one")
+		return 0
+	}
+	counter.Add(1)
+	// SQLite INTEGER is int64; store the uint64 bit pattern.
+	return int64(sum)
+}
+
+// StampChecksums announces the checksum algorithm version in the metadata
+// table — the marker consumers key on. The scan owner calls it exactly
+// once, when the scan's writes are complete: for cnspec that is the sqlite
+// datalake, right after the scan and before any Finalize/upload, which is
+// the one seam both paths share (an uploaded file and a kept
+// --output-scan-db file that never sees Finalize are stamped by the same
+// call). Finalize deliberately does NOT stamp — a store user who writes
+// checksums owns the stamp too.
+//
+// It refuses to stamp a file with any hash failure: partially checksummed
+// must never masquerade as checksummed — the unstamped file is consumed
+// exactly like a pre-checksum one (full upload, fail-open). Best-effort by
+// contract: checksum work never fails a scan, so problems are logged,
+// never returned.
+func (s *SqliteScanDataStore) StampChecksums() {
+	if !s.computeChecksums || s.readOnly {
+		return
+	}
+	if errs := s.checksumStats.errors.Load(); errs > 0 {
+		log.Warn().Int64("failures", errs).
+			Msg("scan content checksums incomplete; leaving file unstamped (uploads in full)")
+		return
+	}
+	if _, err := s.sqlDB.Exec(
+		`INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)`,
+		MetaChecksumAlgoVersion, llxchecksum.AlgoVersion); err != nil {
+		log.Warn().Err(err).
+			Msg("failed to stamp checksum algo version; leaving file unstamped (uploads in full)")
+	}
 }
 
 // NewSqliteScanDataStore creates a new SQLite-based scan data store for writing
-func NewSqliteScanDataStore(filePath string, assetMrn string) (*SqliteScanDataStore, error) {
+func NewSqliteScanDataStore(filePath string, assetMrn string, opts ...StoreOption) (*SqliteScanDataStore, error) {
 	sqlDB, err := sql.Open("sqlite", filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open sqlite file: %w", err)
@@ -95,6 +228,9 @@ func NewSqliteScanDataStore(filePath string, assetMrn string) (*SqliteScanDataSt
 		filePath: filePath,
 		readOnly: false,
 	}
+	for _, opt := range opts {
+		opt(store)
+	}
 
 	if err := store.initializeDatabase(); err != nil {
 		sqlDB.Close()
@@ -106,7 +242,7 @@ func NewSqliteScanDataStore(filePath string, assetMrn string) (*SqliteScanDataSt
 
 // NewSqliteScanDataStoreReader creates a new SQLite-based scan data store for reading
 func NewSqliteScanDataStoreReader(filePath string) (*SqliteScanDataStore, error) {
-	sqlDB, err := sql.Open("sqlite", filePath+"?mode=ro")
+	sqlDB, err := sql.Open("sqlite", readOnlyDSN(filePath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open sqlite file: %w", err)
 	}
@@ -193,6 +329,9 @@ func (s *SqliteScanDataStore) WriteData(ctx context.Context, data []*llx.Result)
 		if err := s.queries.InsertData(ctx, sqlc.InsertDataParams{
 			CodeID: codeId,
 			Data:   resultData,
+			Checksum: s.rowChecksum("data", codeId, &s.checksumStats.data, func() (uint64, error) {
+				return llxchecksum.HashDataRow(codeId, result)
+			}),
 		}); err != nil {
 			return fmt.Errorf("failed to write data %s: %w", codeId, err)
 		}
@@ -215,6 +354,9 @@ func (s *SqliteScanDataStore) WriteResource(ctx context.Context, resource *llx.R
 		Name: resource.Resource,
 		ID:   resource.Id,
 		Data: resourceData,
+		Checksum: s.rowChecksum("resource", resource.Resource+"/"+resource.Id, &s.checksumStats.resources, func() (uint64, error) {
+			return llxchecksum.HashResourceRow(resource)
+		}),
 	}); err != nil {
 		return fmt.Errorf("failed to write resource %s/%s: %w", resource.Resource, resource.Id, err)
 	}
@@ -265,8 +407,10 @@ func isMissingAssetFiltersTable(err error) bool {
 }
 
 // WriteAsset persists the inventory.Asset proto for the scanned asset.
-// Schema 1.1+: enables consumers (e.g. cnspec loadtest) to replay scan databases
-// against SynchronizeAssets without out-of-band asset metadata.
+// The asset table is optional and announced by its own presence — the
+// stamped schema_version stays "1.0" (see SchemaVersion). It enables
+// consumers (e.g. cnspec loadtest) to replay scan databases against
+// SynchronizeAssets without out-of-band asset metadata.
 func (s *SqliteScanDataStore) WriteAsset(ctx context.Context, asset *inventory.Asset) error {
 	if s.readOnly {
 		return fmt.Errorf("cannot write asset in read-only mode")
@@ -295,6 +439,9 @@ func (s *SqliteScanDataStore) WriteRisk(ctx context.Context, risk *policy.Scored
 		Risk:       float64(risk.Risk),
 		IsToxic:    risk.IsToxic,
 		IsDetected: risk.IsDetected,
+		Checksum: s.rowChecksum("risk", risk.Mrn, &s.checksumStats.risks, func() (uint64, error) {
+			return checksum.HashRiskRow(risk)
+		}),
 	}); err != nil {
 		return fmt.Errorf("failed to write risk %s: %w", risk.Mrn, err)
 	}
@@ -335,6 +482,9 @@ func (s *SqliteScanDataStore) writeScore(ctx context.Context, score *policy.Scor
 		Message:     message,
 		RiskFactors: riskFactors,
 		Sources:     sources,
+		Checksum: s.rowChecksum("score", score.QrId, &s.checksumStats.scores, func() (uint64, error) {
+			return checksum.HashScoreRow(score)
+		}),
 	})
 }
 
@@ -415,7 +565,8 @@ func (s *SqliteScanDataStore) GetScore(ctx context.Context, qrId string) (*polic
 		return nil, fmt.Errorf("failed to get score: %w", err)
 	}
 
-	return s.convertScore(&scoreRow)
+	row := sqlc.StreamScoresRow(scoreRow)
+	return s.convertScore(&row)
 }
 
 // GetData retrieves a specific data result by code ID
@@ -545,8 +696,12 @@ func (s *SqliteScanDataStore) StreamResources(ctx context.Context, callback func
 	return nil
 }
 
-// convertScore converts a sqlc-generated Score to a policy.Score
-func (s *SqliteScanDataStore) convertScore(scoreRow *sqlc.Score) (*policy.Score, error) {
+// convertScore converts a sqlc-generated score row to a policy.Score. The
+// readers select every column except checksum (explicit-column queries are
+// what keep old files readable), so sqlc emits per-query row structs;
+// GetScoreRow is field-identical and converts to StreamScoresRow at its
+// call site.
+func (s *SqliteScanDataStore) convertScore(scoreRow *sqlc.StreamScoresRow) (*policy.Score, error) {
 	score := &policy.Score{
 		QrId:            scoreRow.QrID,
 		RiskScore:       uint32(scoreRow.RiskScore),
@@ -654,7 +809,7 @@ func (s *SqliteScanDataStore) Finalize() (string, error) {
 	}
 
 	// Reopen as read-only
-	sqlDB, err := sql.Open("sqlite", s.filePath+"?mode=ro")
+	sqlDB, err := sql.Open("sqlite", readOnlyDSN(s.filePath))
 	if err != nil {
 		return "", fmt.Errorf("failed to reopen database as read-only: %w", err)
 	}

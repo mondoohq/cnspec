@@ -3,7 +3,11 @@
 
 -- SQLite schema for cnspec policy upload files
 -- Optimized for fast writes on client side
--- Version: 1.0
+-- Version: 1.0 - the checksum columns and the asset/asset_filters tables
+-- are additive (invisible to readers that don't query them), so the
+-- stamped schema_version stays 1.0; see SchemaVersion in
+-- scan_data_store.go. Checksum presence is announced by the
+-- checksum_algo_version metadata key instead.
 
 -- Metadata table for versioning and asset information
 CREATE TABLE metadata (
@@ -28,14 +32,16 @@ CREATE TABLE scores (
     weight INTEGER NOT NULL,          -- Score.weight  
     message TEXT,                     -- Score.message
     risk_factors BLOB,               -- protobuf encoded ScoredRiskFactors
-    sources BLOB                     -- protobuf encoded Sources
+    sources BLOB,                    -- protobuf encoded Sources
+    checksum INTEGER NOT NULL DEFAULT 0 -- 8-byte row content checksum (uint64 bit pattern)
 );
 
 -- Data table - stores LLX results with upsert capability
 -- code_id is the primary key for uniqueness and upsert operations
 CREATE TABLE data (
     code_id TEXT PRIMARY KEY,        -- llx.Result.CodeID (query checksum, unique identifier)
-    data BLOB NOT NULL               -- protobuf encoded llx.Result
+    data BLOB NOT NULL,              -- protobuf encoded llx.Result
+    checksum INTEGER NOT NULL DEFAULT 0 -- 8-byte row content checksum
 );
 
 -- ScoredRiskFactor table - stores individual risk factors for scores
@@ -44,19 +50,22 @@ CREATE TABLE scored_risk_factors (
     mrn TEXT PRIMARY KEY,            -- ScoredRiskFactor.mrn (unique identifier)
     risk REAL NOT NULL,              -- ScoredRiskFactor.risk (float32)
     is_toxic BOOLEAN NOT NULL,       -- ScoredRiskFactor.is_toxic
-    is_detected BOOLEAN NOT NULL     -- ScoredRiskFactor.is_detected
+    is_detected BOOLEAN NOT NULL,    -- ScoredRiskFactor.is_detected
+    checksum INTEGER NOT NULL DEFAULT 0 -- 8-byte row content checksum
 );
 
 CREATE TABLE resources (
     name TEXT NOT NULL,              -- The resource name
     id TEXT NOT NULL,                -- The resource ID
     data BLOB NOT NULL,              -- protobuf encoded llx.ResourceRecording
+    checksum INTEGER NOT NULL DEFAULT 0, -- 8-byte row content checksum
     PRIMARY KEY (name, id)           -- Composite primary key for uniqueness
 );
 
 -- Asset table - stores the inventory.Asset proto for the scanned asset.
--- Single-row table (id=0) added in schema 1.1 to make scan databases
--- self-contained for replay use cases (e.g. the cnspec loadtest tool).
+-- Optional single-row table (id=0), announced by its own presence (the
+-- stamped schema_version stays 1.0; see SchemaVersion), to make scan
+-- databases self-contained for replay use cases (e.g. cnspec loadtest).
 CREATE TABLE asset (
     id INTEGER PRIMARY KEY CHECK (id = 0),
     data BLOB NOT NULL               -- protobuf encoded inventory.Asset
