@@ -26,11 +26,14 @@ the seed statements costs one.
 from __future__ import annotations
 
 import json
+import os
+import posixpath
 import re
-import shlex
+import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -270,15 +273,20 @@ def apply_steps(fixture: Fixture, steps: list[Step]) -> None:
                     f"{(done.stderr or done.stdout).strip().splitlines()[:1]}"
                 )
         elif isinstance(step, Write):
-            quoted = shlex.quote(step.path)
-            script = f"mkdir -p \"$(dirname {quoted})\" && cat > {quoted}"
-            done = subprocess.run(
-                ["docker", "exec", "-i", fixture.container, "sh", "-c", script],
-                input=step.content,
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
+            # Staged on the host and copied in, rather than piped through a
+            # shell inside the container. Nothing here needs a shell, and not
+            # having one means no argument can ever be read as syntax.
+            parent = posixpath.dirname(step.path)
+            if parent:
+                _run(["docker", "exec", fixture.container, "mkdir", "-p", parent], timeout=60)
+            with tempfile.NamedTemporaryFile("w", delete=False) as staged:
+                staged.write(step.content)
+                staged_path = staged.name
+            try:
+                os.chmod(staged_path, 0o644)
+                done = _run(["docker", "cp", staged_path, f"{fixture.container}:{step.path}"], timeout=120)
+            finally:
+                os.unlink(staged_path)
             if done.returncode != 0:
                 raise RuntimeError(f"{fixture.name}: could not write {step.path}: {done.stderr.strip()}")
         elif isinstance(step, Remove):
@@ -359,6 +367,19 @@ def scan(suite: Suite, fixture: Fixture, scan_spec: Scan) -> dict[str, str]:
 # --------------------------------------------------------------------------
 # fixture assets
 # --------------------------------------------------------------------------
+
+
+def credential() -> str:
+    """A password for a fixture account, generated fresh on every run.
+
+    The fixtures need accounts, and accounts need passwords, but a password
+    written into this directory is a credential in the repository — which
+    secret scanners flag, correctly, since they cannot tell a throwaway from a
+    real one. Generating them removes the question: there is nothing to leak,
+    nothing to rotate, and no allowlist entry that would also hide a real
+    credential added later.
+    """
+    return secrets.token_hex(16)
 
 
 def mint_certs(workdir: Path) -> dict[str, str]:
