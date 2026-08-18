@@ -3466,6 +3466,8 @@ queries:
       )
   - uid: mondoo-aws-security-mfa-enabled-for-iam-console-access-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::IAM::User" && properties['LoginProfile'] != empty)
+    # CloudFormation carries policy documents as structured objects, so the deny statement is read directly
+    # instead of through the one-element list the Terraform variants get back from jsonencode.
     mql: |
       mfaDenyPolicies = cloudformation.template.resources.where(type == /^AWS::IAM::(ManagedPolicy|Policy|RolePolicy|UserPolicy|GroupPolicy)$/).where(
         properties['PolicyDocument']['Statement'] != null
@@ -7583,6 +7585,8 @@ queries:
       )
   - uid: mondoo-aws-security-rds-cluster-public-access-check-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::RDS::DBCluster")
+    # Scoped to AWS::RDS::DBCluster only: a cluster's instances are AWS::RDS::DBInstance, which mondoo-aws-
+    # security-rds-instance-public-access-check already covers in CloudFormation.
     mql: |
       cloudformation.template.resources.where(type == "AWS::RDS::DBCluster").all(
         properties['PubliclyAccessible'] != true
@@ -8532,6 +8536,9 @@ queries:
       )
   - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SnapshotBlockPublicAccess")
+    # CloudFormation has no snapshot resource type, so this cannot anchor on declared snapshots the way the
+    # Terraform siblings do. It scores the account setting itself: a template that declares it must set block-
+    # all-sharing.
     mql: |
       cloudformation.template.resources.where(type == "AWS::EC2::SnapshotBlockPublicAccess").all(
         properties['State'] == "block-all-sharing"
@@ -13033,6 +13040,8 @@ queries:
       )
   - uid: mondoo-aws-security-api-gw-execution-logging-enabled-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ApiGateway::Stage")
+    # CloudFormation carries the method settings inline on the stage, so the `*/*` catch-all is selected by
+    # ResourcePath and HttpMethod rather than by the `method_path` argument the Terraform siblings read.
     mql: |
       cloudformation.template.resources.where(type == "AWS::ApiGateway::Stage").all(
         properties['MethodSettings'].where(_['ResourcePath'] == "/*" && _['HttpMethod'] == "*").where(
@@ -24366,6 +24375,8 @@ queries:
       )
   - uid: mondoo-aws-security-guardduty-all-features-enabled-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::GuardDuty::Detector")
+    # CloudFormation carries the protection features as a list on the detector rather than as separate
+    # resources, so the count and the status are read from the same property.
     mql: |
       cloudformation.template.resources.where(type == "AWS::GuardDuty::Detector").all(
         properties['Features'].length >= 6 &&
@@ -27022,6 +27033,10 @@ queries:
       )
   - uid: mondoo-aws-security-nacl-no-unrestricted-ssh-rdp-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::NetworkAclEntry")
+    # CloudFormation types Protocol as an integer and models the port range as a nested object. An allow entry
+    # from any address with no PortRange opens every port on that protocol, so an absent PortRange is
+    # unrestricted rather than neutral. The provider coerces the scalar, so `== -1` matches both `Protocol: -1`
+    # and the quoted `Protocol: "-1"`; the fail fixtures cover both spellings.
     mql: |
       cloudformation.template.resources.where(type == "AWS::EC2::NetworkAclEntry").where(
         properties['Egress'] != true && properties['RuleAction'] == "allow"
@@ -31311,6 +31326,13 @@ queries:
       terraform.state.resources.where(type == "aws_route53_hosted_zone_dnssec").length > 0
   - uid: mondoo-aws-security-route53-dnssec-enabled-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Route53::HostedZone")
+    # AWS::Route53::DNSSEC points at its zone through `!Ref`, which reaches the query as {Ref: "<logical
+    # name>"}. The referenced names are joined into one delimited string so the membership test is a string
+    # operation, the same technique the Terraform siblings use.
+    # Only `!Ref` correlates. A literal hosted zone ID cannot name a zone declared in the same template, whose
+    # ID is assigned at deploy time, so a template that both declares and signs its zones necessarily uses
+    # `!Ref`. A DNSSEC resource pointing at a zone defined elsewhere leaves this template's own zones unsigned
+    # as far as anything here can see, which is what the check reports.
     mql: |
       signedZones = "|" + cloudformation.template.resources.where(type == "AWS::Route53::DNSSEC").map(properties['HostedZoneId']['Ref']).join("|") + "|"
       cloudformation.template.resources.where(type == "AWS::Route53::HostedZone").where(properties['VPCs'] == null).all(
@@ -31922,6 +31944,8 @@ queries:
       terraform.state.resources.where(type == "aws_route53_query_log").length > 0
   - uid: mondoo-aws-security-route53-query-logging-enabled-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Route53::HostedZone")
+    # CloudFormation nests the logging configuration inside the hosted zone, so no cross-resource correlation is
+    # needed. A zone with VPCs attached is private and cannot be query-logged.
     mql: |
       cloudformation.template.resources.where(type == "AWS::Route53::HostedZone").where(properties['VPCs'] == null).all(
         properties['QueryLoggingConfig'] != empty
@@ -58915,6 +58939,8 @@ queries:
       )
   - uid: mondoo-aws-security-ecr-no-overly-permissive-policy-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ECR::Repository")
+    # CloudFormation carries RepositoryPolicyText as a structured document rather than the opaque JSON string
+    # Terraform sees, so the statements are read directly the way the runtime variant reads them.
     mql: |
       cloudformation.template.resources.where(type == "AWS::ECR::Repository").where(properties['RepositoryPolicyText'] != empty).all(
         properties['RepositoryPolicyText']['Statement'].where(_['Effect'] == "Allow").where(_['Condition'] == empty).none(
@@ -60739,6 +60765,11 @@ queries:
       terraform.resources.where(nameLabel == "aws_subnet").all(flowLogRefs.contains("aws_subnet." + labels[1] + "."))
   - uid: mondoo-aws-security-vpc-subnet-flow-logs-enabled-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::Subnet")
+    # AWS::EC2::FlowLog names its subnet through `!Ref`, which reaches the query as {Ref: "<logical name>"}. The
+    # enrolled names are joined into one delimited string so the membership test is a string operation.
+    # Only `!Ref` correlates. A literal subnet ID cannot name a subnet declared in the same template, whose ID
+    # is assigned at deploy time, so a template that both declares and enrols its subnets necessarily uses
+    # `!Ref`.
     mql: |
       loggedSubnets = "|" + cloudformation.template.resources.where(type == "AWS::EC2::FlowLog").where(properties['ResourceType'] == "Subnet").map(properties['ResourceId']['Ref']).join("|") + "|"
       cloudformation.template.resources.where(type == "AWS::EC2::Subnet").all(
@@ -62161,6 +62192,9 @@ queries:
       )
   - uid: mondoo-aws-security-vpc-endpoint-service-restrict-principals-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::VPCEndpointService")
+    # CloudFormation has no inline allowed-principals property: permissions are a separate
+    # AWS::EC2::VPCEndpointServicePermissions resource, so "principals were set at all" and "no wildcard
+    # principal" are separate statements.
     mql: |
       cloudformation.template.resources.where(type == "AWS::EC2::VPCEndpointServicePermissions").all(
         properties['AllowedPrincipals'] != empty
@@ -63983,11 +64017,16 @@ queries:
       )
   - uid: mondoo-aws-security-identitycenter-session-duration-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SSO::PermissionSet")
+    # SessionDuration is an ISO-8601 duration, and reading the first number out of it gets two cases wrong:
+    # `P1DT0H` yields 1 and would pass a 24-hour session, while `PT720M` yields 720 and would fail a 12-hour
+    # one. MQL's `find` returns whole matches rather than capture groups, so there is no isolated component to
+    # compare against 12. The durations at or under the 12-hour maximum are spelled out instead: 1-12 hours,
+    # 1-11 hours with any minutes, and 1-720 minutes. Anything carrying a day, week, month, or year component
+    # is rejected.
     mql: |
       cloudformation.template.resources.where(type == "AWS::SSO::PermissionSet").all(
         properties['SessionDuration'] == null ||
-        properties['SessionDuration'].find(/[0-9]+/).length == 0 ||
-        int(properties['SessionDuration'].find(/[0-9]+/).first) <= 12
+        properties['SessionDuration'] == /^PT(([1-9]|1[01])H([0-5]?[0-9]M)?|12H(0{1,2}M)?|([1-9]|[1-9][0-9]|[1-6][0-9]{2}|7[01][0-9]|720)M)$/
       )
   - uid: mondoo-aws-security-identitycenter-no-inline-policy
     title: Ensure Identity Center permission sets use managed policies
@@ -78089,6 +78128,8 @@ queries:
       )
   - uid: mondoo-aws-security-iot-domain-configuration-tls-1-2-minimum-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::IoT::DomainConfiguration")
+    # The allow-list is a single regex operand. MQL has no parenthesized grouping, so spelling it as two `||`
+    # comparisons would parse as `(guard && A) || B` and match a configuration carrying no TlsConfig at all.
     mql: |
       cloudformation.template.resources.where(type == "AWS::IoT::DomainConfiguration").all(
         properties['TlsConfig'] != empty &&
@@ -78286,13 +78327,21 @@ queries:
         values.vpc_config.all(_['subnet_ids'] != empty)
       )
   - uid: mondoo-aws-security-secretsmanager-rotation-lambda-in-vpc-cloudformation
-    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Lambda::Function")
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SecretsManager::RotationSchedule")
+    # Scoped by what the template actually wires up rather than by function name. A rotation schedule names its
+    # function with `!GetAtt`, which reaches the query as {Fn::GetAtt: [<logical name>, Arn]}, so the functions
+    # in scope are exactly the ones rotation uses: a function called `rotate-images` is not swept in, and one
+    # called `credential-refresher` is not missed. A schedule pointing at a literal ARN is a function defined
+    # outside this template and is dropped, since nothing here can be scored for it; that guard also keeps the
+    # accessor off a string value, which would error. AWS-managed rotation runs in a Lambda the schedule
+    # declares inline through HostedRotationLambda, which carries its own subnets.
     mql: |
-      cloudformation.template.resources.where(type == "AWS::Lambda::Function").where(
-        properties['FunctionName'] == /rotation|rotate/i
-      ).all(
-        properties['VpcConfig'] != empty &&
+      rotationFunctions = "|" + cloudformation.template.resources.where(type == "AWS::SecretsManager::RotationSchedule").where(properties['RotationLambdaARN'] != /^arn:/).map(properties['RotationLambdaARN']['Fn::GetAtt'].first).join("|") + "|"
+      cloudformation.template.resources.where(type == "AWS::Lambda::Function").where(rotationFunctions.contains("|" + name + "|")).all(
         properties['VpcConfig']['SubnetIds'] != empty
+      )
+      cloudformation.template.resources.where(type == "AWS::SecretsManager::RotationSchedule").where(properties['HostedRotationLambda'] != empty).all(
+        properties['HostedRotationLambda']['VpcSubnetIds'] != empty
       )
   # No runtime variant: the mql aws provider does not expose AWS CodeArtifact
   # domains. Revisit when an aws.codeartifact resource set is added.
@@ -78966,6 +79015,8 @@ queries:
       )
   - uid: mondoo-aws-security-backup-vault-no-public-access-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Backup::BackupVault")
+    # AWS::Backup::BackupVault embeds AccessPolicy as a structured document, so the statements are read
+    # directly. This avoids the jsonencode/data-source split the Terraform variants have to work around.
     mql: |
       cloudformation.template.resources.where(type == "AWS::Backup::BackupVault").where(properties['AccessPolicy'] != empty).all(
         properties['AccessPolicy']['Statement'].where(_['Effect'] == "Allow").none(
@@ -79137,6 +79188,8 @@ queries:
       )
   - uid: mondoo-aws-security-efs-filesystem-no-public-access-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EFS::FileSystem")
+    # AWS::EFS::FileSystem embeds FileSystemPolicy as a structured document, so the statements are read directly
+    # rather than through the jsonencode/data-source split the Terraform variants have to work around.
     mql: |
       cloudformation.template.resources.where(type == "AWS::EFS::FileSystem").where(properties['FileSystemPolicy'] != empty).all(
         properties['FileSystemPolicy']['Statement'].where(_['Effect'] == "Allow").none(
@@ -88362,6 +88415,9 @@ queries:
       )
   - uid: mondoo-aws-security-sagemaker-endpoint-data-capture-cmk-encryption-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SageMaker::EndpointConfig")
+    # EnableCapture defaults to false and CloudFormation omits a property left at its default, so this asserts
+    # `!= true` rather than `== false`: `null == false` is false in MQL, which would fail every endpoint config
+    # that simply is not capturing.
     mql: |
       cloudformation.template.resources.where(type == "AWS::SageMaker::EndpointConfig").all(
         properties['DataCaptureConfig'] == empty ||
