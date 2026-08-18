@@ -685,7 +685,7 @@ queries:
       - uid: mondooGithubReleaseBranches
         title: Pattern for release branch
         mql: |
-          return  /^release/
+          return  /^(release|stable([-\/][0-9v]|$)|v?[0-9]+\.[0-9x]+)/
     mql: |
       github.repository.branches
         .where( name == props.mondooGithubReleaseBranches )
@@ -694,7 +694,9 @@ queries:
       desc: |
         This check verifies that the repository's release branches carry a branch protection rule.
 
-        Branch protection rules live under Repository Settings, Branches, and each rule applies to the branches matched by its branch name pattern. Which branches count as release branches comes from a policy property that the operator sets to the naming convention the team actually uses, defaulting to names beginning with `release`, so the check evaluates the right branches rather than a convention GitHub imposes. Every branch matching that convention must be covered by a protection rule for the check to pass.
+        Branch protection rules live under Repository Settings, Branches, and each rule applies to the branches matched by its branch name pattern. Which branches count as release branches comes from a policy property that the operator sets to the naming convention the team actually uses. The default covers the three shapes that are common in practice: a name beginning with `release`, the name `stable` either on its own or carrying a version such as `stable-2.19` and `stable/6.1.x`, and a version-shaped name such as `v1.x`, `2.0.x`, or `28.x`. A `stable` name followed by anything other than a version is left out, so a documentation or feature branch named `stable-docs` stays out of scope. Every branch matching that convention must be covered by a protection rule for the check to pass.
+
+        A repository whose release branches follow none of those conventions has nothing in scope and passes. That is the correct answer for the majority of repositories, which cut releases from tags and keep no long-lived release branch at all, but it does mean the check is only as good as the pattern. Set the property to your own convention if you name release branches something the default does not reach.
 
         **Why this matters**
 
@@ -962,7 +964,7 @@ queries:
       - uid: mondooGithubReleaseBranches
         title: Pattern for release branch
         mql: |
-          return  /^release/
+          return  /^(release|stable([-\/][0-9v]|$)|v?[0-9]+\.[0-9x]+)/
     mql: |
       github.repository.branches
         .where( name == props.mondooGithubReleaseBranches )
@@ -3055,7 +3057,7 @@ queries:
   # the feature is enabled.
   - uid: mondoo-github-repository-security-no-open-code-scanning-alerts
     filters: asset.platform == "github-repo"
-    title: Ensure repository has no open code scanning alerts
+    title: Ensure code scanning is enabled with no open alerts
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
@@ -3072,13 +3074,20 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
+    # codeScanningAlerts is empty both for a repository with no open alerts and for one
+    # where code scanning was never turned on, so `.none()` alone reports the second as a
+    # pass. codeScanningEnabled is the precondition that separates them: it is true for
+    # default setup and for advanced setup through an Actions workflow, and null rather
+    # than false when the token cannot read either endpoint, so an authorization failure
+    # fails closed instead of reading as "scanning is off".
     mql: |
+      github.repository.codeScanningEnabled == true
       github.repository.codeScanningAlerts.none(state == "open")
     docs:
       desc: |
-        This check verifies that the repository has no unresolved code scanning alerts.
+        This check verifies that the repository runs code scanning and has no unresolved alerts from it.
 
-        There is no console toggle behind this one. The artifact is the repository's code scanning alert list, reached from the repository's security view under Code scanning, and the check passes only when no alert in it is still open. Those alerts come from CodeQL or from any other analysis tool that uploads SARIF results to the repository, so the set reflects whichever scanners this repository has wired into its workflows. An alert leaves the open state when the underlying problem is fixed on the branch or when a maintainer dismisses it with a reason. A repository with no alerts at all passes.
+        There is no single console toggle behind this one. The check asks two things. First, that code scanning is configured at all, which is true when CodeQL default setup is enabled in the repository's security settings and also when a GitHub Actions workflow uploads analyses, the arrangement GitHub calls advanced setup. Second, that no alert in the repository's code scanning list is still open. Those alerts come from CodeQL or from any other analysis tool that uploads SARIF results, so the set reflects whichever scanners this repository has wired in. An alert leaves the open state when the underlying problem is fixed on the branch or when a maintainer dismisses it with a reason. A repository that scans and has no alerts passes.
 
         **Why this matters**
 
@@ -3086,25 +3095,34 @@ queries:
 
         Code scanning also examines the workflow files themselves, and those findings are the ones that turn a source bug into a supply chain incident. A workflow that checks out and runs code from a fork under `pull_request_target` executes attacker-authored code with a `GITHUB_TOKEN` that can hold write permission to repository contents, packages, and releases, alongside every repository secret exposed to that job. A pull request from a throwaway account is enough to trigger it.
 
-        Alerts that turn out to be wrong are meant to be dismissed with a reason rather than ignored, which moves them out of the `open` state and out of scope here. Note also that a repository with code scanning switched off has no alerts at all and passes this check trivially, so pair it with a check that scanning is actually enabled.
+        Alerts that turn out to be wrong are meant to be dismissed with a reason rather than ignored, which moves them out of the `open` state and out of scope here.
+
+        The scanning precondition is what keeps a green result meaningful. A repository with code scanning switched off has no alerts at all, and without the precondition that absence is indistinguishable in a report from a repository that scans thoroughly and has fixed everything. The weaker of those two postures is the one more likely to be present, so it is the one the check has to name.
       audit: |
         ### Audit via Console
 
         1. Navigate to the repository on GitHub.
-        2. Go to the **Security** tab > **Code scanning alerts**.
-        3. Filter by the "Open" state.
+        2. Go to **Settings** > **Advanced Security** and confirm that code scanning is set up, or confirm that a workflow under `.github/workflows/` uploads code scanning results.
+        3. Go to the **Security** tab > **Code scanning alerts** and filter by the "Open" state.
 
-        If there are no open code scanning alerts, the check passes. If one or more alerts remain open, the check fails.
+        If code scanning is configured and there are no open alerts, the check passes. If scanning is not configured, or one or more alerts remain open, the check fails.
 
         ### Audit via CLI
 
-        1. List open code scanning alerts:
+        1. Confirm code scanning is configured, by default setup or by an uploaded analysis:
+
+           ```bash
+           gh api /repos/OWNER/REPO/code-scanning/default-setup --jq '.state'
+           gh api '/repos/OWNER/REPO/code-scanning/analyses?per_page=1' --jq 'length'
+           ```
+
+        2. List open code scanning alerts:
 
            ```bash
            gh api '/repos/OWNER/REPO/code-scanning/alerts?state=open' --jq 'length'
            ```
 
-        If the command returns `0`, the check passes. If it returns a number greater than zero, the check fails.
+        The check passes when the first step shows `configured` or a non-zero analysis count, and the second returns `0`. It fails when scanning is not configured, or when open alerts remain.
       remediation:
         - id: github
           desc: |
