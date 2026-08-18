@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-cassandra-security
     name: Mondoo Apache Cassandra Security
-    version: 1.0.0
+    version: 1.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -13,16 +13,18 @@ policies:
     authors:
       - name: Mondoo, Inc.
         email: hello@mondoo.com
-    summary: Harden Apache Cassandra authentication, authorization, encryption, and audit logging
+    summary: Harden Apache Cassandra authentication, role privileges, encryption, replication, and audit logging
     docs:
       desc: |
         The Mondoo Apache Cassandra Security policy connects to a running Cassandra cluster and assesses its effective, runtime security configuration. It reads the cluster's live settings from the `system_views.settings` virtual table and inspects the roles and permissions defined in the `system_auth` keyspace, so the checks reflect the configuration the cluster is actually enforcing rather than a file on disk.
 
-        This policy provides security checks across four areas:
-        - Authentication of client connections
-        - Authorization and permission enforcement
-        - Client-to-node transport encryption
+        This policy provides security checks across six areas:
+        - Authentication of client connections, and the credentials and login flags carried by individual roles
+        - Authorization, permission scope, and the data centers a role may reach
+        - Transport encryption, both client-to-node and node-to-node
         - Audit logging of database activity
+        - Data durability and replication, including the keyspace that holds the cluster's own roles and permissions
+        - Cluster configuration defaults that decide which nodes may join
 
         Learn more about scanning databases in the [cnspec documentation](https://mondoo.com/docs/cnspec).
     groups:
@@ -30,18 +32,33 @@ policies:
         filters: asset.platform == "cassandra"
         checks:
           - uid: mondoo-cassandra-security-authentication-enabled
+          - uid: mondoo-cassandra-security-login-roles-require-passwords
+          - uid: mondoo-cassandra-security-default-superuser-login-disabled
       - title: Access Control
         filters: asset.platform == "cassandra"
         checks:
           - uid: mondoo-cassandra-security-authorization-enabled
+          - uid: mondoo-cassandra-security-roles-least-privilege
+          - uid: mondoo-cassandra-security-network-authorizer-enabled
       - title: Transport Encryption
         filters: asset.platform == "cassandra"
         checks:
           - uid: mondoo-cassandra-security-client-encryption-enabled
+          - uid: mondoo-cassandra-security-internode-encryption-enabled
       - title: Logging & Monitoring
         filters: asset.platform == "cassandra"
         checks:
           - uid: mondoo-cassandra-security-audit-logging-enabled
+      - title: Data Durability & Replication
+        filters: asset.platform == "cassandra"
+        checks:
+          - uid: mondoo-cassandra-security-keyspaces-durable-writes
+          - uid: mondoo-cassandra-security-keyspaces-network-topology-strategy
+          - uid: mondoo-cassandra-security-system-auth-replication-factor
+      - title: Cluster Configuration
+        filters: asset.platform == "cassandra"
+        checks:
+          - uid: mondoo-cassandra-security-cluster-name-not-default
     scoring_system: highest impact
 queries:
   - uid: mondoo-cassandra-security-authentication-enabled
@@ -109,7 +126,7 @@ queries:
                CREATE ROLE app WITH PASSWORD = 'strong-password' AND LOGIN = true;
                ```
     refs:
-      - url: https://cassandra.apache.org/doc/latest/cassandra/managing/security/authentication.html
+      - url: https://cassandra.apache.org/doc/latest/cassandra/managing/operating/security.html
         title: Cassandra Authentication
   - uid: mondoo-cassandra-security-authorization-enabled
     filters: asset.platform == "cassandra"
@@ -174,7 +191,7 @@ queries:
                GRANT SELECT ON KEYSPACE app_data TO app;
                ```
     refs:
-      - url: https://cassandra.apache.org/doc/latest/cassandra/managing/security/authorization.html
+      - url: https://cassandra.apache.org/doc/latest/cassandra/developing/cql/security.html
         title: Cassandra Authorization
   - uid: mondoo-cassandra-security-client-encryption-enabled
     filters: asset.platform == "cassandra"
@@ -316,3 +333,733 @@ queries:
     refs:
       - url: https://cassandra.apache.org/doc/latest/cassandra/managing/operating/audit_logging.html
         title: Cassandra Audit Logging
+  - uid: mondoo-cassandra-security-internode-encryption-enabled
+    filters: asset.platform == "cassandra"
+    title: Ensure Cassandra encrypts node-to-node traffic
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    mql: |
+      cassandra.cluster.security.internodeEncryption == "all"
+    docs:
+      desc: |
+        This check verifies that the cluster encrypts the traffic nodes exchange with each other, which `server_encryption_options.internode_encryption` in `cassandra.yaml` controls.
+
+        The setting takes four values. `none`, the default, sends everything in cleartext. `dc` encrypts only traffic that crosses a data center boundary. `rack` encrypts only traffic that crosses a rack boundary. `all` encrypts every internode connection, and it is the only value that leaves nothing on the wire in the clear.
+
+        **Why this matters**
+
+        Client-to-node encryption protects the query. Node-to-node encryption protects everything the cluster does with the answer, and that is the larger surface. A write at consistency level `QUORUM` is replicated to other nodes, a read at `LOCAL_QUORUM` is reconciled against them, hints are replayed to nodes that were down, and repair streams entire SSTables between replicas. Every one of those carries the same data as the client connection, and on a cluster with `internode_encryption: none` every one of them is cleartext.
+
+        Authentication credentials travel on that path too. The `system_auth` keyspace holds role definitions and password hashes, and it is replicated like any other keyspace. A cluster that encrypts client connections and not internode connections is publishing its own credential store to anyone who can watch the storage port.
+
+        Partial settings are worth naming precisely because they read as protection. `dc` leaves every replica exchange within a data center in cleartext, which is where the overwhelming majority of replication traffic goes. It is a control for the wide-area link, not for the cluster.
+
+        The common objection is cost, and it is real: encryption adds CPU load to a path that carries repair and streaming. It is smaller than an internode capture, and modern hardware absorbs it.
+      audit: |-
+        ### Audit via cqlsh
+
+        1. Read the effective setting from the settings virtual table:
+
+           ```bash
+           cqlsh -e "SELECT name, value FROM system_views.settings WHERE name = 'server_encryption_options_internode_encryption'"
+           ```
+
+        A value of `all` passes. `none` means every internode connection is cleartext; `dc` and `rack` leave the traffic inside a data center or rack unencrypted, and all three fail.
+
+        2. On each node, confirm the setting in the configuration file:
+
+           ```bash
+           grep -A5 '^server_encryption_options:' /etc/cassandra/cassandra.yaml
+           ```
+      remediation:
+        - id: config
+          desc: |-
+            To encrypt internode traffic:
+
+            1. Build a keystore and a truststore for each node, signed by a CA the whole cluster trusts, readable only by the Cassandra account.
+            2. In `cassandra.yaml` on every node, enable encryption for all internode connections:
+
+               ```yaml
+               server_encryption_options:
+                 internode_encryption: all
+                 keystore: /etc/cassandra/conf/server-keystore.jks
+                 keystore_password: REPLACE_WITH_A_STRONG_SECRET
+                 truststore: /etc/cassandra/conf/server-truststore.jks
+                 truststore_password: REPLACE_WITH_A_STRONG_SECRET
+                 require_client_auth: true
+               ```
+            3. Restart the nodes one at a time, waiting for each to rejoin before moving to the next.
+
+            Cassandra supports an optional transition period through `optional: true`, which accepts both encrypted and cleartext internode connections while a rolling restart is in progress. Set it back to `false` once every node is restarted; leaving it on keeps the cleartext path open.
+        - id: cli
+          desc: |-
+            Internode encryption cannot be enabled at runtime, because the keystores must be present before the storage listener starts. Apply the configuration above, then perform a rolling restart and confirm each node rejoins:
+
+            ```bash
+            nodetool drain
+            systemctl restart cassandra
+            nodetool status
+            ```
+
+            Wait until the restarted node shows `UN` before restarting the next one.
+    refs:
+      - url: https://cassandra.apache.org/doc/latest/cassandra/managing/operating/security.html
+        title: Cassandra security
+  - uid: mondoo-cassandra-security-login-roles-require-passwords
+    filters: asset.platform == "cassandra"
+    title: Ensure every Cassandra login role has a password
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    mql: |
+      cassandra.cluster.roles.where(canLogin == true).all(hasPassword == true)
+    docs:
+      desc: |
+        This check verifies that every role that can open a session carries a credential. Cassandra separates the two properties: `LOGIN` decides whether a role may authenticate, and `PASSWORD` supplies the secret it authenticates with. `CREATE ROLE svc WITH LOGIN = true` is valid CQL and creates exactly the combination this check looks for — a role that may connect and has nothing to prove it should.
+
+        **Why this matters**
+
+        A cluster can have `PasswordAuthenticator` configured, pass the authentication check, and still hold login roles with no password. Enabling the authenticator is a cluster-wide setting; whether an individual role has a credential is a per-role property, and nothing in Cassandra reconciles the two. The result is a cluster that reports authentication as enabled while carrying accounts that bypass it.
+
+        What such a role does depends on how `PasswordAuthenticator` treats it, and the answer is version-dependent and easy to get wrong. Treating it as a defect to be fixed rather than a behaviour to be reasoned about is the safer posture: a login role without a credential has no legitimate purpose.
+
+        Roles that exist only to carry permissions do not need `LOGIN` at all. That is the intended pattern — a `NOLOGIN` role holds the grants, and the accounts that need them are granted the role. A role that has both `LOGIN = true` and no password is almost always a permission-holding role that was created with the wrong flag, or an account whose password step was skipped during provisioning and never returned to.
+      audit: |-
+        ### Audit via cqlsh
+
+        1. List the roles and their login flags:
+
+           ```bash
+           cqlsh -e "LIST ROLES"
+           ```
+
+        2. Compare that against the roles that actually carry a credential:
+
+           ```bash
+           cqlsh -e "SELECT role, can_login, salted_hash IS NOT NULL AS has_password FROM system_auth.roles"
+           ```
+
+        Any role with `can_login` true and no salted hash fails the check.
+      remediation:
+        - id: config
+          desc: |-
+            For each role that can log in without a credential, decide which of the two properties is wrong.
+
+            If the role exists to carry permissions rather than to be used as an account, remove its ability to log in:
+
+            ```sql
+            ALTER ROLE reporting WITH LOGIN = false;
+            ```
+
+            If it is a real account, give it a password:
+
+            ```sql
+            ALTER ROLE svc_ingest WITH PASSWORD = 'REPLACE_WITH_A_STRONG_SECRET';
+            ```
+        - id: cli
+          desc: |-
+            Apply the change with cqlsh, then confirm no login role is left without a credential:
+
+            ```bash
+            cqlsh -e "ALTER ROLE svc_ingest WITH PASSWORD = 'REPLACE_WITH_A_STRONG_SECRET'"
+            cqlsh -e "SELECT role FROM system_auth.roles WHERE can_login = true AND salted_hash = null ALLOW FILTERING"
+            ```
+
+            Grant permissions to `NOLOGIN` roles and assign those roles to accounts, rather than granting permissions to the accounts directly.
+    refs:
+      - url: https://cassandra.apache.org/doc/latest/cassandra/developing/cql/security.html
+        title: Cassandra CQL security
+  - uid: mondoo-cassandra-security-default-superuser-login-disabled
+    filters: asset.platform == "cassandra"
+    title: Ensure the default Cassandra superuser cannot log in
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    mql: |
+      cassandra.cluster.roles.where(name == "cassandra").all(canLogin == false)
+    docs:
+      desc: |
+        This check verifies that the built-in `cassandra` role can no longer open a session.
+
+        Every cluster that turns on `PasswordAuthenticator` starts with this role, and it starts with the password `cassandra`. It is a superuser, so it holds every permission on every resource implicitly, without any grant appearing in `system_auth.role_permissions`.
+
+        The intended sequence is to log in as `cassandra` once, create a replacement superuser with a real name and a real password, and then take the default out of service. The last step is the one that gets skipped, because everything already works without it.
+
+        **Why this matters**
+
+        `cassandra` with the password `cassandra` is the first credential every scanner tries against port 9042, and it is the credential that turns a reachable cluster into a fully compromised one in a single connection. There is no privilege escalation to perform afterwards: the role is a superuser, so it can read every keyspace, alter every schema, and create further roles for persistence.
+
+        Changing the password is the common half-measure, and it leaves the account in place: a known username with a superuser's authority, shared among whoever has ever needed emergency access, appearing in no access review, and rotated by nobody. Removing its ability to log in is what actually retires it. The role continues to exist, so the internal references that expect it stay valid, but it stops being an authentication path.
+
+        The default role is also treated specially by Cassandra during authentication, which is a further reason not to keep it as a working account: its behaviour on a degraded cluster is not the same as that of the superuser you created.
+
+        Create the replacement superuser and confirm you can log in as it before disabling `cassandra`. Both operations touch `system_auth`, and a cluster whose only remaining superuser cannot authenticate is a difficult position to recover from.
+      audit: |-
+        ### Audit via cqlsh
+
+        1. List the roles and check the default account's login flag:
+
+           ```bash
+           cqlsh -e "LIST ROLES"
+           ```
+
+        If the row for `cassandra` shows `login` as `False`, the check passes. `True` means the default superuser is still a working account.
+
+        2. Confirm a replacement superuser exists before changing anything:
+
+           ```bash
+           cqlsh -e "SELECT role, is_superuser, can_login FROM system_auth.roles WHERE is_superuser = true ALLOW FILTERING"
+           ```
+      remediation:
+        - id: config
+          desc: |-
+            To retire the default superuser:
+
+            1. Create a replacement superuser with a name that maps to a real owner:
+
+               ```sql
+               CREATE ROLE dba_alice WITH SUPERUSER = true AND LOGIN = true AND PASSWORD = 'REPLACE_WITH_A_STRONG_SECRET';
+               ```
+            2. Log out and log back in as the new superuser. Confirm it can read `system_auth` and manage roles.
+            3. Take the default account out of service:
+
+               ```sql
+               ALTER ROLE cassandra WITH LOGIN = false AND SUPERUSER = false;
+               ```
+
+            Raise the replication factor of `system_auth` to match the cluster before doing this, so the role definitions survive the loss of a node.
+        - id: cli
+          desc: |-
+            Perform the change with cqlsh, authenticating as the new superuser for the final step:
+
+            ```bash
+            cqlsh -u cassandra -e "CREATE ROLE dba_alice WITH SUPERUSER = true AND LOGIN = true AND PASSWORD = 'REPLACE_WITH_A_STRONG_SECRET'"
+            cqlsh -u dba_alice -e "ALTER ROLE cassandra WITH LOGIN = false AND SUPERUSER = false"
+            cqlsh -u dba_alice -e "LIST ROLES"
+            ```
+
+            Run the last command to confirm the default role shows `login` as `False` and that your own account is still a superuser.
+    refs:
+      - url: https://cassandra.apache.org/doc/latest/cassandra/developing/cql/security.html
+        title: Cassandra CQL security
+  - uid: mondoo-cassandra-security-roles-least-privilege
+    filters: asset.platform == "cassandra"
+    title: Ensure no Cassandra role holds cluster-wide data permissions
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      cassandra.cluster.roles.where(isSuperuser == false).all(permissions.none(resource == "data"))
+    docs:
+      desc: |
+        This check verifies that no ordinary role has been granted permissions on the root data resource — the grant CQL writes as `ON ALL KEYSPACES`.
+
+        Cassandra names permission scopes hierarchically. `data` is the root and covers every keyspace that exists now and every keyspace created later. `data/orders` covers one keyspace. `data/orders/items` covers one table. A grant made at the root is inherited all the way down, so `GRANT SELECT ON ALL KEYSPACES TO analytics` gives that role read access to keyspaces nobody has created yet.
+
+        Superuser roles are excluded from this check. They hold every permission implicitly rather than through a grant, and the check that governs them is the one covering the default superuser account.
+
+        **Why this matters**
+
+        `ON ALL KEYSPACES` is what a grant becomes when the person making it does not know which keyspace the application will need, and it is what stays in place afterwards because narrowing it risks breaking something. It converts a role scoped to one application into a role scoped to the cluster.
+
+        The forward-looking part is what makes it more than a tidiness problem. A root grant applies to keyspaces that do not exist yet, so a team that creates a new keyspace for regulated data next quarter has already granted read access to every role holding `SELECT ON ALL KEYSPACES` — without a grant being made, reviewed, or logged at that time. The access review that covered the original grant cannot cover the keyspaces it will later reach.
+
+        `AUTHORIZE` at the root is the sharpest case. A role holding it can grant its own permissions to any other role, which makes every other boundary in the cluster advisory: the role does not need to be a superuser to give itself the effect of one.
+
+        Grant at the keyspace a role actually uses. Where a role needs several, grant each one; the list is longer and it is the list an auditor can check.
+      audit: |-
+        ### Audit via cqlsh
+
+        1. List every permission granted at the root data resource:
+
+           ```bash
+           cqlsh -e "SELECT role, resource, permissions FROM system_auth.role_permissions WHERE resource = 'data' ALLOW FILTERING"
+           ```
+
+        Any row returned for a non-superuser role fails the check.
+
+        2. For a single role, list what it holds and where:
+
+           ```bash
+           cqlsh -e "LIST ALL PERMISSIONS OF analytics"
+           ```
+      remediation:
+        - id: config
+          desc: |-
+            Replace each root grant with keyspace-scoped grants:
+
+            1. Determine which keyspaces the role actually reads or writes.
+            2. Grant on those keyspaces:
+
+               ```sql
+               GRANT SELECT ON KEYSPACE orders TO analytics;
+               GRANT SELECT ON KEYSPACE catalog TO analytics;
+               ```
+            3. Revoke the root grant:
+
+               ```sql
+               REVOKE SELECT ON ALL KEYSPACES FROM analytics;
+               ```
+
+            Add the narrower grants before revoking the broad one, so the role never loses access it is actively using.
+        - id: cli
+          desc: |-
+            Apply the change with cqlsh and confirm the result:
+
+            ```bash
+            cqlsh -e "GRANT SELECT ON KEYSPACE orders TO analytics"
+            cqlsh -e "REVOKE ALL PERMISSIONS ON ALL KEYSPACES FROM analytics"
+            cqlsh -e "LIST ALL PERMISSIONS OF analytics"
+            ```
+
+            Cassandra caches permissions for the interval set by `permissions_validity`, so a revocation can take that long to take effect on an established session.
+    refs:
+      - url: https://cassandra.apache.org/doc/latest/cassandra/developing/cql/security.html
+        title: Cassandra CQL security
+  - uid: mondoo-cassandra-security-network-authorizer-enabled
+    filters: asset.platform == "cassandra"
+    title: Ensure Cassandra restricts roles to specific data centers
+    impact: 50
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      cassandra.cluster.security.networkAuthorizer == "CassandraNetworkAuthorizer"
+    docs:
+      desc: |
+        This check verifies that the cluster uses `CassandraNetworkAuthorizer`, which lets a role be restricted to named data centers. The default, `AllowAllNetworkAuthorizer`, applies no such restriction: every role may connect to every node in the cluster.
+
+        With the network authorizer in place, a role is created or altered with `ACCESS TO DATACENTERS {'dc1'}`, and an attempt to authenticate against a node in another data center is refused.
+
+        **Why this matters**
+
+        Cassandra clusters are commonly spread across data centers for a reason that is not only availability. A cluster often has an analytics data center serving batch workloads, a transactional one serving the application, and a disaster-recovery one that should be carrying no client traffic at all. Those boundaries are usually enforced only by which contact points each client is configured with, which is to say by convention.
+
+        The gap that opens is a credential that works everywhere. A reporting role intended for the analytics data center authenticates just as successfully against a transactional node, and once connected it reads from the local replicas — competing for the same resources the application depends on, and reaching the data through a path nobody modelled. The same is true of a compromised credential: the blast radius is every data center, not the one the role was meant for.
+
+        Data residency is the other case. Where a data center exists because certain data must stay in a jurisdiction, a role that can authenticate anywhere can read that data from wherever it connects. The network authorizer is what turns the geographic boundary into an enforced one rather than a documented one.
+
+        Switching the authorizer on is safe by default: existing roles are unrestricted until a data center list is set on them, so the change takes effect role by role as you apply it.
+      audit: |-
+        ### Audit via cqlsh
+
+        1. Read the configured network authorizer:
+
+           ```bash
+           cqlsh -e "SELECT name, value FROM system_views.settings WHERE name = 'network_authorizer'"
+           ```
+
+        A value naming `CassandraNetworkAuthorizer` passes; `AllowAllNetworkAuthorizer` fails.
+
+        2. Once it is enabled, review which data centers each role may reach:
+
+           ```bash
+           cqlsh -e "LIST ROLES"
+           ```
+
+        The `datacenters` column shows `ALL` for a role that has not been restricted.
+      remediation:
+        - id: config
+          desc: |-
+            To enable data center restrictions:
+
+            1. In `cassandra.yaml` on every node, set the network authorizer:
+
+               ```yaml
+               network_authorizer: CassandraNetworkAuthorizer
+               ```
+            2. Restart the nodes one at a time.
+            3. Restrict each role to the data centers it belongs in:
+
+               ```sql
+               ALTER ROLE reporting WITH ACCESS TO DATACENTERS {'analytics'};
+               ```
+
+            Roles left unrestricted keep access to every data center, so the change is inert until you apply the restrictions.
+        - id: cli
+          desc: |-
+            After the rolling restart, apply the restrictions with cqlsh:
+
+            ```bash
+            cqlsh -e "ALTER ROLE reporting WITH ACCESS TO DATACENTERS {'analytics'}"
+            cqlsh -e "ALTER ROLE app_writer WITH ACCESS TO ALL DATACENTERS"
+            cqlsh -e "LIST ROLES"
+            ```
+
+            Confirm the `datacenters` column reflects the intended scope for every role before treating the control as in place.
+    refs:
+      - url: https://cassandra.apache.org/doc/latest/cassandra/developing/cql/security.html
+        title: Cassandra CQL security
+  - uid: mondoo-cassandra-security-keyspaces-durable-writes
+    filters: asset.platform == "cassandra"
+    title: Ensure Cassandra keyspaces enable durable writes
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
+      compliance/dora: dora-art-12
+      compliance/hipaa: hipaa-security-ss164-308-a-7-ii-a-contingency-plan-data-backup-plan
+      compliance/iso-27001-2022: iso-27001-2022-a-8-13
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ip-4
+      compliance/nist-csf-2: nist-csf-2-pr-ds-11
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
+      compliance/nist-sp-800-171: nist-sp-800-171--3-8-9
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc9-1-1
+      compliance/vda-isa-5: vda-isa-5-3-1-2
+    mql: |
+      cassandra.cluster.keyspaces.where(isSystem == false).all(durableWrites == true)
+    docs:
+      desc: |
+        This check verifies that every keyspace the cluster did not create for itself writes through the commit log. `durable_writes` is a keyspace property, on by default, and setting it to `false` tells Cassandra to skip the commit log and acknowledge the write once it is in the memtable.
+
+        **Why this matters**
+
+        The commit log is what makes an acknowledged write survive a node restart. Without it, a write lives only in memory until the memtable is flushed to an SSTable, which may be minutes later. A node that is killed in that window — by the out-of-memory killer, by a host failure, by a `kill -9` during a hurried deployment — comes back having lost every write it acknowledged since its last flush, and it has no record that anything was lost.
+
+        The loss is silent in a way that matters for security records specifically. The client received a success response, so the application believes the write happened. If those writes were audit events, consent records, revocations, or token invalidations, the system's own history now disagrees with reality, and nothing in the cluster reports the discrepancy.
+
+        Replication does not cover this. `durable_writes` is a keyspace property, so it is off on every replica, and a coordinated restart or a rack-wide power event loses the same window on all of them at once.
+
+        The setting exists for genuinely disposable keyspaces where the data is regenerated from a source of record and the write throughput matters more than any individual write. That is a narrow case, and it should be a documented decision rather than a default that was inherited from a schema copied between environments.
+      audit: |-
+        ### Audit via cqlsh
+
+        1. List the keyspaces and their durability setting:
+
+           ```bash
+           cqlsh -e "SELECT keyspace_name, durable_writes, replication FROM system_schema.keyspaces"
+           ```
+
+        Any keyspace outside the `system` family showing `durable_writes` as `False` fails the check.
+      remediation:
+        - id: config
+          desc: |-
+            To restore durability on a keyspace, keep its existing replication settings and turn the property back on:
+
+            ```sql
+            ALTER KEYSPACE orders WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': 3}
+              AND durable_writes = true;
+            ```
+
+            `ALTER KEYSPACE` replaces the properties you name, so pass the current replication map alongside the change rather than the property on its own.
+
+            The change applies to writes from that point onward. Writes already acknowledged without the commit log are not recoverable, so run a repair afterwards to reconcile the replicas.
+        - id: cli
+          desc: |-
+            Apply the change with cqlsh, then verify and repair:
+
+            ```bash
+            cqlsh -e "ALTER KEYSPACE orders WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': 3} AND durable_writes = true"
+            cqlsh -e "SELECT keyspace_name, durable_writes FROM system_schema.keyspaces"
+            nodetool repair -full orders
+            ```
+    refs:
+      - url: https://cassandra.apache.org/doc/latest/cassandra/developing/cql/ddl.html
+        title: Cassandra CQL data definition
+  - uid: mondoo-cassandra-security-keyspaces-network-topology-strategy
+    filters: asset.platform == "cassandra"
+    title: Ensure Cassandra keyspaces use NetworkTopologyStrategy
+    impact: 30
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
+      compliance/dora: dora-art-12
+      compliance/hipaa: hipaa-security-ss164-308-a-7-ii-a-contingency-plan-data-backup-plan
+      compliance/iso-27001-2022: iso-27001-2022-a-8-13
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ip-4
+      compliance/nist-csf-2: nist-csf-2-pr-ds-11
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
+      compliance/nist-sp-800-171: nist-sp-800-171--3-8-9
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc9-1-1
+      compliance/vda-isa-5: vda-isa-5-3-1-2
+    mql: |
+      cassandra.cluster.keyspaces.where(isSystem == false).all(replicationStrategy == "NetworkTopologyStrategy")
+    docs:
+      desc: |
+        This check verifies that user keyspaces replicate with `NetworkTopologyStrategy` rather than `SimpleStrategy`.
+
+        The two strategies differ in what they know about the cluster. `SimpleStrategy` places replicas by walking the token ring and taking the next nodes it finds, with no awareness of which rack or data center those nodes are in. `NetworkTopologyStrategy` places a stated number of replicas in each named data center and spreads them across racks.
+
+        `SimpleStrategy` is the one every tutorial uses, because it is the shorter line to type on a single-node cluster. It is also the one that stays in the schema when that keyspace is copied into an environment with more than one node.
+
+        **Why this matters**
+
+        With `SimpleStrategy`, the placement of replicas is an accident of token assignment. All three replicas of a partition can land on nodes in the same rack, and on a multi-data-center cluster they can land entirely in one data center. The cluster reports a replication factor of three and satisfies `QUORUM` reads, so nothing looks wrong — until the rack that holds all three replicas loses power and those partitions become unavailable, or the data center that holds them is the one taken offline.
+
+        It also breaks the guarantees people rely on when they specify consistency levels. `LOCAL_QUORUM` is meaningful only when the strategy knows what "local" means; under `SimpleStrategy` a cluster expands into a second data center and the keyspace keeps replicating as though there were one, so the disaster-recovery site silently holds no copy of that data.
+
+        Convert with `ALTER KEYSPACE` and follow it with a full repair. The strategy change alters where Cassandra expects replicas to be; the repair is what actually moves the data there, and reads can miss data in the interval between the two.
+      audit: |-
+        ### Audit via cqlsh
+
+        1. List each keyspace with its replication settings:
+
+           ```bash
+           cqlsh -e "SELECT keyspace_name, replication FROM system_schema.keyspaces"
+           ```
+
+        Any keyspace outside the `system` family whose replication class is `SimpleStrategy` fails the check.
+
+        2. Confirm the data center names to use in the replacement:
+
+           ```bash
+           nodetool status
+           ```
+      remediation:
+        - id: config
+          desc: |-
+            To convert a keyspace:
+
+            1. Read the current replication factor so the new map matches it.
+            2. Restate the replication with the data center names from `nodetool status`:
+
+               ```sql
+               ALTER KEYSPACE orders WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': 3}
+                 AND durable_writes = true;
+               ```
+            3. Run a full repair on the keyspace so the replicas the new strategy expects actually hold the data.
+
+            Convert the `system_auth`, `system_distributed`, and `system_traces` keyspaces the same way. They ship with `SimpleStrategy` and carry the cluster's roles and permissions.
+        - id: cli
+          desc: |-
+            Apply the change and repair:
+
+            ```bash
+            cqlsh -e "ALTER KEYSPACE orders WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': 3}"
+            nodetool repair -full orders
+            cqlsh -e "SELECT keyspace_name, replication FROM system_schema.keyspaces"
+            ```
+
+            Run the repair before treating the conversion as complete. Until it finishes, replicas the new strategy expects to hold data may not yet have it.
+    refs:
+      - url: https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html
+        title: Cassandra replication strategies
+  - uid: mondoo-cassandra-security-system-auth-replication-factor
+    filters: asset.platform == "cassandra"
+    title: Ensure the Cassandra system_auth keyspace is replicated
+    impact: 50
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
+      compliance/dora: dora-art-12
+      compliance/hipaa: hipaa-security-ss164-308-a-7-ii-a-contingency-plan-data-backup-plan
+      compliance/iso-27001-2022: iso-27001-2022-a-8-13
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ip-4
+      compliance/nist-csf-2: nist-csf-2-pr-ds-11
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
+      compliance/nist-sp-800-171: nist-sp-800-171--3-8-9
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc9-1-1
+      compliance/vda-isa-5: vda-isa-5-3-1-2
+    mql: |
+      cassandra.cluster.keyspaces.where(name == "system_auth").all(replicationFactors.values.none(_ == "0" || _ == "1" || _ == "2"))
+    docs:
+      desc: |
+        This check verifies that the `system_auth` keyspace is replicated to at least three nodes in every data center that holds it.
+
+        `system_auth` stores the cluster's roles, their password hashes, their permissions, and their data center restrictions. It ships with `SimpleStrategy` and a replication factor of one, which means a single node holds the only copy of the cluster's entire authentication state.
+
+        **Why this matters**
+
+        Cassandra reads authentication data at `LOCAL_QUORUM`, and for the built-in `cassandra` superuser at `QUORUM`. With a replication factor of one, the quorum is that single node. When it goes down — for a restart, a hardware failure, or a network partition — the cluster stops being able to authenticate anyone. The data is still there and the other nodes are still serving, but no new session can be established, so the cluster is effectively offline while looking healthy in `nodetool status`.
+
+        Losing the node outright is worse. If that replica's data is unrecoverable, so are the role definitions and permissions, and the cluster comes back with an authentication store that has to be rebuilt from whatever record of it exists outside the database.
+
+        The availability of the authentication path is a security property, not only an operational one. A cluster that cannot authenticate under load is a cluster somebody will be tempted to fix by switching the authenticator back to `AllowAllAuthenticator` during an incident — a change that is quick to make and slow to be noticed afterwards.
+
+        Set the replication factor to three in each data center, or to the node count where a data center has fewer than three nodes. Raising it does not move the data by itself: run `nodetool repair system_auth` afterwards, and expect authentication to be unreliable until that repair completes.
+      audit: |-
+        ### Audit via cqlsh
+
+        1. Read the keyspace's replication settings:
+
+           ```bash
+           cqlsh -e "SELECT keyspace_name, replication FROM system_schema.keyspaces WHERE keyspace_name = 'system_auth'"
+           ```
+
+        A replication factor below three in any data center fails the check.
+
+        2. Compare that against the nodes available in each data center:
+
+           ```bash
+           nodetool status
+           ```
+      remediation:
+        - id: config
+          desc: |-
+            To replicate the authentication keyspace:
+
+            1. Read the data center names from `nodetool status`.
+            2. Set a replication factor of three per data center, or the node count where a data center is smaller:
+
+               ```sql
+               ALTER KEYSPACE system_auth WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': 3};
+               ```
+            3. Run a full repair of the keyspace immediately.
+
+            Do not set a replication factor higher than the number of nodes in a data center. Authentication reads at `LOCAL_QUORUM`, so a factor of three on a two-node data center makes the quorum unreachable and locks every account out of the cluster.
+        - id: cli
+          desc: |-
+            Apply the change and repair straight away:
+
+            ```bash
+            cqlsh -e "ALTER KEYSPACE system_auth WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': 3}"
+            nodetool repair -full system_auth
+            cqlsh -e "LIST ROLES"
+            ```
+
+            Run the repair on every node. Until it completes, a login can be served by a replica that does not yet hold the role, so authentication is intermittent during the window.
+    refs:
+      - url: https://cassandra.apache.org/doc/latest/cassandra/managing/operating/security.html
+        title: Cassandra security
+  - uid: mondoo-cassandra-security-cluster-name-not-default
+    filters: asset.platform == "cassandra"
+    title: Ensure the Cassandra cluster name is not the shipped default
+    impact: 30
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-1
+    mql: |
+      cassandra.cluster.name != "Test Cluster"
+    docs:
+      desc: |
+        This check verifies that `cluster_name` has been changed from the value Cassandra ships with, `Test Cluster`.
+
+        The name is not decorative. A node refuses to gossip with a cluster whose name differs from its own, so the setting is the guard that keeps unrelated clusters from merging.
+
+        **Why this matters**
+
+        A cluster left on the default shares its name with every other cluster left on the default. That turns a misconfiguration into a merge: a node built from the same image and pointed at the wrong seed list — a staging node given a production seed, a rebuilt node in the wrong environment, a copied deployment template — passes the name check and is admitted. It joins the ring, receives token ranges, and starts serving reads for data it should never have had a copy of.
+
+        The result is a data disclosure with no exploit involved, and it is difficult to unwind. Once the node has bootstrapped, streaming has already moved data to it, and removing it means running a decommission and repairs across the cluster.
+
+        A distinct name makes the same mistake fail immediately and loudly. The node logs a cluster-name mismatch and refuses to start, which is exactly the outcome you want from a node that was pointed at the wrong environment.
+
+        Choose a name that identifies the environment and region, and set it before the first node bootstraps. Changing it afterwards means stopping the cluster and updating the value stored in the system keyspace on every node, so it is far cheaper to get right at build time.
+      audit: |-
+        ### Audit via cqlsh
+
+        1. Read the cluster name:
+
+           ```bash
+           cqlsh -e "SELECT cluster_name FROM system.local"
+           ```
+
+        A value of `Test Cluster` fails the check.
+
+        2. Confirm the configured value on each node:
+
+           ```bash
+           grep '^cluster_name:' /etc/cassandra/cassandra.yaml
+           ```
+      remediation:
+        - id: config
+          desc: |-
+            Set the name before the cluster is built. In `cassandra.yaml` on every node, before the first bootstrap:
+
+            ```yaml
+            cluster_name: 'prod-eu-west-1'
+            ```
+
+            On a cluster that is already running, the name is also recorded in the system keyspace, so the change requires stopping every node and updating both places. Plan it as an outage.
+        - id: cli
+          desc: |-
+            To rename a running cluster, take the whole cluster down and update each node:
+
+            ```bash
+            nodetool flush
+            systemctl stop cassandra
+            sed -i "s/^cluster_name:.*/cluster_name: 'prod-eu-west-1'/" /etc/cassandra/cassandra.yaml
+            systemctl start cassandra
+            nodetool status
+            ```
+
+            Every node must carry the new name before any of them is started, because a node with the old name is refused by the others.
+    refs:
+      - url: https://cassandra.apache.org/doc/latest/cassandra/managing/configuration/cass_yaml_file.html
+        title: Cassandra configuration file
