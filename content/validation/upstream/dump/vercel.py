@@ -53,7 +53,7 @@ POLICY_FILE = CONTENT_DIR / "mondoo-vercel-security.mql.yaml"
 
 # Pin the CLI version the grammar was generated from. `vercel` is installed
 # from npm; regenerate after `npm i -g vercel@<new>` and bump this.
-VERCEL_VERSION = "59.1.3"
+VERCEL_VERSION = "59.1.4"
 
 # A command entry in a `Commands:` section: leading indent, a lowercase
 # command name, an optional `short | long` alias pair, then whitespace
