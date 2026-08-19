@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/scan"
+	"go.mondoo.com/mql/providers"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/providers-sdk/v1/testutils"
 )
@@ -111,7 +113,7 @@ func TestRuntimeImageCacheContent(t *testing.T) {
 	loader := policy.DefaultBundleLoader()
 
 	t.Run("policy compiles runtime cache controls", func(t *testing.T) {
-		bundle, err := loader.BundleFromPaths("./mondoo-kubernetes-runtime-image-cache.mql.yaml")
+		bundle, err := loader.BundleFromPaths(bundlePath("mondoo-kubernetes-runtime-image-cache.mql.yaml"))
 		require.NoError(t, err)
 		require.NotNil(t, bundle)
 		require.Len(t, bundle.Policies, 1)
@@ -153,7 +155,7 @@ func TestRuntimeImageCacheContent(t *testing.T) {
 	})
 
 	t.Run("inventory querypack compiles runtime cache queries", func(t *testing.T) {
-		bundle, err := loader.BundleFromPaths("./querypacks/mondoo-kubernetes-inventory.mql.yaml")
+		bundle, err := loader.BundleFromPaths(bundlePath("querypacks/mondoo-kubernetes-inventory.mql.yaml"))
 		require.NoError(t, err)
 		require.NotNil(t, bundle)
 		require.Len(t, bundle.Packs, 1)
@@ -184,10 +186,18 @@ func runtimeImageCacheRuntime(t *testing.T) *providers.Runtime {
 	runtime := providers.DefaultRuntime()
 	schema, ok := runtime.Schema().(providers.ExtensibleSchema)
 	require.True(t, ok, "provider runtime schema must support adding source schemas")
-	schema.Add("core", testutils.MustLoadSchema(testutils.SchemaProvider{Path: runtimeImageCacheSchemaPath(t, "core", "./testdata/schema/providers/core/resources/core.lr")}))
-	schema.Add("network", testutils.MustLoadSchema(testutils.SchemaProvider{Path: runtimeImageCacheSchemaPath(t, "network", "./testdata/schema/providers/network/resources/network.lr")}))
-	schema.Add("os", testutils.MustLoadSchema(testutils.SchemaProvider{Path: runtimeImageCacheSchemaPath(t, "os", "./testdata/schema/providers/os/resources/os.lr")}))
-	schema.Add("k8s", testutils.MustLoadSchema(testutils.SchemaProvider{Path: runtimeImageCacheSchemaPath(t, "k8s", "./testdata/schema/providers/k8s/resources/k8s.lr")}))
+	schema.Add("core", testutils.MustLoadSchema(testutils.SchemaProvider{
+		Path: runtimeImageCacheSchemaPath(t, "core", filepath.Join(contentDir, "testdata/schema/providers/core/resources/core.lr")),
+	}))
+	schema.Add("network", testutils.MustLoadSchema(testutils.SchemaProvider{
+		Path: runtimeImageCacheSchemaPath(t, "network", filepath.Join(contentDir, "testdata/schema/providers/network/resources/network.lr")),
+	}))
+	schema.Add("os", testutils.MustLoadSchema(testutils.SchemaProvider{
+		Path: runtimeImageCacheSchemaPath(t, "os", filepath.Join(contentDir, "testdata/schema/providers/os/resources/os.lr")),
+	}))
+	schema.Add("k8s", testutils.MustLoadSchema(testutils.SchemaProvider{
+		Path: runtimeImageCacheSchemaPath(t, "k8s", filepath.Join(contentDir, "testdata/schema/providers/k8s/resources/k8s.lr")),
+	}))
 	return runtime
 }
 
