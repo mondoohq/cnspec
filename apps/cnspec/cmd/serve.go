@@ -271,8 +271,11 @@ func loadInventory(opts *cnspec_config.CliConfig, runtimeEnv *execruntime.Runtim
 		return nil, err
 	}
 
-	// detect CI/CD runs and read labels from runtime and apply them to all assets in the inventory
-	if opts.AutoDetectCICDCategory && runtimeEnv.IsAutomatedEnv() || opts.Category == "cicd" {
+	// detect CI/CD runs and read labels from runtime and apply them to all assets in the inventory.
+	// Parenthesized explicitly (no behavior change; matches Go's existing precedence) so the intent
+	// reads unambiguously: either auto-detection is on and we're actually in an automated environment,
+	// or the operator explicitly forced category: cicd.
+	if (opts.AutoDetectCICDCategory && runtimeEnv.IsAutomatedEnv()) || opts.Category == "cicd" {
 		log.Info().Msg("detected ci-cd environment")
 		// NOTE: we only apply those runtime environment labels for CI/CD runs to ensure other assets from the
 		// inventory are not touched, we may consider to add the data to the flagAsset
