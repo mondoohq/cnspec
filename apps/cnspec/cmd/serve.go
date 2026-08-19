@@ -81,8 +81,13 @@ var serveCmd = &cobra.Command{
 			}
 		}
 
+		// Detect the runtime environment (CI/CD or not) once. It's fixed for
+		// the life of the process, so it's computed here rather than on every
+		// scan cycle in loadInventory/reloadInventory.
+		runtimeEnv := execruntime.Detect()
+
 		// determine the scan config from pipe or args
-		scanConf, cliConfig, err := getServeConfig()
+		scanConf, cliConfig, err := getServeConfig(runtimeEnv)
 		if err != nil {
 			// we return the specific error code to prevent systemd from restarting
 			return cli_errors.NewCommandError(errors.Wrap(err, "could not load configuration"), ConfigurationErrorCode)
@@ -149,7 +154,7 @@ var serveCmd = &cobra.Command{
 			// Reload the inventory before every cycle so a service that's
 			// already running picks up an inventory.yml that was added or
 			// edited after startup, without requiring a restart.
-			reloadInventory(cliConfig, scanConf)
+			reloadInventory(cliConfig, scanConf, runtimeEnv)
 
 			// check in the managed client when running a scan
 			if checkInHandler != nil {
@@ -178,7 +183,7 @@ var serveCmd = &cobra.Command{
 	},
 }
 
-func getServeConfig() (*scanConfig, *cnspec_config.CliConfig, error) {
+func getServeConfig(runtimeEnv *execruntime.RuntimeEnv) (*scanConfig, *cnspec_config.CliConfig, error) {
 	opts, optsErr := cnspec_config.ReadConfig()
 	if optsErr != nil {
 		return nil, nil, errors.Wrap(optsErr, "could not load configuration")
@@ -220,7 +225,7 @@ func getServeConfig() (*scanConfig, *cnspec_config.CliConfig, error) {
 	}
 
 	var err error
-	conf.Inventory, err = loadInventory(opts)
+	conf.Inventory, err = loadInventory(opts, runtimeEnv)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "could not load configuration")
 	}
@@ -238,13 +243,16 @@ func getServeConfig() (*scanConfig, *cnspec_config.CliConfig, error) {
 
 // loadInventory parses the inventory fresh from disk (or the piped/templated
 // source, per --inventory-file / --inventory-template) and applies CI/CD
-// labels detected from the runtime environment.
+// labels from runtimeEnv, the runtime environment detected once at startup
+// (the runtime environment is fixed for the life of the process, so callers
+// detect it once via execruntime.Detect() and pass it in here rather than
+// re-detecting it on every call).
 //
 // getServeConfig calls this once at startup. The background scan loop in
 // serveCmd.RunE calls it again before every cycle, so `cnspec serve` picks
 // up an inventory.yml that was added or edited after the service started,
 // without requiring a restart.
-func loadInventory(opts *cnspec_config.CliConfig) (*inventory.Inventory, error) {
+func loadInventory(opts *cnspec_config.CliConfig, runtimeEnv *execruntime.RuntimeEnv) (*inventory.Inventory, error) {
 	optAnnotations := opts.Annotations
 	if optAnnotations == nil {
 		optAnnotations = map[string]string{}
@@ -263,7 +271,6 @@ func loadInventory(opts *cnspec_config.CliConfig) (*inventory.Inventory, error) 
 	}
 
 	// detect CI/CD runs and read labels from runtime and apply them to all assets in the inventory
-	runtimeEnv := execruntime.Detect()
 	if opts.AutoDetectCICDCategory && runtimeEnv.IsAutomatedEnv() || opts.Category == "cicd" {
 		log.Info().Msg("detected ci-cd environment")
 		// NOTE: we only apply those runtime environment labels for CI/CD runs to ensure other assets from the
@@ -293,12 +300,12 @@ func loadInventory(opts *cnspec_config.CliConfig) (*inventory.Inventory, error) 
 // On any other parse error (for example the file is mid-edit and
 // momentarily invalid YAML), it logs the error and leaves scanConf.Inventory
 // as the last-known-good inventory rather than failing the cycle.
-func reloadInventory(cliConfig *cnspec_config.CliConfig, scanConf *scanConfig) {
+func reloadInventory(cliConfig *cnspec_config.CliConfig, scanConf *scanConfig, runtimeEnv *execruntime.RuntimeEnv) {
 	if viper.GetString("inventory-file") == "-" {
 		return
 	}
 
-	fresh, err := loadInventory(cliConfig)
+	fresh, err := loadInventory(cliConfig, runtimeEnv)
 	if err != nil {
 		log.Error().Err(err).Msg("could not reload inventory; scanning with the last-known-good inventory")
 		return
