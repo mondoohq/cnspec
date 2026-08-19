@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+#
 # Determine base branch for cnspec's mql bump PR.
 #
 # When main's mql import major matches the incoming mql release's major,
