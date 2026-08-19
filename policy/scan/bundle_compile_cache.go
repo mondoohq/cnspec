@@ -33,10 +33,12 @@ import (
 // bundle once and then skips it, so another CompileExt call on the same
 // bundle would mutate it a second time outside the cache.
 type bundleCompileCache struct {
-	mu     sync.Mutex
-	bundle *policy.Bundle
-	key    string
-	result *policy.PolicyBundleMap
+	mu          sync.Mutex
+	compiling   bool
+	compileDone chan struct{}
+	bundle      *policy.Bundle
+	key         string
+	result      *policy.PolicyBundleMap
 }
 
 func newBundleCompileCache() *bundleCompileCache {
@@ -118,21 +120,46 @@ func copyBundleMap(src *policy.PolicyBundleMap, library policy.Library) *policy.
 func (c *bundleCompileCache) compile(ctx context.Context, bundle *policy.Bundle, conf policy.BundleCompileConf) (*policy.PolicyBundleMap, error) {
 	key := schemaKey(conf.Schema)
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	for {
+		c.mu.Lock()
+		if c.result != nil && c.bundle == bundle && c.key == key {
+			res := c.result
+			c.mu.Unlock()
+			return copyBundleMap(res, conf.Library), nil
+		}
 
-	if c.result != nil && c.bundle == bundle && c.key == key {
-		return copyBundleMap(c.result, conf.Library), nil
+		if c.compiling {
+			done := c.compileDone
+			c.mu.Unlock()
+			select {
+			case <-done:
+				continue
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+
+		c.compiling = true
+		c.compileDone = make(chan struct{})
+		done := c.compileDone
+		c.mu.Unlock()
+
+		res, err := bundle.CompileExt(ctx, conf)
+
+		c.mu.Lock()
+		if err == nil {
+			c.bundle = bundle
+			c.key = key
+			c.result = res
+		}
+		c.compiling = false
+		close(done)
+		c.compileDone = nil
+		c.mu.Unlock()
+
+		if err != nil {
+			return nil, err
+		}
+		return copyBundleMap(res, conf.Library), nil
 	}
-
-	res, err := bundle.CompileExt(ctx, conf)
-	if err != nil {
-		return nil, err
-	}
-
-	c.bundle = bundle
-	c.key = key
-	c.result = res
-
-	return copyBundleMap(res, conf.Library), nil
 }
