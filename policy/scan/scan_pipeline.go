@@ -183,7 +183,7 @@ func newScanDispatcher(
 		spaceMrn:        spaceMrn,
 		scannedAssets:   scannedAssets,
 		resourceTracker: resourceTracker,
-		bundleCache:   newBundleCompileCache(),
+		bundleCache:     newBundleCompileCache(),
 	}
 }
 
