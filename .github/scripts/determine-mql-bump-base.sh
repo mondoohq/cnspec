@@ -19,7 +19,10 @@ MQL_VERSION="${1:?mql version required as first argument}"
 V="${MQL_VERSION#v}"
 RELEASE_MAJOR="${V%%.*}"
 
-if [ -z "${MAIN_GOMOD:-}" ]; then
+if [ -z "${MAIN_GOMOD+set}" ]; then
+  # MAIN_GOMOD not passed in at all — fetch it. An explicit empty value
+  # is respected (and will fail the "Could not extract" check below), so
+  # tests can exercise failure paths without touching the network.
   : "${GH_REPO:?GH_REPO or MAIN_GOMOD required}"
   MAIN_GOMOD=$(gh api "/repos/${GH_REPO}/contents/go.mod?ref=main" --jq '.content' | base64 -d)
 fi
