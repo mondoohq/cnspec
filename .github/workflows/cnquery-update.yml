@@ -35,6 +35,34 @@ jobs:
           fi
           echo "Version: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+      # Route the bump PR to the right branch by comparing the incoming mql
+      # major with the mql major currently imported on main. Matching major
+      # -> base=main; any other major -> base=v{major} support branch
+      # (e.g. an mql v13.35.1 tag while main is on mql v14 -> base=v13).
+      - name: Determine base branch
+        id: base
+        env:
+          MQL_VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${MQL_VERSION#v}"
+          RELEASE_MAJOR="${V%%.*}"
+          MAIN_MAJOR=$(gh api "/repos/${{ github.repository }}/contents/go.mod?ref=main" --jq '.content' \
+            | base64 -d \
+            | grep -oE 'go\.mondoo\.com/mql/v[0-9]+' \
+            | head -1 \
+            | grep -oE '[0-9]+$')
+          if [ -z "$MAIN_MAJOR" ]; then
+            echo "Could not extract mql major from main's go.mod" >&2
+            exit 1
+          fi
+          if [ "$RELEASE_MAJOR" = "$MAIN_MAJOR" ]; then
+            BASE=main
+          else
+            BASE="v${RELEASE_MAJOR}"
+          fi
+          echo "Release major: ${RELEASE_MAJOR}, main mql major: ${MAIN_MAJOR}, base: ${BASE}"
+          echo "base=${BASE}" >> "$GITHUB_OUTPUT"
       # Mint a short-lived installation token from the mondoo-mergebot
       # GitHub App. App tokens bypass the same "PRs created by GITHUB_TOKEN
       # don't trigger downstream workflows" limit that motivated the old
@@ -52,6 +80,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           token: ${{ steps.generate-token.outputs.token }}
+          ref: ${{ steps.base.outputs.base }}
 
       - name: Import environment variables from file
         run: cat ".github/env" >> $GITHUB_ENV
@@ -85,7 +114,7 @@ jobs:
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ steps.generate-token.outputs.token }}
-          base: main
+          base: ${{ steps.base.outputs.base }}
           labels: dependencies,go
           committer: "Mondoo Tools <tools@mondoo.com>"
           commit-message: ${{ steps.branch.outputs.COMMIT_TITLE }}
