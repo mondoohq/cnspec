@@ -30,7 +30,7 @@ import (
 // Invariant: for a given bundle the cache must be the only caller of
 // CompileExt. CompileExt mutates the bundle in place, it assigns MRNs,
 // recomputes checksums and removes failing queries. The cache compiles a
-// bundle once and then skips it, so another CompileExt call on the same
+// private copy once and then skips it, so another CompileExt call on the same
 // bundle would mutate it a second time outside the cache.
 type bundleCompileCache struct {
 	mu          sync.Mutex
@@ -69,14 +69,13 @@ func schemaKey(schema resources.ResourcesSchema) string {
 	return strconv.Itoa(len(schema.AllResources())) + ":" + strings.Join(ids, ",")
 }
 
-// copyBundleMap copies the map headers of a compiled bundle map and attaches
-// the given library.
+// copyBundleMap copies a compiled bundle map and attaches the given library.
 //
-// The values stay shared. They point into the bundle, which every asset
-// already shares. The headers must not be shared, because SetBundleMap and the
-// policy hub insert into Queries, Policies, Props and Frameworks while a scan
-// runs. Sharing a header across concurrent assets would be a concurrent map
-// write.
+// Policies, frameworks, queries, properties, and risk factors are cloned
+// because SetBundleMap stores them in the data lake and may replace computed
+// filters on them. Sharing those values across assets would race. Compiled
+// code is immutable after compilation and remains shared so the cache still
+// avoids duplicating the expensive result.
 func copyBundleMap(src *policy.PolicyBundleMap, library policy.Library) *policy.PolicyBundleMap {
 	dst := &policy.PolicyBundleMap{
 		OwnerMrn:    src.OwnerMrn,
@@ -90,22 +89,32 @@ func copyBundleMap(src *policy.PolicyBundleMap, library policy.Library) *policy.
 	}
 
 	for k, v := range src.Policies {
-		dst.Policies[k] = v
+		if v != nil {
+			dst.Policies[k] = v.CloneVT()
+		}
 	}
 	for k, v := range src.Frameworks {
-		dst.Frameworks[k] = v
+		if v != nil {
+			dst.Frameworks[k] = v.CloneVT()
+		}
 	}
 	for k, v := range src.Queries {
-		dst.Queries[k] = v
+		if v != nil {
+			dst.Queries[k] = v.CloneVT()
+		}
 	}
 	for k, v := range src.Props {
-		dst.Props[k] = v
+		if v != nil {
+			dst.Props[k] = v.CloneVT()
+		}
 	}
 	for k, v := range src.Code {
 		dst.Code[k] = v
 	}
 	for k, v := range src.RiskFactors {
-		dst.RiskFactors[k] = v
+		if v != nil {
+			dst.RiskFactors[k] = v.CloneVT()
+		}
 	}
 
 	return dst
@@ -115,8 +124,8 @@ func copyBundleMap(src *policy.PolicyBundleMap, library policy.Library) *policy.
 // result when the bundle and the schema are unchanged, otherwise it compiles
 // and stores the result.
 //
-// Each caller gets its own map headers and its own Library, so concurrent
-// assets do not write into shared maps.
+// Each caller gets its own map values and its own Library, so concurrent
+// assets do not write into shared bundle state.
 func (c *bundleCompileCache) compile(ctx context.Context, bundle *policy.Bundle, conf policy.BundleCompileConf) (*policy.PolicyBundleMap, error) {
 	key := schemaKey(conf.Schema)
 
@@ -144,7 +153,8 @@ func (c *bundleCompileCache) compile(ctx context.Context, bundle *policy.Bundle,
 		done := c.compileDone
 		c.mu.Unlock()
 
-		res, err := bundle.CompileExt(ctx, conf)
+		compiledBundle := bundle.CloneVT()
+		res, err := compiledBundle.CompileExt(ctx, conf)
 
 		c.mu.Lock()
 		if err == nil {
