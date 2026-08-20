@@ -2,7 +2,7 @@ module go.mondoo.com/cnspec/v13
 
 go 1.26.6
 
-// replace go.mondoo.com/mql/v13 => ../mql
+// replace go.mondoo.com/mql => ../mql
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus v1.10.0

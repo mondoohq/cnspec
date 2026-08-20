@@ -12,10 +12,9 @@ ifndef VERSION
 # echo "read VERSION from git"
 VERSION=${LATEST_VERSION_TAG}+$(shell git rev-list --count HEAD)
 endif
-MAJOR_VERSION=v13
 
 # use LDFLAGSEXTRA to pass additional ldflags to the build
-LDFLAGS="-s -w -X go.mondoo.com/mql/${MAJOR_VERSION}.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnspec/${MAJOR_VERSION}.Version=${LATEST_VERSION_TAG} ${LDFLAGSEXTRA}"
+LDFLAGS="-s -w -X go.mondoo.com/mql.Version=${LATEST_VERSION_TAG} -X go.mondoo.com/cnspec.Version=${LATEST_VERSION_TAG} ${LDFLAGSEXTRA}"
 LDFLAGSDIST=-tags production -ldflags ${LDFLAGS}
 
 # Windows version resource generator. The PE version fields are numeric, so strip
@@ -130,7 +129,7 @@ test/lint: test/lint/golangci-lint/run
 test: test/go test/lint
 
 benchmark/go:
-	go test -bench=. -benchmem go.mondoo.com/cnspec/${MAJOR_VERSION}/policy/scan/benchmark
+	go test -bench=. -benchmem go.mondoo.com/cnspec/policy/scan/benchmark
 
 test/go: cnspec/generate test/go/plain
 
