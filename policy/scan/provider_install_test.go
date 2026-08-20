@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/testutils"
 )
 
@@ -49,6 +50,29 @@ func TestFilterProviderLookups(t *testing.T) {
 			{Mql: "nonexistent.resource == 1"},
 		})
 		assert.Empty(t, lookups)
+	})
+}
+
+func TestConnectionProviderLookups(t *testing.T) {
+	t.Run("nil inventory", func(t *testing.T) {
+		assert.Empty(t, connectionProviderLookups(nil))
+	})
+
+	t.Run("collects unique connection types", func(t *testing.T) {
+		inv := &inventory.Inventory{Spec: &inventory.InventorySpec{
+			Assets: []*inventory.Asset{
+				{Connections: []*inventory.Config{{Type: "local"}, {Type: "ssh"}}},
+				{Connections: []*inventory.Config{{Type: "ssh"}, {Type: ""}, nil}},
+				nil,
+			},
+		}}
+
+		lookups := connectionProviderLookups(inv)
+		types := make([]string, len(lookups))
+		for i := range lookups {
+			types[i] = lookups[i].ConnType
+		}
+		assert.ElementsMatch(t, []string{"local", "ssh"}, types)
 	})
 }
 
