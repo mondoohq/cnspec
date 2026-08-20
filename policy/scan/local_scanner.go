@@ -468,12 +468,18 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		return nil, err
 	}
 
-	// Ensure all required providers are installed before we try to run the scan.
-	// We only check here for bundles fetched from the server. Local policy bundles
-	// already have their requirements ensured before compilation in loadPolicies().
+	// Make sure the resource schemas needed to decide which policies apply to
+	// an asset are installed before we scan. We only check here for bundles
+	// fetched from the server; local policy bundles are compiled here and have
+	// all of their requirements ensured before compilation in loadPolicies().
+	// Binaries are deliberately not pulled: which providers a scan needs is
+	// only known once an asset's filters have run (see runPolicy), and eagerly
+	// installing every required provider breaks scanning on platforms a
+	// provider does not ship binaries for. A failure only affects the policies
+	// of that provider, so it must not abort the scan.
 	if job.Bundle != nil && upstream != nil && upstream.Creds != nil && job.Bundle.HasRequirements() {
-		if err := job.Bundle.EnsureRequirements(s.autoUpdate); err != nil {
-			return nil, errors.Wrap(err, "failed to ensure policy requirements")
+		if err := ensureFilterRequirements(job.Bundle, s.autoUpdate); err != nil {
+			log.Warn().Err(err).Msg("failed to install resource schemas for required providers; some policies may not be applied")
 		}
 	}
 
@@ -1318,8 +1324,13 @@ func (s *localAssetScanner) prepareAsset() error {
 	// compiles into every asset that follows it.
 	bundle := s.job.Bundle.CloneVT()
 
-	// Ensure any required providers declared in the bundle are installed
-	// before we try to compile it. This handles bundles with Require metadata.
+	// Ensure the resource schemas of any providers the bundle requires are
+	// installed before we try to compile it. Every requirement is pulled here,
+	// not just the ones the asset filters need: CompileExt below runs with
+	// RemoveFailing, which deletes the queries it cannot resolve, so a schema
+	// that arrives after compilation is too late for the checks that needed
+	// it. Binaries are installed later, in runPolicy, once the asset's
+	// matching filters are known.
 	if bundle.HasRequirements() {
 		if err := bundle.EnsureRequirements(true); err != nil {
 			log.Warn().Err(err).Msg("failed to ensure some policy requirements, continuing with available providers")
@@ -1494,6 +1505,10 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	logger.TraceJSON(rawFilters)
 	scandump.YAML(s.job.Ctx, "policyFilters", rawFilters)
 
+	// Install only the providers needed to evaluate the asset filters; which
+	// policies apply to this asset is not known until the filters have run.
+	s.ensureFilterProviders(rawFilters.Items)
+
 	filters, err := s.UpdateFilters(&policy.Mqueries{Items: rawFilters.Items}, 5*time.Second)
 	if err != nil {
 		return nil, err
@@ -1507,6 +1522,10 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	if err := s.services.DataLake.SetAssetFilters(s.job.Ctx, s.job.Asset.Mrn, &policy.Mqueries{Items: filters}); err != nil {
 		log.Warn().Err(err).Msg("failed to capture asset filters")
 	}
+
+	// The matched filters determine which policies apply to this asset;
+	// install the providers those policies require before executing them.
+	s.ensureApplicablePolicyProviders(filters)
 
 	resolvedPolicy, err := resolver.ResolveAndUpdateJobs(s.job.Ctx, &policy.UpdateAssetJobsReq{
 		AssetMrn:     s.job.Asset.Mrn,
