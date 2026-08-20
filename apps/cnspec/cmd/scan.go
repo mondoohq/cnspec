@@ -49,16 +49,7 @@ func init() {
 	_ = scanCmd.Flags().MarkHidden("inventory-template")
 
 	_ = scanCmd.Flags().Bool("inventory-format-ansible", false, "Set the inventory format to Ansible")
-	// "inventory-ansible" is deprecated, use "inventory-format-ansible" instead
-	_ = scanCmd.Flags().Bool("inventory-ansible", false, "Set the inventory format to Ansible")
-	_ = scanCmd.Flags().MarkDeprecated("inventory-ansible", "use --inventory-format-ansible")
-	_ = scanCmd.Flags().MarkHidden("inventory-ansible")
-
 	_ = scanCmd.Flags().Bool("inventory-format-domainlist", false, "Set the inventory format to domain list")
-	// "inventory-domainlist" is deprecated, use "inventory-format-domainlist" instead
-	_ = scanCmd.Flags().Bool("inventory-domainlist", false, "Set the inventory format to domain list")
-	_ = scanCmd.Flags().MarkDeprecated("inventory-domainlist", "use --inventory-format-domainlist")
-	_ = scanCmd.Flags().MarkHidden("inventory-domainlist")
 
 	// bundles, packs & incognito mode
 	_ = scanCmd.Flags().Bool("incognito", false, "Run in incognito mode. Do not report scan results to Mondoo Platform")
@@ -120,11 +111,7 @@ To manually configure a policy, use this:
 		_ = viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
 		_ = viper.BindPFlag("inventory-template", cmd.Flags().Lookup("inventory-template"))
 		_ = viper.BindPFlag("inventory-format-ansible", cmd.Flags().Lookup("inventory-format-ansible"))
-		// inventory-ansible is deprecated
-		_ = viper.BindPFlag("inventory-ansible", cmd.Flags().Lookup("inventory-ansible"))
 		_ = viper.BindPFlag("inventory-format-domainlist", cmd.Flags().Lookup("inventory-format-domainlist"))
-		// inventory-domainlist is deprecated
-		_ = viper.BindPFlag("inventory-domainlist", cmd.Flags().Lookup("inventory-domainlist"))
 
 		_ = viper.BindPFlag("policy-bundle", cmd.Flags().Lookup("policy-bundle"))
 		_ = viper.BindPFlag("detect-cicd", cmd.Flags().Lookup("detect-cicd"))
