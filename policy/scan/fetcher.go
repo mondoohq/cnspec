@@ -10,9 +10,9 @@ import (
 	"sync"
 
 	"github.com/cockroachdb/errors"
-	"go.mondoo.com/cnspec/v13"
-	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/cnspec"
+	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/mql/mqlc"
 )
 
 type fetcher struct {

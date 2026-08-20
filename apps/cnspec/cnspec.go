@@ -9,20 +9,20 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/v13"
-	"go.mondoo.com/cnspec/v13/apps/cnspec/cmd"
-	mql "go.mondoo.com/mql/v13"
-	"go.mondoo.com/mql/v13/cli/config"
-	"go.mondoo.com/mql/v13/cli/selfupdate"
-	"go.mondoo.com/mql/v13/metrics"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
+	"go.mondoo.com/cnspec"
+	"go.mondoo.com/cnspec/apps/cnspec/cmd"
+	mql "go.mondoo.com/mql"
+	"go.mondoo.com/mql/cli/config"
+	"go.mondoo.com/mql/cli/selfupdate"
+	"go.mondoo.com/mql/metrics"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/health"
 
 	_ "github.com/glebarez/go-sqlite"
 
 	// Link in all vault backends (AWS, GCP, HashiCorp, keyring) so they
 	// self-register with the vault registry. The in-memory backend is always
 	// available via the SDK.
-	_ "go.mondoo.com/mql/v13/vault/register"
+	_ "go.mondoo.com/mql/vault/register"
 )
 
 func main() {

@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/mql/v13/test"
+	"go.mondoo.com/mql/test"
 )
 
 var once sync.Once
@@ -170,7 +170,6 @@ func TestOsProviderSharedTests(t *testing.T) {
 	// iterate over all tests for all connections
 	for _, cc := range connections {
 		for _, tt := range cc.tests {
-
 			t.Run(cc.name+"/"+tt.query, func(t *testing.T) {
 				r := test.NewCliTestRunner(cc.binary, append(cc.args, "-c", tt.query, "-j")...)
 				err := r.Run()

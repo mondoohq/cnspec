@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	subject "go.mondoo.com/cnspec/v13/internal/onboarding"
+	subject "go.mondoo.com/cnspec/internal/onboarding"
 )
 
 func TestGenerateAzureHCL(t *testing.T) {

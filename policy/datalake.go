@@ -7,9 +7,9 @@ import (
 	"context"
 	"time"
 
-	"go.mondoo.com/mql/v13/llx"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/recording"
-	"go.mondoo.com/mql/v13/types"
+	"go.mondoo.com/mql/llx"
+	"go.mondoo.com/mql/providers-sdk/v1/recording"
+	"go.mondoo.com/mql/types"
 )
 
 // DataLake provides additional database calls, that are not accessible to

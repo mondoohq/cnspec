@@ -11,7 +11,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
-	"go.mondoo.com/cnspec/v13/internal/bundle"
+	"go.mondoo.com/cnspec/internal/bundle"
 )
 
 func init() {

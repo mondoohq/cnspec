@@ -10,7 +10,7 @@
 package reporter
 
 import (
-	reporter "go.mondoo.com/mql/v13/cli/reporter"
+	reporter "go.mondoo.com/mql/cli/reporter"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -229,7 +229,7 @@ const file_cnspec_report_proto_rawDesc = "" +
 	"ScoreValue\x12\x14\n" +
 	"\x05score\x18\x01 \x01(\rR\x05score\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x1c\n" +
-	"\triskScore\x18\x03 \x01(\rR\triskScoreB'Z%go.mondoo.com/cnspec/v13/cli/reporterb\x06proto3"
+	"\triskScore\x18\x03 \x01(\rR\triskScoreB#Z!go.mondoo.com/cnspec/cli/reporterb\x06proto3"
 
 var (
 	file_cnspec_report_proto_rawDescOnce sync.Once

@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/policy"
 )
 
 // TestTerraformVariantCoverage requires every IaC variant in every registered

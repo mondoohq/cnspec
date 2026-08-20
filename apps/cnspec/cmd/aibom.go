@@ -13,14 +13,14 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"go.mondoo.com/cnspec/v13/cli/reporter"
-	"go.mondoo.com/cnspec/v13/internal/aibom"
-	"go.mondoo.com/cnspec/v13/internal/aibom/generator"
-	"go.mondoo.com/cnspec/v13/internal/aibom/pack"
-	"go.mondoo.com/cnspec/v13/policy/scan"
-	"go.mondoo.com/mql/v13/logger"
-	"go.mondoo.com/mql/v13/providers"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/plugin"
+	"go.mondoo.com/cnspec/cli/reporter"
+	"go.mondoo.com/cnspec/internal/aibom"
+	"go.mondoo.com/cnspec/internal/aibom/generator"
+	"go.mondoo.com/cnspec/internal/aibom/pack"
+	"go.mondoo.com/cnspec/policy/scan"
+	"go.mondoo.com/mql/logger"
+	"go.mondoo.com/mql/providers"
+	"go.mondoo.com/mql/providers-sdk/v1/plugin"
 )
 
 func init() {

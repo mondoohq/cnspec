@@ -13,11 +13,11 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"go.mondoo.com/cnspec/v13/policy"
-	cnspec_upstream "go.mondoo.com/cnspec/v13/upstream"
+	"go.mondoo.com/cnspec/policy"
+	cnspec_upstream "go.mondoo.com/cnspec/upstream"
 	mondoogql "go.mondoo.com/mondoo-go"
-	"go.mondoo.com/mql/v13/cli/config"
-	"go.mondoo.com/mql/v13/cli/theme"
+	"go.mondoo.com/mql/cli/config"
+	"go.mondoo.com/mql/cli/theme"
 )
 
 const (

@@ -5,8 +5,8 @@ package policy
 
 import (
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/mql/v13/providers"
-	"go.mondoo.com/mql/v13/utils/multierr"
+	"go.mondoo.com/mql/providers"
+	"go.mondoo.com/mql/utils/multierr"
 )
 
 // HasRequirements returns true if any policy or querypack in the bundle has provider requirements defined.

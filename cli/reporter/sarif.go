@@ -12,14 +12,14 @@ import (
 	"strings"
 
 	"github.com/owenrumney/go-sarif/v2/sarif"
-	"go.mondoo.com/cnspec/v13"
-	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/mql/v13/cli/printer"
-	"go.mondoo.com/mql/v13/llx"
-	"go.mondoo.com/mql/v13/mrn"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/mql/v13/utils/iox"
+	"go.mondoo.com/cnspec"
+	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/mql/cli/printer"
+	"go.mondoo.com/mql/llx"
+	"go.mondoo.com/mql/mrn"
+	"go.mondoo.com/mql/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/mql/utils/iox"
 )
 
 const (

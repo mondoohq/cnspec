@@ -15,7 +15,7 @@ import (
 	"sort"
 	"sync"
 
-	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/fex"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
 )
 
 // Converter parses one tool's native report bytes into FEX/VEX documents. It is

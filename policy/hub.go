@@ -11,8 +11,8 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/mql/v13/logger"
-	"go.mondoo.com/mql/v13/mrn"
+	"go.mondoo.com/mql/logger"
+	"go.mondoo.com/mql/mrn"
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"

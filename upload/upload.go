@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.mondoo.com/mql/v13/cli/config"
+	"go.mondoo.com/mql/cli/config"
 )
 
 // Result carries the outcome of an upload attempt. BytesSent and Duration are

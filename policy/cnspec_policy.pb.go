@@ -10,10 +10,10 @@
 package policy
 
 import (
-	llx "go.mondoo.com/mql/v13/llx"
-	inventory "go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
-	recording "go.mondoo.com/mql/v13/providers-sdk/v1/recording"
-	mvd "go.mondoo.com/mql/v13/providers-sdk/v1/upstream/mvd"
+	llx "go.mondoo.com/mql/llx"
+	inventory "go.mondoo.com/mql/providers-sdk/v1/inventory"
+	recording "go.mondoo.com/mql/providers-sdk/v1/recording"
+	mvd "go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	anypb "google.golang.org/protobuf/types/known/anypb"
@@ -10521,7 +10521,7 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\x11SynchronizeAssets\x12&.cnspec.policy.v1.SynchronizeAssetsReq\x1a'.cnspec.policy.v1.SynchronizeAssetsResp\"\x00\x12`\n" +
 	"\vPurgeAssets\x12$.cnspec.policy.v1.PurgeAssetsRequest\x1a).cnspec.policy.v1.PurgeAssetsConfirmation\"\x00\x12q\n" +
 	"\x12RefreshAssetScores\x12+.cnspec.policy.v1.RefreshAssetScoresRequest\x1a,.cnspec.policy.v1.RefreshAssetScoresResponse\"\x00\x12_\n" +
-	"\x11GetScanParameters\x12&.cnspec.policy.v1.GetScanParametersReq\x1a .cnspec.policy.v1.ScanParameters\"\x00B!Z\x1fgo.mondoo.com/cnspec/v13/policyb\x06proto3"
+	"\x11GetScanParameters\x12&.cnspec.policy.v1.GetScanParametersReq\x1a .cnspec.policy.v1.ScanParameters\"\x00B\x1dZ\x1bgo.mondoo.com/cnspec/policyb\x06proto3"
 
 var (
 	file_cnspec_policy_proto_rawDescOnce sync.Once

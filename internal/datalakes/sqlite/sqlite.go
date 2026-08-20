@@ -11,17 +11,17 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/v13"
-	"go.mondoo.com/cnspec/v13/internal/datalakes/inmemory"
-	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/cnspec/v13/policy/scandb"
-	"go.mondoo.com/cnspec/v13/policy/scanstats"
-	"go.mondoo.com/cnspec/v13/upload"
-	mql "go.mondoo.com/mql/v13"
-	"go.mondoo.com/mql/v13/llx"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
+	"go.mondoo.com/cnspec"
+	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
+	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/policy/scandb"
+	"go.mondoo.com/cnspec/policy/scanstats"
+	"go.mondoo.com/cnspec/upload"
+	mql "go.mondoo.com/mql"
+	"go.mondoo.com/mql/llx"
+	"go.mondoo.com/mql/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/health"
 )
 
 // outputDirCtxKey is the unexported key used to thread the

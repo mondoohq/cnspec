@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
-	"go.mondoo.com/cnspec/v13"
-	"go.mondoo.com/cnspec/v13/internal/aibom"
-	cr "go.mondoo.com/mql/v13/cli/reporter"
-	"go.mondoo.com/mql/v13/utils/sortx"
+	"go.mondoo.com/cnspec"
+	"go.mondoo.com/cnspec/internal/aibom"
+	cr "go.mondoo.com/mql/cli/reporter"
+	"go.mondoo.com/mql/utils/sortx"
 )
 
 // GenerateAiBom generates an AI Bill of Materials from a cnspec report.

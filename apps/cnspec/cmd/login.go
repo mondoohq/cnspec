@@ -4,7 +4,7 @@
 package cmd
 
 import (
-	mql_app "go.mondoo.com/mql/v13/apps/mql/cmd"
+	mql_app "go.mondoo.com/mql/apps/mql/cmd"
 )
 
 func init() {

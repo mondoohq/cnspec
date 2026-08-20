@@ -4,7 +4,7 @@
 package generator
 
 import (
-	"go.mondoo.com/cnspec/v13/internal/aibom"
+	"go.mondoo.com/cnspec/internal/aibom"
 )
 
 // Section weights for completeness scoring (ADR-0003).

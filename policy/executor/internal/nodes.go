@@ -10,11 +10,11 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/v13/cli/progress"
-	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/mql/v13/llx"
-	"go.mondoo.com/mql/v13/types"
-	"go.mondoo.com/mql/v13/utils/multierr"
+	"go.mondoo.com/cnspec/cli/progress"
+	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/mql/llx"
+	"go.mondoo.com/mql/types"
+	"go.mondoo.com/mql/utils/multierr"
 )
 
 // isNilResult returns true if the result has nil value and no error,

@@ -8,9 +8,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/cnspec/v13/policy/scanstats"
-	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/policy/scanstats"
+	"go.mondoo.com/mql/llx"
 )
 
 // buildTestResolvedPolicy builds a ResolvedPolicy that exercises every

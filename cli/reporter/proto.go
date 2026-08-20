@@ -9,9 +9,9 @@ import (
 	"errors"
 	"strings"
 
-	"go.mondoo.com/cnspec/v13/policy"
-	cr "go.mondoo.com/mql/v13/cli/reporter"
-	"go.mondoo.com/mql/v13/utils/iox"
+	"go.mondoo.com/cnspec/policy"
+	cr "go.mondoo.com/mql/cli/reporter"
+	"go.mondoo.com/mql/utils/iox"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 )

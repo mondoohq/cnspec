@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/muesli/termenv"
-	"go.mondoo.com/mql/v13/cli/theme/colors"
+	"go.mondoo.com/mql/cli/theme/colors"
 )
 
 var _ Decoder = &TextList{}

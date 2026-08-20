@@ -4,7 +4,7 @@
 package cmd
 
 import (
-	cnquery_app "go.mondoo.com/mql/v13/apps/mql/cmd"
+	cnquery_app "go.mondoo.com/mql/apps/mql/cmd"
 )
 
 func init() {

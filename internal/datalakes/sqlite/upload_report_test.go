@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v13/upload"
+	"go.mondoo.com/cnspec/upload"
 )
 
 func TestUploadFailureTags_TransportError(t *testing.T) {

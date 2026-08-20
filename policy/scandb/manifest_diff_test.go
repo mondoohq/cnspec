@@ -11,10 +11,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/cnspec/v13/policy/checksum"
-	"go.mondoo.com/mql/v13/llx"
-	llxchecksum "go.mondoo.com/mql/v13/llx/checksum"
+	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/policy/checksum"
+	"go.mondoo.com/mql/llx"
+	llxchecksum "go.mondoo.com/mql/llx/checksum"
 )
 
 // buildManifest extracts a manifest from a scan database — the projection

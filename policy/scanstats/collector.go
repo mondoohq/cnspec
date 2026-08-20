@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/policy"
 )
 
 // Well-known core metric names. Core cnspec metrics use the "cnspec.scan.*"

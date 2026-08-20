@@ -6,8 +6,8 @@ package policy
 import (
 	"sort"
 
-	"go.mondoo.com/mql/v13/checksums"
-	"go.mondoo.com/mql/v13/utils/sortx"
+	"go.mondoo.com/mql/checksums"
+	"go.mondoo.com/mql/utils/sortx"
 )
 
 // RefreshChecksum recalculates the reporting job checksum

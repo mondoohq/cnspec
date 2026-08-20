@@ -10,8 +10,8 @@
 package scan
 
 import (
-	policy "go.mondoo.com/cnspec/v13/policy"
-	inventory "go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	policy "go.mondoo.com/cnspec/policy"
+	inventory "go.mondoo.com/mql/providers-sdk/v1/inventory"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	structpb "google.golang.org/protobuf/types/known/structpb"
@@ -823,7 +823,7 @@ const file_scan_proto_rawDesc = "" +
 	"\bSchedule\x12\x17.cnspec.policy.scan.Job\x1a\x19.cnspec.policy.scan.Empty\"\x00\x12^\n" +
 	"\x12RunAdmissionReview\x12&.cnspec.policy.scan.AdmissionReviewJob\x1a\x1e.cnspec.policy.scan.ScanResult\"\x00\x12^\n" +
 	"\x14GarbageCollectAssets\x12).cnspec.policy.scan.GarbageCollectOptions\x1a\x19.cnspec.policy.scan.Empty\"\x00\x12`\n" +
-	"\vHealthCheck\x12&.cnspec.policy.scan.HealthCheckRequest\x1a'.cnspec.policy.scan.HealthCheckResponse\"\x00B&Z$go.mondoo.com/cnspec/v13/policy/scanb\x06proto3"
+	"\vHealthCheck\x12&.cnspec.policy.scan.HealthCheckRequest\x1a'.cnspec.policy.scan.HealthCheckResponse\"\x00B\"Z go.mondoo.com/cnspec/policy/scanb\x06proto3"
 
 var (
 	file_scan_proto_rawDescOnce sync.Once

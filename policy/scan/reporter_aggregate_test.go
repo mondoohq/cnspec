@@ -7,11 +7,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/policy"
 )
 
 func TestAggregateReport(t *testing.T) {
-
 	b := &policy.Bundle{
 		Policies: []*policy.Policy{
 			{

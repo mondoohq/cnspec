@@ -8,7 +8,7 @@ package bundle
 import (
 	"encoding/json"
 	"errors"
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/policy"
 	"gopkg.in/yaml.v3"
 )
 

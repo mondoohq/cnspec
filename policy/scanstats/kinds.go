@@ -4,7 +4,7 @@
 package scanstats
 
 import (
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/policy"
 )
 
 // KindCounts holds per-kind counts of scored entities in a scan.

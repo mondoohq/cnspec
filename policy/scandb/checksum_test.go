@@ -13,10 +13,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/cnspec/v13/policy/checksum"
-	"go.mondoo.com/mql/v13/llx"
-	llxchecksum "go.mondoo.com/mql/v13/llx/checksum"
+	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/policy/checksum"
+	"go.mondoo.com/mql/llx"
+	llxchecksum "go.mondoo.com/mql/llx/checksum"
 )
 
 // readChecksum reads one row's checksum column back as the uint64 the
@@ -47,8 +47,10 @@ func TestComputeChecksums(t *testing.T) {
 	}
 	data := &llx.Result{CodeId: "data1", Data: llx.StringPrimitive("hello")}
 	risk := &policy.ScoredRiskFactor{Mrn: "//r/1", Risk: 0.5, IsToxic: true}
-	res := &llx.ResourceRecording{Resource: "user", Id: "root",
-		Fields: map[string]*llx.Result{"c1": {CodeId: "c1", Data: llx.StringPrimitive("v1")}}}
+	res := &llx.ResourceRecording{
+		Resource: "user", Id: "root",
+		Fields: map[string]*llx.Result{"c1": {CodeId: "c1", Data: llx.StringPrimitive("v1")}},
+	}
 
 	w, err := NewSqliteScanDataStore(path, "//assets/a1")
 	require.NoError(t, err)
