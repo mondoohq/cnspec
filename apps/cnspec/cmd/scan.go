@@ -71,8 +71,6 @@ func init() {
 	// Experimental: This is not intended to be used by users. It is internal use only.
 	_ = scanCmd.Flags().String("report-type", "full", "Experimental: Set the report type for the output: full, error")
 	_ = scanCmd.Flags().MarkHidden("report-type")
-	_ = scanCmd.Flags().Int("score-threshold", 0, "If any score falls below the threshold, exit 1")
-	_ = scanCmd.Flags().MarkDeprecated("score-threshold", "Please use --risk-threshold instead")
 	_ = scanCmd.Flags().Int("risk-threshold", reporter.DEFAULT_RISK_THRESHOLD, "Set the risk threshold. Exit with status 1 if any risk meets or exceeds this value")
 	_ = scanCmd.Flags().String("output-target", "", "Set the output target for the asset report. Currently only supports AWS SQS topic URLs and local files")
 	_ = scanCmd.Flags().Int("parallelism", 1, "Set the number of assets to scan in parallel. A value of 0 or 1 means sequential")
@@ -119,7 +117,6 @@ To manually configure a policy, use this:
 		_ = viper.BindPFlag("trace-id", cmd.Flags().Lookup("trace-id"))
 		_ = viper.BindPFlag("category", cmd.Flags().Lookup("category"))
 		_ = viper.BindPFlag("report-type", cmd.Flags().Lookup("report-type"))
-		_ = viper.BindPFlag("score-threshold", cmd.Flags().Lookup("score-threshold"))
 		_ = viper.BindPFlag("risk-threshold", cmd.Flags().Lookup("risk-threshold"))
 
 		// for all assets
@@ -382,16 +379,6 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 	}
 
 	riskThreshold := viper.GetInt("risk-threshold")
-
-	// FIXME: DEPRECATED, just remove this section in v13, it is no longer necessary
-	deprecatedThreshold := 100 - viper.GetInt("score-threshold")
-	// note: the score threshold is off by one compared to the risk threshold;
-	// ie: risk threshold 90 => risk of 90 - 100 get exit 1
-	// vs: score threshold 11 => 100-11 = risk > 89 gets exit 1
-	if deprecatedThreshold+1 < riskThreshold {
-		riskThreshold = deprecatedThreshold + 1
-	}
-	// ^^
 
 	reportType := scan.ReportType_FULL
 	rtString := strings.ToUpper(viper.GetString("report-type"))
