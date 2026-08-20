@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/scan"
+	"go.mondoo.com/mql/providers"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/providers-sdk/v1/testutils"
 )
@@ -111,7 +113,7 @@ func TestNetworkPostureContent(t *testing.T) {
 	loader := policy.DefaultBundleLoader()
 
 	t.Run("policy compiles network posture controls", func(t *testing.T) {
-		bundle, err := loader.BundleFromPaths("./mondoo-kubernetes-network-posture.mql.yaml")
+		bundle, err := loader.BundleFromPaths("../../mondoo-kubernetes-network-posture.mql.yaml")
 		require.NoError(t, err)
 		require.NotNil(t, bundle)
 		require.Len(t, bundle.Policies, 1)
@@ -139,7 +141,7 @@ func TestNetworkPostureContent(t *testing.T) {
 		assert.True(t, checks["mondoo-kubernetes-network-posture-primary-egress-isolated"])
 		assert.True(t, checks["mondoo-kubernetes-network-posture-admin-policy-deny-semantics"])
 
-		raw, err := os.ReadFile("./mondoo-kubernetes-network-posture.mql.yaml")
+		raw, err := os.ReadFile("../../mondoo-kubernetes-network-posture.mql.yaml")
 		require.NoError(t, err)
 		content := string(raw)
 		assert.Contains(t, queries["mondoo-kubernetes-network-posture-internet-exposure-evidence"], `k8s.networkExposures.where(internetExposed == true)`)
@@ -176,7 +178,7 @@ func TestNetworkPostureContent(t *testing.T) {
 	})
 
 	t.Run("inventory querypack compiles network posture queries", func(t *testing.T) {
-		bundle, err := loader.BundleFromPaths("./querypacks/mondoo-kubernetes-inventory.mql.yaml")
+		bundle, err := loader.BundleFromPaths("../../querypacks/mondoo-kubernetes-inventory.mql.yaml")
 		require.NoError(t, err)
 		require.NotNil(t, bundle)
 		require.Len(t, bundle.Packs, 1)
@@ -238,7 +240,7 @@ func requireBundleCompiles(t *testing.T, bundle *policy.Bundle, runtime *provide
 func networkPostureK8sSchemaPath(t *testing.T) string {
 	t.Helper()
 
-	path := "./testdata/schema/providers/k8s/resources/k8s.lr"
+	path := "../../testdata/schema/providers/k8s/resources/k8s.lr"
 	_, err := os.Stat(path)
 	require.NoErrorf(t, err, "in-repo schema fixture must point to a readable k8s.lr schema file")
 	return path
@@ -247,7 +249,7 @@ func networkPostureK8sSchemaPath(t *testing.T) string {
 func networkPostureCoreSchemaPath(t *testing.T) string {
 	t.Helper()
 
-	path := "./testdata/schema/providers/core/resources/core.lr"
+	path := "../../testdata/schema/providers/core/resources/core.lr"
 	_, err := os.Stat(path)
 	require.NoErrorf(t, err, "in-repo schema fixture must point to a readable core.lr schema file")
 	return path
@@ -256,7 +258,7 @@ func networkPostureCoreSchemaPath(t *testing.T) string {
 func networkPostureNetworkSchemaPath(t *testing.T) string {
 	t.Helper()
 
-	path := "./testdata/schema/providers/network/resources/network.lr"
+	path := "../../testdata/schema/providers/network/resources/network.lr"
 	_, err := os.Stat(path)
 	require.NoErrorf(t, err, "in-repo schema fixture must point to a readable network.lr schema file")
 	return path
@@ -265,7 +267,7 @@ func networkPostureNetworkSchemaPath(t *testing.T) string {
 func networkPostureOSSchemaPath(t *testing.T) string {
 	t.Helper()
 
-	path := "./testdata/schema/providers/os/resources/os.lr"
+	path := "../../testdata/schema/providers/os/resources/os.lr"
 	_, err := os.Stat(path)
 	require.NoErrorf(t, err, "in-repo schema fixture must point to a readable os.lr schema file")
 	return path
