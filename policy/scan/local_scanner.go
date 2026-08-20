@@ -483,6 +483,16 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		}
 	}
 
+	// The providers that connect to the root assets must be fully installed
+	// before discovery. Requirements only pull schemas (here or, for local
+	// bundles, in loadPolicies), and the runtime treats a schema-only install
+	// as installed at connect time even though it cannot be started.
+	if s.autoUpdate {
+		if err := ensureConnectionProviders(job.Inventory); err != nil {
+			log.Warn().Err(err).Msg("failed to install providers for asset connections; connecting to affected assets may fail")
+		}
+	}
+
 	// Enable staged discovery on root inventory assets so that providers
 	// supporting it can split discovery into phases (e.g. cluster first,
 	// workloads per namespace later), matching the batched scan approach.

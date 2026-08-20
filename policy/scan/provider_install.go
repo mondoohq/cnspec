@@ -13,6 +13,7 @@ import (
 	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/mqlc"
 	"go.mondoo.com/mql/providers"
+	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/providers-sdk/v1/resources"
 	"go.mondoo.com/mql/utils/multierr"
 )
@@ -80,6 +81,42 @@ func ensureProviderBinaries(lookups []providers.ProviderLookup) error {
 		}
 	}
 	return errs.Deduplicate()
+}
+
+// connectionProviderLookups collects the providers serving the connection
+// types of the given inventory's assets.
+func connectionProviderLookups(inv *inventory.Inventory) []providers.ProviderLookup {
+	if inv == nil || inv.Spec == nil {
+		return nil
+	}
+
+	seen := map[string]struct{}{}
+	var lookups []providers.ProviderLookup
+	for _, asset := range inv.Spec.Assets {
+		if asset == nil {
+			continue
+		}
+		for _, conn := range asset.Connections {
+			if conn == nil || conn.Type == "" {
+				continue
+			}
+			if _, ok := seen[conn.Type]; ok {
+				continue
+			}
+			seen[conn.Type] = struct{}{}
+			lookups = append(lookups, providers.ProviderLookup{ConnType: conn.Type})
+		}
+	}
+	return lookups
+}
+
+// ensureConnectionProviders makes sure the providers that connect to the
+// given inventory's assets are fully installed before discovery connects
+// them. Bundle.EnsureRequirements only pulls schemas, and the runtime's
+// provider lookup at connect time treats a schema-only install as installed
+// even though it cannot be started.
+func ensureConnectionProviders(inv *inventory.Inventory) error {
+	return ensureProviderBinaries(connectionProviderLookups(inv))
 }
 
 // filterProviderLookups compiles the given asset filter queries and collects
