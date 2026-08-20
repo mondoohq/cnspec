@@ -72,14 +72,16 @@ var serveCmd = &cobra.Command{
 		// prevent colors on windows
 		viper.Set("color", "none")
 
-		// check if an inventory file exists
-		if viper.GetString("inventory-file") == "" {
-			inventoryFilePath, ok := config.InventoryPath(viper.ConfigFileUsed())
-			if ok {
-				log.Info().Str("path", inventoryFilePath).Msg("found inventory file")
-				viper.Set("inventory-file", inventoryFilePath)
-			}
-		}
+		// Whether the operator pinned an inventory source on the command line
+		// or in the config. When they did, that value stays authoritative for
+		// the life of the process. When they did not, loadInventory probes for
+		// an inventory.yml next to mondoo.yml before every scan cycle, so a
+		// file added after startup is picked up without a restart. This has to
+		// be captured before the first probe runs: once discovery writes the
+		// path into the same viper key, an emptiness check can no longer tell
+		// an operator-supplied path from a discovered one.
+		explicitInventory := viper.GetString("inventory-file") != "" ||
+			viper.GetString("inventory-template") != ""
 
 		// Detect the runtime environment (CI/CD or not) once. It's fixed for
 		// the life of the process, so it's computed here rather than on every
@@ -87,7 +89,7 @@ var serveCmd = &cobra.Command{
 		runtimeEnv := execruntime.Detect()
 
 		// determine the scan config from pipe or args
-		scanConf, cliConfig, err := getServeConfig(runtimeEnv)
+		scanConf, cliConfig, err := getServeConfig(runtimeEnv, explicitInventory)
 		if err != nil {
 			// we return the specific error code to prevent systemd from restarting
 			return cli_errors.NewCommandError(errors.Wrap(err, "could not load configuration"), ConfigurationErrorCode)
@@ -154,7 +156,7 @@ var serveCmd = &cobra.Command{
 			// Reload the inventory before every cycle so a service that's
 			// already running picks up an inventory.yml that was added or
 			// edited after startup, without requiring a restart.
-			reloadInventory(cliConfig, scanConf, runtimeEnv)
+			reloadInventory(cliConfig, scanConf, runtimeEnv, explicitInventory)
 
 			// check in the managed client when running a scan
 			if checkInHandler != nil {
@@ -183,7 +185,7 @@ var serveCmd = &cobra.Command{
 	},
 }
 
-func getServeConfig(runtimeEnv *execruntime.RuntimeEnv) (*scanConfig, *cnspec_config.CliConfig, error) {
+func getServeConfig(runtimeEnv *execruntime.RuntimeEnv, explicitInventory bool) (*scanConfig, *cnspec_config.CliConfig, error) {
 	opts, optsErr := cnspec_config.ReadConfig()
 	if optsErr != nil {
 		return nil, nil, errors.Wrap(optsErr, "could not load configuration")
@@ -225,7 +227,7 @@ func getServeConfig(runtimeEnv *execruntime.RuntimeEnv) (*scanConfig, *cnspec_co
 	}
 
 	var err error
-	conf.Inventory, err = loadInventory(opts, runtimeEnv)
+	conf.Inventory, err = loadInventory(opts, runtimeEnv, explicitInventory)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "could not load configuration")
 	}
@@ -241,6 +243,45 @@ func getServeConfig(runtimeEnv *execruntime.RuntimeEnv) (*scanConfig, *cnspec_co
 	return &conf, opts, nil
 }
 
+// discoverInventoryFile points the global "inventory-file" viper key at the
+// inventory.yml sitting next to mondoo.yml, unless the operator pinned a
+// source themselves (explicitInventory), in which case their value is left
+// alone.
+//
+// This runs before every parse rather than once at startup, and that is the
+// whole point: config.InventoryPath only reports a path when the file already
+// exists, so a one-shot probe leaves the key empty forever when the service
+// starts before the inventory is written. inventoryloader.Parse returns an
+// empty inventory without touching the disk on an empty key, so every
+// subsequent reload would re-derive the local-only fallback and an
+// inventory.yml dropped next to mondoo.yml would never be seen -- which is
+// the workflow issue #3527 was filed about.
+//
+// The key is cleared again when the file disappears, so removing an inventory
+// falls back to scanning the local asset instead of scanning the removed
+// targets for the life of the process.
+func discoverInventoryFile(explicitInventory bool) {
+	if explicitInventory {
+		return
+	}
+
+	path, ok := config.InventoryPath(viper.ConfigFileUsed())
+	if !ok {
+		if previous := viper.GetString("inventory-file"); previous != "" {
+			log.Info().Str("path", previous).Msg("inventory file is gone, falling back to the local asset")
+		}
+		viper.Set("inventory-file", "")
+		return
+	}
+
+	// Only log on a transition. This runs on every scan cycle, and an
+	// unchanged path is not news.
+	if viper.GetString("inventory-file") != path {
+		log.Info().Str("path", path).Msg("found inventory file")
+	}
+	viper.Set("inventory-file", path)
+}
+
 // loadInventory parses the inventory fresh from disk (or the piped/templated
 // source, per --inventory-file / --inventory-template) and applies CI/CD
 // labels from runtimeEnv, the runtime environment detected once at startup
@@ -251,8 +292,13 @@ func getServeConfig(runtimeEnv *execruntime.RuntimeEnv) (*scanConfig, *cnspec_co
 // getServeConfig calls this once at startup. The background scan loop in
 // serveCmd.RunE calls it again before every cycle, so `cnspec serve` picks
 // up an inventory.yml that was added or edited after the service started,
-// without requiring a restart.
-func loadInventory(opts *cnspec_config.CliConfig, runtimeEnv *execruntime.RuntimeEnv) (*inventory.Inventory, error) {
+// without requiring a restart. Re-running discovery (see
+// discoverInventoryFile) is what covers the "added" half of that: the file
+// has to exist for discovery to find it, so a service that started before
+// the inventory was written would otherwise never see it.
+func loadInventory(opts *cnspec_config.CliConfig, runtimeEnv *execruntime.RuntimeEnv, explicitInventory bool) (*inventory.Inventory, error) {
+	discoverInventoryFile(explicitInventory)
+
 	optAnnotations := opts.Annotations
 	if optAnnotations == nil {
 		optAnnotations = map[string]string{}
@@ -303,12 +349,12 @@ func loadInventory(opts *cnspec_config.CliConfig, runtimeEnv *execruntime.Runtim
 // On any other parse error (for example the file is mid-edit and
 // momentarily invalid YAML), it logs the error and leaves scanConf.Inventory
 // as the last-known-good inventory rather than failing the cycle.
-func reloadInventory(cliConfig *cnspec_config.CliConfig, scanConf *scanConfig, runtimeEnv *execruntime.RuntimeEnv) {
+func reloadInventory(cliConfig *cnspec_config.CliConfig, scanConf *scanConfig, runtimeEnv *execruntime.RuntimeEnv, explicitInventory bool) {
 	if viper.GetString("inventory-file") == "-" {
 		return
 	}
 
-	fresh, err := loadInventory(cliConfig, runtimeEnv)
+	fresh, err := loadInventory(cliConfig, runtimeEnv, explicitInventory)
 	if err != nil {
 		log.Error().Err(err).Msg("could not reload inventory; scanning with the last-known-good inventory")
 		return
