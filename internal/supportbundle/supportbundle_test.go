@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/v13/internal/scandump"
-	"go.mondoo.com/mql/v13/logger"
+	"go.mondoo.com/mql/logger"
 )
 
 // readTarGz reads every regular-file entry from a .tar.gz into a map keyed by

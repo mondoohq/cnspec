@@ -11,8 +11,8 @@ import (
 	"github.com/muesli/termenv"
 	"go.mondoo.com/cnspec/v13/cli/components"
 	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/mql/v13/cli/printer"
-	"go.mondoo.com/mql/v13/cli/theme/colors"
+	"go.mondoo.com/mql/cli/printer"
+	"go.mondoo.com/mql/cli/theme/colors"
 )
 
 // TODO: ================== vv CLEAN UP vv ========================

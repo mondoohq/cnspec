@@ -16,8 +16,8 @@ import (
 	"go.mondoo.com/cnspec/v13/policy"
 	cnspec_upstream "go.mondoo.com/cnspec/v13/upstream"
 	mondoogql "go.mondoo.com/mondoo-go"
-	"go.mondoo.com/mql/v13/cli/config"
-	"go.mondoo.com/mql/v13/cli/theme"
+	"go.mondoo.com/mql/cli/config"
+	"go.mondoo.com/mql/cli/theme"
 )
 
 const (

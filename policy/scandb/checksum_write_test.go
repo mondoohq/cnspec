@@ -14,9 +14,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/checksum"
-	"go.mondoo.com/mql/v13/llx"
-	llxchecksum "go.mondoo.com/mql/v13/llx/checksum"
-	"go.mondoo.com/mql/v13/types"
+	"go.mondoo.com/mql/llx"
+	llxchecksum "go.mondoo.com/mql/llx/checksum"
+	"go.mondoo.com/mql/types"
 )
 
 // parityCorpus is the divergence-prone write sequence shared by the parity
@@ -38,7 +38,8 @@ func writeParityCorpus(t *testing.T, ctx context.Context, w *SqliteScanDataStore
 		{QrId: "bare", RiskScore: 25, Type: 2, Value: 80, Weight: 1},
 		{QrId: "empty-containers", Value: 100, RiskFactors: &policy.ScoredRiskFactors{}, Sources: &policy.Sources{}},
 		{QrId: "unicode", Value: 1, Message: "žluťoučký kůň 🐎 \x00 with NUL"},
-		{QrId: "loaded", RiskScore: 90, Type: 2, Weight: 3, Message: "m",
+		{
+			QrId: "loaded", RiskScore: 90, Type: 2, Weight: 3, Message: "m",
 			RiskFactors: &policy.ScoredRiskFactors{Items: []*policy.ScoredRiskFactor{
 				{Mrn: "//r/a", Risk: 0.7, IsToxic: true, Data: map[string]*llx.Result{
 					"q1": {CodeId: "q1", Data: llx.StringPrimitive("v")},
@@ -47,7 +48,8 @@ func writeParityCorpus(t *testing.T, ctx context.Context, w *SqliteScanDataStore
 			Sources: &policy.Sources{Items: []*policy.Source{{
 				Name: "s", Url: "https://e.com", Version: "1", Vendor: policy.Source_MICROSOFT,
 				FirstDetectedAt: "2026-01-01T00:00:00Z", FixedAt: "2026-02-01T00:00:00Z",
-			}}}},
+			}}},
+		},
 	}
 	require.NoError(t, w.WriteScores(ctx, scores))
 	// An upsert's replacement row carries its own checksum — final state wins.

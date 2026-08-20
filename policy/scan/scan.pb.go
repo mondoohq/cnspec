@@ -10,14 +10,15 @@
 package scan
 
 import (
-	policy "go.mondoo.com/cnspec/v13/policy"
-	inventory "go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	structpb "google.golang.org/protobuf/types/known/structpb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	policy "go.mondoo.com/cnspec/v13/policy"
+	inventory "go.mondoo.com/mql/providers-sdk/v1/inventory"
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	structpb "google.golang.org/protobuf/types/known/structpb"
 )
 
 const (
@@ -837,32 +838,34 @@ func file_scan_proto_rawDescGZIP() []byte {
 	return file_scan_proto_rawDescData
 }
 
-var file_scan_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_scan_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
-var file_scan_proto_goTypes = []any{
-	(ReportType)(0),                        // 0: cnspec.policy.scan.ReportType
-	(HealthCheckResponse_ServingStatus)(0), // 1: cnspec.policy.scan.HealthCheckResponse.ServingStatus
-	(*Empty)(nil),                          // 2: cnspec.policy.scan.Empty
-	(*Job)(nil),                            // 3: cnspec.policy.scan.Job
-	(*AdmissionReviewJob)(nil),             // 4: cnspec.policy.scan.AdmissionReviewJob
-	(*GarbageCollectOptions)(nil),          // 5: cnspec.policy.scan.GarbageCollectOptions
-	(*File)(nil),                           // 6: cnspec.policy.scan.File
-	(*ScanResult)(nil),                     // 7: cnspec.policy.scan.ScanResult
-	(*ErrorCollection)(nil),                // 8: cnspec.policy.scan.ErrorCollection
-	(*HealthCheckRequest)(nil),             // 9: cnspec.policy.scan.HealthCheckRequest
-	(*HealthCheckResponse)(nil),            // 10: cnspec.policy.scan.HealthCheckResponse
-	nil,                                    // 11: cnspec.policy.scan.Job.PropsEntry
-	nil,                                    // 12: cnspec.policy.scan.AdmissionReviewJob.LabelsEntry
-	nil,                                    // 13: cnspec.policy.scan.AdmissionReviewJob.OptionsEntry
-	nil,                                    // 14: cnspec.policy.scan.GarbageCollectOptions.LabelsEntry
-	nil,                                    // 15: cnspec.policy.scan.ErrorCollection.ErrorsEntry
-	(*inventory.Inventory)(nil),            // 16: cnquery.providers.v1.Inventory
-	(*policy.Bundle)(nil),                  // 17: cnspec.policy.v1.Bundle
-	(*structpb.Struct)(nil),                // 18: google.protobuf.Struct
-	(*inventory.Discovery)(nil),            // 19: cnquery.providers.v1.Discovery
-	(*policy.Score)(nil),                   // 20: cnspec.policy.v1.Score
-	(*policy.ReportCollection)(nil),        // 21: cnspec.policy.v1.ReportCollection
-}
+var (
+	file_scan_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+	file_scan_proto_msgTypes  = make([]protoimpl.MessageInfo, 14)
+	file_scan_proto_goTypes   = []any{
+		(ReportType)(0),                        // 0: cnspec.policy.scan.ReportType
+		(HealthCheckResponse_ServingStatus)(0), // 1: cnspec.policy.scan.HealthCheckResponse.ServingStatus
+		(*Empty)(nil),                          // 2: cnspec.policy.scan.Empty
+		(*Job)(nil),                            // 3: cnspec.policy.scan.Job
+		(*AdmissionReviewJob)(nil),             // 4: cnspec.policy.scan.AdmissionReviewJob
+		(*GarbageCollectOptions)(nil),          // 5: cnspec.policy.scan.GarbageCollectOptions
+		(*File)(nil),                           // 6: cnspec.policy.scan.File
+		(*ScanResult)(nil),                     // 7: cnspec.policy.scan.ScanResult
+		(*ErrorCollection)(nil),                // 8: cnspec.policy.scan.ErrorCollection
+		(*HealthCheckRequest)(nil),             // 9: cnspec.policy.scan.HealthCheckRequest
+		(*HealthCheckResponse)(nil),            // 10: cnspec.policy.scan.HealthCheckResponse
+		nil,                                    // 11: cnspec.policy.scan.Job.PropsEntry
+		nil,                                    // 12: cnspec.policy.scan.AdmissionReviewJob.LabelsEntry
+		nil,                                    // 13: cnspec.policy.scan.AdmissionReviewJob.OptionsEntry
+		nil,                                    // 14: cnspec.policy.scan.GarbageCollectOptions.LabelsEntry
+		nil,                                    // 15: cnspec.policy.scan.ErrorCollection.ErrorsEntry
+		(*inventory.Inventory)(nil),            // 16: cnquery.providers.v1.Inventory
+		(*policy.Bundle)(nil),                  // 17: cnspec.policy.v1.Bundle
+		(*structpb.Struct)(nil),                // 18: google.protobuf.Struct
+		(*inventory.Discovery)(nil),            // 19: cnquery.providers.v1.Discovery
+		(*policy.Score)(nil),                   // 20: cnspec.policy.v1.Score
+		(*policy.ReportCollection)(nil),        // 21: cnspec.policy.v1.ReportCollection
+	}
+)
 var file_scan_proto_depIdxs = []int32{
 	16, // 0: cnspec.policy.scan.Job.inventory:type_name -> cnquery.providers.v1.Inventory
 	17, // 1: cnspec.policy.scan.Job.bundle:type_name -> cnspec.policy.v1.Bundle

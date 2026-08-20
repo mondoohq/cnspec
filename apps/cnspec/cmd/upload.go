@@ -14,8 +14,8 @@ import (
 	"go.mondoo.com/cnspec/v13/upload"
 	rc "go.mondoo.com/cnspec/v13/upload/report_conversion"
 	_ "go.mondoo.com/cnspec/v13/upload/report_conversion/all"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/fex"
-	"go.mondoo.com/mql/v13/sbom"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
+	"go.mondoo.com/mql/sbom"
 )
 
 // maxReportSize caps the report file read into memory (512 MiB).

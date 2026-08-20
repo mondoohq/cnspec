@@ -8,7 +8,7 @@ import (
 
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/scanstats"
-	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/llx"
 )
 
 // countingCollector accumulates per-kind scan counts as scores and data results

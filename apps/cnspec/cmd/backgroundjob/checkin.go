@@ -8,9 +8,9 @@ import (
 	"net/http"
 
 	"github.com/cockroachdb/errors"
-	"go.mondoo.com/mql/v13"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/sysinfo"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
+	"go.mondoo.com/mql"
+	"go.mondoo.com/mql/providers-sdk/v1/sysinfo"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream"
 	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/plugins/scope"
 )

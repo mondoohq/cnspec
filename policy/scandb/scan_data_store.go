@@ -21,9 +21,9 @@ import (
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/checksum"
 	"go.mondoo.com/cnspec/v13/policy/scandb/sqlc"
-	"go.mondoo.com/mql/v13/llx"
-	llxchecksum "go.mondoo.com/mql/v13/llx/checksum"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/llx"
+	llxchecksum "go.mondoo.com/mql/llx/checksum"
+	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 	"google.golang.org/protobuf/proto"
 )
 

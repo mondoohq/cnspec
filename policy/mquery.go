@@ -7,9 +7,9 @@ import (
 	"sort"
 
 	"github.com/cockroachdb/errors"
-	"go.mondoo.com/mql/v13/checksums"
-	"go.mondoo.com/mql/v13/mqlc"
-	"go.mondoo.com/mql/v13/mrn"
+	"go.mondoo.com/mql/checksums"
+	"go.mondoo.com/mql/mqlc"
+	"go.mondoo.com/mql/mrn"
 )
 
 func RefreshMRN(ownerMRN string, existingMRN string, resource string, uid string) (string, error) {

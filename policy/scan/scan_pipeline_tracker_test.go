@@ -12,7 +12,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/v13/policy/scanstats"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 )
 
 func TestScanDispatcher_InFlightReflectsHeldScanSlots(t *testing.T) {

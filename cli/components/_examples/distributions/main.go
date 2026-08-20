@@ -9,16 +9,16 @@ import (
 
 	"go.mondoo.com/cnspec/v13/cli/components"
 	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 )
 
 func main() {
 	assetsByPlatform := map[string][]*inventory.Asset{
-		"Ubuntu 16.04.7 LTS": []*inventory.Asset{
+		"Ubuntu 16.04.7 LTS": {
 			{Name: "ubuntu-1"}, {Name: "ubuntu-2"}, {Name: "ubuntu-3"},
 		},
-		"Alpine Linux v3.21": []*inventory.Asset{{Name: "alpine-1"}},
-		"macOS":              []*inventory.Asset{{Name: "mac-1"}},
+		"Alpine Linux v3.21": {{Name: "alpine-1"}},
+		"macOS":              {{Name: "mac-1"}},
 	}
 	assetsByScore := map[string]int{
 		policy.ScoreRatingTextCritical: 0,

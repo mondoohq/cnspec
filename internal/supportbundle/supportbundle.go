@@ -45,9 +45,9 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/cnspec/v13/internal/scandump"
-	"go.mondoo.com/mql/v13"
-	"go.mondoo.com/mql/v13/logger"
-	"go.mondoo.com/mql/v13/providers"
+	"go.mondoo.com/mql"
+	"go.mondoo.com/mql/logger"
+	"go.mondoo.com/mql/providers"
 )
 
 // debugSubdir is the directory under the bundle root that holds per-run /

@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"go.mondoo.com/mql/v13/checksums"
+	"go.mondoo.com/mql/checksums"
 	"gopkg.in/yaml.v3"
 )
 

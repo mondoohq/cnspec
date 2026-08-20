@@ -8,7 +8,7 @@ import (
 	"reflect"
 
 	"github.com/rs/zerolog/log"
-	mql_reporter "go.mondoo.com/mql/v13/cli/reporter"
+	mql_reporter "go.mondoo.com/mql/cli/reporter"
 )
 
 func FindSameAsset(name string, assets map[string]*mql_reporter.Asset) string {

@@ -8,9 +8,9 @@ import (
 	"errors"
 	"testing"
 
-	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/fex"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/sbomscan"
-	"go.mondoo.com/mql/v13/sbom"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/sbomscan"
+	"go.mondoo.com/mql/sbom"
 )
 
 type fakeScanner struct {

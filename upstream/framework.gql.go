@@ -12,7 +12,7 @@ import (
 	mondoogql "go.mondoo.com/mondoo-go"
 	"k8s.io/utils/ptr"
 
-	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/gql"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/gql"
 )
 
 type UpstreamFramework struct {

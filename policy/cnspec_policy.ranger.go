@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"strings"
 
-	"go.mondoo.com/mql/v13/providers-sdk/v1/recording"
+	"go.mondoo.com/mql/providers-sdk/v1/recording"
 	ranger "go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/metadata"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
@@ -59,56 +59,67 @@ func NewPolicyHubClient(addr string, client ranger.HTTPClient, plugins ...ranger
 	serviceClient.AddPlugins(plugins...)
 	return serviceClient, nil
 }
+
 func (c *PolicyHubClient) SetBundle(ctx context.Context, in *Bundle) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/SetBundle"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyHubClient) ValidateBundle(ctx context.Context, in *Bundle) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/ValidateBundle"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyHubClient) GetBundle(ctx context.Context, in *Mrn) (*Bundle, error) {
 	out := new(Bundle)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetBundle"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyHubClient) GetPolicy(ctx context.Context, in *Mrn) (*Policy, error) {
 	out := new(Policy)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetPolicy"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyHubClient) DeletePolicy(ctx context.Context, in *Mrn) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/DeletePolicy"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyHubClient) GetPolicyFilters(ctx context.Context, in *Mrn) (*Mqueries, error) {
 	out := new(Mqueries)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetPolicyFilters"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyHubClient) List(ctx context.Context, in *ListReq) (*Policies, error) {
 	out := new(Policies)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/List"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyHubClient) DefaultPolicies(ctx context.Context, in *DefaultPoliciesReq) (*URLs, error) {
 	out := new(URLs)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/DefaultPolicies"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyHubClient) GetFramework(ctx context.Context, in *Mrn) (*Framework, error) {
 	out := new(Framework)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetFramework"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyHubClient) DeleteFramework(ctx context.Context, in *Mrn) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/DeleteFramework"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyHubClient) ListFrameworks(ctx context.Context, in *ListReq) (*Frameworks, error) {
 	out := new(Frameworks)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/ListFrameworks"}, ""), in, out)
@@ -182,6 +193,7 @@ func (p *PolicyHubServer) SetBundle(ctx context.Context, reqBytes *[]byte) (pb.M
 	}
 	return p.handler.SetBundle(ctx, &req)
 }
+
 func (p *PolicyHubServer) ValidateBundle(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req Bundle
 	var err error
@@ -206,6 +218,7 @@ func (p *PolicyHubServer) ValidateBundle(ctx context.Context, reqBytes *[]byte) 
 	}
 	return p.handler.ValidateBundle(ctx, &req)
 }
+
 func (p *PolicyHubServer) GetBundle(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req Mrn
 	var err error
@@ -230,6 +243,7 @@ func (p *PolicyHubServer) GetBundle(ctx context.Context, reqBytes *[]byte) (pb.M
 	}
 	return p.handler.GetBundle(ctx, &req)
 }
+
 func (p *PolicyHubServer) GetPolicy(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req Mrn
 	var err error
@@ -254,6 +268,7 @@ func (p *PolicyHubServer) GetPolicy(ctx context.Context, reqBytes *[]byte) (pb.M
 	}
 	return p.handler.GetPolicy(ctx, &req)
 }
+
 func (p *PolicyHubServer) DeletePolicy(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req Mrn
 	var err error
@@ -278,6 +293,7 @@ func (p *PolicyHubServer) DeletePolicy(ctx context.Context, reqBytes *[]byte) (p
 	}
 	return p.handler.DeletePolicy(ctx, &req)
 }
+
 func (p *PolicyHubServer) GetPolicyFilters(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req Mrn
 	var err error
@@ -302,6 +318,7 @@ func (p *PolicyHubServer) GetPolicyFilters(ctx context.Context, reqBytes *[]byte
 	}
 	return p.handler.GetPolicyFilters(ctx, &req)
 }
+
 func (p *PolicyHubServer) List(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req ListReq
 	var err error
@@ -326,6 +343,7 @@ func (p *PolicyHubServer) List(ctx context.Context, reqBytes *[]byte) (pb.Messag
 	}
 	return p.handler.List(ctx, &req)
 }
+
 func (p *PolicyHubServer) DefaultPolicies(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req DefaultPoliciesReq
 	var err error
@@ -350,6 +368,7 @@ func (p *PolicyHubServer) DefaultPolicies(ctx context.Context, reqBytes *[]byte)
 	}
 	return p.handler.DefaultPolicies(ctx, &req)
 }
+
 func (p *PolicyHubServer) GetFramework(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req Mrn
 	var err error
@@ -374,6 +393,7 @@ func (p *PolicyHubServer) GetFramework(ctx context.Context, reqBytes *[]byte) (p
 	}
 	return p.handler.GetFramework(ctx, &req)
 }
+
 func (p *PolicyHubServer) DeleteFramework(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req Mrn
 	var err error
@@ -398,6 +418,7 @@ func (p *PolicyHubServer) DeleteFramework(ctx context.Context, reqBytes *[]byte)
 	}
 	return p.handler.DeleteFramework(ctx, &req)
 }
+
 func (p *PolicyHubServer) ListFrameworks(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req ListReq
 	var err error
@@ -473,96 +494,115 @@ func NewPolicyResolverClient(addr string, client ranger.HTTPClient, plugins ...r
 	serviceClient.AddPlugins(plugins...)
 	return serviceClient, nil
 }
+
 func (c *PolicyResolverClient) Assign(ctx context.Context, in *PolicyAssignment) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/Assign"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyResolverClient) Unassign(ctx context.Context, in *PolicyAssignment) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/Unassign"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyResolverClient) SetProps(ctx context.Context, in *PropsReq) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/SetProps"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyResolverClient) Resolve(ctx context.Context, in *ResolveReq) (*ResolvedPolicy, error) {
 	out := new(ResolvedPolicy)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/Resolve"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyResolverClient) UpdateAssetJobs(ctx context.Context, in *UpdateAssetJobsReq) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/UpdateAssetJobs"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyResolverClient) ResolveAndUpdateJobs(ctx context.Context, in *UpdateAssetJobsReq) (*ResolvedPolicy, error) {
 	out := new(ResolvedPolicy)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/ResolveAndUpdateJobs"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyResolverClient) GetResolvedPolicy(ctx context.Context, in *Mrn) (*ResolvedPolicy, error) {
 	out := new(ResolvedPolicy)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetResolvedPolicy"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyResolverClient) StoreResults(ctx context.Context, in *StoreResultsReq) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/StoreResults"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyResolverClient) GetUploadURL(ctx context.Context, in *GetUploadURLReq) (*GetUploadURLResp, error) {
 	out := new(GetUploadURLResp)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetUploadURL"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyResolverClient) ReportUploadCompleted(ctx context.Context, in *ReportUploadCompletedReq) (*Empty, error) {
 	out := new(Empty)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/ReportUploadCompleted"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyResolverClient) GetDownloadURL(ctx context.Context, in *GetDownloadURLReq) (*GetDownloadURLResp, error) {
 	out := new(GetDownloadURLResp)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetDownloadURL"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyResolverClient) GetReport(ctx context.Context, in *EntityScoreReq) (*Report, error) {
 	out := new(Report)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetReport"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyResolverClient) GetFrameworkReport(ctx context.Context, in *EntityScoreReq) (*FrameworkReport, error) {
 	out := new(FrameworkReport)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetFrameworkReport"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyResolverClient) GetScore(ctx context.Context, in *EntityScoreReq) (*Report, error) {
 	out := new(Report)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetScore"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyResolverClient) GetResourcesData(ctx context.Context, in *recording.EntityResourcesReq) (*recording.EntityResourcesRes, error) {
 	out := new(recording.EntityResourcesRes)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetResourcesData"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyResolverClient) SynchronizeAssets(ctx context.Context, in *SynchronizeAssetsReq) (*SynchronizeAssetsResp, error) {
 	out := new(SynchronizeAssetsResp)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/SynchronizeAssets"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyResolverClient) PurgeAssets(ctx context.Context, in *PurgeAssetsRequest) (*PurgeAssetsConfirmation, error) {
 	out := new(PurgeAssetsConfirmation)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/PurgeAssets"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyResolverClient) RefreshAssetScores(ctx context.Context, in *RefreshAssetScoresRequest) (*RefreshAssetScoresResponse, error) {
 	out := new(RefreshAssetScoresResponse)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/RefreshAssetScores"}, ""), in, out)
 	return out, err
 }
+
 func (c *PolicyResolverClient) GetScanParameters(ctx context.Context, in *GetScanParametersReq) (*ScanParameters, error) {
 	out := new(ScanParameters)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetScanParameters"}, ""), in, out)
@@ -644,6 +684,7 @@ func (p *PolicyResolverServer) Assign(ctx context.Context, reqBytes *[]byte) (pb
 	}
 	return p.handler.Assign(ctx, &req)
 }
+
 func (p *PolicyResolverServer) Unassign(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req PolicyAssignment
 	var err error
@@ -668,6 +709,7 @@ func (p *PolicyResolverServer) Unassign(ctx context.Context, reqBytes *[]byte) (
 	}
 	return p.handler.Unassign(ctx, &req)
 }
+
 func (p *PolicyResolverServer) SetProps(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req PropsReq
 	var err error
@@ -692,6 +734,7 @@ func (p *PolicyResolverServer) SetProps(ctx context.Context, reqBytes *[]byte) (
 	}
 	return p.handler.SetProps(ctx, &req)
 }
+
 func (p *PolicyResolverServer) Resolve(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req ResolveReq
 	var err error
@@ -716,6 +759,7 @@ func (p *PolicyResolverServer) Resolve(ctx context.Context, reqBytes *[]byte) (p
 	}
 	return p.handler.Resolve(ctx, &req)
 }
+
 func (p *PolicyResolverServer) UpdateAssetJobs(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req UpdateAssetJobsReq
 	var err error
@@ -740,6 +784,7 @@ func (p *PolicyResolverServer) UpdateAssetJobs(ctx context.Context, reqBytes *[]
 	}
 	return p.handler.UpdateAssetJobs(ctx, &req)
 }
+
 func (p *PolicyResolverServer) ResolveAndUpdateJobs(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req UpdateAssetJobsReq
 	var err error
@@ -764,6 +809,7 @@ func (p *PolicyResolverServer) ResolveAndUpdateJobs(ctx context.Context, reqByte
 	}
 	return p.handler.ResolveAndUpdateJobs(ctx, &req)
 }
+
 func (p *PolicyResolverServer) GetResolvedPolicy(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req Mrn
 	var err error
@@ -788,6 +834,7 @@ func (p *PolicyResolverServer) GetResolvedPolicy(ctx context.Context, reqBytes *
 	}
 	return p.handler.GetResolvedPolicy(ctx, &req)
 }
+
 func (p *PolicyResolverServer) StoreResults(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req StoreResultsReq
 	var err error
@@ -812,6 +859,7 @@ func (p *PolicyResolverServer) StoreResults(ctx context.Context, reqBytes *[]byt
 	}
 	return p.handler.StoreResults(ctx, &req)
 }
+
 func (p *PolicyResolverServer) GetUploadURL(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req GetUploadURLReq
 	var err error
@@ -836,6 +884,7 @@ func (p *PolicyResolverServer) GetUploadURL(ctx context.Context, reqBytes *[]byt
 	}
 	return p.handler.GetUploadURL(ctx, &req)
 }
+
 func (p *PolicyResolverServer) ReportUploadCompleted(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req ReportUploadCompletedReq
 	var err error
@@ -860,6 +909,7 @@ func (p *PolicyResolverServer) ReportUploadCompleted(ctx context.Context, reqByt
 	}
 	return p.handler.ReportUploadCompleted(ctx, &req)
 }
+
 func (p *PolicyResolverServer) GetDownloadURL(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req GetDownloadURLReq
 	var err error
@@ -884,6 +934,7 @@ func (p *PolicyResolverServer) GetDownloadURL(ctx context.Context, reqBytes *[]b
 	}
 	return p.handler.GetDownloadURL(ctx, &req)
 }
+
 func (p *PolicyResolverServer) GetReport(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req EntityScoreReq
 	var err error
@@ -908,6 +959,7 @@ func (p *PolicyResolverServer) GetReport(ctx context.Context, reqBytes *[]byte) 
 	}
 	return p.handler.GetReport(ctx, &req)
 }
+
 func (p *PolicyResolverServer) GetFrameworkReport(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req EntityScoreReq
 	var err error
@@ -932,6 +984,7 @@ func (p *PolicyResolverServer) GetFrameworkReport(ctx context.Context, reqBytes 
 	}
 	return p.handler.GetFrameworkReport(ctx, &req)
 }
+
 func (p *PolicyResolverServer) GetScore(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req EntityScoreReq
 	var err error
@@ -956,6 +1009,7 @@ func (p *PolicyResolverServer) GetScore(ctx context.Context, reqBytes *[]byte) (
 	}
 	return p.handler.GetScore(ctx, &req)
 }
+
 func (p *PolicyResolverServer) GetResourcesData(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req recording.EntityResourcesReq
 	var err error
@@ -980,6 +1034,7 @@ func (p *PolicyResolverServer) GetResourcesData(ctx context.Context, reqBytes *[
 	}
 	return p.handler.GetResourcesData(ctx, &req)
 }
+
 func (p *PolicyResolverServer) SynchronizeAssets(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req SynchronizeAssetsReq
 	var err error
@@ -1004,6 +1059,7 @@ func (p *PolicyResolverServer) SynchronizeAssets(ctx context.Context, reqBytes *
 	}
 	return p.handler.SynchronizeAssets(ctx, &req)
 }
+
 func (p *PolicyResolverServer) PurgeAssets(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req PurgeAssetsRequest
 	var err error
@@ -1028,6 +1084,7 @@ func (p *PolicyResolverServer) PurgeAssets(ctx context.Context, reqBytes *[]byte
 	}
 	return p.handler.PurgeAssets(ctx, &req)
 }
+
 func (p *PolicyResolverServer) RefreshAssetScores(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req RefreshAssetScoresRequest
 	var err error
@@ -1052,6 +1109,7 @@ func (p *PolicyResolverServer) RefreshAssetScores(ctx context.Context, reqBytes 
 	}
 	return p.handler.RefreshAssetScores(ctx, &req)
 }
+
 func (p *PolicyResolverServer) GetScanParameters(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req GetScanParametersReq
 	var err error

@@ -5,7 +5,7 @@ package policy
 
 import (
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/llx"
 )
 
 func Query2Assessment(bundle *llx.CodeBundle, report *Report) *llx.Assessment {

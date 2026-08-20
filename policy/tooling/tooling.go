@@ -5,7 +5,7 @@ package tooling
 
 import (
 	bundlefmt "go.mondoo.com/cnspec/v13/internal/bundle"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/resources"
+	"go.mondoo.com/mql/providers-sdk/v1/resources"
 )
 
 func Format(data []byte) ([]byte, error) {
