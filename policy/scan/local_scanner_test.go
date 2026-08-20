@@ -109,15 +109,16 @@ func TestResolveServerScanParameters_NoUpstream(t *testing.T) {
 	base := mql.SetFeatures(context.Background(), mql.DefaultFeatures)
 
 	t.Run("nil upstream", func(t *testing.T) {
-		ctx, services, spaceMrn, err := s.resolveServerScanParameters(base, nil)
+		ctx, services, spaceMrn, params, err := s.resolveServerScanParameters(base, nil)
 		require.NoError(t, err)
 		require.Equal(t, base, ctx)
 		require.Nil(t, services)
 		require.Empty(t, spaceMrn)
+		require.Nil(t, params)
 	})
 
 	t.Run("incognito upstream", func(t *testing.T) {
-		ctx, services, spaceMrn, err := s.resolveServerScanParameters(base, &upstream.UpstreamConfig{
+		ctx, services, spaceMrn, params, err := s.resolveServerScanParameters(base, &upstream.UpstreamConfig{
 			ApiEndpoint: "https://example.com",
 			Incognito:   true,
 		})
@@ -125,6 +126,7 @@ func TestResolveServerScanParameters_NoUpstream(t *testing.T) {
 		require.Equal(t, base, ctx)
 		require.Nil(t, services)
 		require.Empty(t, spaceMrn)
+		require.Nil(t, params)
 	})
 }
 
@@ -715,5 +717,62 @@ func TestNewLocalScannerWithOptions(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, 9999, rt.AutoUpdate.RefreshInterval)
 		assert.False(t, rt.AutoUpdate.Enabled, "should not be modified if a custom runtime is provided")
+	})
+}
+
+// TestClampToServerMax covers the one rule the server ceiling has to obey: it
+// is a maximum, never a minimum, and it outranks whatever the client picked --
+// including a parallelism the user asked for explicitly.
+func TestClampToServerMax(t *testing.T) {
+	tests := []struct {
+		name        string
+		parallelism int
+		serverMax   int
+		expected    int
+	}{
+		{name: "no server limit set", parallelism: 8, serverMax: 0, expected: 8},
+		{name: "negative server limit is ignored", parallelism: 8, serverMax: -1, expected: 8},
+		{name: "server limit above the client value", parallelism: 4, serverMax: 16, expected: 4},
+		{name: "server limit equal to the client value", parallelism: 6, serverMax: 6, expected: 6},
+		{name: "server limit cuts the client value down", parallelism: 8, serverMax: 2, expected: 2},
+		{name: "server can force sequential", parallelism: 8, serverMax: 1, expected: 1},
+		{name: "server never raises a sequential scan", parallelism: 1, serverMax: 16, expected: 1},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, clampToServerMax(tc.parallelism, tc.serverMax))
+		})
+	}
+}
+
+// TestScanParametersMaxParallelismDefaultsToUnset pins the wire behavior the
+// clamp depends on: a server that says nothing about parallelism must read back
+// as zero, which clampToServerMax treats as "no limit" rather than "sequential".
+func TestScanParametersMaxParallelismDefaultsToUnset(t *testing.T) {
+	var nilParams *policy.ScanParameters
+	assert.Equal(t, int32(0), nilParams.GetMaxParallelism(), "a nil response must not throttle the scan")
+
+	empty := &policy.ScanParameters{EnabledFeatures: []string{"some-feature"}}
+	assert.Equal(t, int32(0), empty.GetMaxParallelism())
+	assert.Equal(t, 8, clampToServerMax(8, int(empty.GetMaxParallelism())))
+}
+
+// TestResolveScanParallelismServerOutranksTheClient pins the ordering the
+// server ceiling depends on: it is applied after the client has made its
+// choice, so it cuts down an explicit --parallelism rather than losing to it.
+func TestResolveScanParallelismServerOutranksTheClient(t *testing.T) {
+	t.Run("explicit request with no server limit", func(t *testing.T) {
+		assert.Equal(t, 20, resolveScanParallelism(20, nil, 0))
+	})
+
+	t.Run("server limit cuts an explicit request down", func(t *testing.T) {
+		assert.Equal(t, 2, resolveScanParallelism(20, nil, 2),
+			"an explicit --parallelism must not escape the server ceiling")
+	})
+
+	t.Run("server limit never raises the resolved value", func(t *testing.T) {
+		// No roots means no provider opted in, which resolves to sequential.
+		assert.Equal(t, 1, resolveScanParallelism(0, nil, 16))
 	})
 }

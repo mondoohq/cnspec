@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 )
 
@@ -122,4 +123,15 @@ func TestApplyAutoDiscoveredInventory_OnlyFirstMatchingAssetIsMergedIntoTarget(t
 		"only the first matching inventory asset's id_detector should be lifted")
 	assert.Equal(t, []*inventory.Asset{target}, inv.Spec.Assets,
 		"second-local and all other inventory assets should be discarded")
+}
+
+// TestParallelismFlagDefaultsToAuto pins the contract behind the flag's zero
+// value: unset means "let the scanner derive a default from the providers behind
+// the root assets", not "scan sequentially". Restoring the old default of 1 would
+// silently turn every scan sequential again without failing anything else.
+func TestParallelismFlagDefaultsToAuto(t *testing.T) {
+	flag := scanCmd.Flags().Lookup("parallelism")
+	require.NotNil(t, flag, "--parallelism flag should be registered")
+	assert.Equal(t, "0", flag.DefValue,
+		"an unset --parallelism must reach the scanner as 0 so it resolves a provider default")
 }

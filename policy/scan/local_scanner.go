@@ -377,7 +377,8 @@ func withServerFeatures(ctx context.Context, featureNames []string) context.Cont
 // resolveServerScanParameters fetches server-controlled scan parameters and
 // layers any server-activated features onto ctx. It returns the enriched ctx
 // plus the resolved remote services and space MRN, which the scan pipeline
-// reuses.
+// reuses, and the parameters themselves for the settings the pipeline reads
+// directly (e.g. MaxParallelism).
 //
 // This MUST run before asset discovery. Connection-level features (e.g.
 // TerraformResolveVars, read at provider Connect time) only take effect if they
@@ -385,33 +386,64 @@ func withServerFeatures(ctx context.Context, featureNames []string) context.Cont
 // the root asset. Fetching scan parameters after discovery — as this code used
 // to — left those features inactive on the root connection. For incognito or
 // credential-less scans it is a no-op that returns ctx unchanged with nil
-// services.
-func (s *LocalScanner) resolveServerScanParameters(ctx context.Context, upstreamConfig *upstream.UpstreamConfig) (context.Context, *policy.Services, string, error) {
+// services and nil parameters.
+func (s *LocalScanner) resolveServerScanParameters(ctx context.Context, upstreamConfig *upstream.UpstreamConfig) (context.Context, *policy.Services, string, *policy.ScanParameters, error) {
 	if upstreamConfig == nil || upstreamConfig.ApiEndpoint == "" || upstreamConfig.Incognito {
-		return ctx, nil, "", nil
+		return ctx, nil, "", nil, nil
 	}
 
 	client, err := upstreamConfig.InitClient(ctx)
 	if err != nil {
-		return ctx, nil, "", err
+		return ctx, nil, "", nil, err
 	}
 	spaceMrn := client.SpaceMrn
 
 	services, err := policy.NewRemoteServices(client.ApiEndpoint, client.Plugins, client.HttpClient)
 	if err != nil {
-		return ctx, nil, "", err
+		return ctx, nil, "", nil, err
 	}
 
 	resp, err := services.GetScanParameters(ctx, &policy.GetScanParametersReq{ScopeMrn: spaceMrn})
 	if err != nil {
 		// A failed scan-parameters call must not abort the scan; proceed without
-		// server-activated features.
+		// server-activated features. Note that this also means we proceed without
+		// the server's parallelism ceiling: it is a throttle for a scope under
+		// load, not a safety control, and failing the scan over an unreachable
+		// settings endpoint would be worse than scanning at the local default.
 		log.Warn().Err(err).Msg("could not get server scan parameters")
-		return ctx, services, spaceMrn, nil
+		return ctx, services, spaceMrn, nil, nil
 	}
 
 	ctx = withServerFeatures(ctx, resp.GetEnabledFeatures())
-	return ctx, services, spaceMrn, nil
+	return ctx, services, spaceMrn, resp, nil
+}
+
+// resolveScanParallelism decides how many assets this scan may run at once.
+// The provider defaults (or the user's explicit --parallelism) are resolved
+// first, then the server's ceiling is applied on top -- in that order, so the
+// server outranks an explicit request rather than merely competing with it.
+func resolveScanParallelism(requested int, roots []*inventory.Asset, serverMax int) int {
+	parallelism := providers.ResolveParallelism(requested, roots)
+
+	limited := clampToServerMax(parallelism, serverMax)
+	if limited != parallelism {
+		log.Info().
+			Int("requested", parallelism).
+			Int("server_max", serverMax).
+			Msg("scan parallelism limited by the server")
+	}
+	return limited
+}
+
+// clampToServerMax applies the server's ceiling on scan parallelism. The server
+// gets the last word — above the provider's declared default and above an
+// explicit --parallelism — so a scope under load can throttle every scan pointed
+// at it without touching the clients. A max of zero means the server set none.
+func clampToServerMax(parallelism, serverMax int) int {
+	if serverMax <= 0 || parallelism <= serverMax {
+		return parallelism
+	}
+	return serverMax
 }
 
 func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *upstream.UpstreamConfig) (*ScanResult, error) {
@@ -449,7 +481,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	// Fetch server-controlled scan parameters and layer any server-activated
 	// features onto ctx BEFORE discovery, so connection-level features (e.g.
 	// TerraformResolveVars) are present when discovery connects the root asset.
-	ctx, services, spaceMrn, err := s.resolveServerScanParameters(ctx, upstream)
+	ctx, services, spaceMrn, scanParams, err := s.resolveServerScanParameters(ctx, upstream)
 	if err != nil {
 		return nil, err
 	}
@@ -494,13 +526,25 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	// is safe
 	defer multiprogress.Close()
 
-	parallelism := int(job.Parallelism)
-	if parallelism < 1 {
-		parallelism = 1
+	// Children are connected one branch at a time further down, so everything
+	// Connected() reports right now is a root -- the set the default parallelism
+	// is derived from. A job that carries an explicit parallelism keeps it; the
+	// roots are only consulted when it does not.
+	connectedRoots := explorer.Connected()
+	rootAssets := make([]*inventory.Asset, 0, len(connectedRoots))
+	for _, root := range connectedRoots {
+		rootAssets = append(rootAssets, root.Asset)
 	}
+	serverMax := int(scanParams.GetMaxParallelism())
+	parallelism := resolveScanParallelism(int(job.Parallelism), rootAssets, serverMax)
 
 	maxConn := getMaxConnections()
-	log.Info().Int("max_connections", maxConn).Int("parallelism", parallelism).Msg("scan pipeline configuration")
+	log.Info().
+		Int("max_connections", maxConn).
+		Int("parallelism", parallelism).
+		Bool("parallelism_explicit", job.Parallelism > 0).
+		Int("server_max_parallelism", serverMax).
+		Msg("scan pipeline configuration")
 	connSem := make(chan struct{}, maxConn)
 	var scannedAssets atomic.Int64
 

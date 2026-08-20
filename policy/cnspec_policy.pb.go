@@ -8933,8 +8933,14 @@ func (x *GetScanParametersReq) GetScopeMrn() string {
 type ScanParameters struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	EnabledFeatures []string               `protobuf:"bytes,1,rep,name=enabled_features,json=enabledFeatures,proto3" json:"enabled_features,omitempty"` // mql feature names enabled by server
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Hard ceiling on how many assets a client may scan concurrently in this
+	// scope. It overrules everything the client would otherwise pick, including
+	// an explicit --parallelism, so a scope under load can throttle the scans
+	// pointed at it without any client-side change. Zero (or unset) means the
+	// server sets no limit and the client decides on its own.
+	MaxParallelism int32 `protobuf:"varint,2,opt,name=max_parallelism,json=maxParallelism,proto3" json:"max_parallelism,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ScanParameters) Reset() {
@@ -8972,6 +8978,13 @@ func (x *ScanParameters) GetEnabledFeatures() []string {
 		return x.EnabledFeatures
 	}
 	return nil
+}
+
+func (x *ScanParameters) GetMaxParallelism() int32 {
+	if x != nil {
+		return x.MaxParallelism
+	}
+	return 0
 }
 
 type PurgeAssetsRequest struct {
@@ -10338,9 +10351,10 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12H\n" +
 	"\x05value\x18\x02 \x01(\v22.cnspec.policy.v1.SynchronizeAssetsRespAssetDetailR\x05value:\x028\x01\"3\n" +
 	"\x14GetScanParametersReq\x12\x1b\n" +
-	"\tscope_mrn\x18\x01 \x01(\tR\bscopeMrn\";\n" +
+	"\tscope_mrn\x18\x01 \x01(\tR\bscopeMrn\"d\n" +
 	"\x0eScanParameters\x12)\n" +
-	"\x10enabled_features\x18\x01 \x03(\tR\x0fenabledFeatures\"\x97\x03\n" +
+	"\x10enabled_features\x18\x01 \x03(\tR\x0fenabledFeatures\x12'\n" +
+	"\x0fmax_parallelism\x18\x02 \x01(\x05R\x0emaxParallelism\"\x97\x03\n" +
 	"\x12PurgeAssetsRequest\x12\x1a\n" +
 	"\bspaceMrn\x18\x01 \x01(\tR\bspaceMrn\x12\x1d\n" +
 	"\n" +
