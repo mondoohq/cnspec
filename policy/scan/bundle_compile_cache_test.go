@@ -17,6 +17,7 @@ import (
 	"go.mondoo.com/mql/v13/mqlc"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/resources"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/testutils"
+	"google.golang.org/protobuf/proto"
 )
 
 func testBundle(t *testing.T) *policy.Bundle {
@@ -50,14 +51,15 @@ func TestBundleCompileCache_ReusesResultForSameSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, second)
 
-	// The maps are reused, so the compiled code is the same object.
-	assert.NotSame(t, first, second, "each caller gets its own map header")
+	// The compiled code is reused, while mutable bundle values are isolated.
+	assert.NotSame(t, first, second, "each caller gets its own map")
 	assert.Equal(t, first.OwnerMrn, second.OwnerMrn)
 	require.Equal(t, len(first.Queries), len(second.Queries))
 	for mrn, q := range first.Queries {
 		other, ok := second.Queries[mrn]
 		require.True(t, ok, "query %s missing on reuse", mrn)
-		assert.Same(t, q, other)
+		assert.NotSame(t, q, other)
+		assert.Equal(t, q.Mrn, other.Mrn)
 	}
 	require.Equal(t, len(first.Code), len(second.Code))
 	for id, code := range first.Code {
@@ -65,6 +67,22 @@ func TestBundleCompileCache_ReusesResultForSameSchema(t *testing.T) {
 		require.True(t, ok, "code %s missing on reuse", id)
 		assert.Same(t, code, other)
 	}
+}
+
+func TestBundleCompileCache_LeavesSourceBundleUntouched(t *testing.T) {
+	runtime := testutils.Local()
+	bundle := testBundle(t)
+	conf := testCompileConf(t, runtime.Schema())
+
+	before, err := proto.Marshal(bundle)
+	require.NoError(t, err)
+
+	_, err = newBundleCompileCache().compile(context.Background(), bundle, conf)
+	require.NoError(t, err)
+
+	after, err := proto.Marshal(bundle)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
 }
 
 func TestBundleCompileCache_CarriesCallerLibrary(t *testing.T) {
