@@ -494,13 +494,23 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	// is safe
 	defer multiprogress.Close()
 
-	parallelism := int(job.Parallelism)
-	if parallelism < 1 {
-		parallelism = 1
+	// Children are connected one branch at a time further down, so everything
+	// Connected() reports right now is a root -- the set the default parallelism
+	// is derived from. A job that carries an explicit parallelism keeps it; the
+	// roots are only consulted when it does not.
+	connectedRoots := explorer.Connected()
+	rootAssets := make([]*inventory.Asset, 0, len(connectedRoots))
+	for _, root := range connectedRoots {
+		rootAssets = append(rootAssets, root.Asset)
 	}
+	parallelism := providers.ResolveParallelism(int(job.Parallelism), rootAssets)
 
 	maxConn := getMaxConnections()
-	log.Info().Int("max_connections", maxConn).Int("parallelism", parallelism).Msg("scan pipeline configuration")
+	log.Info().
+		Int("max_connections", maxConn).
+		Int("parallelism", parallelism).
+		Bool("parallelism_explicit", job.Parallelism > 0).
+		Msg("scan pipeline configuration")
 	connSem := make(chan struct{}, maxConn)
 	var scannedAssets atomic.Int64
 
