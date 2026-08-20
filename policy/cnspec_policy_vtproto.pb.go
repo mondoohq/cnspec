@@ -2940,6 +2940,7 @@ func (m *ScanParameters) CloneVT() *ScanParameters {
 		return (*ScanParameters)(nil)
 	}
 	r := new(ScanParameters)
+	r.MaxParallelism = m.MaxParallelism
 	if rhs := m.EnabledFeatures; rhs != nil {
 		tmpContainer := make([]string, len(rhs))
 		copy(tmpContainer, rhs)
@@ -11334,6 +11335,11 @@ func (m *ScanParameters) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.MaxParallelism != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.MaxParallelism))
+		i--
+		dAtA[i] = 0x10
+	}
 	if len(m.EnabledFeatures) > 0 {
 		for iNdEx := len(m.EnabledFeatures) - 1; iNdEx >= 0; iNdEx-- {
 			i -= len(m.EnabledFeatures[iNdEx])
@@ -15278,6 +15284,9 @@ func (m *ScanParameters) SizeVT() (n int) {
 			l = len(s)
 			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 		}
+	}
+	if m.MaxParallelism != 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(m.MaxParallelism))
 	}
 	n += len(m.unknownFields)
 	return n
@@ -38963,6 +38972,25 @@ func (m *ScanParameters) UnmarshalVT(dAtA []byte) error {
 			}
 			m.EnabledFeatures = append(m.EnabledFeatures, string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MaxParallelism", wireType)
+			}
+			m.MaxParallelism = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.MaxParallelism |= int32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
