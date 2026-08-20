@@ -152,7 +152,7 @@ func TestNetworkPostureContent(t *testing.T) {
 		assert.Contains(t, queries["mondoo-kubernetes-network-posture-public-egress-nat-owned"], `k8s.egressNats.where(publicCidrs.length > 0)`)
 		assert.Contains(t, queries["mondoo-kubernetes-network-posture-public-egress-nat-owned"], `sourceRef != empty`)
 		assert.Contains(t, queries["mondoo-kubernetes-network-posture-public-egress-nat-owned"], `metadataClassification != empty && owner != empty`)
-		assert.Contains(t, queries["mondoo-kubernetes-network-posture-secondary-interface-covered"], `k8s.networkPolicyCoverages.where(interfaces.contains("secondary") && workloadRef != "").all`)
+		assert.Contains(t, queries["mondoo-kubernetes-network-posture-secondary-interface-covered"], `k8s.networkPolicyCoverages.where(interfaces.contains("secondary") && workloadRef != empty).all`)
 		assert.NotContains(t, queries["mondoo-kubernetes-network-posture-secondary-interface-covered"], `length > 0 &&`)
 		assert.Contains(t, queries["mondoo-kubernetes-network-posture-primary-egress-isolated"], `k8s.networkPolicyCoverages.where(interfaces.contains("primary")).length > 0`)
 		assert.Contains(t, queries["mondoo-kubernetes-network-posture-admin-policy-deny-semantics"], `adminNetworkPolicies.length > 0`)
