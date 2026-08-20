@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
-	"go.mondoo.com/cnspec/v13"
-	"go.mondoo.com/cnspec/v13/internal/sbom"
+	"go.mondoo.com/cnspec"
+	"go.mondoo.com/cnspec/internal/sbom"
 	cr "go.mondoo.com/mql/cli/reporter"
 	"go.mondoo.com/mql/mrn"
 	"go.mondoo.com/mql/utils/sortx"

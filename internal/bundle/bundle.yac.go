@@ -8,7 +8,8 @@ package bundle
 import (
 	"encoding/json"
 	"errors"
-	"go.mondoo.com/cnspec/v13/policy"
+
+	"go.mondoo.com/cnspec/policy"
 	"gopkg.in/yaml.v3"
 )
 
@@ -26,7 +27,6 @@ type Comments struct {
 type Action policy.Action
 
 func (s *Action) UnmarshalYAML(node *yaml.Node) error {
-
 	var decoded any
 	err := node.Decode(&decoded)
 	if err != nil {
@@ -675,7 +675,6 @@ func (d FrameworkRef) MarshalYAML() (any, error) {
 type GroupType policy.GroupType
 
 func (s *GroupType) UnmarshalYAML(node *yaml.Node) error {
-
 	var decoded any
 	err := node.Decode(&decoded)
 	if err != nil {
@@ -1151,7 +1150,6 @@ func (d MigrationTarget) MarshalYAML() (any, error) {
 type Migration_Action policy.Migration_Action
 
 func (s *Migration_Action) UnmarshalYAML(node *yaml.Node) error {
-
 	var decoded any
 	err := node.Decode(&decoded)
 	if err != nil {
@@ -2080,7 +2078,6 @@ func (d ResourceSelector) MarshalYAML() (any, error) {
 type ReviewStatus policy.ReviewStatus
 
 func (s *ReviewStatus) UnmarshalYAML(node *yaml.Node) error {
-
 	var decoded any
 	err := node.Decode(&decoded)
 	if err != nil {
@@ -2235,7 +2232,6 @@ func (x *RiskMagnitude) addFileContext(node *yaml.Node) {
 type ScopeType policy.ScopeType
 
 func (s *ScopeType) UnmarshalYAML(node *yaml.Node) error {
-
 	var decoded any
 	err := node.Decode(&decoded)
 	if err != nil {

@@ -1,4 +1,4 @@
-module go.mondoo.com/cnspec/v13
+module go.mondoo.com/cnspec
 
 go 1.26.6
 

@@ -10,13 +10,12 @@
 package reporter
 
 import (
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
-
 	reporter "go.mondoo.com/mql/cli/reporter"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
 )
 
 const (
@@ -230,7 +229,7 @@ const file_cnspec_report_proto_rawDesc = "" +
 	"ScoreValue\x12\x14\n" +
 	"\x05score\x18\x01 \x01(\rR\x05score\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x1c\n" +
-	"\triskScore\x18\x03 \x01(\rR\triskScoreB'Z%go.mondoo.com/cnspec/v13/cli/reporterb\x06proto3"
+	"\triskScore\x18\x03 \x01(\rR\triskScoreB#Z!go.mondoo.com/cnspec/cli/reporterb\x06proto3"
 
 var (
 	file_cnspec_report_proto_rawDescOnce sync.Once
@@ -244,21 +243,19 @@ func file_cnspec_report_proto_rawDescGZIP() []byte {
 	return file_cnspec_report_proto_rawDescData
 }
 
-var (
-	file_cnspec_report_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
-	file_cnspec_report_proto_goTypes  = []any{
-		(*Report)(nil),              // 0: mondoo.report.cnspec.v1.Report
-		(*ScoreValues)(nil),         // 1: mondoo.report.cnspec.v1.ScoreValues
-		(*ScoreValue)(nil),          // 2: mondoo.report.cnspec.v1.ScoreValue
-		nil,                         // 3: mondoo.report.cnspec.v1.Report.AssetsEntry
-		nil,                         // 4: mondoo.report.cnspec.v1.Report.DataEntry
-		nil,                         // 5: mondoo.report.cnspec.v1.Report.ErrorsEntry
-		nil,                         // 6: mondoo.report.cnspec.v1.Report.ScoresEntry
-		nil,                         // 7: mondoo.report.cnspec.v1.ScoreValues.ValuesEntry
-		(*reporter.Asset)(nil),      // 8: mondoo.report.mql.v1.Asset
-		(*reporter.DataValues)(nil), // 9: mondoo.report.mql.v1.DataValues
-	}
-)
+var file_cnspec_report_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_cnspec_report_proto_goTypes = []any{
+	(*Report)(nil),              // 0: mondoo.report.cnspec.v1.Report
+	(*ScoreValues)(nil),         // 1: mondoo.report.cnspec.v1.ScoreValues
+	(*ScoreValue)(nil),          // 2: mondoo.report.cnspec.v1.ScoreValue
+	nil,                         // 3: mondoo.report.cnspec.v1.Report.AssetsEntry
+	nil,                         // 4: mondoo.report.cnspec.v1.Report.DataEntry
+	nil,                         // 5: mondoo.report.cnspec.v1.Report.ErrorsEntry
+	nil,                         // 6: mondoo.report.cnspec.v1.Report.ScoresEntry
+	nil,                         // 7: mondoo.report.cnspec.v1.ScoreValues.ValuesEntry
+	(*reporter.Asset)(nil),      // 8: mondoo.report.mql.v1.Asset
+	(*reporter.DataValues)(nil), // 9: mondoo.report.mql.v1.DataValues
+}
 var file_cnspec_report_proto_depIdxs = []int32{
 	3, // 0: mondoo.report.cnspec.v1.Report.assets:type_name -> mondoo.report.cnspec.v1.Report.AssetsEntry
 	4, // 1: mondoo.report.cnspec.v1.Report.data:type_name -> mondoo.report.cnspec.v1.Report.DataEntry

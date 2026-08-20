@@ -5,7 +5,7 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
-	"go.mondoo.com/cnspec/v13/internal/lsp"
+	"go.mondoo.com/cnspec/internal/lsp"
 )
 
 func init() {

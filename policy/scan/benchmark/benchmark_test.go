@@ -11,8 +11,8 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/cnspec/v13/policy/scan"
+	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/policy/scan"
 	"go.mondoo.com/mql"
 	"go.mondoo.com/mql/mqlc"
 	"go.mondoo.com/mql/providers"

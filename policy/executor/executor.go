@@ -11,8 +11,8 @@ import (
 
 	vrs "github.com/hashicorp/go-version"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/v13"
-	"go.mondoo.com/cnspec/v13/policy/executor/internal"
+	"go.mondoo.com/cnspec"
+	"go.mondoo.com/cnspec/policy/executor/internal"
 	"go.mondoo.com/mql"
 	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/logger"

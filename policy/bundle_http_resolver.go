@@ -12,7 +12,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/v13"
+	"go.mondoo.com/cnspec"
 )
 
 const maxBundleSize = 10 << 20 // 10 MiB

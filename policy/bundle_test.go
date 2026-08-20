@@ -15,8 +15,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v13/internal/datalakes/inmemory"
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/internal/datalakes/inmemory"
+	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/providers"
 	llxtypes "go.mondoo.com/mql/types"
 )

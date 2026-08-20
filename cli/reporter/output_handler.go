@@ -7,7 +7,7 @@ import (
 	"bytes"
 	"context"
 
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/utils/iox"
 	_ "gocloud.dev/pubsub/awssnssqs"
 	_ "gocloud.dev/pubsub/azuresb"

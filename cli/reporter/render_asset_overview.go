@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/cli/printer"
 )
 

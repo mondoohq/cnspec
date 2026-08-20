@@ -7,9 +7,6 @@ package policy
 import (
 	binary "encoding/binary"
 	fmt "fmt"
-	io "io"
-	math "math"
-
 	protohelpers "github.com/planetscale/vtprotobuf/protohelpers"
 	anypb1 "github.com/planetscale/vtprotobuf/types/known/anypb"
 	timestamppb1 "github.com/planetscale/vtprotobuf/types/known/timestamppb"
@@ -20,6 +17,8 @@ import (
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	anypb "google.golang.org/protobuf/types/known/anypb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
+	io "io"
+	math "math"
 )
 
 const (
@@ -10975,7 +10974,6 @@ func (m *Metric_IntValue) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	dAtA[i] = 0x18
 	return len(dAtA) - i, nil
 }
-
 func (m *Metric_DoubleValue) MarshalToVT(dAtA []byte) (int, error) {
 	size := m.SizeVT()
 	return m.MarshalToSizedBufferVT(dAtA[:size])
@@ -10989,7 +10987,6 @@ func (m *Metric_DoubleValue) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	dAtA[i] = 0x21
 	return len(dAtA) - i, nil
 }
-
 func (m *Metric_BoolValue) MarshalToVT(dAtA []byte) (int, error) {
 	size := m.SizeVT()
 	return m.MarshalToSizedBufferVT(dAtA[:size])
@@ -11007,7 +11004,6 @@ func (m *Metric_BoolValue) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	dAtA[i] = 0x28
 	return len(dAtA) - i, nil
 }
-
 func (m *Metric_StringValue) MarshalToVT(dAtA []byte) (int, error) {
 	size := m.SizeVT()
 	return m.MarshalToSizedBufferVT(dAtA[:size])
@@ -11022,7 +11018,6 @@ func (m *Metric_StringValue) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	dAtA[i] = 0x32
 	return len(dAtA) - i, nil
 }
-
 func (m *EntityScoreReq) MarshalVT() (dAtA []byte, err error) {
 	if m == nil {
 		return nil, nil
@@ -15129,7 +15124,6 @@ func (m *Metric_IntValue) SizeVT() (n int) {
 	n += 1 + protohelpers.SizeOfVarint(uint64(m.IntValue))
 	return n
 }
-
 func (m *Metric_DoubleValue) SizeVT() (n int) {
 	if m == nil {
 		return 0
@@ -15139,7 +15133,6 @@ func (m *Metric_DoubleValue) SizeVT() (n int) {
 	n += 9
 	return n
 }
-
 func (m *Metric_BoolValue) SizeVT() (n int) {
 	if m == nil {
 		return 0
@@ -15149,7 +15142,6 @@ func (m *Metric_BoolValue) SizeVT() (n int) {
 	n += 2
 	return n
 }
-
 func (m *Metric_StringValue) SizeVT() (n int) {
 	if m == nil {
 		return 0
@@ -15160,7 +15152,6 @@ func (m *Metric_StringValue) SizeVT() (n int) {
 	n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	return n
 }
-
 func (m *EntityScoreReq) SizeVT() (n int) {
 	if m == nil {
 		return 0
@@ -15584,7 +15575,6 @@ func (m *ImpactValue) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Impact) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -15729,7 +15719,6 @@ func (m *Impact) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ObjectRef) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -15972,7 +15961,6 @@ func (m *ObjectRef) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Author) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -16088,7 +16076,6 @@ func (m *Author) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *MqueryRef) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -16204,7 +16191,6 @@ func (m *MqueryRef) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *HumanTime) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -16275,7 +16261,6 @@ func (m *HumanTime) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *TypedDoc) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -16588,7 +16573,6 @@ func (m *TypedDoc) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Remediation) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -16674,7 +16658,6 @@ func (m *Remediation) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *MqueryDocs) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -16860,7 +16843,6 @@ func (m *MqueryDocs) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Filters) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -17041,7 +17023,6 @@ func (m *Filters) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Property) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -17415,7 +17396,6 @@ func (m *Property) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Mquery) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -18143,7 +18123,6 @@ func (m *Mquery) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *QueryPackDocs) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -18227,7 +18206,6 @@ func (m *QueryPackDocs) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *QueryGroup) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -18451,7 +18429,6 @@ func (m *QueryGroup) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *QueryPack) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -19266,7 +19243,6 @@ func (m *QueryPack) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *PropsReq) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -19384,7 +19360,6 @@ func (m *PropsReq) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *PolicyGroup) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -19911,7 +19886,6 @@ func (m *PolicyGroup) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Validity) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -20035,7 +20009,6 @@ func (m *Validity) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *PolicyRef) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -20276,7 +20249,6 @@ func (m *PolicyRef) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Policy) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -21142,7 +21114,6 @@ func (m *Policy) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Policies) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -21228,7 +21199,6 @@ func (m *Policies) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Requirement) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -21376,7 +21346,6 @@ func (m *Requirement) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *QueryCounts) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -21485,7 +21454,6 @@ func (m *QueryCounts) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Bundle) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -21843,7 +21811,6 @@ func (m *Bundle) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *MigrationPolicyRef) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -21959,7 +21926,6 @@ func (m *MigrationPolicyRef) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *MigrationGroup) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -22183,7 +22149,6 @@ func (m *MigrationGroup) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *MigrationConditions) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -22307,7 +22272,6 @@ func (m *MigrationConditions) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *MigrationMetadata) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -22554,7 +22518,6 @@ func (m *MigrationMetadata) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *MigrationStage) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -22706,7 +22669,6 @@ func (m *MigrationStage) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Migration) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -22849,7 +22811,6 @@ func (m *Migration) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *MigrationSource) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -22965,7 +22926,6 @@ func (m *MigrationSource) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *MigrationTarget) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -23081,7 +23041,6 @@ func (m *MigrationTarget) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *SoftwareSelector) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -23293,7 +23252,6 @@ func (m *SoftwareSelector) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ResourceSelector) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -23377,7 +23335,6 @@ func (m *ResourceSelector) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *RiskMagnitude) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -23460,7 +23417,6 @@ func (m *RiskMagnitude) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *RiskFactor) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -24112,7 +24068,6 @@ func (m *RiskFactor) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *RiskFactorDocs) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -24228,7 +24183,6 @@ func (m *RiskFactorDocs) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *PolicyGroupDocs) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -24344,7 +24298,6 @@ func (m *PolicyGroupDocs) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *PolicyDocs) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -24428,7 +24381,6 @@ func (m *PolicyDocs) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Framework) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -25169,7 +25121,6 @@ func (m *Framework) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Frameworks) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -25255,7 +25206,6 @@ func (m *Frameworks) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *FrameworkGroup) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -25642,7 +25592,6 @@ func (m *FrameworkGroup) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *FrameworkRef) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -25777,7 +25726,6 @@ func (m *FrameworkRef) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Evidence) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -26059,7 +26007,6 @@ func (m *Evidence) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Control) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -26475,7 +26422,6 @@ func (m *Control) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *FrameworkMap) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -26827,7 +26773,6 @@ func (m *FrameworkMap) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ControlMap) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -27079,7 +27024,6 @@ func (m *ControlMap) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ControlDocs) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -27197,7 +27141,6 @@ func (m *ControlDocs) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ControlRef) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -27332,7 +27275,6 @@ func (m *ControlRef) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Asset) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -27524,7 +27466,6 @@ func (m *Asset) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ResolvedPolicy) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -27847,7 +27788,6 @@ func (m *ResolvedPolicy) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ExecutionJob) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -28060,7 +28000,6 @@ func (m *ExecutionJob) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ExecutionQuery) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -28379,7 +28318,6 @@ func (m *ExecutionQuery) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *CollectorJob) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -29237,7 +29175,6 @@ func (m *CollectorJob) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *RiskDataInfo) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -29416,7 +29353,6 @@ func (m *RiskDataInfo) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *StringArray) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -29500,7 +29436,6 @@ func (m *StringArray) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *DataQueryInfo) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -29616,7 +29551,6 @@ func (m *DataQueryInfo) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ReportingJob) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -30130,7 +30064,6 @@ func (m *ReportingJob) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Report) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -30959,7 +30892,6 @@ func (m *Report) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Reports) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -31045,7 +30977,6 @@ func (m *Reports) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ReportCollection) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -31792,7 +31723,6 @@ func (m *ReportCollection) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *FrameworkReport) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -31978,7 +31908,6 @@ func (m *FrameworkReport) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ControlScore) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -32282,7 +32211,6 @@ func (m *ControlScore) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Cvss) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -32481,7 +32409,6 @@ func (m *Cvss) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *CvssStats) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -32685,7 +32612,6 @@ func (m *CvssStats) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Score) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -33080,7 +33006,6 @@ func (m *Score) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ScoreDelta) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -33240,7 +33165,6 @@ func (m *ScoreDelta) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ScoredRiskFactor) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -33512,7 +33436,6 @@ func (m *ScoredRiskFactor) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ScoredRiskFactors) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -33598,7 +33521,6 @@ func (m *ScoredRiskFactors) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *RiskFactorStats) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -33784,7 +33706,6 @@ func (m *RiskFactorStats) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *RiskFactorsStats) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -33870,7 +33791,6 @@ func (m *RiskFactorsStats) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Stats) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -34125,7 +34045,6 @@ func (m *Stats) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ScoreDistribution) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -34329,7 +34248,6 @@ func (m *ScoreDistribution) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ScoreStats) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -34666,7 +34584,6 @@ func (m *ScoreStats) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *AssetFindingsStats) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -34903,7 +34820,6 @@ func (m *AssetFindingsStats) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Empty) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -34955,7 +34871,6 @@ func (m *Empty) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Mrn) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -35039,7 +34954,6 @@ func (m *Mrn) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Mqueries) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -35125,7 +35039,6 @@ func (m *Mqueries) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ListReq) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -35241,7 +35154,6 @@ func (m *ListReq) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *DefaultPoliciesReq) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -35453,7 +35365,6 @@ func (m *DefaultPoliciesReq) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *URLs) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -35537,7 +35448,6 @@ func (m *URLs) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *PolicyAssignment) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -35723,7 +35633,6 @@ func (m *PolicyAssignment) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *PolicyMutationDelta) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -35955,7 +35864,6 @@ func (m *PolicyMutationDelta) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *PolicyDelta) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -36077,7 +35985,6 @@ func (m *PolicyDelta) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ResolveReq) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -36195,7 +36102,6 @@ func (m *ResolveReq) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *UpdateAssetJobsReq) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -36313,7 +36219,6 @@ func (m *UpdateAssetJobsReq) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *StoreResultsReq) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -36845,7 +36750,6 @@ func (m *StoreResultsReq) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *GetUploadURLReq) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -36948,7 +36852,6 @@ func (m *GetUploadURLReq) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *GetUploadURLResp) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -37068,7 +36971,6 @@ func (m *GetUploadURLResp) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *UploadURL) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -37298,7 +37200,6 @@ func (m *UploadURL) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ReportUploadCompletedReq) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -37470,7 +37371,6 @@ func (m *ReportUploadCompletedReq) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *GetDownloadURLReq) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -37573,7 +37473,6 @@ func (m *GetDownloadURLReq) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *GetDownloadURLResp) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -37681,7 +37580,6 @@ func (m *GetDownloadURLResp) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *DownloadURL) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -37911,7 +37809,6 @@ func (m *DownloadURL) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ScanStatistics) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -37997,7 +37894,6 @@ func (m *ScanStatistics) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Metric) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -38197,7 +38093,6 @@ func (m *Metric) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *EntityScoreReq) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -38313,7 +38208,6 @@ func (m *EntityScoreReq) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *SynchronizeAssetsReq) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -38439,7 +38333,6 @@ func (m *SynchronizeAssetsReq) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *SynchronizeAssetsRespAssetDetail) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -38746,7 +38639,6 @@ func (m *SynchronizeAssetsRespAssetDetail) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *SynchronizeAssetsResp) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -38927,7 +38819,6 @@ func (m *SynchronizeAssetsResp) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *GetScanParametersReq) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -39011,7 +38902,6 @@ func (m *GetScanParametersReq) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *ScanParameters) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -39095,7 +38985,6 @@ func (m *ScanParameters) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *PurgeAssetsRequest) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -39490,7 +39379,6 @@ func (m *PurgeAssetsRequest) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *DateFilter) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -39612,7 +39500,6 @@ func (m *DateFilter) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *PurgeAssetsConfirmation) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -39823,7 +39710,6 @@ func (m *PurgeAssetsConfirmation) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *RefreshAssetScoresRequest) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -40137,7 +40023,6 @@ func (m *RefreshAssetScoresRequest) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *RefreshAssetScoresResponse) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -40257,7 +40142,6 @@ func (m *RefreshAssetScoresResponse) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *AssetRefreshResult) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -40373,7 +40257,6 @@ func (m *AssetRefreshResult) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Sources) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -40459,7 +40342,6 @@ func (m *Sources) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Source) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0

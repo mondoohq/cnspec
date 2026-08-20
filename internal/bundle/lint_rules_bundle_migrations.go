@@ -3,7 +3,7 @@
 
 package bundle
 
-import "go.mondoo.com/cnspec/v13/policy"
+import "go.mondoo.com/cnspec/policy"
 
 const (
 	BundleMigrationsConfigurationValidationRuleID   = "bundle-migrations-configuration-validation"

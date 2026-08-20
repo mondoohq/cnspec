@@ -7,8 +7,8 @@ import (
 	"go/format"
 	"os"
 
-	yacit "go.mondoo.com/cnspec/v13/internal/yac-it"
-	"go.mondoo.com/cnspec/v13/policy"
+	yacit "go.mondoo.com/cnspec/internal/yac-it"
+	"go.mondoo.com/cnspec/policy"
 )
 
 //go:generate go run ./main.go

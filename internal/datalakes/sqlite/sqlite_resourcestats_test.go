@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v13/policy/scanstats"
+	"go.mondoo.com/cnspec/policy/scanstats"
 )
 
 func TestRecordMemStats_WritesTrackerIntoCollector(t *testing.T) {

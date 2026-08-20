@@ -8,7 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/policy"
 	mondoogql "go.mondoo.com/mondoo-go"
 	"k8s.io/utils/ptr"
 

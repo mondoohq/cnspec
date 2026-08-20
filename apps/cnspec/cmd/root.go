@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
 	"github.com/spf13/viper"
-	"go.mondoo.com/cnspec/v13"
+	"go.mondoo.com/cnspec"
 	cnquery_app "go.mondoo.com/mql/apps/mql/cmd"
 	"go.mondoo.com/mql/cli/config"
 	cli_errors "go.mondoo.com/mql/cli/errors"

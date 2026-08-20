@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/policy"
 )
 
 func TestProtoConversion(t *testing.T) {
@@ -44,5 +44,4 @@ func TestProtoConversion(t *testing.T) {
 		assert.Equal(t, 100, int(score.Score))
 		assert.Equal(t, "pass", score.Status)
 	})
-
 }

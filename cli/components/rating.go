@@ -6,7 +6,7 @@ package components
 import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/cli/theme/colors"
 )
 

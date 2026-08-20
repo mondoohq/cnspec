@@ -9,7 +9,7 @@ import (
 	"errors"
 	"strings"
 
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/policy"
 	cr "go.mondoo.com/mql/cli/reporter"
 	"go.mondoo.com/mql/utils/iox"
 	"google.golang.org/protobuf/encoding/protojson"

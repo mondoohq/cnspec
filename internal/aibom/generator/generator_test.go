@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v13/internal/aibom"
+	"go.mondoo.com/cnspec/internal/aibom"
 )
 
 // whisperTinyHuggingFace returns a HuggingFaceModel that simulates the MQL

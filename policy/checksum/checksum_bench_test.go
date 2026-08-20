@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"testing"
 
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/policy"
 )
 
 // The score/risk checksum pass runs over every scored row of every scan, on

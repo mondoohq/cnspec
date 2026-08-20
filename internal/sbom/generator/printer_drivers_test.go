@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v13/internal/sbom"
+	"go.mondoo.com/cnspec/internal/sbom"
 )
 
 func findPkg(pkgs []*sbom.Package, name string) *sbom.Package {

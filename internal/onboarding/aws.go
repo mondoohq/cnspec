@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 
-	"go.mondoo.com/cnspec/v13/internal/tfgen"
+	"go.mondoo.com/cnspec/internal/tfgen"
 	"go.mondoo.com/mql/cli/theme"
 )
 

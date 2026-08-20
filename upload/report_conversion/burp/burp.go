@@ -16,7 +16,7 @@ import (
 	"regexp"
 	"strings"
 
-	rc "go.mondoo.com/cnspec/v13/upload/report_conversion"
+	rc "go.mondoo.com/cnspec/upload/report_conversion"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
 )
 

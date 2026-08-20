@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/muesli/termenv"
-	"go.mondoo.com/cnspec/v13/cli/components"
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/cli/components"
+	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/cli/printer"
 	"go.mondoo.com/mql/cli/theme/colors"
 )

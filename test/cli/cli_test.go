@@ -11,7 +11,7 @@ import (
 	cmdtest "github.com/google/go-cmdtest"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v13/apps/cnspec/cmd"
+	"go.mondoo.com/cnspec/apps/cnspec/cmd"
 	"go.mondoo.com/mql/providers"
 )
 

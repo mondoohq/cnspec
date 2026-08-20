@@ -11,9 +11,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/cnspec/v13/policy/checksum"
-	"go.mondoo.com/cnspec/v13/policy/scandb/sqlc"
+	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/policy/checksum"
+	"go.mondoo.com/cnspec/policy/scandb/sqlc"
 	"go.mondoo.com/mql/llx"
 	llxchecksum "go.mondoo.com/mql/llx/checksum"
 	"google.golang.org/protobuf/proto"

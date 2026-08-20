@@ -4,7 +4,7 @@
 package tooling
 
 import (
-	bundlefmt "go.mondoo.com/cnspec/v13/internal/bundle"
+	bundlefmt "go.mondoo.com/cnspec/internal/bundle"
 	"go.mondoo.com/mql/providers-sdk/v1/resources"
 )
 

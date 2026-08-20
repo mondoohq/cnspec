@@ -8,7 +8,7 @@ import (
 	"errors"
 	"strconv"
 
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/policy"
 	cr "go.mondoo.com/mql/cli/reporter"
 	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"

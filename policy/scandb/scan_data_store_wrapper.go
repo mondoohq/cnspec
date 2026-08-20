@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/llx"
 )
 

@@ -11,9 +11,9 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
-	"go.mondoo.com/cnspec/v13/upload"
-	rc "go.mondoo.com/cnspec/v13/upload/report_conversion"
-	_ "go.mondoo.com/cnspec/v13/upload/report_conversion/all"
+	"go.mondoo.com/cnspec/upload"
+	rc "go.mondoo.com/cnspec/upload/report_conversion"
+	_ "go.mondoo.com/cnspec/upload/report_conversion/all"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
 	"go.mondoo.com/mql/sbom"
 )

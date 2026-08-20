@@ -19,7 +19,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/v13/internal/scandump"
+	"go.mondoo.com/cnspec/internal/scandump"
 	"go.mondoo.com/mql/logger"
 )
 

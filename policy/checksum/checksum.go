@@ -14,7 +14,7 @@
 package checksum
 
 import (
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/policy"
 	llxchecksum "go.mondoo.com/mql/llx/checksum"
 )
 

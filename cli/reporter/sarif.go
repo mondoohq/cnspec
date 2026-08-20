@@ -12,8 +12,8 @@ import (
 	"strings"
 
 	"github.com/owenrumney/go-sarif/v2/sarif"
-	"go.mondoo.com/cnspec/v13"
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec"
+	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/cli/printer"
 	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/mrn"

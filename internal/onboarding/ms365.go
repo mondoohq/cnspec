@@ -11,7 +11,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/rs/zerolog/log"
 
-	"go.mondoo.com/cnspec/v13/internal/tfgen"
+	"go.mondoo.com/cnspec/internal/tfgen"
 	"go.mondoo.com/mql/cli/theme"
 )
 

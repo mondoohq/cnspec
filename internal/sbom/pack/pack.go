@@ -6,7 +6,7 @@ package pack
 import (
 	_ "embed"
 
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/policy"
 )
 
 // sbomQueryPack is the embedded SBOM query pack YAML

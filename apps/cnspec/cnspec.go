@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/v13"
-	"go.mondoo.com/cnspec/v13/apps/cnspec/cmd"
+	"go.mondoo.com/cnspec"
+	"go.mondoo.com/cnspec/apps/cnspec/cmd"
 	mql "go.mondoo.com/mql"
 	"go.mondoo.com/mql/cli/config"
 	"go.mondoo.com/mql/cli/selfupdate"

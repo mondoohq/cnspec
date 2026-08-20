@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/v13/internal/scandump"
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/internal/scandump"
+	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/llx"
 )
 

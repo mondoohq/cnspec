@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql"
 	"go.mondoo.com/mql/mqlc"
 	"go.mondoo.com/mql/providers-sdk/v1/resources"

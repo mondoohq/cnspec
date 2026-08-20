@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"strings"
 
-	"go.mondoo.com/cnspec/v13/cli/components"
-	"go.mondoo.com/cnspec/v13/cli/components/advisories"
+	"go.mondoo.com/cnspec/cli/components"
+	"go.mondoo.com/cnspec/cli/components/advisories"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/mql/utils/iox"
 )

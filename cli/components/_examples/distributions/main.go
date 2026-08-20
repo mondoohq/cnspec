@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"os"
 
-	"go.mondoo.com/cnspec/v13/cli/components"
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/cli/components"
+	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 )
 
