@@ -11,7 +11,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"go.mondoo.com/cnspec/v13/internal/tfgen"
-	"go.mondoo.com/mql/v13/cli/theme"
+	"go.mondoo.com/mql/cli/theme"
 )
 
 // AwsIntegration represents the configuration of an AWS integration to be created.

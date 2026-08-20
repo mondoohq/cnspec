@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/mql/v13/cli/printer"
+	"go.mondoo.com/mql/cli/printer"
 )
 
 var mqlQueryNames = map[string]string{

@@ -10,7 +10,7 @@
 package reporter
 
 import (
-	reporter "go.mondoo.com/mql/v13/cli/reporter"
+	reporter "go.mondoo.com/mql/cli/reporter"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"

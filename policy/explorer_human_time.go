@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"go.mondoo.com/mql/v13/utils/timex"
+	"go.mondoo.com/mql/utils/timex"
 )
 
 func (t *HumanTime) UnmarshalJSON(data []byte) error {

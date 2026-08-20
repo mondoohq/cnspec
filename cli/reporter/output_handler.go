@@ -8,7 +8,7 @@ import (
 	"context"
 
 	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/mql/v13/utils/iox"
+	"go.mondoo.com/mql/utils/iox"
 	_ "gocloud.dev/pubsub/awssnssqs"
 	_ "gocloud.dev/pubsub/azuresb"
 	"sigs.k8s.io/yaml"

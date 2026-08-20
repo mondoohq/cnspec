@@ -18,9 +18,9 @@ import (
 	"go.mondoo.com/cnspec/v13/internal/aibom/generator"
 	"go.mondoo.com/cnspec/v13/internal/aibom/pack"
 	"go.mondoo.com/cnspec/v13/policy/scan"
-	"go.mondoo.com/mql/v13/logger"
-	"go.mondoo.com/mql/v13/providers"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/plugin"
+	"go.mondoo.com/mql/logger"
+	"go.mondoo.com/mql/providers"
+	"go.mondoo.com/mql/providers-sdk/v1/plugin"
 )
 
 func init() {

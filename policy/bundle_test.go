@@ -17,8 +17,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/v13/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/mql/v13/providers"
-	llxtypes "go.mondoo.com/mql/v13/types"
+	"go.mondoo.com/mql/providers"
+	llxtypes "go.mondoo.com/mql/types"
 )
 
 type s3Fake struct {

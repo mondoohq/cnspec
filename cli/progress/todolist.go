@@ -13,8 +13,8 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"go.mondoo.com/mql/v13/logger"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/logger"
+	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 )
 
 // Option configures the TODO list progress UI.

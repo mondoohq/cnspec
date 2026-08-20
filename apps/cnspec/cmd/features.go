@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"go.mondoo.com/mql/v13"
-	"go.mondoo.com/mql/v13/cli/config"
+	"go.mondoo.com/mql"
+	"go.mondoo.com/mql/cli/config"
 )
 
 // featuresCmd represents the features command

@@ -18,9 +18,9 @@ import (
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnspec/v13/internal/onboarding"
 	cnspec_upstream "go.mondoo.com/cnspec/v13/upstream"
-	"go.mondoo.com/mql/v13/cli/components"
-	"go.mondoo.com/mql/v13/cli/config"
-	"go.mondoo.com/mql/v13/cli/theme"
+	"go.mondoo.com/mql/cli/components"
+	"go.mondoo.com/mql/cli/config"
+	"go.mondoo.com/mql/cli/theme"
 )
 
 const spacePrefix = "//captain.api.mondoo.app/spaces/"

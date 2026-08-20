@@ -15,9 +15,9 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v13/policy"
-	cliconfig "go.mondoo.com/mql/v13/cli/config"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/fex"
+	cliconfig "go.mondoo.com/mql/cli/config"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
 	ranger "go.mondoo.com/ranger-rpc"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"

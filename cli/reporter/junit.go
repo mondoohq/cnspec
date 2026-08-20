@@ -11,9 +11,9 @@ import (
 
 	"github.com/jstemmer/go-junit-report/v2/junit"
 	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/mql/v13/cli/printer"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
-	"go.mondoo.com/mql/v13/utils/iox"
+	"go.mondoo.com/mql/cli/printer"
+	"go.mondoo.com/mql/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/utils/iox"
 )
 
 // ConvertToJunit maps the ReportCollection to Junit. Each asset becomes its own Suite.

@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/v13/apps/cnspec/cmd"
-	"go.mondoo.com/mql/v13/providers"
+	"go.mondoo.com/mql/providers"
 )
 
 var (

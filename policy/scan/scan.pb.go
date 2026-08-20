@@ -11,7 +11,7 @@ package scan
 
 import (
 	policy "go.mondoo.com/cnspec/v13/policy"
-	inventory "go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	inventory "go.mondoo.com/mql/providers-sdk/v1/inventory"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	structpb "google.golang.org/protobuf/types/known/structpb"

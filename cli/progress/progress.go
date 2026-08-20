@@ -3,7 +3,7 @@
 
 package progress
 
-import "go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+import "go.mondoo.com/mql/providers-sdk/v1/inventory"
 
 // Progress is the single-asset progress reporter used by the policy executor.
 type Progress interface {

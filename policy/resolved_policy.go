@@ -5,8 +5,8 @@ package policy
 
 import (
 	"github.com/cockroachdb/errors"
-	"go.mondoo.com/mql/v13/llx"
-	"go.mondoo.com/mql/v13/types"
+	"go.mondoo.com/mql/llx"
+	"go.mondoo.com/mql/types"
 )
 
 // WithDataQueries cycles through all data queries of the resolved policy and calls the given function

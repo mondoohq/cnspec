@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/fex"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
 )
 
 // AssertClean is the standard converter test: it runs conv on the report file at

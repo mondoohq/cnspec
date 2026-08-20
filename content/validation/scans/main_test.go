@@ -18,8 +18,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"go.mondoo.com/mql/v13/logger"
-	"go.mondoo.com/mql/v13/providers"
+	"go.mondoo.com/mql/logger"
+	"go.mondoo.com/mql/providers"
 )
 
 func init() {

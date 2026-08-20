@@ -11,7 +11,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/mql/v13/utils/timex"
+	"go.mondoo.com/mql/utils/timex"
 	"gopkg.in/yaml.v3"
 )
 

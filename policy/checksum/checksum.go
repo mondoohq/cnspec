@@ -15,7 +15,7 @@ package checksum
 
 import (
 	"go.mondoo.com/cnspec/v13/policy"
-	llxchecksum "go.mondoo.com/mql/v13/llx/checksum"
+	llxchecksum "go.mondoo.com/mql/llx/checksum"
 )
 
 // canonScoredRiskFactor hashes one ScoredRiskFactor message, in full —

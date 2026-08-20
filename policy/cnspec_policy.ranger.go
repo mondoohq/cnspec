@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"strings"
 
-	"go.mondoo.com/mql/v13/providers-sdk/v1/recording"
+	"go.mondoo.com/mql/providers-sdk/v1/recording"
 	ranger "go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/metadata"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"

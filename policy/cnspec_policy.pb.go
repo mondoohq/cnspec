@@ -10,10 +10,10 @@
 package policy
 
 import (
-	llx "go.mondoo.com/mql/v13/llx"
-	inventory "go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
-	recording "go.mondoo.com/mql/v13/providers-sdk/v1/recording"
-	mvd "go.mondoo.com/mql/v13/providers-sdk/v1/upstream/mvd"
+	llx "go.mondoo.com/mql/llx"
+	inventory "go.mondoo.com/mql/providers-sdk/v1/inventory"
+	recording "go.mondoo.com/mql/providers-sdk/v1/recording"
+	mvd "go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	anypb "google.golang.org/protobuf/types/known/anypb"

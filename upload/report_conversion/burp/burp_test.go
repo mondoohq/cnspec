@@ -9,7 +9,7 @@ import (
 
 	rc "go.mondoo.com/cnspec/v13/upload/report_conversion"
 	"go.mondoo.com/cnspec/v13/upload/report_conversion/burp"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/fex"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
 )
 
 func TestConvert(t *testing.T) {

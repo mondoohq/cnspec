@@ -10,8 +10,8 @@ import (
 
 	"go.mondoo.com/cnspec/v13/cli/components"
 	"go.mondoo.com/cnspec/v13/cli/components/advisories"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/mvd"
-	"go.mondoo.com/mql/v13/utils/iox"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/mql/utils/iox"
 )
 
 type csvStruct struct {

@@ -12,9 +12,9 @@ import (
 	"github.com/cockroachdb/errors"
 	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/cnspec/v13/internal/sbom"
-	cr "go.mondoo.com/mql/v13/cli/reporter"
-	"go.mondoo.com/mql/v13/mrn"
-	"go.mondoo.com/mql/v13/utils/sortx"
+	cr "go.mondoo.com/mql/cli/reporter"
+	"go.mondoo.com/mql/mrn"
+	"go.mondoo.com/mql/utils/sortx"
 )
 
 var LABEL_KERNEL_RUNNING = "mondoo.com/os/kernel-running"

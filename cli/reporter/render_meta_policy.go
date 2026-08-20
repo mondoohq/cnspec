@@ -9,7 +9,7 @@ import (
 
 	"go.mondoo.com/cnspec/v13/cli/components"
 	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/mql/v13/cli/printer"
+	"go.mondoo.com/mql/cli/printer"
 )
 
 func renderMetaPolicy(print *printer.Printer, policyObj *policy.Policy, report *policy.Report, bundle *policy.PolicyBundleMap, resolvedPolicy *policy.ResolvedPolicy, scoringData []reportRow) string {

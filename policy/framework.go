@@ -9,9 +9,9 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/mql/v13/checksums"
-	"go.mondoo.com/mql/v13/mrn"
-	"go.mondoo.com/mql/v13/utils/sortx"
+	"go.mondoo.com/mql/checksums"
+	"go.mondoo.com/mql/mrn"
+	"go.mondoo.com/mql/utils/sortx"
 )
 
 type ResolvedFrameworkNodeType int

@@ -14,9 +14,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/checksum"
-	"go.mondoo.com/mql/v13/llx"
-	llxchecksum "go.mondoo.com/mql/v13/llx/checksum"
-	"go.mondoo.com/mql/v13/types"
+	"go.mondoo.com/mql/llx"
+	llxchecksum "go.mondoo.com/mql/llx/checksum"
+	"go.mondoo.com/mql/types"
 )
 
 // parityCorpus is the divergence-prone write sequence shared by the parity

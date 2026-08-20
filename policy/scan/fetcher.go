@@ -12,7 +12,7 @@ import (
 	"github.com/cockroachdb/errors"
 	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/mql/v13/mqlc"
+	"go.mondoo.com/mql/mqlc"
 )
 
 type fetcher struct {
