@@ -10,7 +10,6 @@ import (
 	goruntime "runtime"
 	"runtime/debug"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -19,7 +18,6 @@ import (
 	"go.mondoo.com/cnspec/v13/cli/progress"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/scanstats"
-	"go.mondoo.com/mql/v13/cli/config"
 	"go.mondoo.com/mql/v13/discovery"
 	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
@@ -30,6 +28,7 @@ import (
 const (
 	defaultMaxConnections = 50
 	syncBatchSize         = 5 // how many assets to batch for upstream sync calls
+
 )
 
 func getMaxConnections() int {
@@ -151,6 +150,7 @@ type scanDispatcher struct {
 	spaceMrn        string
 	scannedAssets   *atomic.Int64
 	resourceTracker *scanstats.ResourceTracker
+	failures        *failureReporter
 }
 
 func newScanDispatcher(
@@ -166,6 +166,7 @@ func newScanDispatcher(
 	spaceMrn string,
 	scannedAssets *atomic.Int64,
 	resourceTracker *scanstats.ResourceTracker,
+	failures *failureReporter,
 ) *scanDispatcher {
 	return &scanDispatcher{
 		scanSem:         make(chan struct{}, parallelism),
@@ -180,6 +181,7 @@ func newScanDispatcher(
 		spaceMrn:        spaceMrn,
 		scannedAssets:   scannedAssets,
 		resourceTracker: resourceTracker,
+		failures:        failures,
 	}
 }
 
@@ -193,7 +195,17 @@ func (d *scanDispatcher) Submit(ctx context.Context, tracked *discovery.TrackedA
 	go func() {
 		defer d.wg.Done()
 		defer func() { <-d.connSem }()
-		defer d.reportPanic(tracked)
+		// Recover panics from this asset's scan directly here (recover only
+		// works in a function deferred by the panicking goroutine). Reporting
+		// and re-raising elsewhere would let the panic escape this bare
+		// goroutine and crash the whole process, taking down every other
+		// in-flight asset scan — exactly what must not happen in a critical
+		// environment. Instead we contain it, report it, and keep scanning.
+		defer func() {
+			if r := recover(); r != nil {
+				d.recoverAssetPanic(tracked, r, debug.Stack())
+			}
+		}()
 
 		// Acquire worker slot, respecting context cancellation.
 		select {
@@ -243,6 +255,7 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 		updatedAsset, err := discovery.HandleDelayedDiscovery(ctx, asset, runtime)
 		if err != nil {
 			d.reporter.AddScanError(asset, err)
+			d.failures.report(asset, err)
 			if err := d.explorer.CloseAsset(tracked); err != nil {
 				log.Error().Err(err).Str("asset", asset.Name).Msg("failed to close asset")
 			}
@@ -257,6 +270,7 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 		}
 		if syncErr := syncBatchWithUpstream(ctx, []*discovery.TrackedAsset{tracked}, d.services, d.spaceMrn, d.scanner.recording); syncErr != nil {
 			d.reporter.AddScanError(asset, syncErr)
+			d.failures.report(asset, syncErr)
 			if len(asset.PlatformIds) > 0 {
 				d.multiprogress.Errored(asset.PlatformIds[0])
 			}
@@ -290,19 +304,12 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 		Reporter:         d.reporter,
 		ProgressReporter: p,
 		runtime:          runtime,
+		failures:         d.failures,
 	})
 
 	// Report any recovered provider panics to the Mondoo Platform.
 	for _, critErr := range runtime.CriticalErrors() {
-		tags := map[string]string{
-			"assetMrn":  asset.Mrn,
-			"assetName": asset.Name,
-		}
-		if asset.Platform != nil {
-			tags["platformIDs"] = strings.Join(asset.PlatformIds, ",")
-			tags["assetPlatform"] = asset.Platform.Name
-			tags["assetPlatformVersion"] = asset.Platform.Version
-		}
+		tags := assetErrorTags(d.spaceMrn, asset)
 		health.ReportError("cnspec", cnspec.Version, cnspec.Build, critErr.Error(), health.WithTags(tags))
 	}
 
@@ -372,55 +379,52 @@ func (d *scanDispatcher) logResourceStats(asset *inventory.Asset) {
 	}
 }
 
-// reportPanic captures panics from scan goroutines and reports them.
-func (d *scanDispatcher) reportPanic(tracked *discovery.TrackedAsset) {
-	health.ReportPanic("cnspec", cnspec.Version, cnspec.Build, func(product, version, build string, r any, stacktrace []byte) {
-		opts, err := config.Read()
-		if err != nil {
-			log.Error().Err(err).Msg("failed to read config")
-			return
-		}
+// recoverAssetPanic handles a panic recovered from an asset's scan goroutine.
+// It reports the panic upstream WITHOUT re-raising it, records the asset as a
+// scan failure, marks it errored in the progress bar, and releases the asset's
+// provider connection — so a single asset's panic degrades to one failed asset
+// instead of crashing the entire scan.
+func (d *scanDispatcher) recoverAssetPanic(tracked *discovery.TrackedAsset, r any, stacktrace []byte) {
+	var asset *inventory.Asset
+	if tracked != nil {
+		asset = tracked.Asset
+	}
+	assetName := ""
+	if asset != nil {
+		assetName = asset.Name
+	}
 
-		serviceAccount := opts.GetServiceCredential()
-		if serviceAccount == nil {
-			log.Error().Msg("no service account configured")
-			return
-		}
+	log.Error().
+		Interface("panic", r).
+		Str("asset", assetName).
+		Bytes("stacktrace", stacktrace).
+		Msg("recovered from panic during asset scan; continuing with remaining assets")
 
-		tags := map[string]string{
-			"spaceMrn": d.spaceMrn,
+	// Report the panic upstream with asset/space tags. ReportRecoveredPanic
+	// (unlike ReportPanic) does not re-panic, which is what lets us keep going.
+	tags := assetErrorTags(d.spaceMrn, asset)
+	health.ReportRecoveredPanic("cnspec", cnspec.Version, cnspec.Build, r, stacktrace, tags)
+
+	// Surface the panic as a scan error so it appears in the report and drives
+	// a non-zero exit code, and mark it failed in the progress bar.
+	if asset != nil {
+		d.reporter.AddScanError(asset, fmt.Errorf("panic during scan: %v", r))
+		if len(asset.PlatformIds) > 0 {
+			d.multiprogress.Errored(asset.PlatformIds[0])
 		}
-		if tracked != nil && tracked.Asset != nil {
-			tags["assetMrn"] = tracked.Asset.Mrn
-			tags["assetName"] = tracked.Asset.Name
-			tags["platformIDs"] = strings.Join(tracked.Asset.PlatformIds, ",")
-			if tracked.Asset.Platform != nil {
-				tags["assetPlatform"] = tracked.Asset.Platform.Name
-				tags["assetPlatformVersion"] = tracked.Asset.Platform.Version
+	}
+
+	// Best-effort close so the provider connection and its goroutines are
+	// released; the connSem slot itself is released by Submit's defer. Guard the
+	// explorer: this is a crash handler, so it must not itself nil-panic.
+	if tracked != nil && tracked.Asset != nil {
+		if d.explorer != nil {
+			if err := d.explorer.CloseAsset(tracked); err != nil {
+				log.Error().Err(err).Str("asset", assetName).Msg("failed to close asset after panic")
 			}
 		}
-
-		event := &health.SendErrorReq{
-			ServiceAccountMrn: opts.ServiceAccountMrn,
-			AgentMrn:          opts.AgentMrn,
-			Product: &health.ProductInfo{
-				Name:    product,
-				Version: version,
-				Build:   build,
-			},
-			Error: &health.ErrorInfo{
-				Message:    "panic: " + fmt.Sprintf("%v", r),
-				Stacktrace: string(stacktrace),
-			},
-			// Send asset identification as structured tags so the platform
-			// can attribute the panic to a specific asset, rather than
-			// burying the map in the message string.
-			Tags: tags,
-		}
-
-		sendErrorToMondooPlatform(serviceAccount, event)
-		log.Info().Msg("reported panic to Mondoo Platform")
-	})
+		tracked.Asset = nil
+	}
 }
 
 // inFlight reports how many assets are currently scanning. scanSem is a
