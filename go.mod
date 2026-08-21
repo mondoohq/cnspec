@@ -189,7 +189,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
-	github.com/google/cel-go v0.26.1 // indirect
+	github.com/google/cel-go v0.29.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-containerregistry v0.21.7 // indirect
 	github.com/google/renameio v1.0.1 // indirect
@@ -311,7 +311,6 @@ require (
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.7.0 // indirect
 	github.com/sqlc-dev/sqlc v1.30.0 // indirect
-	github.com/stoewer/go-strcase v1.3.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f // indirect
 	github.com/tetratelabs/wazero v1.9.0 // indirect
