@@ -9,6 +9,10 @@ on:
         description: "mql version"
         required: true
         type: string
+      dry-run:
+        description: "Skip Create PR (test the base-branch decision only)"
+        type: boolean
+        default: false
 
 jobs:
   bump-mql:
@@ -35,6 +39,30 @@ jobs:
           fi
           echo "Version: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+      # Sparse-checkout the scripts dir before we know the target branch, so
+      # we can run determine-mql-bump-base.sh to figure out where to open the
+      # bump PR. The full checkout of the target branch happens further down.
+      - name: Checkout scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: '.github/scripts'
+          sparse-checkout-cone-mode: false
+      # Route the bump PR to the right branch by comparing the incoming mql
+      # major with the mql major currently imported on main. Matching major
+      # -> base=main; any other major -> base=v{major} support branch
+      # (e.g. an mql v13.35.1 tag while main is on mql v14 -> base=v13).
+      # Logic lives in .github/scripts/determine-mql-bump-base.sh and is
+      # unit-tested via .github/scripts/tests/determine-mql-bump-base.bats.
+      - name: Determine base branch
+        id: base
+        env:
+          MQL_VERSION: ${{ steps.version.outputs.version }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BASE=$(.github/scripts/determine-mql-bump-base.sh "$MQL_VERSION")
+          echo "Release major: ${MQL_VERSION%%.*}, resolved base branch: ${BASE}"
+          echo "base=${BASE}" >> "$GITHUB_OUTPUT"
       # Mint a short-lived installation token from the mondoo-mergebot
       # GitHub App. App tokens bypass the same "PRs created by GITHUB_TOKEN
       # don't trigger downstream workflows" limit that motivated the old
@@ -52,6 +80,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           token: ${{ steps.generate-token.outputs.token }}
+          ref: ${{ steps.base.outputs.base }}
 
       - name: Import environment variables from file
         run: cat ".github/env" >> $GITHUB_ENV
@@ -80,12 +109,31 @@ jobs:
           echo "COMMIT_TITLE=${COMMIT_MSG}" >> $GITHUB_OUTPUT
           echo "BRANCH_NAME=${BRANCH_NAME}" >> $GITHUB_OUTPUT
 
+      # Dry-run: print what the PR WOULD have looked like, and stop.
+      # Everything above (base decision, go get, VERSION write) still runs
+      # so a workflow_dispatch with dry-run=true exercises the routing end
+      # to end without opening a real PR.
+      - name: Dry run summary
+        if: ${{ inputs.dry-run }}
+        env:
+          MQL_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          echo "::notice::DRY RUN — no PR opened."
+          echo "  version:    ${MQL_VERSION}"
+          echo "  base:       ${{ steps.base.outputs.base }}"
+          echo "  branch:     ${{ steps.branch.outputs.BRANCH_NAME }}"
+          echo "  commit msg: ${{ steps.branch.outputs.COMMIT_TITLE }}"
+          echo
+          echo "Local changes staged for the would-be PR:"
+          git diff --stat
+
       - name: Create PR
         id: cpr
+        if: ${{ !inputs.dry-run }}
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ steps.generate-token.outputs.token }}
-          base: main
+          base: ${{ steps.base.outputs.base }}
           labels: dependencies,go
           committer: "Mondoo Tools <tools@mondoo.com>"
           commit-message: ${{ steps.branch.outputs.COMMIT_TITLE }}
@@ -95,7 +143,7 @@ jobs:
           body-path: .github/pr-body.md
 
       - name: PR infos
-        if: ${{ steps.cpr.outputs.pull-request-number }}
+        if: ${{ !inputs.dry-run && steps.cpr.outputs.pull-request-number }}
         env:
           PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
           PR_URL: ${{ steps.cpr.outputs.pull-request-url }}
