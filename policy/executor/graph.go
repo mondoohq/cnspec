@@ -122,7 +122,7 @@ func ExecuteFilterQueries(ctx context.Context, runtime llx.Runtime, queries []*p
 		queryMap[codeBundle.CodeV2.Id] = m
 	}
 
-	passingFilterQueries := map[string]struct{}{}
+	tracker := newFilterScoreTracker()
 	collector := &internal.FuncCollector{
 		SinkScoreFunc: func(scores []*policy.Score) {
 			for _, s := range scores {
@@ -134,9 +134,7 @@ func ExecuteFilterQueries(ctx context.Context, runtime llx.Runtime, queries []*p
 					Int("dataCompletion", int(s.DataCompletion)).
 					Int("value", int(s.Value)).
 					Msg("filter query score received")
-				if s.ScoreCompletion == 100 && s.Value == 100 {
-					passingFilterQueries[s.QrId] = struct{}{}
-				}
+				tracker.record(s)
 			}
 		},
 	}
@@ -157,6 +155,10 @@ func ExecuteFilterQueries(ctx context.Context, runtime llx.Runtime, queries []*p
 
 	ge.Debug(ctx, "filter-queries")
 
+	// Decided only now that execution has finished, so every provisional score
+	// has had the chance to be corrected. See filterScoreTracker.
+	passingFilterQueries := tracker.passing()
+
 	filteredQueries := []*policy.Mquery{}
 	for id, query := range queryMap {
 		if _, ok := passingFilterQueries[id]; ok {
@@ -165,6 +167,65 @@ func ExecuteFilterQueries(ctx context.Context, runtime llx.Runtime, queries []*p
 	}
 
 	return filteredQueries, errors
+}
+
+// filterScoreTracker records the scores the graph emits for filter queries and
+// decides which filters matched once execution has finished.
+//
+// The graph emits a score for a reporting query on EVERY round in which all of
+// that query's entrypoints are resolved, and those intermediate scores are
+// provisional. Datapoint checksums are content-addressed and shared across
+// queries, so another query can resolve one of this query's entrypoints before
+// this query executes it itself — with a short-circuit nil for a branch it
+// never evaluated, or with a broadcast placeholder for a query that could not
+// run at all. ReportingQueryNodeData.score() skips nil-valued entrypoints
+// rather than failing them, so a multi-statement filter can transiently score
+// 100 on just the subset that happened to resolve.
+//
+// Concretely: the Debian 8 and Debian 9 policy filters are identical apart from
+// their version line —
+//
+//	asset.platform == "debian"
+//	asset.version == /^8\./
+//	asset.kind != "container-image"
+//
+// On a Debian 11 host, statements 1 and 3 are resolved TRUE by the Debian
+// 9/10/11 filters, which compile to the same checksums. If the version
+// statement is nil for a single round, the Debian 8 filter scores 100 and the
+// host is told to run the whole Debian 8 policy. ScoreCompletion is 100 on
+// every round, so a provisional score is indistinguishable from a final one at
+// this layer.
+//
+// resultUpgrades() repairs the datapoint and the node recalculates to the real
+// score, so the LAST score emitted for a query is the authoritative one.
+// Latching the first passing score threw that correction away and made the
+// filter set depend on the order results happened to arrive in.
+type filterScoreTracker struct {
+	last map[string]*policy.Score
+}
+
+func newFilterScoreTracker() *filterScoreTracker {
+	return &filterScoreTracker{last: map[string]*policy.Score{}}
+}
+
+// record keeps the most recent score seen for a query, replacing any earlier
+// provisional one.
+func (t *filterScoreTracker) record(s *policy.Score) {
+	if s == nil {
+		return
+	}
+	t.last[s.QrId] = s
+}
+
+// passing returns the queries whose FINAL score means the filter matched.
+func (t *filterScoreTracker) passing() map[string]struct{} {
+	res := make(map[string]struct{}, len(t.last))
+	for id, s := range t.last {
+		if s.ScoreCompletion == 100 && s.Value == 100 {
+			res[id] = struct{}{}
+		}
+	}
+	return res
 }
 
 func ExecuteQuery(runtime llx.Runtime, codeBundle *llx.CodeBundle, props map[string]*llx.Primitive, features mql.Features) (*policy.Score, map[string]*llx.RawResult, error) {
