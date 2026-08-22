@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -235,26 +236,33 @@ func ConvertToHDFDir(r *policy.ReportCollection, dir string) ([]string, error) {
 	// Asset names are free-form, so two of them can sanitize to the same filename.
 	used := map[string]int{}
 	written := make([]string, 0, len(docs))
+	var errs []error
 	for _, doc := range docs {
-		name := hdfUniqueName(hdfFileBase(doc), used) + ".hdf.json"
-		path := filepath.Join(dir, name)
-
-		f, err := os.Create(path)
-		if err != nil {
-			return written, err
-		}
-		writer := iox.IOWriter{Writer: f}
-		err = writeHDF(doc.report, &writer)
-		closeErr := f.Close()
-		if err != nil {
-			return written, err
-		}
-		if closeErr != nil {
-			return written, closeErr
+		path := filepath.Join(dir, hdfUniqueName(hdfFileBase(doc), used)+".hdf.json")
+		if err := writeHDFFile(doc.report, path); err != nil {
+			// Keep going: one asset the filesystem rejects should not cost the
+			// report of every asset after it. The errors are returned together.
+			errs = append(errs, fmt.Errorf("write report for %q: %w", doc.name, err))
+			continue
 		}
 		written = append(written, path)
 	}
-	return written, nil
+	return written, errors.Join(errs...)
+}
+
+// writeHDFFile renders one document to its own file.
+func writeHDFFile(report *hdfReport, path string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+
+	writer := iox.IOWriter{Writer: f}
+	if err := writeHDF(report, &writer); err != nil {
+		f.Close() //nolint:errcheck // the write error is the one worth reporting
+		return err
+	}
+	return f.Close()
 }
 
 // hdfDocuments renders one OHDF document per scanned asset.
@@ -310,6 +318,12 @@ func hdfEmptyReport() *hdfReport {
 	}
 }
 
+// hdfMaxFileBase caps the stem of a written filename. Asset names are free-form and
+// routinely long - a full ARN, an image reference with a digest, a namespaced
+// Kubernetes object - while most filesystems stop at 255 bytes for one path element.
+// The cap leaves room for the ".hdf.json" suffix and the "-N" a collision adds.
+const hdfMaxFileBase = 200
+
 // hdfFileBase turns an asset into a filename stem. Asset names carry spaces, slashes
 // and colons (an image reference, a cloud resource id), none of which belong in a
 // path, and an asset with no usable name at all falls back to its MRN digest.
@@ -327,6 +341,14 @@ func hdfFileBase(doc *hdfDocument) string {
 	name := strings.Trim(b.String(), "-.")
 	if name == "" {
 		return "asset-" + hdfSha256(doc.assetMrn)[:12]
+	}
+
+	// Truncating alone would collide two assets that share a long prefix - think a
+	// registry path where only the trailing digest differs - so the MRN digest goes
+	// on the end to keep them apart.
+	if len(name) > hdfMaxFileBase {
+		digest := hdfSha256(doc.assetMrn)[:12]
+		name = strings.Trim(name[:hdfMaxFileBase-len(digest)-1], "-.") + "-" + digest
 	}
 	return name
 }
@@ -605,6 +627,13 @@ func hdfCheckResults(ctx *hdfAssetContext, resolved *policy.ResolvedPolicy, repo
 		base.SkipMessage = hdfSkipMessage(score)
 	case hdfStatusError:
 		base.Message = score.MessageLine()
+	}
+
+	// A passing check has nothing to explain and no failing resource to point at,
+	// so the assessment is never read for one. Building and rendering it anyway
+	// costs the majority of the work in a healthy scan.
+	if status == hdfStatusPassed {
+		return []hdfResult{base}
 	}
 
 	var assessment *llx.Assessment

@@ -157,6 +157,86 @@ func TestHDFDirWritesOneFilePerAsset(t *testing.T) {
 	}, names, "colliding asset names must not overwrite each other")
 }
 
+// TestHDFFileBase covers the filename stem. Asset names are attacker-adjacent input
+// in the sense that they come from whatever was scanned - a container image
+// reference, a cloud resource ARN, a Kubernetes object - so a path separator must
+// never survive into a filename, and a long one must not blow the filesystem's limit.
+func TestHDFFileBase(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain", "web-02", "web-02"},
+		{"image reference", "docker.io/library/nginx:1.25", "docker.io-library-nginx-1.25"},
+		{"arn", "arn:aws:ec2:us-east-1:1:instance/i-0abc", "arn-aws-ec2-us-east-1-1-instance-i-0abc"},
+		{"traversal", "../../etc/passwd", "etc-passwd"},
+		{"absolute path", "/etc/shadow", "etc-shadow"},
+		{"windows traversal", `..\..\windows\system32`, "windows-system32"},
+		{"newlines", "name\nwith\nnewlines", "name-with-newlines"},
+		{"non-ascii", "héllo wörld", "h-llo-w-rld"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := hdfFileBase(&hdfDocument{name: test.in, assetMrn: "//mrn/" + test.in})
+			assert.Equal(t, test.want, got)
+			assert.NotContains(t, got, "/")
+			assert.NotContains(t, got, `\`)
+		})
+	}
+
+	// Names that sanitize away entirely fall back to the MRN digest rather than to
+	// something the filesystem would reject.
+	for _, in := range []string{"", ".", "..", "....", "-", "\x00"} {
+		got := hdfFileBase(&hdfDocument{name: in, assetMrn: "//mrn/x"})
+		assert.Equal(t, "asset-"+hdfSha256("//mrn/x")[:12], got, "input %q", in)
+	}
+
+	// A long name is capped, and two that share a prefix stay distinct.
+	longA := hdfFileBase(&hdfDocument{name: strings.Repeat("x", 300) + "-a", assetMrn: "//mrn/a"})
+	longB := hdfFileBase(&hdfDocument{name: strings.Repeat("x", 300) + "-b", assetMrn: "//mrn/b"})
+	assert.LessOrEqual(t, len(longA), hdfMaxFileBase)
+	assert.NotEqual(t, longA, longB, "truncated names must not collide")
+}
+
+// TestHDFDirLongAssetName is the regression: a name past the filesystem's limit used
+// to fail the write and abandon every asset after it, so one long name cost the
+// whole export.
+func TestHDFDirLongAssetName(t *testing.T) {
+	pinHDFClock(t)
+
+	r := multiAssetReportCollection(t)
+	r.Assets[sampleAssetMrn].Name = strings.Repeat("x", 300)
+
+	dir := t.TempDir()
+	files, err := ConvertToHDFDir(r, dir)
+	require.NoError(t, err)
+	assert.Len(t, files, 2, "both assets must be written")
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Len(t, entries, 2)
+}
+
+// TestHDFDirReportsFailuresWithoutAbandoningTheRest covers the other half: when one
+// asset genuinely cannot be written, the remaining assets still are, and the failure
+// is reported rather than swallowed.
+func TestHDFDirReportsFailuresWithoutAbandoningTheRest(t *testing.T) {
+	pinHDFClock(t)
+
+	dir := t.TempDir()
+	// Occupy the path the first asset would write to, so os.Create fails on it.
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "X1.hdf.json"), 0o755))
+
+	files, err := ConvertToHDFDir(multiAssetReportCollection(t), dir)
+	require.Error(t, err, "the unwritable asset must be reported")
+	assert.Contains(t, err.Error(), "X1")
+
+	require.Len(t, files, 1, "the other asset must still be written")
+	assert.Equal(t, "web-02.hdf.json", filepath.Base(files[0]))
+}
+
 // TestHDFMultiAssetStream documents what a multi-asset scan looks like on stdout:
 // an array of documents, since one OHDF document cannot describe several targets.
 func TestHDFMultiAssetStream(t *testing.T) {
