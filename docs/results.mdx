@@ -22,6 +22,106 @@ For `FILENAME`, substitute the name you want to give the file. For example, this
 cnspec scan k8s -o json > k8s-test-results.json
 ```
 
+## Export results as OHDF for Heimdall and the MITRE SAF CLI
+
+cnspec can write scan results as [OHDF](https://saf.mitre.org/) (the OASIS Heimdall
+Data Format, formerly HDF) — the normalized result schema of the MITRE Security
+Automation Framework, and the same schema InSpec emits as `exec-json`. Anything that
+reads InSpec results reads a cnspec scan directly, with no `saf convert` step:
+
+```bash
+cnspec scan local -o hdf > results.hdf.json
+```
+
+Open the file in [Heimdall Lite](https://heimdall-lite.mitre.org/), or feed it to the
+[SAF CLI](https://saf-cli.mitre.org/):
+
+```bash
+saf summary -i results.hdf.json            # pass/fail/error counts and compliance %
+saf view heimdall -f results.hdf.json      # the Heimdall UI, locally
+saf convert hdf2csv -i results.hdf.json -o results.csv
+```
+
+### Scanning more than one asset
+
+An OHDF document describes a **single** asset. Heimdall and the SAF CLI resolve a
+document down to one profile and count only that one, so several assets in a single
+file would lose everything but the first.
+
+Point `--output-target` at a directory to get one `ASSET.hdf.json` per asset:
+
+```bash
+cnspec scan k8s -o hdf --output-target ./hdf-results/
+```
+
+A target counts as a directory if it already exists as one, or if the path ends in a
+`/`. cnspec creates it if needed. Filenames come from the asset name with anything
+that is not a letter, digit, `.`, `_`, or `-` replaced by `-`; assets that end up
+sharing a name get a `-2`, `-3` suffix so none overwrites another.
+
+Sent to stdout, a multi-asset scan comes out as a JSON array of documents and cnspec
+warns you. Split it with `jq` if you cannot use a directory:
+
+```bash
+cnspec scan k8s -o hdf | jq -c '.[]' | while read -r doc; do
+  echo "$doc" | jq . > "$(echo "$doc" | jq -r '.platform.target_id | split("/") | last').hdf.json"
+done
+```
+
+### How cnspec results map onto OHDF
+
+| cnspec | OHDF |
+| --- | --- |
+| Asset | The document's `platform`, and its one `profile` |
+| Policy | A control `group` inside that profile |
+| Check | A `control` — title, description, references, and the MQL as `code` |
+| Check result | A control `result` — `passed`, `failed`, `error`, or `skipped` |
+| Remediation | A control description labeled `fix` |
+| Audit steps | A control description labeled `check` |
+| Vulnerability advisory | A `control` in the profile's Vulnerabilities group |
+| Asset scan failure | An `asset-error` control with an `error` result |
+
+Severity converts directly: a cnspec impact of 70 (HIGH) becomes an OHDF impact of
+0.7, which Heimdall also reads as high. Two impact values are reserved. Checks that
+the scan deliberately excluded — skipped, out of scope, or disabled — get impact `0`,
+which Heimdall renders as **Not Applicable**. Checks with no configured severity are
+floored at `0.1` so they still appear in the SAF summary rather than dropping out of
+the tally.
+
+Checks carrying a `compliance/nist-sp-800-53-rev5` tag are mapped onto the control's
+`nist` tag (`nist-sp-800-53-rev5-si-7` becomes `SI-7`), which is what drives
+Heimdall's NIST 800-53 compliance views. Checks with no NIST mapping are tagged
+`UM-1`, MITRE's marker for unmapped controls. Every other `compliance/*` mapping —
+CIS, ISO 27001, PCI DSS, SOC 2, and the rest — is carried through on the control tags
+under its own key.
+
+Details that OHDF has no field for — the asset MRN, its platform IDs, and the overall
+cnspec score and letter grade — travel in the document's `passthrough.auxiliary_data`.
+
+### Use OHDF to gate a CI pipeline
+
+The SAF CLI can fail a build when results fall below a threshold. Write a threshold
+file:
+
+```yaml
+# threshold.yaml
+failed:
+  critical:
+    max: 0
+  high:
+    max: 0
+```
+
+Then scan and check it:
+
+```bash
+cnspec scan local -o hdf > results.hdf.json
+saf validate threshold -i results.hdf.json -T threshold.yaml
+```
+
+`saf validate threshold` exits non-zero when the scan breaches the threshold, failing
+the pipeline step.
+
 ## View and print results in the Mondoo App
 
 When cnspec completes a scan, it provides a link to the Mondoo App, where you can view graphical results.

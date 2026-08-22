@@ -31,11 +31,14 @@ import (
 // InSpec emits as `exec-json`, so everything that reads InSpec results - Heimdall,
 // the SAF CLI, the SAF threshold gates - reads a cnspec scan unchanged.
 //
-// The document cnspec produces holds one profile per scanned asset, plus a second
-// profile per asset for its vulnerability findings:
+// A document describes exactly one asset, because that is all its consumers can
+// read: Heimdall and the SAF CLI resolve a document down to a single root profile
+// and tally only that one, so findings parked in a second profile are dropped
+// without a word. A scan of several assets is written as a file each.
 //
-//	platform      the scanned asset (or "cnspec" when the scan covered several)
-//	profiles[]    one per asset: controls = the asset's checks, groups = the policies
+//	platform      the asset the document covers
+//	profiles[0]   its only profile: controls = the asset's checks and advisories,
+//	              groups = the policies they came from
 //	control       a check: id, title, desc, impact, refs, tags, MQL, results
 //	result        the outcome of that check on that asset
 //	passthrough   asset metadata and scores that OHDF itself has no place for
