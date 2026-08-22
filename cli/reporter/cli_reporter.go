@@ -159,6 +159,8 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 		}
 		_, err = r.out.Write(data)
 		return err
+	case FormatJSONFull:
+		return WriteCollection(data, r.out)
 	case FormatJUnit:
 		writer := iox.IOWriter{Writer: r.out}
 		return ConvertToJunit(data, &writer, r.Conf.detailed)
@@ -194,6 +196,10 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
 		return errors.New("'junit' is not supported for vuln reports, please use one of the other formats")
 	case FormatSarif:
 		return errors.New("'sarif' is not supported for vuln reports, please use one of the other formats")
+	case FormatJSONFull:
+		// json-full is a serialized policy.ReportCollection; a standalone vuln
+		// report is not one, so there is nothing faithful to write here.
+		return errors.New("'json-full' is not supported for vuln reports, please use one of the other formats")
 	case FormatCSV:
 		writer := iox.IOWriter{Writer: r.out}
 		return VulnReportToCSV(data, &writer)

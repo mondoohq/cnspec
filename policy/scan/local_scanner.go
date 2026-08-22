@@ -1140,7 +1140,11 @@ func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (*upstream.Up
 	if s.allowJobCredentials && jobCredentials != nil {
 		res.Creds = jobCredentials
 		res.ApiEndpoint = jobCredentials.GetApiEndpoint()
-		res.SpaceMrn = jobCredentials.GetParentMrn()
+		res.SpaceMrn = jobCredentials.GetScopeMrn()
+		if res.SpaceMrn == "" {
+			// service accounts issued before scope_mrn existed only carry parent_mrn
+			res.SpaceMrn = jobCredentials.GetParentMrn()
+		}
 	}
 
 	if !res.Incognito {
@@ -1588,7 +1592,23 @@ func mustCompile(code string) *llx.CodeBundle {
 }
 
 func createProgressBar(disableProgressBar bool) (progress.MultiProgress, error) {
-	if isatty.IsTerminal(os.Stdout.Fd()) && !disableProgressBar && !strings.EqualFold(logger.GetLevel(), "debug") && !strings.EqualFold(logger.GetLevel(), "trace") {
+	if disableProgressBar {
+		return progress.NoopMultiProgress{}, nil
+	}
+
+	// An explicit progress-stream target wins over terminal detection. A parent
+	// process that asked for machine-readable progress must get it even when it
+	// handed the child a pty, and unlike the TODO list the stream has its own
+	// destination, so debug/trace logging cannot corrupt it.
+	if target := os.Getenv(progress.StreamEnvVar); target != "" {
+		stream, err := progress.NewStream(target)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to set up %s", progress.StreamEnvVar)
+		}
+		return stream, nil
+	}
+
+	if isatty.IsTerminal(os.Stdout.Fd()) && !strings.EqualFold(logger.GetLevel(), "debug") && !strings.EqualFold(logger.GetLevel(), "trace") {
 		return progress.NewTodoList(progress.WithScore())
 	}
 	return progress.NoopMultiProgress{}, nil

@@ -17,15 +17,16 @@ import (
 // Helpers that extract the human-readable documentation of a check (description,
 // MQL, audit steps, remediation, references, compliance mappings) and the severity
 // derived from its impact. They are shared by the JUnit and SARIF reporters so both
-// surface the same content.
+// surface the same content, and are exported so the report viewer renders the same
+// detail as the file reporters do.
 
-// reporterQueryMap indexes a bundle's queries the way the reporters look them up:
+// DeterministicQueryMap indexes a bundle's queries the way the reporters look them up:
 // by code id, falling back to the MRN. Several queries can share a code id (e.g.
 // variants that compile to the same MQL), so the one with the lowest MRN wins.
 // policy.PolicyBundleMap.QueryMap picks an arbitrary one instead - it iterates a
 // map - which makes SARIF rule ids and JUnit test names flip between runs of the
 // same report.
-func reporterQueryMap(bundle *policy.PolicyBundleMap) map[string]*policy.Mquery {
+func DeterministicQueryMap(bundle *policy.PolicyBundleMap) map[string]*policy.Mquery {
 	res := make(map[string]*policy.Mquery, len(bundle.Queries))
 	for _, key := range sortedKeys(bundle.Queries) {
 		query := bundle.Queries[key]
@@ -47,8 +48,8 @@ func reporterQueryMap(bundle *policy.PolicyBundleMap) map[string]*policy.Mquery 
 	return res
 }
 
-// queryDescription extracts a description from a query
-func queryDescription(query *policy.Mquery) string {
+// QueryDescription extracts a description from a query
+func QueryDescription(query *policy.Mquery) string {
 	if query.Docs != nil && query.Docs.Desc != "" {
 		return query.Docs.Desc
 	}
@@ -58,29 +59,29 @@ func queryDescription(query *policy.Mquery) string {
 	return ""
 }
 
-// queryMql returns the MQL source for a query, preferring the current field and
+// QueryMql returns the MQL source for a query, preferring the current field and
 // falling back to the deprecated one (which the compact reporter still reads).
-func queryMql(query *policy.Mquery) string {
+func QueryMql(query *policy.Mquery) string {
 	if query.Mql != "" {
 		return query.Mql
 	}
 	return query.Query
 }
 
-// queryAudit returns the manual audit instructions of a check, if it has any.
-func queryAudit(query *policy.Mquery) string {
+// QueryAudit returns the manual audit instructions of a check, if it has any.
+func QueryAudit(query *policy.Mquery) string {
 	if query.Docs == nil {
 		return ""
 	}
 	return strings.TrimSpace(query.Docs.Audit)
 }
 
-// platformRemediationKeys returns the set of remediation ids relevant to an
+// PlatformRemediationKeys returns the set of remediation ids relevant to an
 // asset's platform: the platform name, its family entries (e.g. "terraform" for
 // the "terraform-hcl" platform), and the platform-agnostic "default"/"" ids. It
 // is used to filter remediation down to the platform being scanned so a Terraform
 // scan shows Terraform remediation rather than every IaC/tool variant.
-func platformRemediationKeys(platform *inventory.Platform) map[string]bool {
+func PlatformRemediationKeys(platform *inventory.Platform) map[string]bool {
 	keys := map[string]bool{"": true, "default": true}
 	if platform != nil {
 		if platform.Name != "" {
@@ -95,10 +96,10 @@ func platformRemediationKeys(platform *inventory.Platform) map[string]bool {
 	return keys
 }
 
-// remediationItems returns the remediation entries of a query that apply to the
+// RemediationItems returns the remediation entries of a query that apply to the
 // asset's platform (name/family) or that are platform-agnostic. If none match, all
 // items are returned so remediation is never dropped entirely.
-func remediationItems(query *policy.Mquery, platformKeys map[string]bool) []*policy.TypedDoc {
+func RemediationItems(query *policy.Mquery, platformKeys map[string]bool) []*policy.TypedDoc {
 	if query.Docs == nil || query.Docs.Remediation == nil {
 		return nil
 	}
@@ -120,11 +121,11 @@ func remediationItems(query *policy.Mquery, platformKeys map[string]bool) []*pol
 	return matched
 }
 
-// queryRemediation renders the remediation for a query as plain text, labeling
+// QueryRemediation renders the remediation for a query as plain text, labeling
 // each item with its platform/tool id (e.g. "[terraform]") when present.
-func queryRemediation(query *policy.Mquery, platformKeys map[string]bool) string {
+func QueryRemediation(query *policy.Mquery, platformKeys map[string]bool) string {
 	var b strings.Builder
-	for _, item := range remediationItems(query, platformKeys) {
+	for _, item := range RemediationItems(query, platformKeys) {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
@@ -136,9 +137,9 @@ func queryRemediation(query *policy.Mquery, platformKeys map[string]bool) string
 	return b.String()
 }
 
-// queryRefs returns the references of a query. It prefers docs.refs (the canonical
+// QueryRefs returns the references of a query. It prefers docs.refs (the canonical
 // location) and falls back to the deprecated refs field.
-func queryRefs(query *policy.Mquery) []*policy.MqueryRef {
+func QueryRefs(query *policy.Mquery) []*policy.MqueryRef {
 	refs := query.Refs
 	if query.Docs != nil && len(query.Docs.Refs) > 0 {
 		refs = query.Docs.Refs
@@ -154,10 +155,10 @@ func queryRefs(query *policy.Mquery) []*policy.MqueryRef {
 	return res
 }
 
-// queryReferences renders a query's references as "Title: URL" lines.
-func queryReferences(query *policy.Mquery) string {
+// QueryReferences renders a query's references as "Title: URL" lines.
+func QueryReferences(query *policy.Mquery) string {
 	var b strings.Builder
-	for _, ref := range queryRefs(query) {
+	for _, ref := range QueryRefs(query) {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
@@ -169,10 +170,10 @@ func queryReferences(query *policy.Mquery) string {
 	return b.String()
 }
 
-// queryComplianceTags returns the compliance framework mappings of a check, keyed
+// QueryComplianceTags returns the compliance framework mappings of a check, keyed
 // by framework (e.g. "compliance/iso-27001-2022" -> "iso-27001-2022-a-8-24").
 // Entries that are explicitly turned off (value "false") are dropped.
-func queryComplianceTags(query *policy.Mquery) map[string]string {
+func QueryComplianceTags(query *policy.Mquery) map[string]string {
 	res := map[string]string{}
 	for k, v := range query.Tags {
 		if !strings.HasPrefix(k, "compliance/") || v == "" || v == "false" {
@@ -183,10 +184,10 @@ func queryComplianceTags(query *policy.Mquery) map[string]string {
 	return res
 }
 
-// failingResourceLocations lists the source locations (path:line) of the resources
+// FailingResourceLocations lists the source locations (path:line) of the resources
 // that caused a check to fail. It is populated for resources that carry source
 // context (e.g. Terraform/HCL) and empty for scalar checks.
-func failingResourceLocations(cb *llx.CodeBundle, assessment *llx.Assessment) string {
+func FailingResourceLocations(cb *llx.CodeBundle, assessment *llx.Assessment) string {
 	var b strings.Builder
 	for _, sc := range cb.FailingResourceContexts(assessment) {
 		if sc.Path == "" {
@@ -204,9 +205,9 @@ func failingResourceLocations(cb *llx.CodeBundle, assessment *llx.Assessment) st
 	return b.String()
 }
 
-// writeDetailSection appends an indented "Title:\n  body" section to b. It is the
+// WriteDetailSection appends an indented "Title:\n  body" section to b. It is the
 // plain-text section format used in JUnit failure bodies and SARIF rule help.
-func writeDetailSection(b *strings.Builder, title, body string) {
+func WriteDetailSection(b *strings.Builder, title, body string) {
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return
@@ -220,9 +221,9 @@ func writeDetailSection(b *strings.Builder, title, body string) {
 	b.WriteString("\n")
 }
 
-// policyTitlesByQuery maps a check MRN to the titles of the policies that include
+// PolicyTitlesByQuery maps a check MRN to the titles of the policies that include
 // it, so a finding can be attributed to the policy it came from.
-func policyTitlesByQuery(bundle *policy.PolicyBundleMap) map[string][]string {
+func PolicyTitlesByQuery(bundle *policy.PolicyBundleMap) map[string][]string {
 	res := map[string][]string{}
 	if bundle == nil {
 		return res
@@ -261,16 +262,16 @@ func policyTitlesByQuery(bundle *policy.PolicyBundleMap) map[string][]string {
 	return res
 }
 
-// queryImpact returns the configured impact of a check (0-100, where 100 is the
+// QueryImpact returns the configured impact of a check (0-100, where 100 is the
 // most impactful) and whether it is set at all.
-func queryImpact(query *policy.Mquery) (int32, bool) {
+func QueryImpact(query *policy.Mquery) (int32, bool) {
 	if query == nil || query.Impact == nil || query.Impact.Value == nil {
 		return 0, false
 	}
 	return query.Impact.Value.Value, true
 }
 
-// riskSeverityLabel maps a cnspec risk value (0-100, the inverse of a score value)
+// RiskSeverityLabel maps a cnspec risk value (0-100, the inverse of a score value)
 // to the severity label cnspec uses everywhere else. The bands mirror
 // policy.ScoreRatingsText:
 //
@@ -279,7 +280,7 @@ func queryImpact(query *policy.Mquery) (int32, bool) {
 //	40 ..  69 → MEDIUM
 //	 1 ..  39 → LOW
 //	        0 → NONE
-func riskSeverityLabel(risk int32) string {
+func RiskSeverityLabel(risk int32) string {
 	switch {
 	case risk >= 90:
 		return policy.ScoreRatingTextCritical
@@ -308,8 +309,8 @@ func riskSarifLevel(risk int32) string {
 	}
 }
 
-// securitySeverity renders a cnspec risk value (0-100) as the 0.0-10.0 string that
+// SecuritySeverity renders a cnspec risk value (0-100) as the 0.0-10.0 string that
 // GitHub code scanning reads from the "security-severity" rule property.
-func securitySeverity(risk int32) string {
+func SecuritySeverity(risk int32) string {
 	return strconv.FormatFloat(float64(risk)/10, 'f', 1, 64)
 }

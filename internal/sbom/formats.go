@@ -43,6 +43,21 @@ func AllFormats() string {
 	return strings.Join(formats, ", ")
 }
 
+// IsSupportedFormat returns true if New can render the given format. New falls
+// back to the table format for anything it does not recognize, so callers that
+// want to reject an unknown format have to ask this first.
+func IsSupportedFormat(format string) bool {
+	switch format {
+	case FormatJson, "cnquery-json", "cnspec-json",
+		FormatCycloneDxJSON, FormatCycloneDxXML,
+		FormatSpdxJSON, FormatSpdxTagValue,
+		FormatList, "list":
+		return true
+	default:
+		return false
+	}
+}
+
 func New(format string) FormatSpecificationHandler {
 	switch format {
 	case FormatJson, "cnquery-json", "cnspec-json":

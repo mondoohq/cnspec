@@ -262,23 +262,23 @@ func TestQueryRemediationPlatformFilter(t *testing.T) {
 	tf := &policy.TypedDoc{Id: "terraform", Desc: "terraform fix"}
 	def := &policy.TypedDoc{Id: "default", Desc: "generic fix"}
 
-	tfKeys := platformRemediationKeys(&inventory.Platform{Name: "terraform-hcl", Family: []string{"terraform"}})
+	tfKeys := PlatformRemediationKeys(&inventory.Platform{Name: "terraform-hcl", Family: []string{"terraform"}})
 
 	// family match ("terraform" via terraform-hcl) keeps only the terraform item
-	out := queryRemediation(mkQuery(console, tf), tfKeys)
+	out := QueryRemediation(mkQuery(console, tf), tfKeys)
 	assert.Contains(t, out, "[terraform] terraform fix")
 	assert.NotContains(t, out, "console fix")
 
 	// no platform-specific match -> fall back to all items (never drop remediation)
-	out = queryRemediation(mkQuery(console), tfKeys)
+	out = QueryRemediation(mkQuery(console), tfKeys)
 	assert.Contains(t, out, "[console] console fix")
 
 	// platform-agnostic "default" is kept and shown without a label
-	out = queryRemediation(mkQuery(def, console), tfKeys)
+	out = QueryRemediation(mkQuery(def, console), tfKeys)
 	assert.Contains(t, out, "generic fix")
 	assert.NotContains(t, out, "[default]")
 	assert.NotContains(t, out, "console fix")
 
 	// nil docs / nil remediation are safe
-	assert.Equal(t, "", queryRemediation(&policy.Mquery{}, tfKeys))
+	assert.Equal(t, "", QueryRemediation(&policy.Mquery{}, tfKeys))
 }

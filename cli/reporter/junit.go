@@ -57,7 +57,7 @@ func ConvertToJunit(r *policy.ReportCollection, out iox.OutputHelper, detailed b
 		}
 
 		bundle := r.Bundle.ToMap()
-		queries := reporterQueryMap(bundle)
+		queries := DeterministicQueryMap(bundle)
 
 		// iterate over asset mrns
 		for assetMrn, assetObj := range r.Assets {
@@ -111,7 +111,7 @@ func assetPolicyTests(r *policy.ReportCollection, assetMrn string, assetObj *inv
 	// Data queries have no score and are not represented here. When detailed is set,
 	// failed/errored checks carry their meta information (description, query, assessment,
 	// remediation, references) in the failure body below.
-	platformKeys := platformRemediationKeys(assetObj.Platform)
+	platformKeys := PlatformRemediationKeys(assetObj.Platform)
 	for id, score := range report.Scores {
 		_, ok := resolved.CollectorJob.ReportingQueries[id]
 		if !ok {
@@ -260,13 +260,13 @@ func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *invent
 func detailedCheckBody(resolved *policy.ResolvedPolicy, report *policy.Report, query *policy.Mquery, score *policy.Score, platformKeys map[string]bool) string {
 	var b strings.Builder
 
-	if desc := strings.TrimSpace(queryDescription(query)); desc != "" {
+	if desc := strings.TrimSpace(QueryDescription(query)); desc != "" {
 		b.WriteString(desc)
 		b.WriteString("\n")
 	}
 
-	if mql := queryMql(query); mql != "" {
-		writeDetailSection(&b, "Query", mql)
+	if mql := QueryMql(query); mql != "" {
+		WriteDetailSection(&b, "Query", mql)
 	}
 
 	// The assessment (expected vs actual) is only available for assertion checks
@@ -279,10 +279,10 @@ func detailedCheckBody(resolved *policy.ResolvedPolicy, report *policy.Report, q
 		if cb := resolved.GetCodeBundle(query); cb != nil {
 			if assessment := policy.Query2Assessment(cb, report); assessment != nil {
 				if text := strings.TrimSpace(printer.PlainNoColorPrinter.Assessment(cb, assessment)); text != "" {
-					writeDetailSection(&b, "Result", text)
+					WriteDetailSection(&b, "Result", text)
 				}
-				if locs := failingResourceLocations(cb, assessment); locs != "" {
-					writeDetailSection(&b, "Failing resources", locs)
+				if locs := FailingResourceLocations(cb, assessment); locs != "" {
+					WriteDetailSection(&b, "Failing resources", locs)
 				}
 			}
 		}
@@ -291,12 +291,12 @@ func detailedCheckBody(resolved *policy.ResolvedPolicy, report *policy.Report, q
 	// For errored checks the score message carries the failure reason.
 	if score != nil && score.Type == policy.ScoreType_Error {
 		if msg := score.MessageLine(); msg != "" {
-			writeDetailSection(&b, "Error", msg)
+			WriteDetailSection(&b, "Error", msg)
 		}
 	}
 
-	writeDetailSection(&b, "Remediation", queryRemediation(query, platformKeys))
-	writeDetailSection(&b, "References", queryReferences(query))
+	WriteDetailSection(&b, "Remediation", QueryRemediation(query, platformKeys))
+	WriteDetailSection(&b, "References", QueryReferences(query))
 
 	return strings.TrimSpace(b.String())
 }
