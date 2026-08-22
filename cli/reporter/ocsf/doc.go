@@ -37,6 +37,14 @@
 // is selected; in Parquet they show up as an all-null column, which Glue, Athena
 // and every other reader handle.
 //
+// # Scope
+//
+// The generator is internal to cnspec on purpose: it has one consumer, so a
+// public module would mean a published API and a release process for no present
+// benefit. Its boundary is kept clean (spec and schemas in, Go out) so that
+// extracting it, or upstreaming it into the OCSF project, stays mechanical if a
+// second consumer appears. See docs/adr/0005-ocsf-type-generation.md.
+//
 // # Conformance
 //
 // Correctness is proven against the schema rather than asserted: every event of
