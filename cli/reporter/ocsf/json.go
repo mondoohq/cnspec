@@ -28,6 +28,8 @@ func (e *Events) WriteJSONClass(class string, out io.Writer) error {
 	switch class {
 	case ClassComplianceFinding:
 		return encodeAll(enc, e.ComplianceFindings)
+	case ClassDetectionFinding:
+		return encodeAll(enc, e.DetectionFindings)
 	case ClassVulnerabilityFinding:
 		return encodeAll(enc, e.VulnerabilityFindings)
 	case ClassInventoryInfo:
@@ -35,6 +37,44 @@ func (e *Events) WriteJSONClass(class string, out io.Writer) error {
 	default:
 		return errors.Newf("unknown OCSF event class %q", class)
 	}
+}
+
+// EachJSON calls fn with the JSON encoding of every event, class by class in
+// write order. A transport that wraps each event in an envelope of its own, such
+// as Splunk HEC, iterates over this rather than over a byte stream.
+func (e *Events) EachJSON(fn func(class string, event []byte) error) error {
+	for _, class := range e.Classes() {
+		var err error
+		switch class {
+		case ClassComplianceFinding:
+			err = eachJSON(class, e.ComplianceFindings, fn)
+		case ClassDetectionFinding:
+			err = eachJSON(class, e.DetectionFindings, fn)
+		case ClassVulnerabilityFinding:
+			err = eachJSON(class, e.VulnerabilityFindings, fn)
+		case ClassInventoryInfo:
+			err = eachJSON(class, e.InventoryInfos, fn)
+		default:
+			err = errors.Newf("unknown OCSF event class %q", class)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func eachJSON[T any](class string, rows []T, fn func(string, []byte) error) error {
+	for i := range rows {
+		raw, err := json.Marshal(rows[i])
+		if err != nil {
+			return err
+		}
+		if err := fn(class, raw); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func encodeAll[T any](enc *json.Encoder, rows []T) error {

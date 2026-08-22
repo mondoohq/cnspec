@@ -14,17 +14,19 @@ import (
 // read them all at once.
 type Events struct {
 	ComplianceFindings    []ComplianceFinding
+	DetectionFindings     []DetectionFinding
 	VulnerabilityFindings []VulnerabilityFinding
 	InventoryInfos        []InventoryInfo
 }
 
 // classOrder is the order classes are written in, so a mixed stream and a set
 // of per-class files always come out the same way.
-var classOrder = []string{ClassComplianceFinding, ClassVulnerabilityFinding, ClassInventoryInfo}
+var classOrder = []string{ClassComplianceFinding, ClassDetectionFinding, ClassVulnerabilityFinding, ClassInventoryInfo}
 
 // Len is the total number of events across all classes.
 func (e *Events) Len() int {
-	return len(e.ComplianceFindings) + len(e.VulnerabilityFindings) + len(e.InventoryInfos)
+	return len(e.ComplianceFindings) + len(e.DetectionFindings) +
+		len(e.VulnerabilityFindings) + len(e.InventoryInfos)
 }
 
 // Classes lists the event classes that carry at least one event, in write order.
@@ -42,6 +44,8 @@ func (e *Events) count(class string) int {
 	switch class {
 	case ClassComplianceFinding:
 		return len(e.ComplianceFindings)
+	case ClassDetectionFinding:
+		return len(e.DetectionFindings)
 	case ClassVulnerabilityFinding:
 		return len(e.VulnerabilityFindings)
 	case ClassInventoryInfo:
@@ -55,6 +59,13 @@ func (e *Events) count(class string) int {
 // report produce byte-identical output.
 func (e *Events) Sort() {
 	slices.SortStableFunc(e.ComplianceFindings, func(a, b ComplianceFinding) int {
+		return cmp.Or(
+			cmp.Compare(a.Time, b.Time),
+			cmp.Compare(a.FindingInfo.UID, b.FindingInfo.UID),
+			cmp.Compare(resourceUID(a.Resources), resourceUID(b.Resources)),
+		)
+	})
+	slices.SortStableFunc(e.DetectionFindings, func(a, b DetectionFinding) int {
 		return cmp.Or(
 			cmp.Compare(a.Time, b.Time),
 			cmp.Compare(a.FindingInfo.UID, b.FindingInfo.UID),

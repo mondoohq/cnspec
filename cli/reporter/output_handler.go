@@ -28,6 +28,7 @@ const (
 	LOCAL_FILE
 	AWS_SQS
 	AZURE_SBUS
+	SPLUNK_HEC
 )
 
 type OutputHandler interface {
@@ -53,6 +54,8 @@ func NewOutputHandler(config HandlerConfig) (OutputHandler, error) {
 		return &awsSqsHandler{sqsQueueUrl: config.OutputTarget, format: conf.format}, nil
 	case AZURE_SBUS:
 		return &azureSbusHandler{url: config.OutputTarget, format: conf.format}, nil
+	case SPLUNK_HEC:
+		return newSplunkHecHandler(config.OutputTarget, conf)
 	case CLI:
 		fallthrough
 	default:
@@ -74,6 +77,9 @@ func determineOutputType(target string) OutputTarget {
 	}
 	if sbusRegex.MatchString(target) {
 		return AZURE_SBUS
+	}
+	if splunkHecRegex.MatchString(target) {
+		return SPLUNK_HEC
 	}
 
 	return LOCAL_FILE

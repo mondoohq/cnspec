@@ -43,7 +43,7 @@ func TestOcsfSchemaValidation(t *testing.T) {
 
 			for name, report := range reports {
 				t.Run(name, func(t *testing.T) {
-					events, err := convertToOCSF(report, ocsf.Version(version), true, fixedScanTime)
+					events, err := convertToOCSF(report, ocsfConfig{version: ocsf.Version(version), findings: OcsfFindingsBoth, includeData: true}, fixedScanTime)
 					require.NoError(t, err)
 					require.NotZero(t, events.Len(), "the fixture must produce events to validate")
 

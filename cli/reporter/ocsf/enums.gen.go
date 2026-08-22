@@ -15,6 +15,13 @@ const (
 	CategoryUIDComplianceFinding  = 2
 	CategoryNameComplianceFinding = "Findings"
 
+	// DetectionFinding identity, from the OCSF schema.
+	ClassUIDDetectionFinding     = 2004
+	ClassNameDetectionFinding    = "Detection Finding"
+	ClassDetectionFinding        = "detection_finding"
+	CategoryUIDDetectionFinding  = 2
+	CategoryNameDetectionFinding = "Findings"
+
 	// InventoryInfo identity, from the OCSF schema.
 	ClassUIDInventoryInfo     = 5001
 	ClassNameInventoryInfo    = "Device Inventory Info"
@@ -39,7 +46,72 @@ const (
 	ProfileDatetime           = "datetime"
 	ProfileHost               = "host"
 	ProfileOsint              = "osint"
+	ProfileSecurityControl    = "security_control"
 )
+
+// AnalyticType values of Analytic.type_id, from the OCSF schema.
+const (
+	// The type is unknown.
+	AnalyticTypeUnknown = 0
+	// A Rule in security analytics refers to predefined criteria or conditions set to monitor, alert, or enforce policies, playing a crucial role in access control, threat detection, and regulatory compliance across security systems.
+	AnalyticTypeRule = 1
+	// Behavioral analytics focus on monitoring and analyzing user or system actions to identify deviations from established patterns, aiding in the detection of insider threats, fraud, and advanced persistent threats (APTs).
+	AnalyticTypeBehavioral = 2
+	// Statistical analytics pertains to analyzing data patterns and anomalies using statistical models to predict, detect, and respond to potential threats, enhancing overall security posture through informed decision-making.
+	AnalyticTypeStatistical = 3
+	// Learning (ML/DL) encompasses techniques that can "learn" from known data to create analytics that generalize to new data. There may be a statistical component to these techniques, but it is not a requirement.
+	AnalyticTypeLearningMLDL = 4
+	// Fingerprinting is the technique of collecting detailed system data, including software versions and configurations, to enhance threat detection, data loss prevention (DLP), and endpoint detection and response (EDR) capabilities.
+	AnalyticTypeFingerprinting = 5
+	// Tagging refers to the practice of assigning labels or identifiers to data, users, assets, or activities to monitor, control access, and facilitate incident response across various security domains such as DLP and EDR.
+	AnalyticTypeTagging = 6
+	// Keyword Match involves scanning content for specific terms to identify sensitive information, potential threats, or policy violations, aiding in DLP and compliance monitoring.
+	AnalyticTypeKeywordMatch = 7
+	// Regular Expressions are used to define complex search patterns for identifying, validating, and extracting specific data sets or threats within digital content, enhancing DLP, EDR, and threat detection mechanisms.
+	AnalyticTypeRegularExpressions = 8
+	// Exact Data Match is a precise comparison technique used to detect the unauthorized use or exposure of specific, sensitive information, crucial for enforcing DLP policies and protecting against data breaches.
+	AnalyticTypeExactDataMatch = 9
+	// Partial Data Match involves identifying instances where segments of sensitive information or patterns match, facilitating nuanced DLP and threat detection without requiring complete data conformity.
+	AnalyticTypePartialDataMatch = 10
+	// Indexed Data Match refers to comparing content against a pre-compiled index of sensitive information to efficiently detect and prevent unauthorized access or breaches, streamlining DLP and compliance efforts.
+	AnalyticTypeIndexedDataMatch = 11
+	// The type is not mapped. See the type attribute, which contains a data source specific value.
+	AnalyticTypeOther = 99
+)
+
+// AnalyticTypeName is the OCSF caption of a Analytic.type_id value. It is what the
+// string sibling of the identifier has to carry.
+func AnalyticTypeName(id int) string {
+	switch id {
+	case 0:
+		return "Unknown"
+	case 1:
+		return "Rule"
+	case 2:
+		return "Behavioral"
+	case 3:
+		return "Statistical"
+	case 4:
+		return "Learning (ML/DL)"
+	case 5:
+		return "Fingerprinting"
+	case 6:
+		return "Tagging"
+	case 7:
+		return "Keyword Match"
+	case 8:
+		return "Regular Expressions"
+	case 9:
+		return "Exact Data Match"
+	case 10:
+		return "Partial Data Match"
+	case 11:
+		return "Indexed Data Match"
+	case 99:
+		return "Other"
+	}
+	return ""
+}
 
 // ComplianceFindingActivity values of ComplianceFinding.activity_id, from the OCSF schema.
 const (
@@ -135,6 +207,68 @@ func ComplianceStatusName(id int) string {
 	return ""
 }
 
+// DetectionFindingActivity values of DetectionFinding.activity_id, from the OCSF schema.
+const (
+	// The event activity is unknown.
+	DetectionFindingActivityUnknown = 0
+	// A finding was created.
+	DetectionFindingActivityCreate = 1
+	// A finding was updated.
+	DetectionFindingActivityUpdate = 2
+	// A finding was closed.
+	DetectionFindingActivityClose = 3
+	// The event activity is not mapped. See the activity_name attribute, which contains a data source specific value.
+	DetectionFindingActivityOther = 99
+)
+
+// DetectionFindingActivityName is the OCSF caption of a DetectionFinding.activity_id value. It is what the
+// string sibling of the identifier has to carry.
+func DetectionFindingActivityName(id int) string {
+	switch id {
+	case 0:
+		return "Unknown"
+	case 1:
+		return "Create"
+	case 2:
+		return "Update"
+	case 3:
+		return "Close"
+	case 99:
+		return "Other"
+	}
+	return ""
+}
+
+// DetectionFindingTypeUID values of DetectionFinding.type_uid, from the OCSF schema.
+const (
+	DetectionFindingTypeUIDUnknown = 200400
+	// A finding was created.
+	DetectionFindingTypeUIDCreate = 200401
+	// A finding was updated.
+	DetectionFindingTypeUIDUpdate = 200402
+	// A finding was closed.
+	DetectionFindingTypeUIDClose = 200403
+	DetectionFindingTypeUIDOther = 200499
+)
+
+// DetectionFindingTypeUIDName is the OCSF caption of a DetectionFinding.type_uid value. It is what the
+// string sibling of the identifier has to carry.
+func DetectionFindingTypeUIDName(id int) string {
+	switch id {
+	case 200400:
+		return "Detection Finding: Unknown"
+	case 200401:
+		return "Detection Finding: Create"
+	case 200402:
+		return "Detection Finding: Update"
+	case 200403:
+		return "Detection Finding: Close"
+	case 200499:
+		return "Detection Finding: Other"
+	}
+	return ""
+}
+
 // DeviceType values of Device.type_id, from the OCSF schema.
 const (
 	// The type is unknown.
@@ -209,6 +343,38 @@ func DeviceTypeName(id int) string {
 		return "IPS"
 	case 15:
 		return "Load Balancer"
+	case 99:
+		return "Other"
+	}
+	return ""
+}
+
+// Impact values of impact_id, from the OCSF schema.
+const (
+	// The normalized impact is unknown.
+	ImpactUnknown  = 0
+	ImpactLow      = 1
+	ImpactMedium   = 2
+	ImpactHigh     = 3
+	ImpactCritical = 4
+	// The impact is not mapped. See the impact attribute, which contains a data source specific value.
+	ImpactOther = 99
+)
+
+// ImpactName is the OCSF caption of a impact_id value. It is what the
+// string sibling of the identifier has to carry.
+func ImpactName(id int) string {
+	switch id {
+	case 0:
+		return "Unknown"
+	case 1:
+		return "Low"
+	case 2:
+		return "Medium"
+	case 3:
+		return "High"
+	case 4:
+		return "Critical"
 	case 99:
 		return "Other"
 	}
@@ -315,6 +481,37 @@ func OSTypeName(id int) string {
 		return "AIX"
 	case 402:
 		return "HP-UX"
+	}
+	return ""
+}
+
+// RiskLevel values of risk_level_id, from the OCSF schema.
+const (
+	RiskLevelInfo     = 0
+	RiskLevelLow      = 1
+	RiskLevelMedium   = 2
+	RiskLevelHigh     = 3
+	RiskLevelCritical = 4
+	// The risk level is not mapped. See the risk_level attribute, which contains a data source specific value.
+	RiskLevelOther = 99
+)
+
+// RiskLevelName is the OCSF caption of a risk_level_id value. It is what the
+// string sibling of the identifier has to carry.
+func RiskLevelName(id int) string {
+	switch id {
+	case 0:
+		return "Info"
+	case 1:
+		return "Low"
+	case 2:
+		return "Medium"
+	case 3:
+		return "High"
+	case 4:
+		return "Critical"
+	case 99:
+		return "Other"
 	}
 	return ""
 }

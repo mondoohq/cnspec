@@ -30,7 +30,7 @@ type ocsfFileHandler struct {
 }
 
 func (h *ocsfFileHandler) WriteReport(ctx context.Context, report *policy.ReportCollection) error {
-	events, err := ConvertToOCSF(report, h.conf.ocsfVersion, h.conf.printData)
+	events, err := ConvertToOCSF(report, h.conf)
 	if err != nil {
 		return err
 	}

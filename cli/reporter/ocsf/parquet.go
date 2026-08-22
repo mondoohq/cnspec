@@ -33,6 +33,8 @@ func (e *Events) WriteParquetClass(class string, out io.Writer) error {
 	switch class {
 	case ClassComplianceFinding:
 		return writeParquet(out, class, e.ComplianceFindings)
+	case ClassDetectionFinding:
+		return writeParquet(out, class, e.DetectionFindings)
 	case ClassVulnerabilityFinding:
 		return writeParquet(out, class, e.VulnerabilityFindings)
 	case ClassInventoryInfo:

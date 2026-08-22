@@ -45,13 +45,13 @@ const (
 )
 
 // ConvertToOCSF converts a report collection into OCSF events.
-func ConvertToOCSF(r *policy.ReportCollection, version ocsf.Version, includeData bool) (*ocsf.Events, error) {
-	return convertToOCSF(r, version, includeData, time.Now())
+func ConvertToOCSF(r *policy.ReportCollection, conf *PrintConfig) (*ocsf.Events, error) {
+	return convertToOCSF(r, conf.ocsfConfig(), time.Now())
 }
 
 // ConvertToOCSFJSON writes a report collection as newline-delimited OCSF events.
-func ConvertToOCSFJSON(r *policy.ReportCollection, version ocsf.Version, includeData bool, out io.Writer) error {
-	events, err := ConvertToOCSF(r, version, includeData)
+func ConvertToOCSFJSON(r *policy.ReportCollection, conf *PrintConfig, out io.Writer) error {
+	events, err := ConvertToOCSF(r, conf)
 	if err != nil {
 		return err
 	}
@@ -73,18 +73,51 @@ func VulnReportToOCSFJSON(target string, data *mvd.VulnReport, version ocsf.Vers
 	return events.WriteJSON(out)
 }
 
-func convertToOCSF(r *policy.ReportCollection, version ocsf.Version, includeData bool, now time.Time) (*ocsf.Events, error) {
+func convertToOCSF(r *policy.ReportCollection, conf ocsfConfig, now time.Time) (*ocsf.Events, error) {
 	c := &ocsfConverter{
-		version:     version,
-		includeData: includeData,
+		version:     conf.version,
+		findings:    conf.findings,
+		includeData: conf.includeData,
 		now:         now.UnixMilli(),
 	}
 	return c.convert(r)
 }
 
+// ocsfConfig is what the output format options say about the events to produce.
+type ocsfConfig struct {
+	version     ocsf.Version
+	findings    OcsfFindingClasses
+	includeData bool
+}
+
+// OcsfFindingClasses selects which OCSF class a check result is reported as.
+//
+// A cnspec check is a compliance check, so Compliance Finding (2003) is the
+// default and the complete record: it carries every check, passing or failing,
+// with its framework mappings. Detection Finding (2004) is what Splunk
+// Enterprise Security and similar tools model their findings on; it has no
+// compliance object, so only failing and errored checks are reported as
+// detections, and the framework mappings travel in unmapped.
+type OcsfFindingClasses byte
+
+const (
+	OcsfFindingsCompliance OcsfFindingClasses = iota + 1
+	OcsfFindingsDetection
+	OcsfFindingsBoth
+)
+
+func (f OcsfFindingClasses) compliance() bool {
+	return f == OcsfFindingsCompliance || f == OcsfFindingsBoth
+}
+
+func (f OcsfFindingClasses) detection() bool {
+	return f == OcsfFindingsDetection || f == OcsfFindingsBoth
+}
+
 // ocsfConverter holds everything that is the same for every event of one run.
 type ocsfConverter struct {
 	version     ocsf.Version
+	findings    OcsfFindingClasses
 	includeData bool
 	// now is the scan time in milliseconds since the epoch. It is a field rather
 	// than a call to time.Now so that a conversion is reproducible.
@@ -197,7 +230,19 @@ func (c *ocsfConverter) addComplianceFindings(events *ocsf.Events, r *policy.Rep
 		if !ok {
 			continue
 		}
-		events.ComplianceFindings = append(events.ComplianceFindings, c.complianceFinding(resolved, report, query, score, ctx))
+
+		if c.findings.compliance() {
+			events.ComplianceFindings = append(events.ComplianceFindings,
+				c.complianceFinding(resolved, report, query, score, ctx))
+		}
+		// A detection reports something that was found. A check that passed or was
+		// skipped found nothing, so it is not one; it stays in the compliance
+		// class. A check that errored is reported, because an unevaluated control
+		// is a gap someone has to act on.
+		if c.findings.detection() && checkDetected(score) {
+			events.DetectionFindings = append(events.DetectionFindings,
+				c.detectionFinding(resolved, report, query, score, ctx))
+		}
 	}
 }
 
@@ -234,6 +279,129 @@ func (c *ocsfConverter) complianceFinding(resolved *policy.ResolvedPolicy, repor
 		}
 	}
 	return finding
+}
+
+// detectionFinding reports a failing check as OCSF class 2004, which is the
+// class Splunk Enterprise Security and similar tools model findings on.
+//
+// It carries the same identity and remediation as the compliance finding, but
+// swaps the compliance object, which 2004 does not have, for the risk and impact
+// attributes it does: the check becomes an analytic under finding_info, and the
+// framework mappings travel in unmapped.
+func (c *ocsfConverter) detectionFinding(resolved *policy.ResolvedPolicy, report *policy.Report, query *policy.Mquery, score *policy.Score, ctx *ocsfAssetContext) ocsf.DetectionFinding {
+	title := query.Title
+	if title == "" {
+		title = queryRuleID(query)
+	}
+
+	message := title + ": " + scoreStatusLabel(score)
+	if msg := score.MessageLine(); msg != "" {
+		message += " · " + msg
+	}
+
+	finding := ocsf.NewDetectionFinding(ocsf.DetectionFindingActivityCreate)
+	finding.Time = c.now
+	finding.SeverityID = ocsfCheckSeverity(score)
+	finding.Severity = ocsf.SeverityName(finding.SeverityID)
+	finding.StatusID, finding.Status = ocsfFindingStatus(score)
+	finding.StatusCode = strings.ToLower(scoreStatusLabel(score))
+	finding.StatusDetail = checkAssessment(resolved, report, query)
+	finding.Message = message
+	finding.Metadata = c.metadata(ctx.findingProfiles()...)
+	finding.Unmapped = c.detectionUnmapped(query, score, ctx)
+
+	finding.FindingInfo = c.findingInfo(query, score, title)
+	finding.FindingInfo.Analytic = &ocsf.Analytic{
+		TypeID:   ocsf.AnalyticTypeRule,
+		Type:     ocsf.AnalyticTypeName(ocsf.AnalyticTypeRule),
+		Name:     title,
+		UID:      queryRuleID(query),
+		Desc:     strings.TrimSpace(queryMql(query)),
+		Category: firstOrEmpty(ctx.policyTitles[query.Mrn]),
+	}
+
+	risk := scoreRisk(score)
+	finding.RiskScore = int(risk)
+	finding.RiskLevelID = ocsfRiskLevel(risk)
+	finding.RiskLevel = ocsf.RiskLevelName(finding.RiskLevelID)
+	if impact, ok := queryImpact(query); ok {
+		finding.ImpactScore = int(impact)
+		finding.ImpactID = ocsfImpactLevel(impact)
+		finding.Impact = ocsf.ImpactName(finding.ImpactID)
+	}
+
+	if rem := queryRemediation(query, ctx.platformKeys); rem != "" {
+		finding.Remediation = &ocsf.Remediation{Desc: rem, References: refURLs(query)}
+	}
+	finding.Resources = []ocsf.ResourceDetails{ctx.resource}
+	finding.Device = ctx.device
+	finding.Cloud = ctx.cloud
+	return finding
+}
+
+// detectionUnmapped carries what a detection finding has no attribute for. That
+// includes the compliance mappings, since class 2004 has no compliance object.
+func (c *ocsfConverter) detectionUnmapped(query *policy.Mquery, score *policy.Score, ctx *ocsfAssetContext) map[string]string {
+	res := c.checkUnmapped(query, score, ctx)
+	tags := queryComplianceTags(query)
+	if frameworks := sortedKeys(tags); len(frameworks) > 0 {
+		standards := make([]string, 0, len(frameworks))
+		controls := make([]string, 0, len(frameworks))
+		for _, framework := range frameworks {
+			standards = append(standards, strings.TrimPrefix(framework, "compliance/"))
+			controls = append(controls, tags[framework])
+		}
+		res["compliance_standards"] = strings.Join(standards, ", ")
+		res["compliance_controls"] = strings.Join(controls, ", ")
+	}
+	return res
+}
+
+// checkDetected reports whether a check found something worth a detection: a
+// failure, or an error that left the control unevaluated. Passing, skipped and
+// unscored checks are not detections.
+func checkDetected(score *policy.Score) bool {
+	return scoreToSarifKind(score) == "fail"
+}
+
+// ocsfRiskLevel maps a cnspec risk value to an OCSF risk_level_id, whose bands
+// are Info/Low/Medium/High/Critical rather than the severity ones.
+func ocsfRiskLevel(risk int32) int {
+	switch {
+	case risk >= 90:
+		return ocsf.RiskLevelCritical
+	case risk >= 70:
+		return ocsf.RiskLevelHigh
+	case risk >= 40:
+		return ocsf.RiskLevelMedium
+	case risk >= 1:
+		return ocsf.RiskLevelLow
+	default:
+		return ocsf.RiskLevelInfo
+	}
+}
+
+// ocsfImpactLevel maps a check's configured impact to an OCSF impact_id.
+func ocsfImpactLevel(impact int32) int {
+	switch {
+	case impact >= 90:
+		return ocsf.ImpactCritical
+	case impact >= 70:
+		return ocsf.ImpactHigh
+	case impact >= 40:
+		return ocsf.ImpactMedium
+	case impact >= 1:
+		return ocsf.ImpactLow
+	default:
+		return ocsf.ImpactUnknown
+	}
+}
+
+func firstOrEmpty(items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	return items[0]
 }
 
 // compliance builds the compliance context of a check: which frameworks it maps

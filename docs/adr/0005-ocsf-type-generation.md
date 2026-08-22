@@ -109,6 +109,28 @@ present benefit.
 - cnspec carries `parquet-go` as a runtime dependency and `ocsf-toolkit` as a test-only one
   (no non-test package imports it, so it is never linked into the binary).
 
+## Splunk
+
+Splunk holds `splunk` / UID 997 in the OCSF Extensions Registry, but its extension
+([ocsf/splunk](https://github.com/ocsf/splunk)) targets OCSF 1.0.0-rc.2, adds "fields specific
+to Splunk's internal usage" plus back-ports, and defines `detection_finding`,
+`detection_report` and `inventory_base` — none of the three classes cnspec emits. Emitting
+`splunk`-namespaced attributes would therefore add nothing, on a schema base older than the one
+we target, and would be rejected by any validator that has not loaded the extension.
+
+Splunk support is instead core OCSF plus transport:
+
+- **Detection Finding (2004)**, selected with `ocsf-findings=detection|both`. It is the class
+  Splunk Enterprise Security models findings on and the one Splunk's own extension covers, and
+  it is core OCSF, so the events stay valid for Security Lake too. Class 2004 has no compliance
+  object, so the framework mappings travel in `unmapped` and the check becomes
+  `finding_info.analytic`; its risk and impact attributes carry cnspec's risk model, which 2003
+  has nowhere to put. Only failing and errored checks are detections: a passing or skipped
+  check detected nothing.
+- **HTTP Event Collector output**, when `--output-target` is a `/services/collector` URL. Events
+  are wrapped in the HEC envelope with `ocsf:<class>` sourcetypes, which is what the OCSF-CIM
+  Add-On for Splunk keys off.
+
 ## References
 
 - `cli/reporter/ocsf/doc.go` — package documentation and the generation contract

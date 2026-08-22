@@ -166,7 +166,7 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 		writer := iox.IOWriter{Writer: r.out}
 		return ConvertToSarif(data, &writer)
 	case FormatOcsfJson:
-		return ConvertToOCSFJSON(data, r.Conf.ocsfVersion, r.Conf.printData, r.out)
+		return ConvertToOCSFJSON(data, r.Conf, r.out)
 	case FormatOcsfParquet:
 		// Parquet is a binary, seek-and-footer format with one event class per
 		// file. It needs a destination directory, never a terminal.

@@ -29,7 +29,7 @@ var fixedScanTime = time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
 
 func toOcsf(t *testing.T, r *policy.ReportCollection) *ocsf.Events {
 	t.Helper()
-	events, err := convertToOCSF(r, ocsf.DefaultVersion, false, fixedScanTime)
+	events, err := convertToOCSF(r, ocsfConfig{version: ocsf.DefaultVersion, findings: OcsfFindingsCompliance}, fixedScanTime)
 	require.NoError(t, err)
 	return events
 }
@@ -136,7 +136,7 @@ func TestOcsfVulnerabilityFindings(t *testing.T) {
 		"OCSF 1.3 has no advisory attribute, so the advisory id goes in cve.uid")
 	assert.Equal(t, "USN-1234-1", v13.VulnerabilityFindings[0].Vulnerabilities[0].CVE.UID)
 
-	events19, err := convertToOCSF(noCVE, ocsf.Version190, false, fixedScanTime)
+	events19, err := convertToOCSF(noCVE, ocsfConfig{version: ocsf.Version190, findings: OcsfFindingsCompliance}, fixedScanTime)
 	require.NoError(t, err)
 	v19 := events19.VulnerabilityFindings[0].Vulnerabilities[0]
 	assert.Nil(t, v19.CVE, "1.9 allows just one of advisory, cve and cwe")
@@ -146,7 +146,7 @@ func TestOcsfVulnerabilityFindings(t *testing.T) {
 
 func TestOcsfConverterNilReport(t *testing.T) {
 	var report *policy.ReportCollection
-	events, err := convertToOCSF(report, ocsf.DefaultVersion, false, fixedScanTime)
+	events, err := convertToOCSF(report, ocsfConfig{version: ocsf.DefaultVersion, findings: OcsfFindingsCompliance}, fixedScanTime)
 	require.NoError(t, err)
 	assert.Equal(t, 0, events.Len())
 	assert.Empty(t, events.Classes())
@@ -220,13 +220,13 @@ func TestOcsfComplianceStandardsFallback(t *testing.T) {
 func TestOcsfVersionSelection(t *testing.T) {
 	report := detailedReportCollection()
 
-	v13, err := convertToOCSF(report, ocsf.Version130, false, fixedScanTime)
+	v13, err := convertToOCSF(report, ocsfConfig{version: ocsf.Version130, findings: OcsfFindingsCompliance}, fixedScanTime)
 	require.NoError(t, err)
 	assert.Equal(t, "1.3.0", v13.ComplianceFindings[0].Metadata.Version)
 	assert.Empty(t, v13.ComplianceFindings[0].Compliance.Desc,
 		"compliance.desc does not exist before OCSF 1.9")
 
-	v19, err := convertToOCSF(report, ocsf.Version190, false, fixedScanTime)
+	v19, err := convertToOCSF(report, ocsfConfig{version: ocsf.Version190, findings: OcsfFindingsCompliance}, fixedScanTime)
 	require.NoError(t, err)
 	assert.Equal(t, "1.9.0", v19.ComplianceFindings[0].Metadata.Version)
 	assert.Equal(t, "Root login over SSH should be disabled.", v19.ComplianceFindings[0].Compliance.Desc)
@@ -431,4 +431,53 @@ func advisoryReportCollection() *policy.ReportCollection {
 		},
 	}
 	return report
+}
+
+func TestOcsfDetectionFindings(t *testing.T) {
+	report := detailedReportCollection()
+	report.Bundle.Queries[0].Tags = map[string]string{"compliance/cis-aws-foundations-benchmark-1.5.0": "1.4"}
+	report.Bundle.Queries[0].Impact = &policy.Impact{Value: &policy.ImpactValue{Value: 80}}
+
+	events, err := convertToOCSF(report,
+		ocsfConfig{version: ocsf.DefaultVersion, findings: OcsfFindingsDetection}, fixedScanTime)
+	require.NoError(t, err)
+
+	assert.Empty(t, events.ComplianceFindings, "detection mode reports checks as class 2004 only")
+	require.Len(t, events.DetectionFindings, 1)
+
+	finding := events.DetectionFindings[0]
+	assert.Equal(t, ocsf.ClassUIDDetectionFinding, finding.ClassUID)
+	assert.EqualValues(t, ocsf.DetectionFindingTypeUIDCreate, finding.TypeUID)
+	assert.Equal(t, ocsf.SeverityCritical, finding.SeverityID)
+
+	// the risk and impact attributes 2004 has, which 2003 does not
+	assert.Equal(t, 100, finding.RiskScore, "a score of 0 is a risk of 100")
+	assert.Equal(t, ocsf.RiskLevelCritical, finding.RiskLevelID)
+	assert.Equal(t, "Critical", finding.RiskLevel)
+	assert.Equal(t, 80, finding.ImpactScore)
+	assert.Equal(t, ocsf.ImpactHigh, finding.ImpactID)
+
+	// the check itself is the analytic that produced the finding
+	require.NotNil(t, finding.FindingInfo.Analytic)
+	assert.Equal(t, ocsf.AnalyticTypeRule, finding.FindingInfo.Analytic.TypeID)
+	assert.Equal(t, "Ensure the thing is configured", finding.FindingInfo.Analytic.Name)
+	assert.Contains(t, finding.FindingInfo.Analytic.Desc, "PermitRootLogin")
+
+	// class 2004 has no compliance object, so the mappings travel in unmapped
+	assert.Equal(t, "cis-aws-foundations-benchmark-1.5.0", finding.Unmapped["compliance_standards"])
+	assert.Equal(t, "1.4", finding.Unmapped["compliance_controls"])
+
+	require.NotNil(t, finding.Remediation)
+	assert.Contains(t, finding.Remediation.Desc, "PermitRootLogin")
+
+	// a passing check is not a detection
+	passing := toOcsf(t, sampleReportCollection())
+	assert.Len(t, passing.ComplianceFindings, 3)
+
+	both, err := convertToOCSF(sampleReportCollection(),
+		ocsfConfig{version: ocsf.DefaultVersion, findings: OcsfFindingsBoth}, fixedScanTime)
+	require.NoError(t, err)
+	assert.Len(t, both.ComplianceFindings, 3, "every check is a compliance finding")
+	assert.Len(t, both.DetectionFindings, 1,
+		"only the errored check is a detection; the passing and skipped ones are not")
 }

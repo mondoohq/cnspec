@@ -218,18 +218,33 @@ cnspec scan local -o ocsf-json > results.ocsf.jsonl
 # OCSF in Parquet, one file per event class, for Amazon Security Lake
 cnspec scan local -o ocsf-parquet --output-target ./ocsf/
 
+# OCSF straight into Splunk, as Detection Findings the way Splunk ES models them
+export SPLUNK_HEC_TOKEN=...
+cnspec scan local -o ocsf-json,ocsf-findings=both \
+  --output-target https://splunk.example.com:8088/services/collector
+
 # Full detailed output
 cnspec scan local -o full
 ```
 
 The full set is `compact` (the default), `csv`, `full`, `json`, `json-v1`, `json-v2`, `junit`, `ocsf-json`, `ocsf-parquet`, `report`, `sarif`, `summary`, `yaml`, `yaml-v1`, and `yaml-v2`. Run `cnspec scan --help` for the current list.
 
-The OCSF formats emit three event classes: Compliance Finding (2003) per check, Vulnerability
-Finding (2002) per advisory, and Device Inventory Info (5001) per asset. They default to OCSF
+The OCSF formats emit Compliance Finding (2003) per check, Vulnerability Finding (2002) per
+advisory, and Device Inventory Info (5001) per asset. `ocsf-findings=detection` reports checks
+as Detection Finding (2004) instead, which is the class Splunk Enterprise Security and similar
+tools model findings on; `both` emits each check as both. Class 2004 has no compliance object,
+so only failing and errored checks become detections and the framework mappings travel in
+`unmapped`. They default to OCSF
 1.3.0, the highest version Amazon Security Lake accepts for custom sources; pass
 `-o ocsf-json,ocsf-version=1.9.0` for the current schema instead. Point `--output-target` at a
 directory to get one file per event class (required for `ocsf-parquet`, which is binary), or at
 a file to get every class in one newline-delimited JSON stream.
+
+Pointing `--output-target` at a Splunk HTTP Event Collector URL
+(`https://host:8088/services/collector`) sends the events there directly, wrapped in the HEC
+envelope with the `ocsf:<class>` sourcetypes the
+[OCSF-CIM Add-On for Splunk](https://splunk.github.io/ocsf_cim_addon_for_splunk/) keys off. The
+token comes from `SPLUNK_HEC_TOKEN`; `SPLUNK_HEC_INDEX` and `SPLUNK_HEC_SOURCE` are optional.
 
 Every event of every supported version is validated in CI against the official compiled OCSF
 schema with the OCSF project's own validator, [`ocsf-toolkit`](https://github.com/ocsf/ocsf-toolkit).

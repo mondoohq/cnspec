@@ -30,6 +30,17 @@ type PrintConfig struct {
 	// ocsfVersion is the OCSF schema version the ocsf-json and ocsf-parquet
 	// formats emit.
 	ocsfVersion ocsf.Version
+	// ocsfFindings selects which OCSF class check results are reported as.
+	ocsfFindings OcsfFindingClasses
+}
+
+// ocsfConfig collects the OCSF settings the converter needs.
+func (p *PrintConfig) ocsfConfig() ocsfConfig {
+	return ocsfConfig{
+		version:     p.ocsfVersion,
+		findings:    p.ocsfFindings,
+		includeData: p.printData,
+	}
 }
 
 func defaultPrintConfig() *PrintConfig {
@@ -42,6 +53,7 @@ func defaultPrintConfig() *PrintConfig {
 		printRisks:           true,
 		printVulnerabilities: true,
 		ocsfVersion:          ocsf.DefaultVersion,
+		ocsfFindings:         OcsfFindingsCompliance,
 	}
 }
 
@@ -56,6 +68,10 @@ const (
 	// OptionOcsfVersion selects the OCSF schema version, e.g.
 	// "--output ocsf-json,ocsf-version=1.9.0".
 	OptionOcsfVersion = "ocsf-version"
+
+	// OptionOcsfFindings selects the OCSF class check results are reported as:
+	// compliance (the default), detection, or both.
+	OptionOcsfFindings = "ocsf-findings"
 )
 
 func ParseConfig[T string | Format](raw T) (*PrintConfig, error) {
@@ -110,6 +126,14 @@ func ParseConfig[T string | Format](raw T) (*PrintConfig, error) {
 				res.ocsfVersion = version
 				continue
 			}
+			if isPair && key == OptionOcsfFindings {
+				findings, err := parseOcsfFindings(value)
+				if err != nil {
+					return res, err
+				}
+				res.ocsfFindings = findings
+				continue
+			}
 			unknown = append(unknown, cur)
 		}
 	}
@@ -118,6 +142,21 @@ func ParseConfig[T string | Format](raw T) (*PrintConfig, error) {
 		return res, errors.New("unknown terms entered: " + strings.Join(unknown, ", ") + ". " + AllAvailableOptions())
 	}
 	return res, nil
+}
+
+// parseOcsfFindings resolves the ocsf-findings option.
+func parseOcsfFindings(raw string) (OcsfFindingClasses, error) {
+	switch strings.TrimSpace(raw) {
+	case "", "compliance":
+		return OcsfFindingsCompliance, nil
+	case "detection":
+		return OcsfFindingsDetection, nil
+	case "both":
+		return OcsfFindingsBoth, nil
+	default:
+		return 0, errors.New("unknown " + OptionOcsfFindings + " value " + raw +
+			", expected one of: compliance, detection, both")
+	}
 }
 
 func AllAvailableOptions() string {
@@ -212,7 +251,8 @@ func AllOptions() string {
 		"[no]" + OptionPrintRisks + ", " +
 		"[no]" + OptionPrintVulns + ", " +
 		"[no]" + OptionDetailed + " (junit), " +
-		OptionOcsfVersion + "=" + strings.Join(ocsf.SupportedVersions(), "|") + " (ocsf)"
+		OptionOcsfVersion + "=" + strings.Join(ocsf.SupportedVersions(), "|") + " (ocsf), " +
+		OptionOcsfFindings + "=compliance|detection|both (ocsf)"
 }
 
 func (r *Reporter) scoreColored(rating policy.ScoreRating, s string) string {
