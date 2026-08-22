@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"go.mondoo.com/cnspec/cli/components"
 	"go.mondoo.com/mql/logger"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 )
@@ -237,18 +238,6 @@ var (
 	styleSuccess    = lipgloss.NewStyle().Foreground(lipgloss.Color("#04B575"))
 	styleError      = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4672"))
 	styleInProgress = lipgloss.NewStyle().Foreground(lipgloss.Color("#7571F9"))
-
-	// scoreColors maps score rating text to lipgloss colors, matching
-	// the ScoreRatingLipglossColorMapping in cli/components/rating.go.
-	scoreColors = map[string]lipgloss.Color{
-		"UNRATED":  lipgloss.Color("231"),
-		"NONE":     lipgloss.Color("78"),
-		"LOW":      lipgloss.Color("117"),
-		"MEDIUM":   lipgloss.Color("75"),
-		"HIGH":     lipgloss.Color("212"),
-		"CRITICAL": lipgloss.Color("204"),
-		"ERROR":    lipgloss.Color("210"),
-	}
 )
 
 func (m *modelTodoList) View() string {
@@ -395,7 +384,15 @@ func (m *modelTodoList) renderTask(t *task) string {
 
 	if m.includeScore && t.score != "" {
 		scoreStr := t.score
-		if c, ok := scoreColors[t.score]; ok {
+		// Straight out of the rating palette rather than out of a copy of it.
+		// The copy that used to live in this file carried a comment saying it
+		// matched cli/components/rating.go, which is an import's job: two of
+		// the launcher's three hand-picked colours had already drifted by the
+		// time anyone checked. The lookup stays a map read rather than
+		// LipglossColor because the miss matters here -- a score this palette
+		// has never heard of falls through to the error style below rather than
+		// being painted as unrated.
+		if c, ok := components.DefaultScoreRatingColors.ScoreRatingLipglossColorMapping[t.score]; ok {
 			scoreStr = lipgloss.NewStyle().Foreground(c).Render(t.score)
 		} else if t.state == taskStateErrored {
 			scoreStr = styleError.Render(t.score)

@@ -149,6 +149,22 @@ This section is for any automated reviewer (mondoo-code-review, Claude, etc.) co
   - To check a real query end to end: `cnquery run <provider> -c '<mql>'` (no TTY needed) or `cnspec policy lint ./content/<file>.mql.yaml`. **Run the query before claiming it returns the wrong thing.**
 - **Operator precedence** — MQL precedence is fixed; consult [`mqlc/parser/operators.go`](https://github.com/mondoohq/mql/blob/main/mqlc/parser/operators.go#L11) before flagging precedence. Notably `&&` binds tighter than `||`, so `a || b && c` already parses as `a || (b && c)` — that is usually intentional, not a bug.
 
+### Go changes: three facts that make a green run misleading
+
+These are specific to this repo and each has already let a defect through.
+
+- **The installed provider JSON is the authority for connector metadata** — `~/.config/mondoo/providers/<name>/<name>.json` (flags, options, `MinArgs`/`MaxArgs`, `Discovery`), and the shipped binary for anything read from the environment. A flag's *description* is prose and has been wrong. A previous pass invented a plausible flag mapping that survived review because it looked right.
+- **Two golangci configs must pass, and they are not the same.** `.golangci.yaml` (run by `pr-test-lint.yml`) enables only `depguard`. `.github/.golangci.yaml` (run by `pr-extended-linting.yml`) adds `unused`, `staticcheck`, `errcheck` and `ineffassign` — it is the one that fails CI on this repo. Run both:
+  ```bash
+  golangci-lint run --config=.golangci.yaml ./...
+  golangci-lint run --config=.github/.golangci.yaml ./...
+  ```
+  Note `only-new-issues: true` on the second: `unused` fires only on the code the change adds.
+- **CI runs Go tests with no providers installed.** `pr-test-lint.yml` creates an empty directory and points `PROVIDERS_PATH` at it, so `providers.ListActive()` returns nothing and any test over installed-provider metadata **skips every case and passes**. A test in that shape must report how many connectors it checked and how many it skipped, or reproduce the condition locally:
+  ```bash
+  PROVIDERS_PATH=$(mktemp -d) go test ./apps/cnspec/cmd/interactive/
+  ```
+
 ### Do not flag these — they are correct MQL
 
 Each is verified against the compiler and explained in full in [`content/CLAUDE.md`](content/CLAUDE.md). The one-liners here exist so a reviewer that never opens that file still does not raise the false positive.

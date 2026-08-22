@@ -81,6 +81,33 @@ policy/generate:
 reporter/generate:
 	go generate ./cli/reporter
 
+# Connector metadata for the interactive launcher, extracted from mql provider
+# source. Deliberately not part of cnspec/generate: cnspec has to build with no
+# mql checkout present, so the artifact is checked in and this refreshes it.
+#
+#   make connectors/generate MQL=../mql
+#   make connectors/generate MQL=../mql ENTERPRISE=../mql-enterprise-providers
+#
+# Without ENTERPRISE the connectors that ship from the second repository are not
+# re-derived; they are carried forward from the checked-in artifact and reported
+# as such.
+.PHONY: connectors/generate
+connectors/generate:
+ifndef MQL
+	$(error MQL is not set. Point it at an mql checkout: make connectors/generate MQL=../mql)
+endif
+	go run ./internal/connectorgen/gen -mql "$(MQL)" $(if $(ENTERPRISE),-enterprise "$(ENTERPRISE)")
+
+# The same walk, printing the extraction report and writing nothing. The gap
+# list is the output that matters: it is what the provider SDK would have to
+# carry for cnspec to stop reading Go source.
+.PHONY: connectors/report
+connectors/report:
+ifndef MQL
+	$(error MQL is not set. Point it at an mql checkout: make connectors/report MQL=../mql)
+endif
+	go run ./internal/connectorgen/gen -mql "$(MQL)" $(if $(ENTERPRISE),-enterprise "$(ENTERPRISE)") -report
+
 #   🏗 Binary   #
 
 .PHONY: cnspec/build
@@ -114,6 +141,21 @@ cnspec/build/windows: cnspec/winres
 .PHONY: cnspec/install
 cnspec/install:
 	GOBIN=${GOPATH}/bin go install ${LDFLAGSDIST} apps/cnspec/cnspec.go
+
+# cnspec/install/dev installs a build that will actually run.
+#
+# cnspec/install stamps the newest tag reachable from the current branch, which
+# during development is older than whatever release sits in the auto-update
+# cache at ~/.config/mondoo/bin. On startup cnspec compares the two and execs
+# the newer one, so a locally built binary silently hands off to a release and
+# your changes never run -- the symptom is a new subcommand reporting
+# "unknown command".
+#
+# Stamping a version no release will outrank keeps the binary you just built in
+# charge. Use this for local work; cnspec/install remains what CI and releases use.
+.PHONY: cnspec/install/dev
+cnspec/install/dev:
+	$(MAKE) cnspec/install LATEST_VERSION_TAG=v99.0.0-dev
 
 cnspec/dist/goreleaser/stable:
 	goreleaser release --clean --skip=validate,publish -f .goreleaser.yml --timeout 120m
