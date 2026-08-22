@@ -120,13 +120,22 @@ we target, and would be rejected by any validator that has not loaded the extens
 
 Splunk support is instead core OCSF plus transport:
 
-- **Detection Finding (2004)**, selected with `ocsf-findings=detection|both`. It is the class
-  Splunk Enterprise Security models findings on and the one Splunk's own extension covers, and
-  it is core OCSF, so the events stay valid for Security Lake too. Class 2004 has no compliance
+- **Detection Finding (2004)**, selected with `ocsf-findings=detection`. It is the class Splunk
+  Enterprise Security models findings on and the one Splunk's own extension covers, and it is
+  core OCSF, so the events stay valid for Security Lake too. Class 2004 has no compliance
   object, so the framework mappings travel in `unmapped` and the check becomes
   `finding_info.analytic`; its risk and impact attributes carry cnspec's risk model, which 2003
-  has nowhere to put. Only failing and errored checks are detections: a passing or skipped
-  check detected nothing.
+  has nowhere to put.
+
+  A check is reported in **one** class, never both, and every check is reported whatever its
+  outcome, with PASS/FAIL/ERROR in `status_code`. That follows the exporters that already
+  solved this: Security Lake routes each Security Hub finding to the single class that fits it
+  (Vulnerability, Compliance or Detection), [Prowler](https://docs.prowler.com/user-guide/cli/tutorials/reporting)
+  reports every check — passing ones included — as a Detection Finding with its compliance
+  mappings in `unmapped`, and `telophasehq/go-ocsf` maps each source to one class. An earlier
+  `both` mode was dropped: nothing else emits a finding twice, and it double-counts in anything
+  that aggregates across classes. Reporting only failures was also considered and rejected, as
+  it would make a detection-only stream an incomplete record of the scan.
 - **HTTP Event Collector output**, when `--output-target` is a `/services/collector` URL. Events
   are wrapped in the HEC envelope with `ocsf:<class>` sourcetypes, which is what the OCSF-CIM
   Add-On for Splunk keys off.

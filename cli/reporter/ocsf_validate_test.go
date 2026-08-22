@@ -37,40 +37,59 @@ func TestOcsfSchemaValidation(t *testing.T) {
 		"scan error": erroredReportCollection(),
 	}
 
+	// Both finding classes are validated: a check is reported as one or the
+	// other, so covering only the default would leave class 2004 unchecked.
+	findingClasses := map[string]OcsfFindingClasses{
+		"compliance": OcsfFindingsCompliance,
+		"detection":  OcsfFindingsDetection,
+	}
+
 	for _, version := range ocsf.SupportedVersions() {
 		t.Run(version, func(t *testing.T) {
 			pipeline := ocsfValidationPipeline(t, ocsf.Version(version))
 
 			for name, report := range reports {
-				t.Run(name, func(t *testing.T) {
-					events, err := convertToOCSF(report, ocsfConfig{version: ocsf.Version(version), findings: OcsfFindingsBoth, includeData: true}, fixedScanTime)
-					require.NoError(t, err)
-					require.NotZero(t, events.Len(), "the fixture must produce events to validate")
-
-					buf := bytes.Buffer{}
-					require.NoError(t, events.WriteJSON(&buf))
-
-					for i, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
-						event, err := jsonio.DecodeObject(strings.NewReader(line))
-						require.NoError(t, err, "event %d must be valid JSON", i)
-
-						res, err := pipeline.ProcessEvent(event)
-						require.NoError(t, err)
-
-						for _, issue := range res.Validation.Errors {
-							assert.Fail(t, "OCSF validation error",
-								"event %d (%s %s): %s at %q", i, name, version, issue.Message, issue.AttributePath)
-						}
-						// Warnings cover deprecated attributes, which is how a
-						// version bump tells us the mapping has to move on.
-						for _, issue := range res.Validation.Warnings {
-							assert.Fail(t, "OCSF validation warning",
-								"event %d (%s %s): %s at %q", i, name, version, issue.Message, issue.AttributePath)
-						}
-					}
-				})
+				for className, findings := range findingClasses {
+					t.Run(name+"/"+className, func(t *testing.T) {
+						validateOcsfEvents(t, pipeline, report, ocsfConfig{
+							version:     ocsf.Version(version),
+							findings:    findings,
+							includeData: true,
+						}, name+" "+version+" "+className)
+					})
+				}
 			}
 		})
+	}
+}
+
+// validateOcsfEvents converts a report and runs every event it produces through
+// the OCSF validator, failing on errors and on warnings alike.
+func validateOcsfEvents(t *testing.T, pipeline eventschema.EventProcessorPipeline, report *policy.ReportCollection, conf ocsfConfig, label string) {
+	events, err := convertToOCSF(report, conf, fixedScanTime)
+	require.NoError(t, err)
+	require.NotZero(t, events.Len(), "the fixture must produce events to validate")
+
+	buf := bytes.Buffer{}
+	require.NoError(t, events.WriteJSON(&buf))
+
+	for i, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		event, err := jsonio.DecodeObject(strings.NewReader(line))
+		require.NoError(t, err, "event %d must be valid JSON", i)
+
+		res, err := pipeline.ProcessEvent(event)
+		require.NoError(t, err)
+
+		for _, issue := range res.Validation.Errors {
+			assert.Fail(t, "OCSF validation error",
+				"event %d (%s): %s at %q", i, label, issue.Message, issue.AttributePath)
+		}
+		// Warnings cover deprecated attributes, which is how a version bump tells
+		// us the mapping has to move on.
+		for _, issue := range res.Validation.Warnings {
+			assert.Fail(t, "OCSF validation warning",
+				"event %d (%s): %s at %q", i, label, issue.Message, issue.AttributePath)
+		}
 	}
 }
 

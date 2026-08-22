@@ -70,7 +70,7 @@ const (
 	OptionOcsfVersion = "ocsf-version"
 
 	// OptionOcsfFindings selects the OCSF class check results are reported as:
-	// compliance (the default), detection, or both.
+	// compliance (the default) or detection.
 	OptionOcsfFindings = "ocsf-findings"
 )
 
@@ -151,11 +151,9 @@ func parseOcsfFindings(raw string) (OcsfFindingClasses, error) {
 		return OcsfFindingsCompliance, nil
 	case "detection":
 		return OcsfFindingsDetection, nil
-	case "both":
-		return OcsfFindingsBoth, nil
 	default:
 		return 0, errors.New("unknown " + OptionOcsfFindings + " value " + raw +
-			", expected one of: compliance, detection, both")
+			", expected one of: compliance, detection")
 	}
 }
 
@@ -252,7 +250,7 @@ func AllOptions() string {
 		"[no]" + OptionPrintVulns + ", " +
 		"[no]" + OptionDetailed + " (junit), " +
 		OptionOcsfVersion + "=" + strings.Join(ocsf.SupportedVersions(), "|") + " (ocsf), " +
-		OptionOcsfFindings + "=compliance|detection|both (ocsf)"
+		OptionOcsfFindings + "=compliance|detection (ocsf)"
 }
 
 func (r *Reporter) scoreColored(rating policy.ScoreRating, s string) string {

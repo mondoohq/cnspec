@@ -92,27 +92,27 @@ type ocsfConfig struct {
 
 // OcsfFindingClasses selects which OCSF class a check result is reported as.
 //
+// Every check is reported exactly once, in one class. That is what other OCSF
+// producers do: Security Lake routes each Security Hub finding to the one class
+// that fits it, and Prowler reports every check as a Detection Finding. Emitting
+// a check as two events would double it in anything that counts findings across
+// classes.
+//
 // A cnspec check is a compliance check, so Compliance Finding (2003) is the
-// default and the complete record: it carries every check, passing or failing,
-// with its framework mappings. Detection Finding (2004) is what Splunk
-// Enterprise Security and similar tools model their findings on; it has no
-// compliance object, so only failing and errored checks are reported as
-// detections, and the framework mappings travel in unmapped.
+// default: it has a compliance object for the framework mappings and the control.
+// Detection Finding (2004) is what Splunk Enterprise Security and similar tools
+// model findings on; it has no compliance object, so the mappings travel in
+// unmapped, and it has the risk and impact attributes 2003 lacks.
 type OcsfFindingClasses byte
 
 const (
 	OcsfFindingsCompliance OcsfFindingClasses = iota + 1
 	OcsfFindingsDetection
-	OcsfFindingsBoth
 )
 
-func (f OcsfFindingClasses) compliance() bool {
-	return f == OcsfFindingsCompliance || f == OcsfFindingsBoth
-}
+func (f OcsfFindingClasses) compliance() bool { return f == OcsfFindingsCompliance }
 
-func (f OcsfFindingClasses) detection() bool {
-	return f == OcsfFindingsDetection || f == OcsfFindingsBoth
-}
+func (f OcsfFindingClasses) detection() bool { return f == OcsfFindingsDetection }
 
 // ocsfConverter holds everything that is the same for every event of one run.
 type ocsfConverter struct {
@@ -231,17 +231,15 @@ func (c *ocsfConverter) addComplianceFindings(events *ocsf.Events, r *policy.Rep
 			continue
 		}
 
-		if c.findings.compliance() {
-			events.ComplianceFindings = append(events.ComplianceFindings,
-				c.complianceFinding(resolved, report, query, score, ctx))
-		}
-		// A detection reports something that was found. A check that passed or was
-		// skipped found nothing, so it is not one; it stays in the compliance
-		// class. A check that errored is reported, because an unevaluated control
-		// is a gap someone has to act on.
-		if c.findings.detection() && checkDetected(score) {
+		// Both classes report every check, passing ones included, with the outcome
+		// in status_code. A detection stream that dropped the passes would not be
+		// a complete record of the scan on its own.
+		if c.findings.detection() {
 			events.DetectionFindings = append(events.DetectionFindings,
 				c.detectionFinding(resolved, report, query, score, ctx))
+		} else {
+			events.ComplianceFindings = append(events.ComplianceFindings,
+				c.complianceFinding(resolved, report, query, score, ctx))
 		}
 	}
 }
@@ -267,7 +265,7 @@ func (c *ocsfConverter) complianceFinding(resolved *policy.ResolvedPolicy, repor
 	finding.SeverityID = ocsfCheckSeverity(score)
 	finding.Severity = ocsf.SeverityName(finding.SeverityID)
 	finding.StatusID, finding.Status = ocsfFindingStatus(score)
-	finding.StatusCode = strings.ToLower(scoreStatusLabel(score))
+	finding.StatusCode = scoreStatusLabel(score)
 	finding.Message = message
 	finding.Metadata = c.metadata(ctx.findingProfiles()...)
 	finding.Unmapped = c.checkUnmapped(query, score, ctx)
@@ -304,7 +302,7 @@ func (c *ocsfConverter) detectionFinding(resolved *policy.ResolvedPolicy, report
 	finding.SeverityID = ocsfCheckSeverity(score)
 	finding.Severity = ocsf.SeverityName(finding.SeverityID)
 	finding.StatusID, finding.Status = ocsfFindingStatus(score)
-	finding.StatusCode = strings.ToLower(scoreStatusLabel(score))
+	finding.StatusCode = scoreStatusLabel(score)
 	finding.StatusDetail = checkAssessment(resolved, report, query)
 	finding.Message = message
 	finding.Metadata = c.metadata(ctx.findingProfiles()...)
@@ -355,13 +353,6 @@ func (c *ocsfConverter) detectionUnmapped(query *policy.Mquery, score *policy.Sc
 		res["compliance_controls"] = strings.Join(controls, ", ")
 	}
 	return res
-}
-
-// checkDetected reports whether a check found something worth a detection: a
-// failure, or an error that left the control unevaluated. Passing, skipped and
-// unscored checks are not detections.
-func checkDetected(score *policy.Score) bool {
-	return scoreToSarifKind(score) == "fail"
 }
 
 // ocsfRiskLevel maps a cnspec risk value to an OCSF risk_level_id, whose bands
@@ -509,9 +500,7 @@ func (c *ocsfConverter) addAssetError(events *ocsf.Events, r *policy.ReportColle
 		return
 	}
 
-	finding := ocsf.NewComplianceFinding(ocsf.ComplianceFindingActivityCreate)
-	finding.Compliance = c.errorCompliance(errMsg)
-	finding.FindingInfo = ocsf.FindingInfo{
+	info := ocsf.FindingInfo{
 		UID:         ocsfAssetErrorUID,
 		Title:       "Asset scan error",
 		Desc:        "cnspec could not complete the scan of this asset. No policy results are available for it.",
@@ -519,24 +508,52 @@ func (c *ocsfConverter) addAssetError(events *ocsf.Events, r *policy.ReportColle
 		Types:       []string{"Scan Error"},
 		DataSources: []string{ocsfProductName},
 	}
+	unmapped := map[string]string{}
+	if ctx.assetMrn != "" {
+		unmapped["asset_mrn"] = ctx.assetMrn
+	}
+
+	// A scan that did not run leaves every check unanswered, which is worse than
+	// a single check erroring out.
+	const severity = ocsf.SeverityHigh
+	message := "Asset scan error: " + errMsg
+
+	if c.findings.detection() {
+		finding := ocsf.NewDetectionFinding(ocsf.DetectionFindingActivityCreate)
+		finding.Time = c.now
+		finding.SeverityID = severity
+		finding.Severity = ocsf.SeverityName(severity)
+		finding.StatusID = ocsf.StatusOther
+		finding.Status = "Error"
+		finding.StatusCode = "ERROR"
+		finding.StatusDetail = errMsg
+		finding.Message = message
+		finding.Metadata = c.metadata(ctx.findingProfiles()...)
+		finding.Unmapped = unmapped
+		finding.FindingInfo = info
+		finding.Resources = []ocsf.ResourceDetails{ctx.resource}
+		finding.Device = ctx.device
+		finding.Cloud = ctx.cloud
+		events.DetectionFindings = append(events.DetectionFindings, finding)
+		return
+	}
+
+	finding := ocsf.NewComplianceFinding(ocsf.ComplianceFindingActivityCreate)
+	finding.Time = c.now
+	finding.SeverityID = severity
+	finding.Severity = ocsf.SeverityName(severity)
+	finding.StatusID = ocsf.StatusOther
+	finding.Status = "Error"
+	finding.StatusCode = "ERROR"
+	finding.StatusDetail = errMsg
+	finding.Message = message
+	finding.Metadata = c.metadata(ctx.findingProfiles()...)
+	finding.Unmapped = unmapped
+	finding.Compliance = c.errorCompliance(errMsg)
+	finding.FindingInfo = info
 	finding.Resources = []ocsf.ResourceDetails{ctx.resource}
 	finding.Device = ctx.device
 	finding.Cloud = ctx.cloud
-	finding.Time = c.now
-	// A scan that did not run leaves every check unanswered, which is worse than
-	// a single check erroring out.
-	finding.SeverityID = ocsf.SeverityHigh
-	finding.Severity = ocsf.SeverityName(finding.SeverityID)
-	finding.StatusID = ocsf.StatusOther
-	finding.Status = "Error"
-	finding.StatusCode = "error"
-	finding.StatusDetail = errMsg
-	finding.Message = "Asset scan error: " + errMsg
-	finding.Metadata = c.metadata(ctx.findingProfiles()...)
-	if ctx.assetMrn != "" {
-		finding.Unmapped = map[string]string{"asset_mrn": ctx.assetMrn}
-	}
-
 	events.ComplianceFindings = append(events.ComplianceFindings, finding)
 }
 
@@ -833,7 +850,7 @@ func (c *ocsfConverter) vulnerabilityFinding(advisory *mvd.Advisory, pkgs []*mvd
 	finding.Severity = ocsf.SeverityName(finding.SeverityID)
 	finding.StatusID = ocsf.StatusNew
 	finding.Status = ocsf.StatusName(finding.StatusID)
-	finding.StatusCode = "fail"
+	finding.StatusCode = "FAIL"
 	finding.Message = title
 	finding.Metadata = c.metadata(ctx.findingProfiles()...)
 

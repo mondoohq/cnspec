@@ -33,7 +33,7 @@ func hecHandler(t *testing.T, url string) *splunkHecHandler {
 	t.Helper()
 	conf := defaultPrintConfig()
 	conf.format = FormatOcsfJson
-	conf.ocsfFindings = OcsfFindingsBoth
+	conf.ocsfFindings = OcsfFindingsDetection
 
 	handler, err := newSplunkHecHandler(url, conf)
 	require.NoError(t, err)
@@ -106,8 +106,9 @@ func TestSplunkHecSendsEnvelopedEvents(t *testing.T) {
 	}
 
 	// the sourcetypes the OCSF-CIM Add-On for Splunk keys off
-	assert.Equal(t, 3, sourcetypes["ocsf:compliance_finding"])
-	assert.Equal(t, 1, sourcetypes["ocsf:detection_finding"])
+	assert.NotContains(t, sourcetypes, "ocsf:compliance_finding",
+		"detection mode reports checks as class 2004 only")
+	assert.Equal(t, 3, sourcetypes["ocsf:detection_finding"])
 	assert.Equal(t, 1, sourcetypes["ocsf:vulnerability_finding"])
 	assert.Equal(t, 1, sourcetypes["ocsf:inventory_info"])
 }

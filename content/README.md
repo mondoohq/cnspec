@@ -220,7 +220,7 @@ cnspec scan local -o ocsf-parquet --output-target ./ocsf/
 
 # OCSF straight into Splunk, as Detection Findings the way Splunk ES models them
 export SPLUNK_HEC_TOKEN=...
-cnspec scan local -o ocsf-json,ocsf-findings=both \
+cnspec scan local -o ocsf-json,ocsf-findings=detection \
   --output-target https://splunk.example.com:8088/services/collector
 
 # Full detailed output
@@ -231,10 +231,11 @@ The full set is `compact` (the default), `csv`, `full`, `json`, `json-v1`, `json
 
 The OCSF formats emit Compliance Finding (2003) per check, Vulnerability Finding (2002) per
 advisory, and Device Inventory Info (5001) per asset. `ocsf-findings=detection` reports checks
-as Detection Finding (2004) instead, which is the class Splunk Enterprise Security and similar
-tools model findings on; `both` emits each check as both. Class 2004 has no compliance object,
-so only failing and errored checks become detections and the framework mappings travel in
-`unmapped`. They default to OCSF
+as Detection Finding (2004) instead, which is the class Splunk Enterprise Security models
+findings on and the one Prowler emits. Every check is reported exactly once, in one class,
+with its outcome in `status_code`; class 2004 has no compliance object, so the framework
+mappings travel in `unmapped`, and it carries the risk and impact attributes 2003 lacks. They
+default to OCSF
 1.3.0, the highest version Amazon Security Lake accepts for custom sources; pass
 `-o ocsf-json,ocsf-version=1.9.0` for the current schema instead. Point `--output-target` at a
 directory to get one file per event class (required for `ocsf-parquet`, which is binary), or at

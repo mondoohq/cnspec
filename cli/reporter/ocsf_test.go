@@ -470,14 +470,19 @@ func TestOcsfDetectionFindings(t *testing.T) {
 	require.NotNil(t, finding.Remediation)
 	assert.Contains(t, finding.Remediation.Desc, "PermitRootLogin")
 
-	// a passing check is not a detection
-	passing := toOcsf(t, sampleReportCollection())
-	assert.Len(t, passing.ComplianceFindings, 3)
-
-	both, err := convertToOCSF(sampleReportCollection(),
-		ocsfConfig{version: ocsf.DefaultVersion, findings: OcsfFindingsBoth}, fixedScanTime)
+	// Every check is reported, passing ones included, with the outcome in
+	// status_code. That is what Prowler does, and it keeps a detection-only
+	// stream a complete record of the scan.
+	all, err := convertToOCSF(sampleReportCollection(),
+		ocsfConfig{version: ocsf.DefaultVersion, findings: OcsfFindingsDetection}, fixedScanTime)
 	require.NoError(t, err)
-	assert.Len(t, both.ComplianceFindings, 3, "every check is a compliance finding")
-	assert.Len(t, both.DetectionFindings, 1,
-		"only the errored check is a detection; the passing and skipped ones are not")
+	assert.Empty(t, all.ComplianceFindings, "a check is reported in one class, never two")
+	require.Len(t, all.DetectionFindings, 3, "every check is a detection, whatever its outcome")
+
+	codes := map[string]bool{}
+	for _, finding := range all.DetectionFindings {
+		codes[finding.StatusCode] = true
+	}
+	assert.Equal(t, map[string]bool{"PASS": true, "ERROR": true, "SKIPPED": true}, codes,
+		"the outcome is what status_code carries")
 }
