@@ -43,6 +43,11 @@ func NewOutputHandler(config HandlerConfig) (OutputHandler, error) {
 	typ := determineOutputType(config.OutputTarget)
 	switch typ {
 	case LOCAL_FILE:
+		// OCSF splits its events across one file per event class, so it brings
+		// its own handler instead of writing a single stream to one file.
+		if conf.format == FormatOcsfJson || conf.format == FormatOcsfParquet {
+			return &ocsfFileHandler{target: config.OutputTarget, conf: conf}, nil
+		}
 		return &localFileHandler{file: config.OutputTarget, conf: conf}, nil
 	case AWS_SQS:
 		return &awsSqsHandler{sqsQueueUrl: config.OutputTarget, format: conf.format}, nil

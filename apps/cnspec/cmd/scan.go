@@ -83,7 +83,7 @@ func init() {
 	_ = scanCmd.Flags().Int("score-threshold", 0, "If any score falls below the threshold, exit 1")
 	_ = scanCmd.Flags().MarkDeprecated("score-threshold", "Please use --risk-threshold instead")
 	_ = scanCmd.Flags().Int("risk-threshold", reporter.DEFAULT_RISK_THRESHOLD, "Set the risk threshold. Exit with status 1 if any risk meets or exceeds this value")
-	_ = scanCmd.Flags().String("output-target", "", "Set the output target for the asset report. Currently only supports AWS SQS topic URLs and local files")
+	_ = scanCmd.Flags().String("output-target", "", "Set the output target for the asset report: an AWS SQS topic URL, a local file, or a local directory (the OCSF formats write one file per event class into it)")
 	_ = scanCmd.Flags().Int("parallelism", 0, "Set the number of assets to scan in parallel. Defaults to a per-provider value capped by the CPUs available on this machine. Use 1 for sequential")
 	_ = scanCmd.Flags().String("output-scan-db", "", "Save each asset's scan database (SQLite) to this directory in addition to uploading. Used to capture seeds for the cnspec loadtest tool")
 	_ = scanCmd.Flags().MarkHidden("output-scan-db")

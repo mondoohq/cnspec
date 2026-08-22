@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.mondoo.com/cnspec/cli/reporter/ocsf"
 )
 
 func TestParseConfig(t *testing.T) {
@@ -47,6 +48,17 @@ func TestParseConfig(t *testing.T) {
 			expect.printData = true
 			assert.Equal(t, expect, conf)
 		}},
+		{"ocsf", func(t *testing.T, conf *PrintConfig) {
+			expect := defaultPrintConfig()
+			expect.format = FormatOcsfJson
+			assert.Equal(t, expect, conf)
+		}},
+		{"ocsf-parquet,ocsf-version=1.9.0", func(t *testing.T, conf *PrintConfig) {
+			expect := defaultPrintConfig()
+			expect.format = FormatOcsfParquet
+			expect.ocsfVersion = ocsf.Version190
+			assert.Equal(t, expect, conf)
+		}},
 		{"nodata,noVuln,noRiSks", func(t *testing.T, conf *PrintConfig) {
 			expect := defaultPrintConfig()
 			expect.printData = false
@@ -64,6 +76,18 @@ func TestParseConfig(t *testing.T) {
 			cur.f(t, res)
 		})
 	}
+
+	t.Run("unsupported ocsf version", func(t *testing.T) {
+		_, err := ParseConfig("ocsf-json,ocsf-version=1.2.0")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported OCSF version")
+	})
+
+	t.Run("unknown key=value option", func(t *testing.T) {
+		_, err := ParseConfig("ocsf-json,nope=1")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown terms entered")
+	})
 
 	t.Run("unknown options", func(t *testing.T) {
 		_, err := ParseConfig("notknown")

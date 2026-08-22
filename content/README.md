@@ -212,11 +212,24 @@ cnspec scan local -o sarif > results.sarif
 # JUnit XML (for CI/CD integration)
 cnspec scan local -o junit > results.xml
 
+# OCSF (security data lakes and SIEMs), newline-delimited JSON
+cnspec scan local -o ocsf-json > results.ocsf.jsonl
+
+# OCSF in Parquet, one file per event class, for Amazon Security Lake
+cnspec scan local -o ocsf-parquet --output-target ./ocsf/
+
 # Full detailed output
 cnspec scan local -o full
 ```
 
-The full set is `compact` (the default), `csv`, `full`, `json`, `json-v1`, `json-v2`, `junit`, `report`, `sarif`, `summary`, `yaml`, `yaml-v1`, and `yaml-v2`. Run `cnspec scan --help` for the current list.
+The full set is `compact` (the default), `csv`, `full`, `json`, `json-v1`, `json-v2`, `junit`, `ocsf-json`, `ocsf-parquet`, `report`, `sarif`, `summary`, `yaml`, `yaml-v1`, and `yaml-v2`. Run `cnspec scan --help` for the current list.
+
+The OCSF formats emit three event classes: Compliance Finding (2003) per check, Vulnerability
+Finding (2002) per advisory, and Device Inventory Info (5001) per asset. They default to OCSF
+1.3.0, the highest version Amazon Security Lake accepts for custom sources; pass
+`-o ocsf-json,ocsf-version=1.9.0` for the current schema instead. Point `--output-target` at a
+directory to get one file per event class (required for `ocsf-parquet`, which is binary), or at
+a file to get every class in one newline-delimited JSON stream.
 
 ## Policy Structure
 

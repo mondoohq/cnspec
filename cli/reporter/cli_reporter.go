@@ -165,6 +165,13 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 	case FormatSarif:
 		writer := iox.IOWriter{Writer: r.out}
 		return ConvertToSarif(data, &writer)
+	case FormatOcsfJson:
+		return ConvertToOCSFJSON(data, r.Conf.ocsfVersion, r.Conf.printData, r.out)
+	case FormatOcsfParquet:
+		// Parquet is a binary, seek-and-footer format with one event class per
+		// file. It needs a destination directory, never a terminal.
+		return errors.New("'ocsf-parquet' writes one file per OCSF event class, " +
+			"please point --output-target at a directory")
 	// case FormatCSV:
 	// 	res, err = data.ToCsv()
 	default:
@@ -194,6 +201,10 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
 		return errors.New("'junit' is not supported for vuln reports, please use one of the other formats")
 	case FormatSarif:
 		return errors.New("'sarif' is not supported for vuln reports, please use one of the other formats")
+	case FormatOcsfJson:
+		return VulnReportToOCSFJSON(target, data, r.Conf.ocsfVersion, r.out)
+	case FormatOcsfParquet:
+		return errors.New("'ocsf-parquet' is not supported for vuln reports, please use 'ocsf-json'")
 	case FormatCSV:
 		writer := iox.IOWriter{Writer: r.out}
 		return VulnReportToCSV(data, &writer)
