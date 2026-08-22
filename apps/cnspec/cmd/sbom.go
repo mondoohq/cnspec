@@ -68,6 +68,12 @@ Note this command is experimental and may change in the future.
 		if err != nil {
 			log.Fatal().Err(err).Msg("failed to bind with-cpes flag")
 		}
+
+		// sbom.New falls back to the table format instead of returning nil, so the
+		// format has to be rejected here or an unsupported -o silently renders a table
+		if format := viper.GetString("output"); !sbom.IsSupportedFormat(format) {
+			log.Fatal().Msg("unsupported output format: " + format + ". Supported formats: " + sbom.AllFormats())
+		}
 	},
 	// we have to initialize an empty run so it shows up as a runnable command in --help
 	Run: func(cmd *cobra.Command, args []string) {},
@@ -107,12 +113,8 @@ var sbomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 
 	boms := generator.GenerateBom(cnspecReport.ToCnqueryReport())
 
-	var exporter sbom.FormatSpecificationHandler
-	output := viper.GetString("output")
-	exporter = sbom.New(output)
-	if exporter == nil {
-		log.Fatal().Err(err).Msg("failed to get exporter for output format: " + output)
-	}
+	// the output format is validated in PreRun, sbom.New always returns a handler
+	exporter := sbom.New(viper.GetString("output"))
 
 	if viper.GetBool("with-evidence") {
 		exporter.ApplyOptions(sbom.WithEvidence())

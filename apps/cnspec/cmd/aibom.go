@@ -67,6 +67,12 @@ Examples:
 		if err := viper.BindPFlag("output-target", cmd.Flags().Lookup("output-target")); err != nil {
 			log.Fatal().Err(err).Msg("failed to bind output-target flag")
 		}
+
+		// aibom.NewFormatter falls back to markdown instead of returning nil, so the
+		// format has to be rejected here or an unsupported -o silently renders markdown
+		if format := viper.GetString("output"); !aibom.IsSupportedFormat(format) {
+			log.Fatal().Msg("unsupported output format: " + format + ". Supported formats: " + aibom.AllFormats())
+		}
 	},
 	Run: func(cmd *cobra.Command, args []string) {},
 }
@@ -103,11 +109,8 @@ var aibomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *p
 
 	boms := generator.GenerateAiBom(cnspecReport.ToCnqueryReport())
 
-	output := viper.GetString("output")
-	formatter := aibom.NewFormatter(output)
-	if formatter == nil {
-		log.Fatal().Msg("unsupported output format: " + output)
-	}
+	// the output format is validated in PreRun, aibom.NewFormatter always returns a handler
+	formatter := aibom.NewFormatter(viper.GetString("output"))
 
 	outputTarget := viper.GetString("output-target")
 	for i := range boms {
