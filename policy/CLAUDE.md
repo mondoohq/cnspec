@@ -11,7 +11,7 @@ For policy *content* authoring (writing `.mql.yaml` files), see `content/CLAUDE.
 - **mql provides**: MQL query engine, provider system, resource framework, data gathering.
 - **cnspec adds**: Policy evaluation, scoring, compliance frameworks, security assessments, risk factors.
 - **Shared runtime**: Both use the same provider system (`providers.Runtime`) for connecting to target systems.
-- **Import path**: cnspec imports `go.mondoo.com/mql/v13` extensively.
+- **Import path**: cnspec imports `go.mondoo.com/mql` extensively.
 
 When working on cnspec, you may need to understand or modify mql components.
 

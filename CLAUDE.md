@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 cnspec is an open-source, cloud-native security and policy project that assesses infrastructure security and compliance. It finds vulnerabilities and misconfigurations across cloud environments, Kubernetes, containers, servers, SaaS products, and more.
 
-**cnspec is built on top of mql** (`go.mondoo.com/mql/v13`). mql provides the MQL query engine, provider system, and resource framework; cnspec adds policy evaluation, scoring, compliance frameworks, and security assessments.
+**cnspec is built on top of mql** (`go.mondoo.com/mql`). mql provides the MQL query engine, provider system, and resource framework; cnspec adds policy evaluation, scoring, compliance frameworks, and security assessments.
 
 ## Where things live
 
@@ -105,7 +105,7 @@ Feature work happens in worktrees, and many branches are already checked out in 
 
 ### Local mql development
 
-A check often needs a provider field that does not exist yet. `make prep/repos` clones mql into `./mql`, and `go.mod` carries a commented `replace go.mondoo.com/mql/v13 => ../mql` for building against a sibling checkout. After changing a provider's `.lr` schema, regenerate and rebuild that provider, then copy it into `~/.config/mondoo/providers/<name>/` — that installed copy, not the source, is what `cnspec policy lint` resolves against.
+A check often needs a provider field that does not exist yet. `make prep/repos` clones mql into `./mql`, and `go.mod` carries a commented `replace go.mondoo.com/mql => ../mql` for building against a sibling checkout. After changing a provider's `.lr` schema, regenerate and rebuild that provider, then copy it into `~/.config/mondoo/providers/<name>/` — that installed copy, not the source, is what `cnspec policy lint` resolves against.
 
 ## Development rules
 
