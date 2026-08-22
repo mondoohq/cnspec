@@ -76,12 +76,13 @@ func TestOcsfSchemaValidation(t *testing.T) {
 
 // ocsfValidationPipeline loads the compiled OCSF schema of a version and builds a
 // validating processor from it. The schemas are checked in gzipped under
-// testdata/ocsf; see the README there for how they are produced.
+// ocsf/schemas, where they are also the input the types are generated from; see
+// the README there for how they are produced.
 func ocsfValidationPipeline(t *testing.T, version ocsf.Version) eventschema.EventProcessorPipeline {
 	t.Helper()
 
-	compressed, err := os.Open(filepath.Join("testdata", "ocsf", "schema-"+string(version)+".json.gz"))
-	require.NoError(t, err, "every supported OCSF version needs a compiled schema in testdata/ocsf")
+	compressed, err := os.Open(filepath.Join("ocsf", "schemas", "schema-"+string(version)+".json.gz"))
+	require.NoError(t, err, "every supported OCSF version needs a compiled schema in cli/reporter/ocsf/schemas")
 	defer compressed.Close() //nolint: errcheck
 
 	gz, err := gzip.NewReader(compressed)

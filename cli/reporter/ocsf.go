@@ -212,21 +212,12 @@ func (c *ocsfConverter) complianceFinding(resolved *policy.ResolvedPolicy, repor
 		message += " · " + msg
 	}
 
-	finding := ocsf.ComplianceFinding{
-		Compliance:  c.compliance(resolved, report, query, score, ctx),
-		FindingInfo: c.findingInfo(query, score, title),
-		Resources:   []ocsf.ResourceDetails{ctx.resource},
-		Device:      ctx.device,
-		Cloud:       ctx.cloud,
-	}
-	finding.ActivityID = ocsf.ActivityCreate
-	finding.ActivityName = "Create"
-	finding.CategoryUID = ocsf.CategoryFindings
-	finding.CategoryName = "Findings"
-	finding.ClassUID = ocsf.ClassUIDComplianceFinding
-	finding.ClassName = "Compliance Finding"
-	finding.TypeUID = ocsf.ClassUIDComplianceFinding*100 + ocsf.ActivityCreate
-	finding.TypeName = "Compliance Finding: Create"
+	finding := ocsf.NewComplianceFinding(ocsf.ComplianceFindingActivityCreate)
+	finding.Compliance = c.compliance(resolved, report, query, score, ctx)
+	finding.FindingInfo = c.findingInfo(query, score, title)
+	finding.Resources = []ocsf.ResourceDetails{ctx.resource}
+	finding.Device = ctx.device
+	finding.Cloud = ctx.cloud
 	finding.Time = c.now
 	finding.SeverityID = ocsfCheckSeverity(score)
 	finding.Severity = ocsf.SeverityName(finding.SeverityID)
@@ -350,28 +341,19 @@ func (c *ocsfConverter) addAssetError(events *ocsf.Events, r *policy.ReportColle
 		return
 	}
 
-	finding := ocsf.ComplianceFinding{
-		Compliance: c.errorCompliance(errMsg),
-		FindingInfo: ocsf.FindingInfo{
-			UID:         ocsfAssetErrorUID,
-			Title:       "Asset scan error",
-			Desc:        "cnspec could not complete the scan of this asset. No policy results are available for it.",
-			CreatedTime: c.now,
-			Types:       []string{"Scan Error"},
-			DataSources: []string{ocsfProductName},
-		},
-		Resources: []ocsf.ResourceDetails{ctx.resource},
-		Device:    ctx.device,
-		Cloud:     ctx.cloud,
+	finding := ocsf.NewComplianceFinding(ocsf.ComplianceFindingActivityCreate)
+	finding.Compliance = c.errorCompliance(errMsg)
+	finding.FindingInfo = ocsf.FindingInfo{
+		UID:         ocsfAssetErrorUID,
+		Title:       "Asset scan error",
+		Desc:        "cnspec could not complete the scan of this asset. No policy results are available for it.",
+		CreatedTime: c.now,
+		Types:       []string{"Scan Error"},
+		DataSources: []string{ocsfProductName},
 	}
-	finding.ActivityID = ocsf.ActivityCreate
-	finding.ActivityName = "Create"
-	finding.CategoryUID = ocsf.CategoryFindings
-	finding.CategoryName = "Findings"
-	finding.ClassUID = ocsf.ClassUIDComplianceFinding
-	finding.ClassName = "Compliance Finding"
-	finding.TypeUID = ocsf.ClassUIDComplianceFinding*100 + ocsf.ActivityCreate
-	finding.TypeName = "Compliance Finding: Create"
+	finding.Resources = []ocsf.ResourceDetails{ctx.resource}
+	finding.Device = ctx.device
+	finding.Cloud = ctx.cloud
 	finding.Time = c.now
 	// A scan that did not run leaves every check unanswered, which is worse than
 	// a single check erroring out.
@@ -412,18 +394,11 @@ func (c *ocsfConverter) errorCompliance(errMsg string) ocsf.Compliance {
 // inventoryInfo reports the asset itself, so the lake knows what was scanned even
 // when the scan produced no findings.
 func (c *ocsfConverter) inventoryInfo(r *policy.ReportCollection, ctx *ocsfAssetContext) ocsf.InventoryInfo {
-	res := ocsf.InventoryInfo{Cloud: ctx.cloud}
+	res := ocsf.NewInventoryInfo(ocsf.InventoryInfoActivityCollect)
+	res.Cloud = ctx.cloud
 	if ctx.device != nil {
 		res.Device = *ctx.device
 	}
-	res.ActivityID = ocsf.ActivityCollect
-	res.ActivityName = "Collect"
-	res.CategoryUID = ocsf.CategoryDiscovery
-	res.CategoryName = "Discovery"
-	res.ClassUID = ocsf.ClassUIDInventoryInfo
-	res.ClassName = "Device Inventory Info"
-	res.TypeUID = ocsf.ClassUIDInventoryInfo*100 + ocsf.ActivityCollect
-	res.TypeName = "Device Inventory Info: Collect"
 	res.Time = c.now
 	res.SeverityID = ocsf.SeverityInformational
 	res.Severity = ocsf.SeverityName(res.SeverityID)
@@ -669,31 +644,22 @@ func (c *ocsfConverter) vulnerabilityFinding(advisory *mvd.Advisory, pkgs []*mvd
 		}
 	}
 
-	finding := ocsf.VulnerabilityFinding{
-		FindingInfo: ocsf.FindingInfo{
-			UID:           uid,
-			Title:         title,
-			Desc:          desc,
-			CreatedTime:   c.now,
-			FirstSeenTime: published,
-			Types:         []string{"Vulnerability"},
-			DataSources:   []string{ocsfProductName},
-		},
-		Vulnerabilities: vulns,
-		Device:          ctx.device,
-		Cloud:           ctx.cloud,
+	finding := ocsf.NewVulnerabilityFinding(ocsf.VulnerabilityFindingActivityCreate)
+	finding.FindingInfo = ocsf.FindingInfo{
+		UID:           uid,
+		Title:         title,
+		Desc:          desc,
+		CreatedTime:   c.now,
+		FirstSeenTime: published,
+		Types:         []string{"Vulnerability"},
+		DataSources:   []string{ocsfProductName},
 	}
+	finding.Vulnerabilities = vulns
+	finding.Device = ctx.device
+	finding.Cloud = ctx.cloud
 	if ctx.resource.UID != "" || ctx.resource.Name != "" {
 		finding.Resources = []ocsf.ResourceDetails{ctx.resource}
 	}
-	finding.ActivityID = ocsf.ActivityCreate
-	finding.ActivityName = "Create"
-	finding.CategoryUID = ocsf.CategoryFindings
-	finding.CategoryName = "Findings"
-	finding.ClassUID = ocsf.ClassUIDVulnerabilityFinding
-	finding.ClassName = "Vulnerability Finding"
-	finding.TypeUID = ocsf.ClassUIDVulnerabilityFinding*100 + ocsf.ActivityCreate
-	finding.TypeName = "Vulnerability Finding: Create"
 	finding.Time = c.now
 	finding.SeverityID = ocsfSeverityFromRisk(score)
 	finding.Severity = ocsf.SeverityName(finding.SeverityID)
@@ -945,7 +911,7 @@ func buildOcsfDevice(asset *inventory.Asset, version ocsf.Version) *ocsf.Device 
 		res.OS = &ocsf.OS{
 			Name:    platform.Name,
 			TypeID:  osType,
-			Type:    ocsfOsTypeName(osType),
+			Type:    ocsf.OSTypeName(osType),
 			Version: platform.Version,
 			Build:   platform.Build,
 		}
@@ -953,11 +919,11 @@ func buildOcsfDevice(asset *inventory.Asset, version ocsf.Version) *ocsf.Device 
 	if platform.Arch != "" {
 		// 1.9 deprecates cpu_type in favor of a per-processor cpu_info_list.
 		if version.AtLeast(ocsf.Version190) {
-			res.HwInfo = &ocsf.HardwareInfo{
+			res.HwInfo = &ocsf.DeviceHwInfo{
 				CPUInfoList: []ocsf.CPUInfo{{CPUArchitecture: platform.Arch}},
 			}
 		} else {
-			res.HwInfo = &ocsf.HardwareInfo{CPUType: platform.Arch}
+			res.HwInfo = &ocsf.DeviceHwInfo{CPUType: platform.Arch}
 		}
 	}
 	if arn, ok := awsARN(asset); ok {
@@ -970,11 +936,8 @@ func buildOcsfDevice(asset *inventory.Asset, version ocsf.Version) *ocsf.Device 
 // is none of OCSF's known types the sibling carries what cnspec calls the
 // platform, which is more useful than the word "Other" and is what OCSF asks for.
 func ocsfDeviceTypeName(typeID int, platform *inventory.Platform) string {
-	switch typeID {
-	case ocsf.DeviceTypeServer:
-		return "Server"
-	case ocsf.DeviceTypeVirtual:
-		return "Virtual"
+	if typeID != ocsf.DeviceTypeOther {
+		return ocsf.DeviceTypeName(typeID)
 	}
 	if platform == nil {
 		return ""
@@ -1010,27 +973,6 @@ func ocsfOsType(platform *inventory.Platform) int {
 		}
 	}
 	return ocsf.OSTypeUnknown
-}
-
-func ocsfOsTypeName(typeID int) string {
-	switch typeID {
-	case ocsf.OSTypeWindows:
-		return "Windows"
-	case ocsf.OSTypeLinux:
-		return "Linux"
-	case ocsf.OSTypeMacOS:
-		return "macOS"
-	case ocsf.OSTypeAndroid:
-		return "Android"
-	case ocsf.OSTypeSolaris:
-		return "Solaris"
-	case ocsf.OSTypeAIX:
-		return "AIX"
-	case ocsf.OSTypeHPUX:
-		return "HP-UX"
-	default:
-		return "Other"
-	}
 }
 
 // buildOcsfCloud fills in the cloud environment of an asset. It returns nil for

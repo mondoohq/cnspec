@@ -54,8 +54,8 @@ func TestOcsfConverter(t *testing.T) {
 
 	for _, finding := range events.ComplianceFindings {
 		assert.Equal(t, ocsf.ClassUIDComplianceFinding, finding.ClassUID)
-		assert.Equal(t, ocsf.CategoryFindings, finding.CategoryUID)
-		assert.Equal(t, 200301, finding.TypeUID)
+		assert.Equal(t, ocsf.CategoryUIDComplianceFinding, finding.CategoryUID)
+		assert.EqualValues(t, ocsf.ComplianceFindingTypeUIDCreate, finding.TypeUID)
 		assert.Equal(t, fixedScanTime.UnixMilli(), finding.Time)
 		assert.Equal(t, string(ocsf.Version130), finding.Metadata.Version)
 		assert.Equal(t, "cnspec", finding.Metadata.Product.Name)
@@ -89,7 +89,7 @@ func TestOcsfConverter(t *testing.T) {
 	// the asset shows up as a device, even though it is not a cloud asset
 	inv := events.InventoryInfos[0]
 	assert.Equal(t, ocsf.ClassUIDInventoryInfo, inv.ClassUID)
-	assert.Equal(t, 500102, inv.TypeUID)
+	assert.EqualValues(t, ocsf.InventoryInfoTypeUIDCollect, inv.TypeUID)
 	assert.Equal(t, "X1", inv.Device.Name)
 	assert.Equal(t, ocsf.DeviceTypeServer, inv.Device.TypeID, "kind baremetal is a server")
 	require.NotNil(t, inv.Device.OS)
@@ -108,7 +108,7 @@ func TestOcsfVulnerabilityFindings(t *testing.T) {
 
 	vuln := events.VulnerabilityFindings[0]
 	assert.Equal(t, ocsf.ClassUIDVulnerabilityFinding, vuln.ClassUID)
-	assert.Equal(t, 200201, vuln.TypeUID)
+	assert.EqualValues(t, ocsf.VulnerabilityFindingTypeUIDCreate, vuln.TypeUID)
 	assert.Equal(t, ocsf.SeverityCritical, vuln.SeverityID, "an advisory score of 95 is critical")
 	assert.Equal(t, "USN-1234-1", vuln.FindingInfo.UID)
 

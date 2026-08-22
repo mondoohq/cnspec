@@ -20,54 +20,44 @@ func testEvents() *Events {
 		Product:    Product{Name: "cnspec", VendorName: "Mondoo", Version: "12.0.0"},
 		LoggedTime: 1700000000000,
 	}
+
+	// Deliberately the higher severity and the later time, to prove the sort is
+	// on time rather than on input order or severity.
+	failing := NewComplianceFinding(ComplianceFindingActivityCreate)
+	failing.Time = 1700000000002
+	failing.SeverityID = SeverityHigh
+	failing.Severity = SeverityName(SeverityHigh)
+	failing.StatusID = StatusNew
+	failing.Status = StatusName(StatusNew)
+	failing.Metadata = meta
+	failing.Unmapped = map[string]string{"score": "0"}
+	failing.Compliance = Compliance{
+		Standards: []string{"cis-aws-foundations-benchmark"},
+		Control:   "1.4",
+		StatusID:  ComplianceStatusFail,
+		Status:    ComplianceStatusName(ComplianceStatusFail),
+	}
+	failing.FindingInfo = FindingInfo{UID: "check-b", Title: "Root account has no access key"}
+	failing.Resources = []ResourceDetails{{UID: "//assets/1", Name: "prod", Labels: []string{"env=prod"}}}
+
+	passing := NewComplianceFinding(ComplianceFindingActivityCreate)
+	passing.Time = 1700000000001
+	passing.Metadata = meta
+	passing.Compliance = Compliance{Standards: []string{"mondoo"}, StatusID: ComplianceStatusPass}
+	passing.FindingInfo = FindingInfo{UID: "check-a", Title: "SSH root login disabled"}
+
+	inventory := NewInventoryInfo(InventoryInfoActivityCollect)
+	inventory.Time = 1700000000000
+	inventory.SeverityID = SeverityInformational
+	inventory.Metadata = meta
+	inventory.Device = Device{
+		TypeID: DeviceTypeServer, UID: "//assets/1", Name: "prod",
+		OS: &OS{Name: "Ubuntu", TypeID: OSTypeLinux},
+	}
+
 	return &Events{
-		ComplianceFindings: []ComplianceFinding{
-			{
-				base: base{
-					ActivityID: ActivityCreate, ActivityName: "Create",
-					CategoryUID: CategoryFindings, CategoryName: "Findings",
-					ClassUID: ClassUIDComplianceFinding, ClassName: "Compliance Finding",
-					TypeUID: ClassUIDComplianceFinding*100 + ActivityCreate,
-					Time:    1700000000002,
-					// Deliberately the higher severity, to prove the sort is on time.
-					SeverityID: SeverityHigh, Severity: SeverityName(SeverityHigh),
-					StatusID: StatusNew, Status: StatusName(StatusNew),
-					Metadata: meta,
-					Unmapped: map[string]string{"score": "0"},
-				},
-				Compliance: Compliance{
-					Standards: []string{"cis-aws-foundations-benchmark"},
-					Control:   "1.4",
-					StatusID:  ComplianceStatusFail,
-					Status:    ComplianceStatusName(ComplianceStatusFail),
-				},
-				FindingInfo: FindingInfo{UID: "check-b", Title: "Root account has no access key"},
-				Resources:   []ResourceDetails{{UID: "//assets/1", Name: "prod", Labels: []string{"env=prod"}}},
-			},
-			{
-				base: base{
-					ActivityID: ActivityCreate, CategoryUID: CategoryFindings,
-					ClassUID: ClassUIDComplianceFinding,
-					TypeUID:  ClassUIDComplianceFinding*100 + ActivityCreate,
-					Time:     1700000000001,
-					Metadata: meta,
-				},
-				Compliance:  Compliance{Standards: []string{"mondoo"}, StatusID: ComplianceStatusPass},
-				FindingInfo: FindingInfo{UID: "check-a", Title: "SSH root login disabled"},
-			},
-		},
-		InventoryInfos: []InventoryInfo{
-			{
-				base: base{
-					ActivityID: ActivityCollect, CategoryUID: CategoryDiscovery,
-					ClassUID: ClassUIDInventoryInfo,
-					TypeUID:  ClassUIDInventoryInfo*100 + ActivityCollect,
-					Time:     1700000000000, SeverityID: SeverityInformational,
-					Metadata: meta,
-				},
-				Device: Device{TypeID: DeviceTypeServer, UID: "//assets/1", Name: "prod", OS: &OS{Name: "Ubuntu", TypeID: OSTypeLinux}},
-			},
-		},
+		ComplianceFindings: []ComplianceFinding{failing, passing},
+		InventoryInfos:     []InventoryInfo{inventory},
 	}
 }
 
@@ -97,8 +87,9 @@ func TestWriteJSON(t *testing.T) {
 
 	// the embedded base must be flattened, not nested under "base"
 	assert.EqualValues(t, ClassUIDComplianceFinding, first["class_uid"])
-	assert.EqualValues(t, 200301, first["type_uid"])
-	assert.NotContains(t, first, "base")
+	assert.EqualValues(t, ComplianceFindingTypeUIDCreate, first["type_uid"])
+	assert.Equal(t, "Compliance Finding: Create", first["type_name"],
+		"the generated constructor fills the classification in from the schema")
 	// empty optional values are dropped
 	assert.NotContains(t, first, "remediation")
 	assert.NotContains(t, first, "device")
