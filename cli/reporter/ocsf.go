@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
+	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec"
 	"go.mondoo.com/cnspec/cli/reporter/ocsf"
 	"go.mondoo.com/cnspec/policy"
@@ -65,7 +66,7 @@ func VulnReportToOCSFJSON(target string, data *mvd.VulnReport, version ocsf.Vers
 	events := &ocsf.Events{}
 	c.addVulnerabilityFindings(events, data, &ocsfAssetContext{
 		asset:    asset,
-		device:   buildOcsfDevice(asset),
+		device:   buildOcsfDevice(asset, version),
 		resource: buildOcsfResource(asset),
 	})
 	events.Sort()
@@ -124,7 +125,7 @@ func (c *ocsfConverter) convert(r *policy.ReportCollection) (*ocsf.Events, error
 			asset:        asset,
 			platformKeys: platformRemediationKeys(asset.Platform),
 			policyTitles: policyTitles,
-			device:       buildOcsfDevice(asset),
+			device:       buildOcsfDevice(asset, c.version),
 			cloud:        buildOcsfCloud(asset),
 			resource:     buildOcsfResource(asset),
 		}
@@ -139,9 +140,13 @@ func (c *ocsfConverter) convert(r *policy.ReportCollection) (*ocsf.Events, error
 	return events, nil
 }
 
-// metadata is the same for every event of a run, except for the profiles, which
-// depend on what the event actually carries.
-func (c *ocsfConverter) metadata(hasCloud bool) ocsf.Metadata {
+// metadata is the same for every event of a run, except for the profiles.
+//
+// Profiles are not decoration: an OCSF attribute that belongs to a profile is
+// only allowed on an event that declares the profile. `device` on a finding
+// comes from the host profile and `cloud` from the cloud profile, so an event
+// carrying either without saying so is rejected by a schema-aware validator.
+func (c *ocsfConverter) metadata(profiles ...string) ocsf.Metadata {
 	res := ocsf.Metadata{
 		Version: string(c.version),
 		Product: ocsf.Product{
@@ -152,8 +157,22 @@ func (c *ocsfConverter) metadata(hasCloud bool) ocsf.Metadata {
 		},
 		LoggedTime: c.now,
 	}
-	if hasCloud {
-		res.Profiles = []string{"cloud"}
+	if len(profiles) > 0 {
+		res.Profiles = profiles
+	}
+	return res
+}
+
+// findingProfiles lists the OCSF profiles a finding of this asset uses. Findings
+// carry the asset as a device (host profile) and, for cloud assets, the cloud
+// environment (cloud profile).
+func (ctx *ocsfAssetContext) findingProfiles() []string {
+	res := []string{}
+	if ctx.device != nil {
+		res = append(res, ocsf.ProfileHost)
+	}
+	if ctx.cloud != nil {
+		res = append(res, ocsf.ProfileCloud)
 	}
 	return res
 }
@@ -211,11 +230,10 @@ func (c *ocsfConverter) complianceFinding(resolved *policy.ResolvedPolicy, repor
 	finding.Time = c.now
 	finding.SeverityID = ocsfCheckSeverity(score)
 	finding.Severity = ocsf.SeverityName(finding.SeverityID)
-	finding.StatusID = ocsfFindingStatus(score)
-	finding.Status = ocsf.StatusName(finding.StatusID)
+	finding.StatusID, finding.Status = ocsfFindingStatus(score)
 	finding.StatusCode = strings.ToLower(scoreStatusLabel(score))
 	finding.Message = message
-	finding.Metadata = c.metadata(ctx.cloud != nil)
+	finding.Metadata = c.metadata(ctx.findingProfiles()...)
 	finding.Unmapped = c.checkUnmapped(query, score, ctx)
 
 	if rem := queryRemediation(query, ctx.platformKeys); rem != "" {
@@ -233,10 +251,8 @@ func (c *ocsfConverter) compliance(resolved *policy.ResolvedPolicy, report *poli
 	tags := queryComplianceTags(query)
 	frameworks := sortedKeys(tags)
 
-	res := ocsf.Compliance{
-		StatusID: ocsfComplianceStatus(score),
-	}
-	res.Status = ocsf.ComplianceStatusName(res.StatusID)
+	res := ocsf.Compliance{}
+	res.StatusID, res.Status = ocsfComplianceStatus(score)
 
 	for _, framework := range frameworks {
 		res.Standards = append(res.Standards, strings.TrimPrefix(framework, "compliance/"))
@@ -259,7 +275,12 @@ func (c *ocsfConverter) compliance(resolved *policy.ResolvedPolicy, report *poli
 	}
 
 	if detail := checkAssessment(resolved, report, query); detail != "" {
-		res.StatusDetail = detail
+		// 1.9 deprecates the singular status_detail in favor of status_details.
+		if c.version.AtLeast(ocsf.Version190) {
+			res.StatusDetails = []string{detail}
+		} else {
+			res.StatusDetail = detail
+		}
 	}
 
 	// compliance.category and compliance.desc were added in OCSF 1.9.
@@ -330,13 +351,7 @@ func (c *ocsfConverter) addAssetError(events *ocsf.Events, r *policy.ReportColle
 	}
 
 	finding := ocsf.ComplianceFinding{
-		Compliance: ocsf.Compliance{
-			Standards:    []string{"Mondoo Policy"},
-			Control:      ocsfAssetErrorUID,
-			StatusID:     ocsf.ComplianceStatusUnknown,
-			Status:       ocsf.ComplianceStatusName(ocsf.ComplianceStatusUnknown),
-			StatusDetail: errMsg,
-		},
+		Compliance: c.errorCompliance(errMsg),
 		FindingInfo: ocsf.FindingInfo{
 			UID:         ocsfAssetErrorUID,
 			Title:       "Asset scan error",
@@ -363,11 +378,11 @@ func (c *ocsfConverter) addAssetError(events *ocsf.Events, r *policy.ReportColle
 	finding.SeverityID = ocsf.SeverityHigh
 	finding.Severity = ocsf.SeverityName(finding.SeverityID)
 	finding.StatusID = ocsf.StatusOther
-	finding.Status = ocsf.StatusName(finding.StatusID)
+	finding.Status = "Error"
 	finding.StatusCode = "error"
 	finding.StatusDetail = errMsg
 	finding.Message = "Asset scan error: " + errMsg
-	finding.Metadata = c.metadata(ctx.cloud != nil)
+	finding.Metadata = c.metadata(ctx.findingProfiles()...)
 	if ctx.assetMrn != "" {
 		finding.Unmapped = map[string]string{"asset_mrn": ctx.assetMrn}
 	}
@@ -376,6 +391,23 @@ func (c *ocsfConverter) addAssetError(events *ocsf.Events, r *policy.ReportColle
 }
 
 const ocsfAssetErrorUID = "asset-error"
+
+// errorCompliance is the compliance context of an asset that could not be
+// scanned: no verdict, and the error as the detail.
+func (c *ocsfConverter) errorCompliance(errMsg string) ocsf.Compliance {
+	res := ocsf.Compliance{
+		Standards: []string{"Mondoo Policy"},
+		Control:   ocsfAssetErrorUID,
+		StatusID:  ocsf.ComplianceStatusUnknown,
+		Status:    ocsf.ComplianceStatusName(ocsf.ComplianceStatusUnknown),
+	}
+	if c.version.AtLeast(ocsf.Version190) {
+		res.StatusDetails = []string{errMsg}
+	} else {
+		res.StatusDetail = errMsg
+	}
+	return res
+}
 
 // inventoryInfo reports the asset itself, so the lake knows what was scanned even
 // when the scan produced no findings.
@@ -395,7 +427,13 @@ func (c *ocsfConverter) inventoryInfo(r *policy.ReportCollection, ctx *ocsfAsset
 	res.Time = c.now
 	res.SeverityID = ocsf.SeverityInformational
 	res.Severity = ocsf.SeverityName(res.SeverityID)
-	res.Metadata = c.metadata(ctx.cloud != nil)
+	// device is a class attribute of inventory_info, not a host-profile one, so
+	// only the cloud profile has to be declared here.
+	var profiles []string
+	if ctx.cloud != nil {
+		profiles = append(profiles, ocsf.ProfileCloud)
+	}
+	res.Metadata = c.metadata(profiles...)
 	res.Unmapped = c.assetUnmapped(r, ctx)
 	return res
 }
@@ -529,17 +567,22 @@ func (c *ocsfConverter) addVulnerabilityFindings(events *ocsf.Events, vulnReport
 			remaining = append(remaining, key)
 		}
 	}
-	sort.Strings(remaining)
-	for _, key := range remaining {
-		pkg := affected[key]
-		events.VulnerabilityFindings = append(events.VulnerabilityFindings,
-			c.vulnerabilityFinding(nil, []*mvd.Package{pkg}, ctx))
+	if len(remaining) == 0 {
+		return
 	}
+
+	// A vulnerability with neither a CVE nor an advisory has nothing to identify
+	// it, and OCSF rejects such an object (1.3: at least one of cve/cwe, 1.9:
+	// exactly one of advisory/cve/cwe). Rather than invent an identifier, report
+	// the gap: the packages still show up in every other output format.
+	sort.Strings(remaining)
+	log.Warn().
+		Strs("packages", remaining).
+		Msg("no advisory covers these affected packages, skipping them in the OCSF vulnerability findings")
 }
 
-// vulnerabilityFinding builds one finding. With an advisory it reports the
-// advisory and every package of it the asset is affected by; without one it
-// reports a single vulnerable package.
+// vulnerabilityFinding builds one finding for an advisory and every package of
+// it the asset is affected by.
 func (c *ocsfConverter) vulnerabilityFinding(advisory *mvd.Advisory, pkgs []*mvd.Package, ctx *ocsfAssetContext) ocsf.VulnerabilityFinding {
 	score := int32(0)
 	uid := "vulnerable-package"
@@ -606,9 +649,24 @@ func (c *ocsfConverter) vulnerabilityFinding(advisory *mvd.Advisory, pkgs []*mvd
 			}
 			vulns = append(vulns, cur)
 		}
-	}
-	if len(vulns) == 0 {
-		vulns = append(vulns, vuln)
+		if len(vulns) == 0 {
+			// An advisory with no CVEs still has to identify itself. 1.9 has the
+			// advisory object for exactly this; 1.3 has no such attribute, so the
+			// advisory id goes in cve.uid, which is where every OCSF producer puts
+			// a non-CVE vulnerability identifier.
+			cur := vuln
+			if c.version.AtLeast(ocsf.Version190) {
+				cur.Advisory = &ocsf.Advisory{
+					UID:        advisory.ID,
+					Title:      advisory.Title,
+					Desc:       advisory.Description,
+					References: advisoryRefs(advisory),
+				}
+			} else {
+				cur.CVE = &ocsf.CVE{UID: advisory.ID, Title: advisory.Title, Desc: advisory.Description}
+			}
+			vulns = append(vulns, cur)
+		}
 	}
 
 	finding := ocsf.VulnerabilityFinding{
@@ -643,7 +701,7 @@ func (c *ocsfConverter) vulnerabilityFinding(advisory *mvd.Advisory, pkgs []*mvd
 	finding.Status = ocsf.StatusName(finding.StatusID)
 	finding.StatusCode = "fail"
 	finding.Message = title
-	finding.Metadata = c.metadata(ctx.cloud != nil)
+	finding.Metadata = c.metadata(ctx.findingProfiles()...)
 
 	unmapped := map[string]string{"cvss_score": strconv.Itoa(int(score))}
 	if ctx.assetMrn != "" {
@@ -759,40 +817,46 @@ func ocsfSeverityFromRisk(risk int32) int {
 	}
 }
 
-// ocsfFindingStatus maps a check outcome to the finding status. Findings cnspec
-// produces are always newly observed; a skipped check is reported as suppressed,
-// which is what "we deliberately did not evaluate this" means in OCSF, and a
-// check that errored has no outcome to report at all.
-func ocsfFindingStatus(score *policy.Score) int {
+// ocsfFindingStatus maps a check outcome to the finding status and the label
+// that goes with it. Findings cnspec produces are always newly observed; a
+// skipped check is reported as suppressed, which is what "we deliberately did
+// not evaluate this" means in OCSF, and a check that errored has no outcome.
+//
+// The label of an "Other" status is the cnspec outcome, not the word "Other":
+// OCSF expects the string sibling of an Other enum to carry the producer's own
+// value, and a validator flags one that just repeats the caption.
+func ocsfFindingStatus(score *policy.Score) (int, string) {
 	if score.GetType() == policy.ScoreType_Error {
-		return ocsf.StatusOther
+		return ocsf.StatusOther, "Error"
 	}
 	switch scoreToSarifKind(score) {
 	case "pass", "fail":
-		return ocsf.StatusNew
+		return ocsf.StatusNew, ocsf.StatusName(ocsf.StatusNew)
 	case "notApplicable":
-		return ocsf.StatusSuppressed
+		return ocsf.StatusSuppressed, ocsf.StatusName(ocsf.StatusSuppressed)
+	case "informational":
+		return ocsf.StatusOther, "Unscored"
 	default:
-		return ocsf.StatusOther
+		return ocsf.StatusUnknown, ocsf.StatusName(ocsf.StatusUnknown)
 	}
 }
 
-// ocsfComplianceStatus maps a check outcome to the compliance verdict. An
-// errored check is deliberately not a Fail: nothing was evaluated, so calling it
-// non-compliant would report an outage as a violation.
-func ocsfComplianceStatus(score *policy.Score) int {
+// ocsfComplianceStatus maps a check outcome to the compliance verdict and its
+// label. An errored check is deliberately not a Fail: nothing was evaluated, so
+// calling it non-compliant would report an outage as a violation.
+func ocsfComplianceStatus(score *policy.Score) (int, string) {
 	if score.GetType() == policy.ScoreType_Error {
-		return ocsf.ComplianceStatusUnknown
+		return ocsf.ComplianceStatusUnknown, ocsf.ComplianceStatusName(ocsf.ComplianceStatusUnknown)
 	}
 	switch scoreToSarifKind(score) {
 	case "pass":
-		return ocsf.ComplianceStatusPass
+		return ocsf.ComplianceStatusPass, ocsf.ComplianceStatusName(ocsf.ComplianceStatusPass)
 	case "fail":
-		return ocsf.ComplianceStatusFail
+		return ocsf.ComplianceStatusFail, ocsf.ComplianceStatusName(ocsf.ComplianceStatusFail)
 	case "notApplicable":
-		return ocsf.ComplianceStatusOther
+		return ocsf.ComplianceStatusOther, "Skipped"
 	default:
-		return ocsf.ComplianceStatusUnknown
+		return ocsf.ComplianceStatusUnknown, ocsf.ComplianceStatusName(ocsf.ComplianceStatusUnknown)
 	}
 }
 
@@ -853,7 +917,7 @@ func buildOcsfResource(asset *inventory.Asset) ocsf.ResourceDetails {
 }
 
 // buildOcsfDevice describes the scanned asset as an endpoint.
-func buildOcsfDevice(asset *inventory.Asset) *ocsf.Device {
+func buildOcsfDevice(asset *inventory.Asset, version ocsf.Version) *ocsf.Device {
 	res := &ocsf.Device{
 		TypeID:   ocsf.DeviceTypeOther,
 		UID:      asset.Mrn,
@@ -866,7 +930,6 @@ func buildOcsfDevice(asset *inventory.Asset) *ocsf.Device {
 
 	platform := asset.Platform
 	if platform == nil {
-		res.Type = "Other"
 		return res
 	}
 
@@ -876,7 +939,7 @@ func buildOcsfDevice(asset *inventory.Asset) *ocsf.Device {
 	case inventory.AssetKindCloudVM, "virtualmachine-image":
 		res.TypeID = ocsf.DeviceTypeVirtual
 	}
-	res.Type = ocsfDeviceTypeName(res.TypeID)
+	res.Type = ocsfDeviceTypeName(res.TypeID, platform)
 
 	if osType := ocsfOsType(platform); osType != ocsf.OSTypeUnknown {
 		res.OS = &ocsf.OS{
@@ -888,7 +951,14 @@ func buildOcsfDevice(asset *inventory.Asset) *ocsf.Device {
 		}
 	}
 	if platform.Arch != "" {
-		res.HwInfo = &ocsf.HardwareInfo{CPUArchitecture: platform.Arch}
+		// 1.9 deprecates cpu_type in favor of a per-processor cpu_info_list.
+		if version.AtLeast(ocsf.Version190) {
+			res.HwInfo = &ocsf.HardwareInfo{
+				CPUInfoList: []ocsf.CPUInfo{{CPUArchitecture: platform.Arch}},
+			}
+		} else {
+			res.HwInfo = &ocsf.HardwareInfo{CPUType: platform.Arch}
+		}
 	}
 	if arn, ok := awsARN(asset); ok {
 		res.Region = arn.region
@@ -896,15 +966,23 @@ func buildOcsfDevice(asset *inventory.Asset) *ocsf.Device {
 	return res
 }
 
-func ocsfDeviceTypeName(typeID int) string {
+// ocsfDeviceTypeName is the string sibling of device.type_id. For a device that
+// is none of OCSF's known types the sibling carries what cnspec calls the
+// platform, which is more useful than the word "Other" and is what OCSF asks for.
+func ocsfDeviceTypeName(typeID int, platform *inventory.Platform) string {
 	switch typeID {
 	case ocsf.DeviceTypeServer:
 		return "Server"
 	case ocsf.DeviceTypeVirtual:
 		return "Virtual"
-	default:
-		return "Other"
 	}
+	if platform == nil {
+		return ""
+	}
+	if platform.Title != "" {
+		return platform.Title
+	}
+	return platform.Name
 }
 
 // ocsfOsType detects the operating system family of a platform. Assets that are

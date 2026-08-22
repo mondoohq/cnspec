@@ -18,7 +18,11 @@ import (
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd/cvss"
 )
+
+// sampleAssetMrn is the asset of sampleReportCollection.
+const sampleAssetMrn = "//assets.api.mondoo.app/spaces/dazzling-golick-767384/assets/2DRZ1cCWFyTYCArycAXHwvn1oU2"
 
 // fixedScanTime keeps the converter's clock out of the assertions.
 var fixedScanTime = time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
@@ -44,7 +48,9 @@ func TestOcsfConverter(t *testing.T) {
 
 	require.Len(t, events.ComplianceFindings, 3, "one finding per reporting check")
 	require.Len(t, events.InventoryInfos, 1, "one inventory event per asset")
-	require.Len(t, events.VulnerabilityFindings, 1, "one finding for the affected package")
+	require.Empty(t, events.VulnerabilityFindings,
+		"the affected package of this fixture has no advisory and therefore no CVE, "+
+			"which OCSF cannot express as a vulnerability")
 
 	for _, finding := range events.ComplianceFindings {
 		assert.Equal(t, ocsf.ClassUIDComplianceFinding, finding.ClassUID)
@@ -90,22 +96,52 @@ func TestOcsfConverter(t *testing.T) {
 	assert.Equal(t, ocsf.OSTypeLinux, inv.Device.OS.TypeID)
 	assert.Equal(t, "22.04", inv.Device.OS.Version)
 	require.NotNil(t, inv.Device.HwInfo)
-	assert.Equal(t, "amd64", inv.Device.HwInfo.CPUArchitecture)
+	assert.Equal(t, "amd64", inv.Device.HwInfo.CPUType, "1.3 carries the architecture in cpu_type")
 	assert.Nil(t, inv.Cloud)
 	assert.Empty(t, inv.Metadata.Profiles, "the cloud profile is only set on cloud assets")
 
-	// the vulnerable package becomes a vulnerability finding
+}
+
+func TestOcsfVulnerabilityFindings(t *testing.T) {
+	events := toOcsf(t, advisoryReportCollection())
+	require.Len(t, events.VulnerabilityFindings, 1, "one finding per advisory")
+
 	vuln := events.VulnerabilityFindings[0]
 	assert.Equal(t, ocsf.ClassUIDVulnerabilityFinding, vuln.ClassUID)
 	assert.Equal(t, 200201, vuln.TypeUID)
-	assert.Equal(t, ocsf.SeverityCritical, vuln.SeverityID, "package score 100 is critical")
-	require.Len(t, vuln.Vulnerabilities, 1)
+	assert.Equal(t, ocsf.SeverityCritical, vuln.SeverityID, "an advisory score of 95 is critical")
+	assert.Equal(t, "USN-1234-1", vuln.FindingInfo.UID)
+
+	require.Len(t, vuln.Vulnerabilities, 1, "one entry per CVE of the advisory")
+	require.NotNil(t, vuln.Vulnerabilities[0].CVE)
+	assert.Equal(t, "CVE-2023-0286", vuln.Vulnerabilities[0].CVE.UID)
+	require.Len(t, vuln.Vulnerabilities[0].CVE.CVSS, 1)
+	assert.Equal(t, "3.1", vuln.Vulnerabilities[0].CVE.CVSS[0].Version)
+	assert.InDelta(t, 7.4, vuln.Vulnerabilities[0].CVE.CVSS[0].BaseScore, 0.001)
+
 	require.Len(t, vuln.Vulnerabilities[0].AffectedPackages, 1)
 	pkg := vuln.Vulnerabilities[0].AffectedPackages[0]
 	assert.Equal(t, "libssl1.1", pkg.Name)
 	assert.Equal(t, "1.1.1f-3ubuntu2.19", pkg.Version)
 	assert.Equal(t, "1.1.1f-3ubuntu2.20", pkg.FixedInVersion)
 	assert.True(t, vuln.Vulnerabilities[0].IsFixAvailable)
+
+	// an advisory without CVEs still has to identify itself
+	noCVE := advisoryReportCollection()
+	noCVE.VulnReports[sampleAssetMrn].Advisories[0].Cves = nil
+
+	v13 := toOcsf(t, noCVE)
+	require.Len(t, v13.VulnerabilityFindings, 1)
+	require.NotNil(t, v13.VulnerabilityFindings[0].Vulnerabilities[0].CVE,
+		"OCSF 1.3 has no advisory attribute, so the advisory id goes in cve.uid")
+	assert.Equal(t, "USN-1234-1", v13.VulnerabilityFindings[0].Vulnerabilities[0].CVE.UID)
+
+	events19, err := convertToOCSF(noCVE, ocsf.Version190, false, fixedScanTime)
+	require.NoError(t, err)
+	v19 := events19.VulnerabilityFindings[0].Vulnerabilities[0]
+	assert.Nil(t, v19.CVE, "1.9 allows just one of advisory, cve and cwe")
+	require.NotNil(t, v19.Advisory)
+	assert.Equal(t, "USN-1234-1", v19.Advisory.UID)
 }
 
 func TestOcsfConverterNilReport(t *testing.T) {
@@ -239,10 +275,7 @@ func TestOcsfCloudAsset(t *testing.T) {
 // classes cnspec emits. Dropping one of them makes a lake reject the record, and
 // nothing else in the test suite would notice.
 func TestOcsfRequiredAttributes(t *testing.T) {
-	report := sampleReportCollection()
-	report.Errors = map[string]string{
-		"//assets.api.mondoo.app/spaces/dazzling-golick-767384/assets/2DRZ1cCWFyTYCArycAXHwvn1oU2": "boom",
-	}
+	report := erroredReportCollection()
 
 	buf := bytes.Buffer{}
 	require.NoError(t, toOcsf(t, report).WriteJSON(&buf))
@@ -292,7 +325,7 @@ func TestOcsfFileHandlerDirectory(t *testing.T) {
 		conf.format = tc.format
 
 		handler := &ocsfFileHandler{target: dir, conf: conf}
-		require.NoError(t, handler.WriteReport(t.Context(), sampleReportCollection()))
+		require.NoError(t, handler.WriteReport(t.Context(), advisoryReportCollection()))
 
 		for _, class := range []string{ocsf.ClassComplianceFinding, ocsf.ClassVulnerabilityFinding, ocsf.ClassInventoryInfo} {
 			path := filepath.Join(dir, class+tc.ext)
@@ -309,7 +342,7 @@ func TestOcsfFileHandlerSingleFile(t *testing.T) {
 	conf.format = FormatOcsfJson
 
 	handler := &ocsfFileHandler{target: "file://" + path, conf: conf}
-	require.NoError(t, handler.WriteReport(t.Context(), sampleReportCollection()))
+	require.NoError(t, handler.WriteReport(t.Context(), advisoryReportCollection()))
 
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -331,19 +364,7 @@ func TestOcsfParseTime(t *testing.T) {
 }
 
 func TestVulnReportToOCSFJSON(t *testing.T) {
-	report := sampleReportCollection().VulnReports["//assets.api.mondoo.app/spaces/dazzling-golick-767384/assets/2DRZ1cCWFyTYCArycAXHwvn1oU2"]
-	report.Advisories = []*mvd.Advisory{
-		{
-			ID:          "USN-1234-1",
-			Title:       "OpenSSL vulnerabilities",
-			Description: "Several security issues were fixed in OpenSSL.",
-			Score:       95,
-			Published:   "2023-03-01T00:00:00Z",
-			Affected:    []*mvd.Package{{Name: "libssl1.1", Version: "1.1.1f-3ubuntu2.19"}},
-			Cves:        []*mvd.CVE{{ID: "CVE-2023-0286", Summary: "X.400 address type confusion", Url: "https://nvd.nist.gov/vuln/detail/CVE-2023-0286"}},
-			Refs:        []*mvd.Reference{{Url: "https://ubuntu.com/security/notices/USN-1234-1"}},
-		},
-	}
+	report := advisoryReportCollection().VulnReports[sampleAssetMrn]
 
 	buf := bytes.Buffer{}
 	require.NoError(t, VulnReportToOCSFJSON("X1", report, ocsf.DefaultVersion, &buf))
@@ -355,16 +376,59 @@ func TestVulnReportToOCSFJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(lines[0]), &event))
 	assert.EqualValues(t, ocsf.ClassUIDVulnerabilityFinding, event["class_uid"])
 	assert.Equal(t, "Critical", event["severity"])
+	assert.Equal(t, "X1", event["resources"].([]any)[0].(map[string]any)["name"])
 
-	vulns, ok := event["vulnerabilities"].([]any)
-	require.True(t, ok)
-	require.Len(t, vulns, 1, "one entry per CVE of the advisory")
+	vulns := event["vulnerabilities"].([]any)
+	require.Len(t, vulns, 1)
 	vuln := vulns[0].(map[string]any)
 	assert.Equal(t, "CVE-2023-0286", vuln["cve"].(map[string]any)["uid"])
 	assert.Equal(t, true, vuln["is_fix_available"])
 	assert.Contains(t, vuln["references"], "https://ubuntu.com/security/notices/USN-1234-1")
+}
 
-	pkgs := vuln["affected_packages"].([]any)
-	require.Len(t, pkgs, 1)
-	assert.Equal(t, "1.1.1f-3ubuntu2.20", pkgs[0].(map[string]any)["fixed_in_version"])
+// cloudAssetReportCollection is the sample scan with the asset re-cast as an EC2
+// instance, so the cloud profile and the ARN-derived fields get validated too.
+func cloudAssetReportCollection() *policy.ReportCollection {
+	report := sampleReportCollection()
+	for _, asset := range report.Assets {
+		asset.PlatformIds = []string{"arn:aws:ec2:us-east-1:123456789012:instance/i-abc"}
+		asset.Platform = &inventory.Platform{
+			Name: "amazonlinux", Runtime: "aws-ec2-instance", Kind: "virtualmachine",
+			Family: []string{"linux", "unix", "os"}, Version: "2023", Arch: "arm64",
+		}
+	}
+	return report
+}
+
+// erroredReportCollection is a scan where the asset could not be reached.
+func erroredReportCollection() *policy.ReportCollection {
+	report := advisoryReportCollection()
+	report.Errors = map[string]string{sampleAssetMrn: "could not connect to the asset"}
+	return report
+}
+
+// advisoryReportCollection is the sample scan whose vulnerability report carries
+// a full advisory, which is the shape the vulnerability API actually returns:
+// every affected package is accounted for by an advisory, and every advisory
+// names its CVEs.
+func advisoryReportCollection() *policy.ReportCollection {
+	report := sampleReportCollection()
+	report.VulnReports[sampleAssetMrn].Advisories = []*mvd.Advisory{
+		{
+			ID:          "USN-1234-1",
+			Title:       "OpenSSL vulnerabilities",
+			Description: "Several security issues were fixed in OpenSSL.",
+			Score:       95,
+			Published:   "2023-03-01T00:00:00Z",
+			Affected:    []*mvd.Package{{Name: "libssl1.1", Version: "1.1.1f-3ubuntu2.19"}},
+			Cves: []*mvd.CVE{{
+				ID:      "CVE-2023-0286",
+				Summary: "X.400 address type confusion",
+				Url:     "https://nvd.nist.gov/vuln/detail/CVE-2023-0286",
+				Cvss:    []*cvss.Cvss{{Vector: "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N", Score: 7.4}},
+			}},
+			Refs: []*mvd.Reference{{Url: "https://ubuntu.com/security/notices/USN-1234-1"}},
+		},
+	}
+	return report
 }

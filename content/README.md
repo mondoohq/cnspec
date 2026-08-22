@@ -231,6 +231,9 @@ Finding (2002) per advisory, and Device Inventory Info (5001) per asset. They de
 directory to get one file per event class (required for `ocsf-parquet`, which is binary), or at
 a file to get every class in one newline-delimited JSON stream.
 
+Every event of every supported version is validated in CI against the official compiled OCSF
+schema with the OCSF project's own validator, [`ocsf-toolkit`](https://github.com/ocsf/ocsf-toolkit).
+
 ## Policy Structure
 
 Each policy file is a YAML document that contains security and operational checks written in MQL (Mondoo Query Language). The policies are structured as follows:

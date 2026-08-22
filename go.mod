@@ -31,6 +31,7 @@ require (
 	github.com/mitchellh/hashstructure/v2 v2.0.2
 	github.com/muesli/reflow v0.3.0
 	github.com/muesli/termenv v0.16.0
+	github.com/ocsf/ocsf-toolkit v0.8.0
 	github.com/olekukonko/tablewriter v1.1.4
 	github.com/owenrumney/go-sarif/v2 v2.3.3
 	github.com/package-url/packageurl-go v0.1.5

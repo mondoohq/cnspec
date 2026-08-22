@@ -15,6 +15,15 @@
 //   - Optional columns are written as null when the Go value is its zero value,
 //     which lines up with `omitempty` on the JSON side.
 //
+// These structs are purpose-built rather than taken from a generated OCSF type
+// library, because a full type set cannot drive the Parquet writer: the OCSF
+// object graph is recursive (a process has a parent process, and so on), so
+// deriving a Parquet schema from it does not terminate, and a schema covering
+// every attribute of every profile would be thousands of mostly-null columns.
+// Conformance is proven the other way round instead, by validating the emitted
+// events against the official compiled schema with the OCSF project's own
+// toolkit; see cli/reporter/ocsf_validate_test.go.
+//
 // The structs cover the union of the supported OCSF versions (see version.go).
 // Fields that only exist in a newer version are left empty when an older
 // version is selected; in parquet they show up as an all-null column, which
@@ -36,6 +45,15 @@ const (
 	ClassComplianceFinding    = "compliance_finding"
 	ClassVulnerabilityFinding = "vulnerability_finding"
 	ClassInventoryInfo        = "inventory_info"
+)
+
+// OCSF profiles. An attribute that belongs to a profile is only valid on an
+// event whose metadata declares that profile.
+const (
+	// ProfileHost covers the `device` and `actor` attributes on a finding.
+	ProfileHost = "host"
+	// ProfileCloud covers the `cloud` attribute.
+	ProfileCloud = "cloud"
 )
 
 // Finding activity, from the `finding` base class: 1 Create, 2 Update, 3 Close.
@@ -213,11 +231,14 @@ type Compliance struct {
 	Status       string   `json:"status,omitempty" parquet:"status,optional"`
 	StatusID     int      `json:"status_id" parquet:"status_id"`
 	StatusCode   string   `json:"status_code,omitempty" parquet:"status_code,optional"`
-	StatusDetail string   `json:"status_detail,omitempty" parquet:"status_detail,optional"`
+	// StatusDetail is deprecated as of OCSF 1.9 in favor of StatusDetails.
+	StatusDetail string `json:"status_detail,omitempty" parquet:"status_detail,optional"`
 
-	// Category and Desc were added in OCSF 1.9 and stay empty on older versions.
-	Category string `json:"category,omitempty" parquet:"category,optional"`
-	Desc     string `json:"desc,omitempty" parquet:"desc,optional"`
+	// StatusDetails, Category and Desc were added in OCSF 1.9 and stay empty on
+	// older versions.
+	StatusDetails []string `json:"status_details,omitempty" parquet:"status_details,list"`
+	Category      string   `json:"category,omitempty" parquet:"category,optional"`
+	Desc          string   `json:"desc,omitempty" parquet:"desc,optional"`
 }
 
 // ResourceDetails describes the thing a finding is about.
@@ -276,17 +297,34 @@ type OS struct {
 	Build   string `json:"build,omitempty" parquet:"build,optional"`
 }
 
-// HardwareInfo carries the hardware details cnspec knows about.
+// HardwareInfo carries the hardware details cnspec knows about. Up to OCSF 1.3
+// the processor architecture goes in cpu_type; 1.9 deprecates that (and the
+// hw_info-level cpu_architecture that briefly replaced it) in favor of a
+// per-processor cpu_info_list.
 type HardwareInfo struct {
+	CPUType     string    `json:"cpu_type,omitempty" parquet:"cpu_type,optional"`
+	CPUInfoList []CPUInfo `json:"cpu_info_list,omitempty" parquet:"cpu_info_list,list"`
+}
+
+// CPUInfo describes one processor of a device. Added in OCSF 1.9.
+type CPUInfo struct {
 	CPUArchitecture string `json:"cpu_architecture,omitempty" parquet:"cpu_architecture,optional"`
 }
 
 // Vulnerability describes one advisory affecting an asset.
+//
+// OCSF constrains how the vulnerability is identified: 1.3 wants at least one of
+// cve or cwe, and 1.9 wants exactly one of advisory, cve or cwe. A vulnerability
+// that names none of them is not a valid OCSF object, which is why the converter
+// never emits one.
 type Vulnerability struct {
-	Title            string            `json:"title,omitempty" parquet:"title,optional"`
-	Desc             string            `json:"desc,omitempty" parquet:"desc,optional"`
-	Severity         string            `json:"severity,omitempty" parquet:"severity,optional"`
-	CVE              *CVE              `json:"cve,omitempty" parquet:"cve,optional"`
+	Title    string `json:"title,omitempty" parquet:"title,optional"`
+	Desc     string `json:"desc,omitempty" parquet:"desc,optional"`
+	Severity string `json:"severity,omitempty" parquet:"severity,optional"`
+	CVE      *CVE   `json:"cve,omitempty" parquet:"cve,optional"`
+	// Advisory was added in OCSF 1.9 and identifies a vulnerability that has no
+	// CVE of its own. Never set together with CVE: 1.9 allows just one of them.
+	Advisory         *Advisory         `json:"advisory,omitempty" parquet:"advisory,optional"`
 	AffectedPackages []AffectedPackage `json:"affected_packages,omitempty" parquet:"affected_packages,list"`
 	References       []string          `json:"references,omitempty" parquet:"references,list"`
 	IsFixAvailable   bool              `json:"is_fix_available" parquet:"is_fix_available"`
@@ -294,6 +332,14 @@ type Vulnerability struct {
 	LastSeenTime     int64             `json:"last_seen_time,omitempty" parquet:"last_seen_time,optional"`
 	VendorName       string            `json:"vendor_name,omitempty" parquet:"vendor_name,optional"`
 	Remediation      *Remediation      `json:"remediation,omitempty" parquet:"remediation,optional"`
+}
+
+// Advisory identifies a vendor advisory. Added in OCSF 1.9.
+type Advisory struct {
+	UID        string   `json:"uid" parquet:"uid"`
+	Title      string   `json:"title,omitempty" parquet:"title,optional"`
+	Desc       string   `json:"desc,omitempty" parquet:"desc,optional"`
+	References []string `json:"references,omitempty" parquet:"references,list"`
 }
 
 // CVE is a single CVE record of a vulnerability.
