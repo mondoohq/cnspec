@@ -212,11 +212,14 @@ cnspec scan local -o sarif > results.sarif
 # JUnit XML (for CI/CD integration)
 cnspec scan local -o junit > results.xml
 
+# OHDF/HDF (Heimdall, the MITRE SAF CLI, and anything that reads InSpec exec-json)
+cnspec scan local -o hdf > results.hdf.json
+
 # Full detailed output
 cnspec scan local -o full
 ```
 
-The full set is `compact` (the default), `csv`, `full`, `json`, `json-v1`, `json-v2`, `junit`, `report`, `sarif`, `summary`, `yaml`, `yaml-v1`, and `yaml-v2`. Run `cnspec scan --help` for the current list.
+The full set is `compact` (the default), `csv`, `full`, `hdf`, `json`, `json-v1`, `json-v2`, `junit`, `report`, `sarif`, `summary`, `yaml`, `yaml-v1`, and `yaml-v2`. Run `cnspec scan --help` for the current list.
 
 ## Policy Structure
 
