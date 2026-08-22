@@ -189,12 +189,45 @@ The resolved policy is **not** re-checksummed after this mutation. Changing impa
 not change reporting-job UUIDs, so result storage keys stay valid, but
 `GraphExecutionChecksum` must keep matching what was cached.
 
-**With an upstream**, cnspec sends the exceptions for the asset *before* the asset's
-policy is resolved. The upstream decides what to do with them — apply them, hold them for
-review, reject them — and then returns the resolved policy as it always does, now
-accounting for whatever it accepted. cnspec does not mutate an upstream-resolved policy.
-Both the local report and the upstream record derive from the same resolution, so they
-agree by construction rather than by convention.
+**With an upstream, the upstream decides.** cnspec sends the exceptions for the asset
+*before* the asset's policy is resolved, and from that point the decision is not
+cnspec's to make. Whether an exception applies at all, and how it applies, is the
+upstream's call.
+
+The flow is:
+
+1. cnspec reads the exceptions for the asset from the user and context configs.
+2. cnspec sends them upstream, before resolution.
+3. The upstream decides on each one and returns its decision along with the resolved
+   policy, which already reflects whatever it accepted.
+4. cnspec executes that resolved policy normally. No special path, no local adjustment.
+
+cnspec does not mutate an upstream-resolved policy, and it does not second-guess a
+decision. An exception the upstream did not accept simply is not in effect, and the
+check scores as it otherwise would. Because the local report and the upstream record
+derive from the same resolution, they agree by construction rather than by convention.
+
+#### Reporting the decisions
+
+Every exception cnspec submitted is accounted for in the output.
+
+**Accepted exceptions are printed with their information** — the checks they cover, the
+action, the justification, the validity window, and how the exception came to be
+accepted. That last part has two forms:
+
+- **Accepted by someone.** Where the upstream requires approval, a person approved it,
+  and the output names them.
+- **Auto-accepted.** Where the upstream does not require approval, there are no approvers
+  and the exception took effect on submission. The output says so rather than leaving a
+  blank where a name would be.
+
+**Rejected exceptions are reported too**, with the reason where the upstream supplies
+one. This is the case a user most needs to see: they wrote an exception, committed it,
+and the check is still failing. Silence here would look like the file was never read.
+
+An upstream that requires approval may also report an exception as awaiting a decision
+rather than accepted or rejected. cnspec surfaces that as its own outcome — the exception
+is not in effect yet, which is different from having been refused.
 
 ### 7. Syncing without flooding the upstream
 
@@ -229,9 +262,17 @@ falling back to the CI identity that `execruntime.Detect()` already captures and
 
 **Approvers cannot be declared.** At the moment an entry is written, in a pull request,
 the approval has not happened yet; any approver named in the file is a prediction written
-by the person requesting the exception. The merge is the approval, and the review record
-lives in the forge. Where an upstream requires approval before an exception applies, that
-mechanism governs — cnspec surfaces its outcome rather than reimplementing it.
+by the person requesting the exception.
+
+Approval is the upstream's, and it has exactly two outcomes. Either **a person accepted
+the exception**, because the upstream requires approval — and then there is an approver,
+who is named in the output — or the exception was **auto-accepted**, because the upstream
+does not require approval, and then there are no approvers at all. cnspec does not
+invent a third state and does not reimplement the mechanism; it reports which of the two
+happened ([§6](#reporting-the-decisions)).
+
+Where no upstream is configured there is no approval step: everything in the file
+applies, and the output says as much.
 
 ### 9. Expired exceptions
 
@@ -246,6 +287,134 @@ can rewrite the file without them.
 cnspec edits the file and stops there. Committing, branching and opening a pull request
 are the user's workflow and cnspec does not touch version control.
 
+## Lifecycle example
+
+A worked example of the mixed case, because the interaction between upstream-held and
+folder-local exceptions is the part that is easy to get wrong.
+
+The setup: a team scans `infra/prod/`, a Terraform module, from CI. Their upstream already
+holds one exception, created there some months ago:
+
+- `mondoo-terraform-aws-security-s3-bucket-versioning` — **risk accepted**, upstream,
+  approved by the platform team, valid until 2027-01-01.
+
+### Stage 0 — before any local config
+
+```
+cnspec scan terraform infra/prod
+```
+
+No `mondoo.yml` in the folder. cnspec submits nothing, the upstream resolves the asset as
+it always has, and the report shows one exception and two failures:
+
+```
+Exceptions:
+  ✕  s3 buckets must have versioning enabled            risk accepted · upstream
+
+Failing:
+  ✕  s3 buckets must have access logging enabled
+  ✕  s3 buckets must block public access
+```
+
+### Stage 1 — a local exception is written
+
+An engineer adds `infra/prod/mondoo.yml` in the pull request that introduces the module:
+
+```yaml
+exceptions:
+  - title: Central CloudTrail covers this
+    checks:
+      - mondoo-terraform-aws-security-s3-bucket-logging
+    action: risk-accepted
+    justification: >
+      Access logging is handled centrally by the org-wide CloudTrail trail.
+    valid_until: 2026-11-01
+```
+
+On the next scan the `terraform` provider finds the file at the scanned path and returns
+it with the asset. cnspec parses it, translates the check UID to an MRN, and submits the
+set upstream **before** the asset's policy is resolved.
+
+### Stage 1b — the upstream requires approval
+
+The upstream is configured to require approval. It accepts the submission, records the
+exception, and returns its decision: **not yet in effect, awaiting approval.** The
+resolved policy it returns does not account for it.
+
+cnspec executes that resolved policy normally, and reports both facts:
+
+```
+Exceptions:
+  ✕  s3 buckets must have versioning enabled            risk accepted · upstream
+
+Failing:
+  ✕  s3 buckets must have access logging enabled
+  ✕  s3 buckets must block public access
+
+Exceptions awaiting approval (not in effect):
+  •  s3 buckets must have access logging enabled        risk accepted
+     from infra/prod/mondoo.yml · submitted, pending review
+     "Access logging is handled centrally by the org-wide CloudTrail trail."
+```
+
+The check still fails, and it is obvious *why* it still fails. Without that last block
+the engineer sees a committed exception and a failing check with no connection between
+them.
+
+Had the upstream **not** required approval, the upstream would have accepted the exception
+on submission, resolved with it in place, and cnspec would have reported it as
+auto-accepted — no approver, because there are none to have.
+
+### Stage 2 — both exceptions active
+
+Someone with the reviewer role approves the pending exception. Nothing changes in the
+repository; the next scan submits the identical set, the upstream recognises it as
+unchanged, and resolves with both exceptions applied:
+
+```
+Exceptions:
+  ✕  s3 buckets must have access logging enabled        risk accepted · infra/prod/mondoo.yml
+     approved by sam@example.com · valid until 2026-11-01
+     "Access logging is handled centrally by the org-wide CloudTrail trail."
+  ✕  s3 buckets must have versioning enabled            risk accepted · upstream
+     approved by platform-team · valid until 2027-01-01
+
+Failing:
+  ✕  s3 buckets must block public access
+```
+
+The two exceptions sit side by side and each one names where it came from. The upstream
+one was never touched by the local file, and the local one is now a first-class exception
+upstream, visible there alongside every other.
+
+### Stage 3 — the local exception is removed
+
+The team fixes the bucket properly and deletes the entry from `infra/prod/mondoo.yml` in
+a pull request. There is no `cnspec` command to run and nothing to revoke by hand.
+
+On the next scan cnspec submits the exception set for that scope — now empty. **The
+upstream does the heavy lifting**: it knows which exceptions came from this source, sees
+that the one it recorded is no longer in the submitted set, and stops applying it. The
+resolved policy comes back with only the upstream-held exception in effect:
+
+```
+Exceptions:
+  ✕  s3 buckets must have versioning enabled            risk accepted · upstream
+     approved by platform-team · valid until 2027-01-01
+
+Failing:
+  ✕  s3 buckets must block public access
+```
+
+Two properties of this stage are worth naming, because they are what the design buys:
+
+- **Deleting a line from a file retires an exception**, everywhere, through the ordinary
+  review process. That only works because a submission is the *complete set* for its
+  source rather than a stream of additions.
+- **The upstream exception is untouched.** A local file can only speak for exceptions
+  that came from it. It cannot delete, weaken or override an exception created elsewhere,
+  which is what keeps a repository from being able to unpick a decision made upstream.
+
 ## What this requires from an upstream
 
 cnspec keeps its upstream interface neutral, so this is stated as a contract rather than
@@ -257,11 +426,20 @@ an integration:
    duplicates. Either upsert against a stable key, or accept a whole-set submission with
    a checksum and diff internally. Without this, cnspec cannot submit on a schedule and
    the sync in §7 has to be gated much more aggressively.
-3. **Report per-entry outcome**, so cnspec can tell the user that some entries were not
-   accepted. If the response carries only a resolved policy, cnspec can still derive
-   which exceptions took effect from the reporting-job impacts, but not why the others
-   did not.
-4. **Allow the scan identity to submit exceptions.** Submitting is a distinct permission
+3. **Treat a submission as the complete set for its source, and attribute exceptions to
+   that source.** An exception the upstream recorded from a source, which is absent from
+   that source's next submission, is no longer in effect — that is how deleting a line
+   from a file retires an exception ([Stage 3](#stage-3--the-local-exception-is-removed)).
+   It also means a source can only ever speak for its own exceptions: removing an entry
+   from a file must never disturb one created elsewhere.
+4. **Report a per-entry decision**, returned with the resolved policy: for each
+   submitted exception, whether it was accepted or rejected, the reason for a rejection
+   where there is one, and for an accepted one whether a person approved it — and who —
+   or whether it was auto-accepted because approval is not required. cnspec reports all
+   of this ([§6](#reporting-the-decisions)) and cannot produce it any other way. Falling
+   back to deriving which exceptions took effect from the reporting-job impacts tells us
+   that much and nothing about why, or by whom.
+5. **Allow the scan identity to submit exceptions.** Submitting is a distinct permission
    from scanning.
 
 An upstream that offers none of this still works: cnspec applies exceptions locally and
