@@ -140,6 +140,25 @@ Splunk support is instead core OCSF plus transport:
   are wrapped in the HEC envelope with `ocsf:<class>` sourcetypes, which is what the OCSF-CIM
   Add-On for Splunk keys off.
 
+## Streaming
+
+Events are converted and written one asset at a time rather than collected and
+written at the end. A fleet scan produces findings by the hundred thousand, at roughly 1.6 KB
+of live heap each, so materializing them put peak memory in the gigabytes for exactly the
+environments cnspec is careful about (see ADR-0004). Measured on a 200-asset, 50-check scan:
+16.6 MB of live heap held when materialized, 0.1 MB at peak when streamed, and the streamed
+path is also faster and allocates less overall because it neither grows one large slice nor
+sorts the whole set.
+
+Ordering follows from the walk rather than from a global sort: assets by MRN, checks by id.
+Every event of a run carries the same timestamp, so nothing is lost against Security Lake's
+request that records be ordered by time.
+
+The Parquet writers are the reason the writer interface has a Close: a file without its footer
+is not a Parquet file, so the writers are closed even when conversion fails part way, and one
+file per class is created lazily on that class's first event so a scan does not leave empty
+files for classes it did not produce.
+
 ## References
 
 - `cli/reporter/ocsf/doc.go` — package documentation and the generation contract

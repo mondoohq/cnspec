@@ -23,6 +23,19 @@ type Events struct {
 // of per-class files always come out the same way.
 var classOrder = []string{ClassComplianceFinding, ClassDetectionFinding, ClassVulnerabilityFinding, ClassInventoryInfo}
 
+// Append moves the events of another set into this one. It is what a caller that
+// wants the whole scan in memory uses to accumulate the per-asset sets the
+// converter produces.
+func (e *Events) Append(other *Events) {
+	if other == nil {
+		return
+	}
+	e.ComplianceFindings = append(e.ComplianceFindings, other.ComplianceFindings...)
+	e.DetectionFindings = append(e.DetectionFindings, other.DetectionFindings...)
+	e.VulnerabilityFindings = append(e.VulnerabilityFindings, other.VulnerabilityFindings...)
+	e.InventoryInfos = append(e.InventoryInfos, other.InventoryInfos...)
+}
+
 // Len is the total number of events across all classes.
 func (e *Events) Len() int {
 	return len(e.ComplianceFindings) + len(e.DetectionFindings) +

@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/cli/reporter/ocsf"
@@ -500,4 +501,39 @@ func TestTruncateAssessment(t *testing.T) {
 	runes := strings.Repeat("ü", maxAssessmentBytes)
 	res = truncateAssessment(runes)
 	assert.True(t, utf8.ValidString(res), "the cut has to land on a rune boundary")
+}
+
+// TestOcsfStreamedParquetAcrossAssets covers the streamed writer path: several
+// assets are written into one Parquet file per class through repeated writes,
+// and the file has to hold every row and still be readable after Close.
+func TestOcsfStreamedParquetAcrossAssets(t *testing.T) {
+	dir := t.TempDir()
+	conf := defaultPrintConfig()
+	conf.format = FormatOcsfParquet
+
+	const assets, checks = 5, 4
+	handler := &ocsfFileHandler{target: dir, conf: conf}
+	require.NoError(t, handler.WriteReport(t.Context(), largeReportCollection(assets, checks)))
+
+	raw, err := os.ReadFile(filepath.Join(dir, ocsf.ClassComplianceFinding+".parquet"))
+	require.NoError(t, err)
+
+	rows, err := parquet.Read[ocsf.ComplianceFinding](bytes.NewReader(raw), int64(len(raw)))
+	require.NoError(t, err)
+	assert.Len(t, rows, assets*checks, "every asset's rows land in the one file per class")
+
+	seen := map[string]bool{}
+	for _, row := range rows {
+		require.Len(t, row.Resources, 1)
+		seen[row.Resources[0].UID] = true
+	}
+	assert.Len(t, seen, assets, "each asset is represented")
+
+	inventory, err := os.Stat(filepath.Join(dir, ocsf.ClassInventoryInfo+".parquet"))
+	require.NoError(t, err)
+	assert.NotZero(t, inventory.Size())
+
+	// classes the scan did not produce must not leave empty files behind
+	_, err = os.Stat(filepath.Join(dir, ocsf.ClassDetectionFinding+".parquet"))
+	assert.True(t, os.IsNotExist(err), "no file for a class with no events")
 }

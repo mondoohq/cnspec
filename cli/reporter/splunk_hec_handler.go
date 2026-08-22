@@ -17,6 +17,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnspec/cli/reporter/ocsf"
 	"go.mondoo.com/cnspec/policy"
 )
 
@@ -86,42 +87,49 @@ func (h *splunkHecHandler) WriteReport(ctx context.Context, report *policy.Repor
 		return errors.New("the Splunk HEC target needs a token, please set " + splunkTokenEnv)
 	}
 
-	events, err := ConvertToOCSF(report, h.conf)
-	if err != nil {
+	sender := &splunkSender{handler: h, ctx: ctx, token: token, batch: &bytes.Buffer{}}
+	if err := StreamOCSF(report, h.conf, sender); err != nil {
 		return err
 	}
-	if events.Len() == 0 {
+
+	if sender.delivered == 0 && sender.dropped == 0 {
 		log.Warn().Msg("the scan produced no OCSF events, nothing sent to Splunk")
 		return nil
 	}
 
-	batch := &bytes.Buffer{}
-	var batched, delivered, dropped int
-
-	// Delivery is at-least-once and not transactional: batches go out as they
-	// fill, so a failure part way through leaves the earlier ones in Splunk. The
-	// counts travel with the error so an operator knows what landed before
-	// re-running.
-	flush := func() error {
-		if batch.Len() == 0 {
-			return nil
-		}
-		if err := h.post(ctx, token, batch.Bytes()); err != nil {
-			return errors.Wrapf(err, "%d of %d events were already delivered to Splunk", delivered, events.Len())
-		}
-		delivered += batched
-		batched = 0
-		batch.Reset()
-		return nil
+	entry := log.Info().Str("url", h.url).Int("events", sender.delivered)
+	if sender.dropped > 0 {
+		entry = entry.Int("skipped", sender.dropped)
 	}
+	entry.Msg("sent OCSF events to Splunk")
+	return nil
+}
 
-	err = events.EachJSON(func(class string, event []byte) error {
+// splunkSender batches events across the per-asset sets the converter produces
+// and posts each batch as it fills.
+//
+// Delivery is at-least-once and not transactional: a failure part way through
+// leaves the earlier batches indexed, so the counts travel with the error and an
+// operator knows what landed before re-running.
+type splunkSender struct {
+	handler *splunkHecHandler
+	ctx     context.Context
+	token   string
+
+	batch     *bytes.Buffer
+	batched   int
+	delivered int
+	dropped   int
+}
+
+func (s *splunkSender) Write(events *ocsf.Events) error {
+	return events.EachJSON(func(class string, event []byte) error {
 		envelope, err := splunkEnvelope(class, event)
 		if err != nil {
 			return err
 		}
 		if len(envelope) > splunkMaxEventBytes {
-			dropped++
+			s.dropped++
 			log.Warn().
 				Str("class", class).
 				Int("bytes", len(envelope)).
@@ -131,27 +139,30 @@ func (h *splunkHecHandler) WriteReport(ctx context.Context, report *policy.Repor
 		}
 		// Flush before adding, so a batch never exceeds the limit by more than
 		// one event.
-		if batch.Len()+len(envelope) > splunkMaxBatchBytes {
-			if err := flush(); err != nil {
+		if s.batch.Len()+len(envelope) > splunkMaxBatchBytes {
+			if err := s.flush(); err != nil {
 				return err
 			}
 		}
-		batch.Write(envelope)
-		batched++
+		s.batch.Write(envelope)
+		s.batched++
 		return nil
 	})
-	if err != nil {
-		return err
-	}
-	if err := flush(); err != nil {
-		return err
-	}
+}
 
-	entry := log.Info().Str("url", h.url).Int("events", delivered)
-	if dropped > 0 {
-		entry = entry.Int("skipped", dropped)
+// Close sends whatever is left in the batch.
+func (s *splunkSender) Close() error { return s.flush() }
+
+func (s *splunkSender) flush() error {
+	if s.batch.Len() == 0 {
+		return nil
 	}
-	entry.Msg("sent OCSF events to Splunk")
+	if err := s.handler.post(s.ctx, s.token, s.batch.Bytes()); err != nil {
+		return errors.Wrapf(err, "%d events were already delivered to Splunk", s.delivered)
+	}
+	s.delivered += s.batched
+	s.batched = 0
+	s.batch.Reset()
 	return nil
 }
 

@@ -136,3 +136,18 @@ func BenchmarkOcsfConvertBareChecks(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkOcsfStreamJSON is the streamed path: convert and write asset by
+// asset, holding one asset's events at a time rather than the whole scan.
+func BenchmarkOcsfStreamJSON(b *testing.B) {
+	report := largeReportCollection(200, 50)
+	conf := defaultPrintConfig()
+	conf.format = FormatOcsfJson
+
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := StreamOCSF(report, conf, ocsf.NewJSONWriter(io.Discard)); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
