@@ -215,11 +215,20 @@ cnspec scan local -o junit > results.xml
 # OHDF/HDF (Heimdall, the MITRE SAF CLI, and anything that reads InSpec exec-json)
 cnspec scan local -o hdf > results.hdf.json
 
+# An OHDF document describes one asset, so a multi-asset scan writes a file each
+cnspec scan k8s -o hdf --output-target ./hdf-results/
+
 # Full detailed output
 cnspec scan local -o full
 ```
 
 The full set is `compact` (the default), `csv`, `full`, `hdf`, `json`, `json-v1`, `json-v2`, `junit`, `report`, `sarif`, `summary`, `yaml`, `yaml-v1`, and `yaml-v2`. Run `cnspec scan --help` for the current list.
+
+`hdf` is the one format whose document is per-asset: Heimdall and the SAF CLI resolve
+an OHDF document down to a single profile, so several assets in one file would lose
+all but the first. Point `--output-target` at a directory (an existing one, or a path
+ending in `/`) to get one `<asset>.hdf.json` per asset. Sent to stdout, a multi-asset
+scan comes out as a JSON array of documents instead.
 
 ## Policy Structure
 

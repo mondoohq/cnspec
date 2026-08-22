@@ -8,12 +8,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/cli/printer"
@@ -45,6 +48,7 @@ const (
 	hdfToolName          = "cnspec"
 	hdfAssetErrorID      = "asset-error"
 	hdfVulnPackageID     = "vulnerable-package"
+	hdfVulnGroupID       = "cnspec-vulnerabilities"
 	hdfProfileStatus     = "loaded"
 	hdfNistTagKey        = "compliance/nist-sp-800-53-rev5"
 	hdfNistTagPrefix     = "nist-sp-800-53-rev5-"
@@ -172,22 +176,91 @@ type hdfAssetContext struct {
 	startTime    string
 }
 
-// ConvertToHDF converts a ReportCollection into an OHDF (Heimdall Data Format)
-// document. Each scanned asset becomes a profile; its vulnerability findings, when
-// present, become a second profile.
+// hdfDocument is one rendered OHDF document together with the asset it covers, so
+// callers that write a file per asset can name the file after it.
+type hdfDocument struct {
+	assetMrn string
+	name     string
+	report   *hdfReport
+}
+
+// ConvertToHDF converts a ReportCollection into OHDF (Heimdall Data Format) and
+// writes it to a single stream.
+//
+// A scan of one asset - the usual case in CI - produces exactly one document. A
+// scan that covered several cannot: an OHDF document describes a single target, and
+// Heimdall and the SAF CLI tally only the first profile in a document, so folding
+// several assets into one would silently drop every finding but the first asset's.
+// Those are written as a JSON array of documents instead, and the caller is pointed
+// at ConvertToHDFDir, which writes each one to its own file.
 func ConvertToHDF(r *policy.ReportCollection, out iox.OutputHelper) error {
-	report := &hdfReport{
-		Platform: hdfPlatform{Name: hdfToolName, Release: cnspec.GetVersion()},
-		Version:  cnspec.GetVersion(),
-		Profiles: []*hdfProfile{},
+	docs, err := hdfDocuments(r)
+	if err != nil {
+		return err
 	}
 
+	switch len(docs) {
+	case 0:
+		return writeHDF(hdfEmptyReport(), out)
+	case 1:
+		return writeHDF(docs[0].report, out)
+	}
+
+	log.Warn().Int("assets", len(docs)).
+		Msg("an OHDF document describes a single asset, so this scan is written as a JSON array of documents. " +
+			"Pass a directory to --output-target to get one OHDF file per asset instead")
+
+	reports := make([]*hdfReport, 0, len(docs))
+	for _, doc := range docs {
+		reports = append(reports, doc.report)
+	}
+	return writeHDFValue(reports, out)
+}
+
+// ConvertToHDFDir writes one OHDF document per scanned asset into dir, named after
+// the asset. This is the form the MITRE tooling expects for a multi-target scan.
+func ConvertToHDFDir(r *policy.ReportCollection, dir string) ([]string, error) {
+	docs, err := hdfDocuments(r)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+
+	// Asset names are free-form, so two of them can sanitize to the same filename.
+	used := map[string]int{}
+	written := make([]string, 0, len(docs))
+	for _, doc := range docs {
+		name := hdfUniqueName(hdfFileBase(doc), used) + ".hdf.json"
+		path := filepath.Join(dir, name)
+
+		f, err := os.Create(path)
+		if err != nil {
+			return written, err
+		}
+		writer := iox.IOWriter{Writer: f}
+		err = writeHDF(doc.report, &writer)
+		closeErr := f.Close()
+		if err != nil {
+			return written, err
+		}
+		if closeErr != nil {
+			return written, closeErr
+		}
+		written = append(written, path)
+	}
+	return written, nil
+}
+
+// hdfDocuments renders one OHDF document per scanned asset.
+func hdfDocuments(r *policy.ReportCollection) ([]*hdfDocument, error) {
 	if r == nil {
-		return writeHDF(report, out)
+		return nil, nil
 	}
-
 	if r.Bundle == nil {
-		return fmt.Errorf("no policy bundle found")
+		return nil, fmt.Errorf("no policy bundle found")
 	}
 
 	bundle := r.Bundle.ToMap()
@@ -195,12 +268,7 @@ func ConvertToHDF(r *policy.ReportCollection, out iox.OutputHelper) error {
 	policyTitles := policyTitlesByQuery(bundle)
 
 	assetMrns := sortedKeys(r.Assets)
-	report.Platform = hdfPlatformFor(r, assetMrns)
-	report.Statistics = hdfStatisticsFor(r, assetMrns)
-
-	// OHDF requires profile names to be unique, and two assets can carry the same
-	// display name (e.g. several containers of one image).
-	names := map[string]int{}
+	docs := make([]*hdfDocument, 0, len(assetMrns))
 	for _, assetMrn := range assetMrns {
 		assetObj := r.Assets[assetMrn]
 		if assetObj == nil {
@@ -215,35 +283,69 @@ func ConvertToHDF(r *policy.ReportCollection, out iox.OutputHelper) error {
 			startTime:    hdfStartTime(r.Reports[assetMrn]),
 		}
 
-		report.Profiles = append(report.Profiles, hdfChecksProfile(r, ctx, bundle, queries, names))
-		if vulnProfile := hdfVulnProfile(r.VulnReports[assetMrn], ctx, names); vulnProfile != nil {
-			report.Profiles = append(report.Profiles, vulnProfile)
+		report := hdfEmptyReport()
+		report.Platform = hdfPlatformFor(assetObj, assetMrn)
+		report.Statistics = hdfStatisticsFor(r.Reports[assetMrn])
+		report.Profiles = []*hdfProfile{hdfAssetProfile(r, ctx, bundle, queries)}
+		report.Passthrough = hdfPassthroughFor(r, ctx)
+
+		docs = append(docs, &hdfDocument{
+			assetMrn: assetMrn,
+			name:     hdfProfileName(assetObj, assetMrn),
+			report:   report,
+		})
+	}
+	return docs, nil
+}
+
+// hdfEmptyReport is a well-formed OHDF document with no findings in it.
+func hdfEmptyReport() *hdfReport {
+	return &hdfReport{
+		Platform: hdfPlatform{Name: hdfToolName, Release: cnspec.GetVersion()},
+		Version:  cnspec.GetVersion(),
+		Profiles: []*hdfProfile{},
+	}
+}
+
+// hdfFileBase turns an asset into a filename stem. Asset names carry spaces, slashes
+// and colons (an image reference, a cloud resource id), none of which belong in a
+// path, and an asset with no usable name at all falls back to its MRN digest.
+func hdfFileBase(doc *hdfDocument) string {
+	var b strings.Builder
+	for _, r := range doc.name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
 		}
 	}
 
-	report.Passthrough = hdfPassthroughFor(r, assetMrns)
-
-	return writeHDF(report, out)
+	name := strings.Trim(b.String(), "-.")
+	if name == "" {
+		return "asset-" + hdfSha256(doc.assetMrn)[:12]
+	}
+	return name
 }
 
-// hdfPlatformFor describes the scan target. OHDF has room for exactly one, so a
-// scan that covered several assets reports cnspec itself and leaves the per-asset
-// platforms on the profiles.
-func hdfPlatformFor(r *policy.ReportCollection, assetMrns []string) hdfPlatform {
-	res := hdfPlatform{Name: hdfToolName, Release: cnspec.GetVersion()}
-	if len(assetMrns) != 1 {
-		return res
+// hdfUniqueName suffixes a name that has already been used, so no document
+// overwrites another.
+func hdfUniqueName(name string, used map[string]int) string {
+	used[name]++
+	if n := used[name]; n > 1 {
+		return name + "-" + strconv.Itoa(n)
 	}
+	return name
+}
 
-	assetObj := r.Assets[assetMrns[0]]
-	if assetObj == nil {
-		return res
-	}
+// hdfPlatformFor describes the target of a document: the asset it covers.
+func hdfPlatformFor(assetObj *inventory.Asset, assetMrn string) hdfPlatform {
+	res := hdfPlatform{Name: hdfToolName, Release: cnspec.GetVersion()}
 	if assetObj.Platform != nil && assetObj.Platform.Name != "" {
 		res.Name = assetObj.Platform.Name
 		res.Release = assetObj.Platform.Version
 	}
-	res.TargetID = hdfTargetID(assetObj, assetMrns[0])
+	res.TargetID = hdfTargetID(assetObj, assetMrn)
 	return res
 }
 
@@ -256,27 +358,14 @@ func hdfTargetID(assetObj *inventory.Asset, assetMrn string) string {
 	return assetMrn
 }
 
-// hdfStatisticsFor reports how long the scan took, when the reports carry the
-// timestamps to derive it from. It stays null otherwise - OHDF consumers treat a
+// hdfStatisticsFor reports how long the asset took to scan, when its report carries
+// the timestamps to derive it from. It stays null otherwise - OHDF consumers treat a
 // missing duration as "not reported", but would read a 0 as an instant scan.
-func hdfStatisticsFor(r *policy.ReportCollection, assetMrns []string) hdfStatistics {
-	var first, last int64
-	for _, assetMrn := range assetMrns {
-		report := r.Reports[assetMrn]
-		if report == nil || report.Created <= 0 || report.Modified <= 0 {
-			continue
-		}
-		if first == 0 || report.Created < first {
-			first = report.Created
-		}
-		if report.Modified > last {
-			last = report.Modified
-		}
-	}
-	if first == 0 || last <= first {
+func hdfStatisticsFor(report *policy.Report) hdfStatistics {
+	if report == nil || report.Created <= 0 || report.Modified <= report.Created {
 		return hdfStatistics{}
 	}
-	duration := float64(last - first)
+	duration := float64(report.Modified - report.Created)
 	return hdfStatistics{Duration: &duration}
 }
 
@@ -290,9 +379,15 @@ func hdfStartTime(report *policy.Report) string {
 	return hdfTimeNow().UTC().Format(time.RFC3339)
 }
 
-// hdfChecksProfile builds the profile that holds an asset's check results.
-func hdfChecksProfile(r *policy.ReportCollection, ctx *hdfAssetContext, bundle *policy.PolicyBundleMap, queries map[string]*policy.Mquery, names map[string]int) *hdfProfile {
-	profile := hdfNewProfile(hdfProfileName(ctx.asset, ctx.assetMrn), names)
+// hdfAssetProfile builds the one profile of an asset's document: its check results,
+// its scan error if it had one, and its vulnerability findings.
+//
+// It has to be a single profile. Heimdall and the SAF CLI resolve a document down to
+// one root profile and tally only that one, so anything in a second, unlinked
+// profile is dropped without a word - a vulnerability finding parked in its own
+// profile never reaches the summary. Grouping keeps the two kinds distinguishable.
+func hdfAssetProfile(r *policy.ReportCollection, ctx *hdfAssetContext, bundle *policy.PolicyBundleMap, queries map[string]*policy.Mquery) *hdfProfile {
+	profile := hdfNewProfile(hdfProfileName(ctx.asset, ctx.assetMrn))
 	profile.Title = strPtr("cnspec policy scan of " + hdfAssetLabel(ctx.asset, ctx.assetMrn))
 	profile.Summary = strPtr(hdfAssetSummary(ctx.asset))
 	profile.Supports = hdfSupports(ctx.asset.Platform)
@@ -326,6 +421,21 @@ func hdfChecksProfile(r *policy.ReportCollection, ctx *hdfAssetContext, bundle *
 	}
 
 	profile.Groups = hdfPolicyGroups(bundle, controlIDs)
+
+	if vulnControls := hdfVulnControls(r.VulnReports[ctx.assetMrn], ctx); len(vulnControls) > 0 {
+		ids := make([]string, 0, len(vulnControls))
+		for _, control := range vulnControls {
+			ids = append(ids, control.ID)
+		}
+		sort.Strings(ids)
+		profile.Controls = append(profile.Controls, vulnControls...)
+		profile.Groups = append(profile.Groups, &hdfGroup{
+			ID:       hdfVulnGroupID,
+			Title:    strPtr("Vulnerabilities"),
+			Controls: ids,
+		})
+	}
+
 	profile.Sha256 = hdfProfileChecksum(resolved, ctx.assetMrn, profile.Controls)
 	return profile
 }
@@ -659,10 +769,11 @@ func hdfPolicyGroups(bundle *policy.PolicyBundleMap, controlIDs map[string]strin
 	return res
 }
 
-// hdfVulnProfile collects an asset's vulnerability findings into a profile of their
-// own: one control per advisory, plus one catch-all control for affected packages
-// that no advisory in the report accounts for.
-func hdfVulnProfile(vulnReport *mvd.VulnReport, ctx *hdfAssetContext, names map[string]int) *hdfProfile {
+// hdfVulnControls turns an asset's vulnerability findings into controls: one per
+// advisory, plus one catch-all for affected packages that no advisory in the report
+// accounts for. They join the asset's own profile rather than forming one of their
+// own - see hdfAssetProfile.
+func hdfVulnControls(vulnReport *mvd.VulnReport, ctx *hdfAssetContext) []*hdfControl {
 	if vulnReport == nil {
 		return nil
 	}
@@ -680,11 +791,6 @@ func hdfVulnProfile(vulnReport *mvd.VulnReport, ctx *hdfAssetContext, names map[
 		return nil
 	}
 
-	profile := hdfNewProfile(hdfProfileName(ctx.asset, ctx.assetMrn)+" vulnerabilities", names)
-	profile.Title = strPtr("Vulnerability report for " + hdfAssetLabel(ctx.asset, ctx.assetMrn))
-	profile.Summary = strPtr("Known vulnerabilities in the packages installed on this asset")
-	profile.Supports = hdfSupports(ctx.asset.Platform)
-
 	advisories := make([]*mvd.Advisory, 0, len(vulnReport.Advisories))
 	for _, advisory := range vulnReport.Advisories {
 		if advisory != nil && advisory.ID != "" {
@@ -693,6 +799,7 @@ func hdfVulnProfile(vulnReport *mvd.VulnReport, ctx *hdfAssetContext, names map[
 	}
 	sort.Slice(advisories, func(i, j int) bool { return advisories[i].ID < advisories[j].ID })
 
+	var res []*hdfControl
 	covered := map[string]bool{}
 	for _, advisory := range advisories {
 		pkgs := advisoryPackages(advisory, affected, byName)
@@ -702,7 +809,7 @@ func hdfVulnProfile(vulnReport *mvd.VulnReport, ctx *hdfAssetContext, names map[
 		for _, pkg := range pkgs {
 			covered[vulnPackageKey(pkg)] = true
 		}
-		profile.Controls = append(profile.Controls, hdfAdvisoryControl(ctx, advisory, pkgs))
+		res = append(res, hdfAdvisoryControl(ctx, advisory, pkgs))
 	}
 
 	var remaining []string
@@ -717,11 +824,9 @@ func hdfVulnProfile(vulnReport *mvd.VulnReport, ctx *hdfAssetContext, names map[
 		for _, key := range remaining {
 			pkgs = append(pkgs, affected[key])
 		}
-		profile.Controls = append(profile.Controls, hdfAdvisoryControl(ctx, nil, pkgs))
+		res = append(res, hdfAdvisoryControl(ctx, nil, pkgs))
 	}
-
-	profile.Sha256 = hdfProfileChecksum(nil, ctx.assetMrn+"/vulnerabilities", profile.Controls)
-	return profile
+	return res
 }
 
 // hdfAdvisoryControl reports one advisory and the packages of this asset it
@@ -841,38 +946,29 @@ func hdfVulnMessage(advisory *mvd.Advisory, pkg *mvd.Package) string {
 }
 
 // hdfPassthroughFor carries the cnspec context that OHDF itself has no field for:
-// per-asset identity, platform detail and the overall score of the scan.
-func hdfPassthroughFor(r *policy.ReportCollection, assetMrns []string) *hdfPassthrough {
-	assets := make([]map[string]any, 0, len(assetMrns))
-	for _, assetMrn := range assetMrns {
-		assetObj := r.Assets[assetMrn]
-		if assetObj == nil {
-			continue
+// the asset's identity, platform detail and overall score.
+func hdfPassthroughFor(r *policy.ReportCollection, ctx *hdfAssetContext) *hdfPassthrough {
+	asset := map[string]any{"mrn": ctx.assetMrn, "name": ctx.asset.Name}
+	if platformName := getPlatformNameForAsset(ctx.asset); platformName != "" {
+		asset["platform"] = platformName
+	}
+	if ctx.asset.Platform != nil {
+		if ctx.asset.Platform.Version != "" {
+			asset["platformVersion"] = ctx.asset.Platform.Version
 		}
-
-		entry := map[string]any{"mrn": assetMrn, "name": assetObj.Name}
-		if platformName := getPlatformNameForAsset(assetObj); platformName != "" {
-			entry["platform"] = platformName
+		if ctx.asset.Platform.Arch != "" {
+			asset["arch"] = ctx.asset.Platform.Arch
 		}
-		if assetObj.Platform != nil {
-			if assetObj.Platform.Version != "" {
-				entry["platformVersion"] = assetObj.Platform.Version
-			}
-			if assetObj.Platform.Arch != "" {
-				entry["arch"] = assetObj.Platform.Arch
-			}
-		}
-		if len(assetObj.PlatformIds) > 0 {
-			entry["platformIds"] = assetObj.PlatformIds
-		}
-		if report := r.Reports[assetMrn]; report != nil && report.Score != nil {
-			entry["score"] = report.Score.Value
-			entry["grade"] = report.Score.Rating().Letter()
-		}
-		if errMsg, ok := r.Errors[assetMrn]; ok {
-			entry["error"] = errMsg
-		}
-		assets = append(assets, entry)
+	}
+	if len(ctx.asset.PlatformIds) > 0 {
+		asset["platformIds"] = ctx.asset.PlatformIds
+	}
+	if report := r.Reports[ctx.assetMrn]; report != nil && report.Score != nil {
+		asset["score"] = report.Score.Value
+		asset["grade"] = report.Score.Rating().Letter()
+	}
+	if errMsg, ok := r.Errors[ctx.assetMrn]; ok {
+		asset["error"] = errMsg
 	}
 
 	return &hdfPassthrough{
@@ -880,20 +976,14 @@ func hdfPassthroughFor(r *policy.ReportCollection, assetMrns []string) *hdfPasst
 			Name: hdfToolName,
 			Data: map[string]any{
 				"version": cnspec.GetVersion(),
-				"assets":  assets,
+				"asset":   asset,
 			},
 		}},
 	}
 }
 
-// hdfNewProfile creates a profile with the OHDF-required fields filled in, taking
-// a name that has been made unique against the ones already used.
-func hdfNewProfile(name string, names map[string]int) *hdfProfile {
-	names[name]++
-	if n := names[name]; n > 1 {
-		name = name + " (" + strconv.Itoa(n) + ")"
-	}
-
+// hdfNewProfile creates a profile with the OHDF-required fields filled in.
+func hdfNewProfile(name string) *hdfProfile {
 	return &hdfProfile{
 		Name:       name,
 		Version:    strPtr(cnspec.GetVersion()),
@@ -983,7 +1073,11 @@ func hdfRefs(refs []*policy.MqueryRef) []hdfRef {
 }
 
 func writeHDF(report *hdfReport, out iox.OutputHelper) error {
-	data, err := json.MarshalIndent(report, "", "  ")
+	return writeHDFValue(report, out)
+}
+
+func writeHDFValue(value any, out iox.OutputHelper) error {
+	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}

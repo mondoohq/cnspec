@@ -13,9 +13,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/policy"
-	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/utils/iox"
 )
+
+// sampleAssetMrn is the asset sampleReportCollection reports on.
+const sampleAssetMrn = "//assets.api.mondoo.app/spaces/dazzling-golick-767384/assets/2DRZ1cCWFyTYCArycAXHwvn1oU2"
 
 // pinHDFClock freezes the timestamp the converter stamps on results that have no
 // report time of their own, so a rendered document is comparable across runs.
@@ -74,14 +76,12 @@ func TestHDFConverter(t *testing.T) {
 	assert.Equal(t, "//platformid.api.mondoo.app/hostname/X1", report.Platform.TargetID)
 	assert.NotEmpty(t, report.Version)
 
-	// One profile for the asset's checks, one for its vulnerabilities.
-	require.Len(t, report.Profiles, 2)
+	// One profile, named after the asset, holding its checks and its vulnerabilities.
+	require.Len(t, report.Profiles, 1)
 	checks := findHDFProfile(report, "X1")
 	require.NotNil(t, checks, "expected a profile named after the asset")
-	vulns := findHDFProfile(report, "X1 vulnerabilities")
-	require.NotNil(t, vulns, "expected a vulnerability profile")
 
-	// Every profile carries the fields OHDF requires.
+	// The profile carries the fields OHDF requires.
 	for _, profile := range report.Profiles {
 		assert.NotEmpty(t, profile.Name)
 		assert.NotEmpty(t, profile.Sha256, "profile %q needs a checksum", profile.Name)
@@ -93,7 +93,8 @@ func TestHDFConverter(t *testing.T) {
 
 	assert.Equal(t, []map[string]string{{"platform-name": "ubuntu", "release": "22.04"}}, checks.Supports)
 
-	require.Len(t, checks.Controls, 3)
+	// three checks plus the vulnerability finding
+	require.Len(t, checks.Controls, 4)
 	for _, control := range checks.Controls {
 		assert.NotEmpty(t, control.ID)
 		require.Len(t, control.Results, 1, "control %q", control.ID)
@@ -238,11 +239,10 @@ func TestHDFUnratedCheckStaysCounted(t *testing.T) {
 	pinHDFClock(t)
 
 	r := sampleReportCollection()
-	assetMrn := "//assets.api.mondoo.app/spaces/dazzling-golick-767384/assets/2DRZ1cCWFyTYCArycAXHwvn1oU2"
 	for _, query := range r.Bundle.Queries {
 		query.Impact = nil
 	}
-	r.Reports[assetMrn].Scores["057itYF8s30="] = &policy.Score{Type: policy.ScoreType_Error}
+	r.Reports[sampleAssetMrn].Scores["057itYF8s30="] = &policy.Score{Type: policy.ScoreType_Error}
 
 	report := toHDF(t, r)
 	control := findHDFControl(findHDFProfile(report, "X1"), "mondoo-kubernetes-security-kubelet-event-record-qps")
@@ -349,11 +349,16 @@ func TestHDFPolicyGroups(t *testing.T) {
 	checks := findHDFProfile(report, "X1")
 	require.NotNil(t, checks)
 
-	require.Len(t, checks.Groups, 1)
-	assert.Equal(t, "//policy.api.mondoo.app/policies/mondoo-linux-security", checks.Groups[0].ID)
-	require.NotNil(t, checks.Groups[0].Title)
-	assert.Equal(t, "Linux Security by Mondoo", *checks.Groups[0].Title)
-	assert.Equal(t, []string{"mondoo-linux-security-snmp-server-is-not-enabled"}, checks.Groups[0].Controls)
+	var policyGroup *hdfGroup
+	for _, group := range checks.Groups {
+		if group.ID == "//policy.api.mondoo.app/policies/mondoo-linux-security" {
+			policyGroup = group
+		}
+	}
+	require.NotNil(t, policyGroup, "expected a group for the policy")
+	require.NotNil(t, policyGroup.Title)
+	assert.Equal(t, "Linux Security by Mondoo", *policyGroup.Title)
+	assert.Equal(t, []string{"mondoo-linux-security-snmp-server-is-not-enabled"}, policyGroup.Controls)
 
 	// The policy is attributed on the control itself as well.
 	control := findHDFControl(checks, "mondoo-linux-security-snmp-server-is-not-enabled")
@@ -361,19 +366,16 @@ func TestHDFPolicyGroups(t *testing.T) {
 	assert.Equal(t, []any{"Linux Security by Mondoo"}, control.Tags["policies"])
 }
 
-// TestHDFVulnerabilities checks the profile that carries the asset's advisories.
+// TestHDFVulnerabilities checks the advisory findings that ride in the asset's
+// profile.
 func TestHDFVulnerabilities(t *testing.T) {
 	pinHDFClock(t)
 	report := toHDF(t, sampleReportCollection())
 
-	vulns := findHDFProfile(report, "X1 vulnerabilities")
-	require.NotNil(t, vulns)
-	require.Len(t, vulns.Controls, 1)
-
 	// The sample report has an affected package but no advisory covering it, so it
 	// lands in the catch-all control.
-	control := vulns.Controls[0]
-	assert.Equal(t, hdfVulnPackageID, control.ID)
+	control := findHDFControl(findHDFProfile(report, "X1"), hdfVulnPackageID)
+	require.NotNil(t, control)
 	assert.Equal(t, 1.0, control.Impact)
 	assert.Equal(t, "critical", control.Tags["severity"])
 	assert.Equal(t, []any{"SI-2", "RA-5"}, control.Tags["nist"])
@@ -390,8 +392,7 @@ func TestHDFAssetError(t *testing.T) {
 	pinHDFClock(t)
 
 	r := sampleReportCollection()
-	assetMrn := "//assets.api.mondoo.app/spaces/dazzling-golick-767384/assets/2DRZ1cCWFyTYCArycAXHwvn1oU2"
-	r.Errors = map[string]string{assetMrn: "could not connect to asset"}
+	r.Errors = map[string]string{sampleAssetMrn: "could not connect to asset"}
 
 	report := toHDF(t, r)
 	control := findHDFControl(findHDFProfile(report, "X1"), hdfAssetErrorID)
@@ -406,28 +407,23 @@ func TestHDFAssetError(t *testing.T) {
 	require.Len(t, report.Passthrough.AuxiliaryData, 1)
 }
 
-// TestHDFDuplicateAssetNames covers the OHDF requirement that profile names are
-// unique - two containers of the same image share a display name.
+// TestHDFDuplicateAssetNames covers assets that share a display name - several
+// containers of one image. They must still come out as separate documents; the
+// filenames they are written to are covered by TestHDFDirWritesOneFilePerAsset.
 func TestHDFDuplicateAssetNames(t *testing.T) {
 	pinHDFClock(t)
 
-	r := sampleReportCollection()
-	r.Assets["//assets.api.mondoo.app/spaces/dazzling-golick-767384/assets/second"] = &inventory.Asset{
-		Name:     "X1",
-		Platform: &inventory.Platform{Name: "ubuntu", Version: "22.04"},
-	}
+	r := multiAssetReportCollection(t)
+	r.Assets[sampleAssetMrn+"-two"].Name = "X1"
 
-	report := toHDF(t, r)
-	names := map[string]bool{}
-	for _, profile := range report.Profiles {
-		assert.False(t, names[profile.Name], "duplicate profile name %q", profile.Name)
-		names[profile.Name] = true
-	}
-	assert.True(t, names["X1"])
-	assert.True(t, names["X1 (2)"])
+	docs, err := hdfDocuments(r)
+	require.NoError(t, err)
+	require.Len(t, docs, 2)
+	assert.NotEqual(t, docs[0].assetMrn, docs[1].assetMrn)
 
-	// With more than one asset there is no single platform to report.
-	assert.Equal(t, hdfToolName, report.Platform.Name)
+	// Each document names its own target rather than a shared placeholder.
+	assert.Equal(t, "ubuntu", docs[0].report.Platform.Name)
+	assert.Equal(t, "debian", docs[1].report.Platform.Name)
 }
 
 // TestHDFDeterministic guards against map iteration leaking into the output: two
