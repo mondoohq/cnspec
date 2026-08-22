@@ -147,25 +147,30 @@ const (
 	FormatJSONv2
 	FormatYAMLv2
 	FormatSarif
+	// FormatJSONFull writes the entire policy.ReportCollection. Unlike every
+	// other format it is not a reduction, so it can be loaded back with
+	// LoadCollection. See collection.go.
+	FormatJSONFull
 )
 
 // Formats that are supported by the reporter
 var Formats = map[string]Format{
-	"compact": FormatCompact,
-	"summary": FormatSummary,
-	"full":    FormatFull,
-	"":        FormatCompact,
-	"report":  FormatReport,
-	"yaml-v1": FormatYAMLv1,
-	"yaml-v2": FormatYAMLv2,
-	"yaml":    FormatYAMLv1,
-	"yml":     FormatYAMLv2,
-	"json-v1": FormatJSONv1,
-	"json-v2": FormatJSONv2,
-	"json":    FormatJSONv2,
-	"junit":   FormatJUnit,
-	"csv":     FormatCSV,
-	"sarif":   FormatSarif,
+	"compact":   FormatCompact,
+	"summary":   FormatSummary,
+	"full":      FormatFull,
+	"":          FormatCompact,
+	"report":    FormatReport,
+	"yaml-v1":   FormatYAMLv1,
+	"yaml-v2":   FormatYAMLv2,
+	"yaml":      FormatYAMLv1,
+	"yml":       FormatYAMLv2,
+	"json-v1":   FormatJSONv1,
+	"json-v2":   FormatJSONv2,
+	"json":      FormatJSONv2,
+	"json-full": FormatJSONFull,
+	"junit":     FormatJUnit,
+	"csv":       FormatCSV,
+	"sarif":     FormatSarif,
 }
 
 func AllFormats() string {

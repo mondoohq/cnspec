@@ -57,7 +57,7 @@ func TestGetUpstreamConfig(t *testing.T) {
 				Spec: &inventory.InventorySpec{
 					UpstreamCredentials: &upstream.ServiceAccountCredentials{
 						ApiEndpoint: "api",
-						ParentMrn:   "space-mrn",
+						ScopeMrn:    "space-mrn",
 						PrivateKey:  string(pk),
 						Certificate: string(cert),
 					},

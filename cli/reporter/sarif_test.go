@@ -53,7 +53,7 @@ func resultsForRule(run *sarif.Run, id string) []*sarif.Result {
 	return res
 }
 
-// indented renders a help section body the way writeDetailSection does, so tests
+// indented renders a help section body the way WriteDetailSection does, so tests
 // can look for it verbatim inside the rendered help.
 func indented(body string) string {
 	return strings.TrimRight(stringx.Indent(2, body), "\n")
@@ -599,7 +599,7 @@ func TestSarifMatchesDetailedJunitContent(t *testing.T) {
 	}
 
 	bundle := yr.Bundle.ToMap()
-	queries := reporterQueryMap(bundle)
+	queries := DeterministicQueryMap(bundle)
 
 	checked := 0
 	for assetMrn, asset := range yr.Assets {
@@ -610,7 +610,7 @@ func TestSarifMatchesDetailedJunitContent(t *testing.T) {
 		resolved := yr.ResolvedPolicies[assetMrn]
 		require.NotNil(t, policyReport)
 		require.NotNil(t, resolved)
-		platformKeys := platformRemediationKeys(asset.Platform)
+		platformKeys := PlatformRemediationKeys(asset.Platform)
 
 		for id, score := range policyReport.Scores {
 			if _, ok := resolved.CollectorJob.ReportingQueries[id]; !ok {
@@ -645,21 +645,21 @@ func TestSarifMatchesDetailedJunitContent(t *testing.T) {
 			}
 
 			help := ruleHelpText(rule)
-			if desc := strings.TrimSpace(queryDescription(query)); desc != "" {
+			if desc := strings.TrimSpace(QueryDescription(query)); desc != "" {
 				require.NotNil(t, rule.FullDescription)
 				assert.Equal(t, desc, *rule.FullDescription.Text, "description missing for %s", ruleID)
 				assert.Contains(t, help, desc, "description missing from help of %s", ruleID)
 			}
 			// help sections are indented by two spaces, exactly like the JUnit body
-			if mql := strings.TrimSpace(queryMql(query)); mql != "" {
+			if mql := strings.TrimSpace(QueryMql(query)); mql != "" {
 				assert.Contains(t, help, indented(mql), "query missing from help of %s", ruleID)
 				assert.Equal(t, mql, rule.Properties["mql"])
 			}
-			if rem := queryRemediation(query, platformKeys); rem != "" {
+			if rem := QueryRemediation(query, platformKeys); rem != "" {
 				assert.Contains(t, help, indented(rem), "remediation missing from help of %s", ruleID)
 				assert.Equal(t, rem, rule.Properties["remediation"])
 			}
-			if refs := queryReferences(query); refs != "" {
+			if refs := QueryReferences(query); refs != "" {
 				assert.Contains(t, help, indented(refs), "references missing from help of %s", ruleID)
 			}
 			if msg := score.MessageLine(); msg != "" {
