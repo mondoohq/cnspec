@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"go.mondoo.com/cnspec/v13/internal/bundle"
+	"go.mondoo.com/cnspec/v13/internal/textrank"
 )
 
 func init() {
@@ -40,6 +41,8 @@ func init() {
 	policyGraphSearchCmd.Flags().Int("impact", 0, "Minimum impact score")
 	policyGraphSearchCmd.Flags().Int("limit", 50, "Maximum results")
 	policyGraphSearchCmd.Flags().Bool("json", false, "Output as JSON")
+	policyGraphSearchCmd.Flags().Bool("similar", false, "Rank checks by relevance to the query (BM25 over title+MQL) instead of identifier matching")
+	policyGraphSearchCmd.Flags().String("provider", "", "With --similar, bias results toward this provider")
 	policyGraphCmd.AddCommand(policyGraphSearchCmd)
 }
 
@@ -210,25 +213,42 @@ var policyGraphExportCmd = &cobra.Command{
 
 var policyGraphSearchCmd = &cobra.Command{
 	Use:   "search <query> <path>",
-	Short: "Search for nodes by name, title, or UID",
-	Long:  "Find policy graph nodes using multi-strategy search: exact name, prefix, or substring match across names, qualified names, and titles.",
-	Args:  cobra.MinimumNArgs(2),
+	Short: "Search for nodes by name/title/UID, or by relevance with --similar",
+	Long: `Find policy graph nodes.
+
+By default this is identifier navigation: exact name, prefix, or substring match
+across names, qualified names, and titles.
+
+With --similar it becomes relevance ranking: checks are scored by BM25 over their
+title and MQL, so you can find existing checks to mirror when authoring or
+generating a new one. Use --provider to bias toward a provider.
+
+Examples:
+  cnspec policy graph search aws.s3 ./content
+  cnspec policy graph search "buckets must be encrypted" ./content --similar --provider aws`,
+	Args: cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		query, paths := args[0], args[1:]
 		g := mustBuildGraph(paths)
-		idx := g.BuildNodeIndex()
-
-		kind, _ := cmd.Flags().GetString("kind")
-		tag, _ := cmd.Flags().GetString("tag")
-		impact, _ := cmd.Flags().GetInt("impact")
 		limit, _ := cmd.Flags().GetInt("limit")
 
-		results := idx.Search(query, bundle.SearchOpts{
-			Kind:      bundle.NodeKind(kind),
-			TagKey:    tag,
-			MinImpact: impact,
-			Limit:     limit,
-		})
+		var results []*bundle.GraphNode
+		if similar, _ := cmd.Flags().GetBool("similar"); similar {
+			// relevance ranking over check bodies, for finding checks to mirror
+			provider, _ := cmd.Flags().GetString("provider")
+			results = rankSimilarNodes(g, query, provider, limit)
+		} else {
+			// identifier/substring navigation over the node graph
+			kind, _ := cmd.Flags().GetString("kind")
+			tag, _ := cmd.Flags().GetString("tag")
+			impact, _ := cmd.Flags().GetInt("impact")
+			results = g.BuildNodeIndex().Search(query, bundle.SearchOpts{
+				Kind:      bundle.NodeKind(kind),
+				TagKey:    tag,
+				MinImpact: impact,
+				Limit:     limit,
+			})
+		}
 
 		if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut {
 			printJSON(results)
@@ -246,6 +266,49 @@ var policyGraphSearchCmd = &cobra.Command{
 			fmt.Printf("%-12s %-50s %-40s (%s:%d)\n", n.Kind, qualName, title, n.File, n.Line)
 		}
 	},
+}
+
+// rankSimilarNodes ranks check/query nodes by BM25 relevance to the query,
+// optionally biased toward a provider. This is the "find checks like this"
+// counterpart to the identifier navigation of NodeIndex.Search.
+func rankSimilarNodes(g *bundle.PolicyGraph, query, provider string, limit int) []*bundle.GraphNode {
+	byID := map[string]*bundle.GraphNode{}
+	var docs []textrank.Document
+	for _, n := range g.Nodes {
+		if n == nil {
+			continue
+		}
+		if strings.TrimSpace(n.MQL) == "" && strings.TrimSpace(n.Title) == "" {
+			continue // structural nodes with no body/title aren't useful matches
+		}
+		byID[n.ID] = n
+		docs = append(docs, textrank.Document{
+			ID: n.ID,
+			Parts: []textrank.WeightedText{
+				{Text: n.Title, Weight: 3},
+				{Text: n.QualName, Weight: 1},
+				{Text: n.MQL, Weight: 1},
+			},
+		})
+	}
+
+	scored := textrank.Build(docs).SearchBonus(query, limit, func(id string) float64 {
+		if provider == "" {
+			return 0
+		}
+		if n := byID[id]; n != nil && strings.HasPrefix(strings.TrimSpace(n.MQL), provider+".") {
+			return 5.0
+		}
+		return 0
+	})
+
+	out := make([]*bundle.GraphNode, 0, len(scored))
+	for _, s := range scored {
+		if n := byID[s.ID]; n != nil {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func mustBuildGraph(paths []string) *bundle.PolicyGraph {
