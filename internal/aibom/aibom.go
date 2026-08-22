@@ -30,6 +30,18 @@ func AllFormats() string {
 	}, ", ")
 }
 
+// IsSupportedFormat returns true if NewFormatter can render the given format.
+// NewFormatter falls back to markdown for anything it does not recognize, so
+// callers that want to reject an unknown format have to ask this first.
+func IsSupportedFormat(format string) bool {
+	switch format {
+	case FormatMarkdown, FormatJSON, FormatCycloneDxJSON, FormatCycloneDxXML:
+		return true
+	default:
+		return false
+	}
+}
+
 func NewFormatter(format string) FormatHandler {
 	switch format {
 	case FormatCycloneDxJSON:

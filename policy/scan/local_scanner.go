@@ -1140,7 +1140,11 @@ func (s *LocalScanner) getUpstreamConfig(incognito bool, job *Job) (*upstream.Up
 	if s.allowJobCredentials && jobCredentials != nil {
 		res.Creds = jobCredentials
 		res.ApiEndpoint = jobCredentials.GetApiEndpoint()
-		res.SpaceMrn = jobCredentials.GetParentMrn()
+		res.SpaceMrn = jobCredentials.GetScopeMrn()
+		if res.SpaceMrn == "" {
+			// service accounts issued before scope_mrn existed only carry parent_mrn
+			res.SpaceMrn = jobCredentials.GetParentMrn()
+		}
 	}
 
 	if !res.Incognito {
