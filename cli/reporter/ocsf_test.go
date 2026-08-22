@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -485,4 +486,18 @@ func TestOcsfDetectionFindings(t *testing.T) {
 	}
 	assert.Equal(t, map[string]bool{"PASS": true, "ERROR": true, "SKIPPED": true}, codes,
 		"the outcome is what status_code carries")
+}
+
+func TestTruncateAssessment(t *testing.T) {
+	assert.Equal(t, "short", truncateAssessment("short"))
+
+	long := strings.Repeat("a", maxAssessmentBytes+100)
+	res := truncateAssessment(long)
+	assert.Less(t, len(res), len(long))
+	assert.Contains(t, res, "assessment truncated")
+
+	// a multi-byte rune straddling the cut must not be split
+	runes := strings.Repeat("ü", maxAssessmentBytes)
+	res = truncateAssessment(runes)
+	assert.True(t, utf8.ValidString(res), "the cut has to land on a rune boundary")
 }

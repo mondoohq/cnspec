@@ -165,3 +165,52 @@ func TestSplunkHecRequiresOcsfFormat(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ocsf-json")
 }
+
+func TestSplunkHecSkipsOversizedEvents(t *testing.T) {
+	var body atomic.Value
+	srv, url := splunkTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		body.Store(string(raw))
+		_, _ = w.Write([]byte(`{"text":"Success","code":0}`))
+	})
+	defer srv.Close()
+
+	t.Setenv(splunkTokenEnv, "test-token")
+
+	// one check whose assessment is far past what Splunk takes in a request
+	report := detailedReportCollection()
+	report.Bundle.Queries[0].Docs.Desc = strings.Repeat("x", splunkMaxEventBytes+1024)
+
+	require.NoError(t, hecHandler(t, url).WriteReport(t.Context(), report))
+
+	// the oversized finding is dropped, the asset inventory event still arrives
+	delivered := body.Load()
+	require.NotNil(t, delivered, "the rest of the events are still sent")
+	assert.NotContains(t, delivered.(string), "ocsf:detection_finding",
+		"an event Splunk would reject is skipped rather than failing the whole delivery")
+	assert.Contains(t, delivered.(string), "ocsf:inventory_info")
+}
+
+func TestSplunkHecReportsPartialDelivery(t *testing.T) {
+	var requests atomic.Int32
+	srv, url := splunkTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			_, _ = w.Write([]byte(`{"text":"Success","code":0}`))
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"text":"No data","code":5}`))
+	})
+	defer srv.Close()
+
+	t.Setenv(splunkTokenEnv, "test-token")
+
+	handler := hecHandler(t, url)
+	// force a flush per event, so the second one fails after the first landed
+	report := largeReportCollection(2, 200)
+	err := handler.WriteReport(t.Context(), report)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already delivered to Splunk",
+		"the operator has to know what landed before re-running")
+}

@@ -246,6 +246,19 @@ Pointing `--output-target` at a Splunk HTTP Event Collector URL
 envelope with the `ocsf:<class>` sourcetypes the
 [OCSF-CIM Add-On for Splunk](https://splunk.github.io/ocsf_cim_addon_for_splunk/) keys off. The
 token comes from `SPLUNK_HEC_TOKEN`; `SPLUNK_HEC_INDEX` and `SPLUNK_HEC_SOURCE` are optional.
+Delivery is at-least-once: events go out in batches as they fill, so a failure part way through
+leaves the earlier batches indexed, and the error says how many landed.
+
+Two things to know before pointing this at a fleet:
+
+- **Prefer `ocsf-parquet` at scale.** The events repeat each check's query, description and
+  audit text once per asset, which Parquet's dictionary encoding collapses and newline-delimited
+  JSON does not. On a 200-asset, 50-check scan the same events are 19.8 MB of JSON against
+  0.1 MB of Parquet.
+- **The events carry scan content.** `status_detail` and `message` hold the assessment, which
+  includes the actual resource values a check compared, and `unmapped` holds the check's MQL and
+  audit steps. That is what makes a finding actionable, and it is the same content as SARIF's
+  detailed output, but it is worth knowing when the destination is a shared SIEM index.
 
 Every event of every supported version is validated in CI against the official compiled OCSF
 schema with the OCSF project's own validator, [`ocsf-toolkit`](https://github.com/ocsf/ocsf-toolkit).

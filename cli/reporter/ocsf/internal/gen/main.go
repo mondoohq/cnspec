@@ -29,9 +29,6 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// versions to generate for, oldest first. Keep in sync with ocsf.SupportedVersions.
-var versions = []string{"1.3.0", "1.9.0"}
-
 type spec struct {
 	Classes   map[string]classSpec `json:"classes"`
 	Objects   map[string][]string  `json:"objects"`
@@ -120,14 +117,26 @@ func run() error {
 		return fmt.Errorf("gen.yaml: %w", err)
 	}
 
-	schemas := make([]schema, 0, len(versions))
-	for _, version := range versions {
-		s, err := loadSchema(filepath.Join(root, "schemas", "schema-"+version+".json.gz"))
+	// The schemas directory is the version list. Keeping a second copy here
+	// would be one more thing to hold in sync with ocsf.SupportedVersions.
+	paths, err := filepath.Glob(filepath.Join(root, "schemas", "schema-*.json.gz"))
+	if err != nil {
+		return err
+	}
+	if len(paths) == 0 {
+		return fmt.Errorf("no compiled schemas in %s", filepath.Join(root, "schemas"))
+	}
+	sort.Strings(paths)
+
+	schemas := make([]schema, 0, len(paths))
+	for _, path := range paths {
+		s, err := loadSchema(path)
 		if err != nil {
 			return err
 		}
-		if s.Version != version {
-			return fmt.Errorf("schema-%s.json.gz declares version %q", version, s.Version)
+		want := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), "schema-"), ".json.gz")
+		if s.Version != want {
+			return fmt.Errorf("%s declares version %q", filepath.Base(path), s.Version)
 		}
 		schemas = append(schemas, s)
 	}

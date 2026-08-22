@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
@@ -674,6 +675,7 @@ func assetDataResults(r *policy.ReportCollection, assetMrn string) map[string]st
 		buf := &bytes.Buffer{}
 		w := iox.IOWriter{Writer: buf}
 		if err := cr.CodeBundleToJSON(query.Code, results, &w); err != nil {
+			log.Warn().Err(err).Str("query", mrn).Msg("could not render a data query result for the OCSF report")
 			continue
 		}
 		res[mrn] = strings.TrimSpace(buf.String())
@@ -903,6 +905,13 @@ func ocsfCvss(cve *mvd.CVE) []ocsf.CVSS {
 	return res
 }
 
+// maxAssessmentBytes caps the "expected vs actual" detail of a check. A check
+// that fails across thousands of resources can render megabytes of assessment,
+// which bloats every row of the Parquet file and can exceed what an HTTP
+// collector accepts in one event. The head of it is what makes a finding
+// actionable; the rest is repetition.
+const maxAssessmentBytes = 64 * 1024
+
 // checkAssessment renders the "expected vs actual" detail of a check, which is
 // what makes a failing finding actionable.
 func checkAssessment(resolved *policy.ResolvedPolicy, report *policy.Report, query *policy.Mquery) string {
@@ -917,7 +926,19 @@ func checkAssessment(resolved *policy.ResolvedPolicy, report *policy.Report, que
 	if assessment == nil {
 		return ""
 	}
-	return strings.TrimSpace(printer.PlainNoColorPrinter.Assessment(codeBundle, assessment))
+	return truncateAssessment(strings.TrimSpace(printer.PlainNoColorPrinter.Assessment(codeBundle, assessment)))
+}
+
+func truncateAssessment(detail string) string {
+	if len(detail) <= maxAssessmentBytes {
+		return detail
+	}
+	// Cut on a rune boundary so the result stays valid UTF-8 and valid JSON.
+	cut := maxAssessmentBytes
+	for cut > 0 && !utf8.RuneStart(detail[cut]) {
+		cut--
+	}
+	return detail[:cut] + "\n… assessment truncated"
 }
 
 func refURLs(query *policy.Mquery) []string {

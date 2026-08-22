@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,4 +34,26 @@ func TestGeneratedTypesAreCurrent(t *testing.T) {
 		assert.Equal(t, string(want), string(got),
 			"%s is out of date, run: go generate ./cli/reporter/ocsf/...", name)
 	}
+}
+
+// TestSupportedVersionsHaveSchemas ties the versions the package offers to the
+// compiled schemas on disk. The generator generates for whatever is in schemas/,
+// so a version listed in only one of the two places would either be selectable
+// with no schema behind it or generated for and unreachable.
+func TestSupportedVersionsHaveSchemas(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join("schemas", "schema-*.json.gz"))
+	require.NoError(t, err)
+
+	onDisk := make([]string, 0, len(paths))
+	for _, path := range paths {
+		name := filepath.Base(path)
+		onDisk = append(onDisk, strings.TrimSuffix(strings.TrimPrefix(name, "schema-"), ".json.gz"))
+	}
+	sort.Strings(onDisk)
+
+	supported := SupportedVersions()
+	sort.Strings(supported)
+
+	assert.Equal(t, supported, onDisk,
+		"every supported version needs a compiled schema in schemas/, and vice versa")
 }

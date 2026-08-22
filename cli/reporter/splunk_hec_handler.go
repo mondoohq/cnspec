@@ -37,6 +37,12 @@ const (
 	// max_content_length, leaving room for the last event to overshoot.
 	splunkMaxBatchBytes = 512 * 1024
 
+	// splunkMaxEventBytes is the point at which a single event is too big to
+	// send at all: Splunk's default max_content_length is 1 MB, and a request
+	// carrying one oversized event would be rejected outright. Dropping it with
+	// a warning costs one finding; sending it costs every finding in the run.
+	splunkMaxEventBytes = 900 * 1024
+
 	splunkAttempts = 4
 	splunkBackoff  = 2 * time.Second
 )
@@ -90,14 +96,21 @@ func (h *splunkHecHandler) WriteReport(ctx context.Context, report *policy.Repor
 	}
 
 	batch := &bytes.Buffer{}
-	sent := 0
+	var batched, delivered, dropped int
+
+	// Delivery is at-least-once and not transactional: batches go out as they
+	// fill, so a failure part way through leaves the earlier ones in Splunk. The
+	// counts travel with the error so an operator knows what landed before
+	// re-running.
 	flush := func() error {
 		if batch.Len() == 0 {
 			return nil
 		}
 		if err := h.post(ctx, token, batch.Bytes()); err != nil {
-			return err
+			return errors.Wrapf(err, "%d of %d events were already delivered to Splunk", delivered, events.Len())
 		}
+		delivered += batched
+		batched = 0
 		batch.Reset()
 		return nil
 	}
@@ -107,6 +120,15 @@ func (h *splunkHecHandler) WriteReport(ctx context.Context, report *policy.Repor
 		if err != nil {
 			return err
 		}
+		if len(envelope) > splunkMaxEventBytes {
+			dropped++
+			log.Warn().
+				Str("class", class).
+				Int("bytes", len(envelope)).
+				Str("finding", eventFindingUID(event)).
+				Msg("event is larger than Splunk accepts in one request, skipping it")
+			return nil
+		}
 		// Flush before adding, so a batch never exceeds the limit by more than
 		// one event.
 		if batch.Len()+len(envelope) > splunkMaxBatchBytes {
@@ -115,7 +137,7 @@ func (h *splunkHecHandler) WriteReport(ctx context.Context, report *policy.Repor
 			}
 		}
 		batch.Write(envelope)
-		sent++
+		batched++
 		return nil
 	})
 	if err != nil {
@@ -125,8 +147,24 @@ func (h *splunkHecHandler) WriteReport(ctx context.Context, report *policy.Repor
 		return err
 	}
 
-	log.Info().Str("url", h.url).Int("events", sent).Msg("sent OCSF events to Splunk")
+	entry := log.Info().Str("url", h.url).Int("events", delivered)
+	if dropped > 0 {
+		entry = entry.Int("skipped", dropped)
+	}
+	entry.Msg("sent OCSF events to Splunk")
 	return nil
+}
+
+// eventFindingUID pulls the finding id out of an encoded event, so a dropped one
+// can be named in the log.
+func eventFindingUID(event []byte) string {
+	var meta struct {
+		FindingInfo *struct{ UID string } `json:"finding_info"`
+	}
+	if err := json.Unmarshal(event, &meta); err != nil || meta.FindingInfo == nil {
+		return ""
+	}
+	return meta.FindingInfo.UID
 }
 
 // splunkEnvelope wraps one OCSF event in the HEC record format. HEC reads the
@@ -228,12 +266,21 @@ func envOr(name, fallback string) string {
 	return fallback
 }
 
-// formatName renders a Format for an error message.
+// formatName renders a Format for an error message. Several names can map to one
+// format ("ocsf" and "ocsf-json"), so it picks the most specific one rather than
+// whichever the map happens to yield first.
 func formatName(f Format) string {
+	res := ""
 	for name, format := range Formats {
-		if format == f && name != "" {
-			return name
+		if format != f || name == "" {
+			continue
+		}
+		if len(name) > len(res) || (len(name) == len(res) && name < res) {
+			res = name
 		}
 	}
-	return strconv.Itoa(int(f))
+	if res == "" {
+		return strconv.Itoa(int(f))
+	}
+	return res
 }
