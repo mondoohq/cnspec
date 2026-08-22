@@ -76,7 +76,7 @@ The MQL skill provides comprehensive guidance for writing MQL queries and securi
 
 - **MQL Reference** — Complete syntax documentation, best practices, and anti-patterns
 - **Platform Samples** — Ready-to-use patterns for AWS, Azure, Linux, Windows, and Microsoft 365
-- **Schema Discovery** — Real-time schema lookup via `cnspec` CLI or Mondoo MCP tools
+- **Schema Discovery** — Real-time schema lookup via the `cnspec` CLI
 - **Query Validation** — Compile-time syntax and semantic checking
 - **Policy Management** — Linting, formatting, and scaffolding policy bundles
 
