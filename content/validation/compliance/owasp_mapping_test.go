@@ -165,6 +165,26 @@ var llmAnchoredPolicies = []string{
 	"mondoo-mcp-security.mql.yaml",
 }
 
+// Coverage note (OWASP Top 10 for LLM Applications:2025): some categories have
+// no posture check because no connected provider's API exposes the underlying
+// configuration to assess:
+//   - LLM07 (System Prompt Leakage) and LLM09 (Misinformation) are properties
+//     of prompts and model behavior, not scannable infrastructure posture.
+//   - LLM10 (Unbounded Consumption) has no posture surface today: request
+//     rate-limiting and quotas live at an API gateway, not in the self-hosted
+//     inference servers we model. vLLM's consumption bounds (max-num-seqs,
+//     max-num-batched-tokens) are launch flags that its OpenAI-compatible API
+//     does not expose, so mql cannot read them. Revisit if a connected
+//     provider (e.g. an OpenAI/Anthropic admin API, or a modeled gateway)
+//     starts exposing rate-limit configuration.
+//   - LLM03 (Supply Chain) for Hugging Face is blocked on API surface: the
+//     huggingface.organization resource is token-scoped inventory, and HF
+//     Enterprise org security settings (SSO enforcement, token policy) must be
+//     confirmed to be API-readable before a check can be written.
+//
+// These are deliberate no-coverage cells, not gaps to paper over with a
+// vacuous check.
+
 // TestOwaspLlmTop10Mapping guards the OWASP Top 10 for LLM Applications:2025
 // mapping. Unlike the application Top 10, this framework is targeted: it is
 // applied only to AI/LLM/GenAI checks, so there is no per-policy parity rule.

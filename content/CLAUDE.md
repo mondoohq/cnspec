@@ -204,6 +204,21 @@ The frameworks in the standard set appear on nearly every tagged check; the subj
 
 Read the control uid out of the framework YAML. Do not construct it from the framework name.
 
+### OWASP Top 10 mapping parity (enforced by test)
+
+The security policies are mapped to the OWASP Top 10:2025 (application) and, for AI/LLM assets, the OWASP Top 10:2025 for LLM Applications. The offline test in `content/validation/compliance/owasp_mapping_test.go` enforces a **parity invariant**: any check that carries a `compliance/pci-dss-4:` tag (the marker for a framework-mapped check) **must** also carry a `compliance/owasp-top-10-2025:` tag, and vice versa. A policy is either fully mapped or not mapped at all.
+
+**Practical consequence for contributors:** if you add a check to a policy whose sibling checks are framework-mapped, add its `compliance/owasp-top-10-2025:` tag **in the same PR**. Omitting it turns `main` red on the next run, because the new check inherits a `pci-dss-4` tag from the mapping convention but lacks its OWASP partner. Pick the category from the check's actual enforced behavior:
+
+- `a01` broken access control (anonymous/bypass, exposure, least privilege)
+- `a02` security misconfiguration (surface area, dangerous defaults)
+- `a04` cryptographic failures (encryption in transit and at rest, password storage)
+- `a07` authentication failures (login/identity, password policy, MFA)
+- `a08` software/data integrity
+- `a09` security logging and monitoring failures
+
+`a03` (supply chain) applies to build-time checks. **`a05` (injection), `a06` (insecure design), and `a10` (mishandling exceptional conditions) are the domain of source-level SAST tooling, not posture scanning — never map a cnspec posture check to them** (the test rejects these three). Tag `false` (unquoted) only where no framework control fits; the OWASP tag is not optional for a mapped check.
+
 ## Terraform variants and remediation for cloud policies
 
 When you add or modify a check in a cloud policy (`mondoo-aws-security`, `mondoo-azure-security`, `mondoo-gcp-security`, `mondoo-oci-security`, `mondoo-hetzner-security`, `mondoo-digitalocean-security`, etc.), **two things** must ship together:
