@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strconv"
 
+	"go.mondoo.com/cnspec/cli/reporter/reportdoc"
 	"go.mondoo.com/cnspec/policy"
 	cr "go.mondoo.com/mql/cli/reporter"
 	"go.mondoo.com/mql/llx"
@@ -52,7 +53,7 @@ func prepareAssetsForPrinting(assets map[string]*inventory.Asset) map[string]*as
 			Mrn:          a.Mrn,
 			Name:         a.Name,
 			Url:          a.Url,
-			PlatformName: getPlatformNameForAsset(a),
+			PlatformName: reportdoc.PlatformName(a),
 		}
 		printableAssets[k] = pAsset
 	}

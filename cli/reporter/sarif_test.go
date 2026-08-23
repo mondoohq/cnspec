@@ -13,6 +13,8 @@ import (
 	"github.com/owenrumney/go-sarif/v2/sarif"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.mondoo.com/cnspec/cli/reporter/internal/reportfixture"
+	"go.mondoo.com/cnspec/cli/reporter/reportdoc"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/cli/printer"
 	"go.mondoo.com/mql/llx"
@@ -53,7 +55,7 @@ func resultsForRule(run *sarif.Run, id string) []*sarif.Result {
 	return res
 }
 
-// indented renders a help section body the way writeDetailSection does, so tests
+// indented renders a help section body the way reportdoc.WriteDetailSection does, so tests
 // can look for it verbatim inside the rendered help.
 func indented(body string) string {
 	return strings.TrimRight(stringx.Indent(2, body), "\n")
@@ -67,7 +69,7 @@ func ruleHelpText(rule *sarif.ReportingDescriptor) string {
 }
 
 func TestSarifConverter(t *testing.T) {
-	yr := sampleReportCollection()
+	yr := reportfixture.Sample()
 	buf := bytes.Buffer{}
 	writer := iox.IOWriter{Writer: &buf}
 	err := ConvertToSarif(yr, &writer)
@@ -128,7 +130,7 @@ func TestSarifConverter(t *testing.T) {
 }
 
 func TestSarifDeterministicOutput(t *testing.T) {
-	yr := sampleReportCollection()
+	yr := reportfixture.Sample()
 
 	// Run twice and verify identical output
 	buf1 := bytes.Buffer{}
@@ -304,7 +306,7 @@ func TestSarifQueryRuleID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, queryRuleID(tt.query))
+			assert.Equal(t, tt.expected, reportdoc.QueryRuleID(tt.query))
 		})
 	}
 }
@@ -365,7 +367,7 @@ func TestSarifLocationFingerprint(t *testing.T) {
 }
 
 func TestSarifRunMetadata(t *testing.T) {
-	report := toSarif(t, sampleReportCollection())
+	report := toSarif(t, reportfixture.Sample())
 	require.Len(t, report.Runs, 1)
 	run := report.Runs[0]
 
@@ -395,7 +397,7 @@ func TestSarifRunMetadata(t *testing.T) {
 }
 
 func TestSarifResultKinds(t *testing.T) {
-	report := toSarif(t, sampleReportCollection())
+	report := toSarif(t, reportfixture.Sample())
 	run := report.Runs[0]
 
 	kinds := map[string]string{}
@@ -599,7 +601,7 @@ func TestSarifMatchesDetailedJunitContent(t *testing.T) {
 	}
 
 	bundle := yr.Bundle.ToMap()
-	queries := reporterQueryMap(bundle)
+	queries := reportdoc.QueryMap(bundle)
 
 	checked := 0
 	for assetMrn, asset := range yr.Assets {
@@ -610,7 +612,7 @@ func TestSarifMatchesDetailedJunitContent(t *testing.T) {
 		resolved := yr.ResolvedPolicies[assetMrn]
 		require.NotNil(t, policyReport)
 		require.NotNil(t, resolved)
-		platformKeys := platformRemediationKeys(asset.Platform)
+		platformKeys := reportdoc.PlatformRemediationKeys(asset.Platform)
 
 		for id, score := range policyReport.Scores {
 			if _, ok := resolved.CollectorJob.ReportingQueries[id]; !ok {
@@ -631,7 +633,7 @@ func TestSarifMatchesDetailedJunitContent(t *testing.T) {
 			}
 			checked++
 
-			ruleID := queryRuleID(query)
+			ruleID := reportdoc.QueryRuleID(query)
 			rule := findRule(run, ruleID)
 			require.NotNil(t, rule, "no SARIF rule for %s", ruleID)
 			results := resultsForRule(run, ruleID)
@@ -645,21 +647,21 @@ func TestSarifMatchesDetailedJunitContent(t *testing.T) {
 			}
 
 			help := ruleHelpText(rule)
-			if desc := strings.TrimSpace(queryDescription(query)); desc != "" {
+			if desc := strings.TrimSpace(reportdoc.QueryDescription(query)); desc != "" {
 				require.NotNil(t, rule.FullDescription)
 				assert.Equal(t, desc, *rule.FullDescription.Text, "description missing for %s", ruleID)
 				assert.Contains(t, help, desc, "description missing from help of %s", ruleID)
 			}
 			// help sections are indented by two spaces, exactly like the JUnit body
-			if mql := strings.TrimSpace(queryMql(query)); mql != "" {
+			if mql := strings.TrimSpace(reportdoc.QueryMql(query)); mql != "" {
 				assert.Contains(t, help, indented(mql), "query missing from help of %s", ruleID)
 				assert.Equal(t, mql, rule.Properties["mql"])
 			}
-			if rem := queryRemediation(query, platformKeys); rem != "" {
+			if rem := reportdoc.QueryRemediation(query, platformKeys); rem != "" {
 				assert.Contains(t, help, indented(rem), "remediation missing from help of %s", ruleID)
 				assert.Equal(t, rem, rule.Properties["remediation"])
 			}
-			if refs := queryReferences(query); refs != "" {
+			if refs := reportdoc.QueryReferences(query); refs != "" {
 				assert.Contains(t, help, indented(refs), "references missing from help of %s", ruleID)
 			}
 			if msg := score.MessageLine(); msg != "" {

@@ -190,7 +190,7 @@ cnspec scan --inventory-file FILENAME
       --inventory-format-domainlist   Set the inventory format to domain list.
   -j, --json                          Run the query and return the object in a JSON structure.
   -o, --output string                 Set output format: compact, csv, full, json, json-v1, json-v2, junit, report, summary, yaml, yaml-v1, yaml-v2 (default "compact")
-      --output-target string          Set output target to which the asset report will be sent. Currently only supports AWS SQS topic URLs and local files
+      --output-target string          Set the output target for the asset report: a local file, an AWS SQS topic URL, or - with -o hdf - a directory to write one OHDF file per asset into
       --platform-id string            Select a specific target asset by providing its platform ID.
       --policy strings                Lists policies to execute. This requires --policy-bundle. You can pass multiple policies using --policy POLICY.
   -f, --policy-bundle strings         Path to local policy file

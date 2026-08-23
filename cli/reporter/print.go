@@ -10,7 +10,6 @@ import (
 
 	"github.com/muesli/termenv"
 	"go.mondoo.com/cnspec/policy"
-	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 )
 
 type Format byte
@@ -147,6 +146,7 @@ const (
 	FormatJSONv2
 	FormatYAMLv2
 	FormatSarif
+	FormatHDF
 )
 
 // Formats that are supported by the reporter
@@ -166,6 +166,7 @@ var Formats = map[string]Format{
 	"junit":   FormatJUnit,
 	"csv":     FormatCSV,
 	"sarif":   FormatSarif,
+	"hdf":     FormatHDF,
 }
 
 func AllFormats() string {
@@ -203,16 +204,4 @@ func (r *Reporter) scoreColored(rating policy.ScoreRating, s string) string {
 		return termenv.String(s).Foreground(r.Colors.Critical).String()
 	}
 	return s
-}
-
-func getPlatformNameForAsset(asset *inventory.Asset) string {
-	platformName := ""
-	if asset.Platform != nil {
-		if asset.Platform.Title == "" {
-			platformName = asset.Platform.Name
-		} else {
-			platformName = asset.Platform.Title
-		}
-	}
-	return platformName
 }

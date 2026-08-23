@@ -13,10 +13,10 @@ import (
 
 	"github.com/owenrumney/go-sarif/v2/sarif"
 	"go.mondoo.com/cnspec"
+	"go.mondoo.com/cnspec/cli/reporter/reportdoc"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/cli/printer"
 	"go.mondoo.com/mql/llx"
-	"go.mondoo.com/mql/mrn"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/mql/utils/iox"
@@ -81,8 +81,8 @@ func ConvertToSarif(r *policy.ReportCollection, out iox.OutputHelper) error {
 	}
 
 	bundle := r.Bundle.ToMap()
-	queries := reporterQueryMap(bundle)
-	policyTitles := policyTitlesByQuery(bundle)
+	queries := reportdoc.QueryMap(bundle)
+	policyTitles := reportdoc.PolicyTitlesByQuery(bundle)
 
 	// Create one run per asset (deterministic order via sorted keys)
 	assetMrns := sortedKeys(r.Assets)
@@ -92,7 +92,7 @@ func ConvertToSarif(r *policy.ReportCollection, out iox.OutputHelper) error {
 			assetMrn:     assetMrn,
 			asset:        assetObj,
 			logicalLoc:   assetLogicalLocation(assetObj),
-			platformKeys: platformRemediationKeys(assetObj.Platform),
+			platformKeys: reportdoc.PlatformRemediationKeys(assetObj.Platform),
 			policyTitles: policyTitles,
 		}
 		run := newAssetRun(r, ctx)
@@ -147,7 +147,7 @@ func newAssetRun(r *policy.ReportCollection, ctx *sarifRunContext) *sarif.Run {
 		props["assetMrn"] = ctx.assetMrn
 	}
 	if ctx.asset.Platform != nil {
-		if platformName := getPlatformNameForAsset(ctx.asset); platformName != "" {
+		if platformName := reportdoc.PlatformName(ctx.asset); platformName != "" {
 			props["platform"] = platformName
 		}
 		if ctx.asset.Platform.Version != "" {
@@ -256,7 +256,7 @@ func registerAssetRules(run *sarif.Run, r *policy.ReportCollection, ctx *sarifRu
 // (query, audit steps, remediation, references, compliance mappings), severity
 // and the policies it belongs to.
 func registerCheckRule(run *sarif.Run, query *policy.Mquery, ctx *sarifRunContext) {
-	ruleID := queryRuleID(query)
+	ruleID := reportdoc.QueryRuleID(query)
 	rb := run.AddRule(ruleID)
 
 	title := query.Title
@@ -265,7 +265,7 @@ func registerCheckRule(run *sarif.Run, query *policy.Mquery, ctx *sarifRunContex
 	}
 	rb.WithName(title).WithDescription(title)
 
-	if desc := strings.TrimSpace(queryDescription(query)); desc != "" {
+	if desc := strings.TrimSpace(reportdoc.QueryDescription(query)); desc != "" {
 		rb.WithFullDescription(sarif.NewMultiformatMessageString(desc).WithMarkdown(desc))
 	}
 
@@ -273,14 +273,14 @@ func registerCheckRule(run *sarif.Run, query *policy.Mquery, ctx *sarifRunContex
 		rb.WithHelp(sarif.NewMultiformatMessageString(text).WithMarkdown(markdown))
 	}
 
-	if refs := queryRefs(query); len(refs) > 0 {
+	if refs := reportdoc.QueryRefs(query); len(refs) > 0 {
 		rb.WithHelpURI(refs[0].Url)
 	}
 
 	props := sarif.Properties{"tags": checkRuleTags(query, ctx)}
-	if impact, ok := queryImpact(query); ok {
+	if impact, ok := reportdoc.QueryImpact(query); ok {
 		props["impact"] = impact
-		props["severity"] = riskSeverityLabel(impact)
+		props["severity"] = reportdoc.RiskSeverityLabel(impact)
 		// GitHub code scanning reads the alert severity from this property.
 		props["security-severity"] = securitySeverity(impact)
 		rb.WithDefaultConfiguration(sarif.NewReportingConfiguration().WithLevel(riskSarifLevel(impact)))
@@ -288,16 +288,16 @@ func registerCheckRule(run *sarif.Run, query *policy.Mquery, ctx *sarifRunContex
 	if query.Mrn != "" {
 		props["queryMrn"] = query.Mrn
 	}
-	if mql := strings.TrimSpace(queryMql(query)); mql != "" {
+	if mql := strings.TrimSpace(reportdoc.QueryMql(query)); mql != "" {
 		props["mql"] = mql
 	}
 	if titles := ctx.policyTitles[query.Mrn]; len(titles) > 0 {
 		props["policies"] = titles
 	}
-	if compliance := queryComplianceTags(query); len(compliance) > 0 {
+	if compliance := reportdoc.QueryComplianceTags(query); len(compliance) > 0 {
 		props["compliance"] = compliance
 	}
-	if rem := queryRemediation(query, ctx.platformKeys); rem != "" {
+	if rem := reportdoc.QueryRemediation(query, ctx.platformKeys); rem != "" {
 		props["remediation"] = rem
 	}
 	rb.WithProperties(props)
@@ -312,7 +312,7 @@ func checkRuleTags(query *policy.Mquery, ctx *sarifRunContext) []string {
 		tags = append(tags, "policy/"+title)
 	}
 	// the compliance tag keys are already namespaced, e.g. "compliance/iso-27001-2022"
-	return append(tags, sortedKeys(queryComplianceTags(query))...)
+	return append(tags, sortedKeys(reportdoc.QueryComplianceTags(query))...)
 }
 
 // checkHelp renders the static documentation of a check as plain text and as
@@ -321,45 +321,45 @@ func checkRuleTags(query *policy.Mquery, ctx *sarifRunContext) []string {
 func checkHelp(query *policy.Mquery, ctx *sarifRunContext) (string, string) {
 	var text, md strings.Builder
 
-	desc := strings.TrimSpace(queryDescription(query))
+	desc := strings.TrimSpace(reportdoc.QueryDescription(query))
 	if desc != "" {
 		text.WriteString(desc + "\n")
 		md.WriteString(desc + "\n")
 	}
 
-	if impact, ok := queryImpact(query); ok {
-		severity := riskSeverityLabel(impact) + " (impact " + strconv.Itoa(int(impact)) + ")"
-		writeDetailSection(&text, "Severity", severity)
+	if impact, ok := reportdoc.QueryImpact(query); ok {
+		severity := reportdoc.RiskSeverityLabel(impact) + " (impact " + strconv.Itoa(int(impact)) + ")"
+		reportdoc.WriteDetailSection(&text, "Severity", severity)
 		writeMarkdownSection(&md, "Severity", severity)
 	}
 
 	if titles := ctx.policyTitles[query.Mrn]; len(titles) > 0 {
-		writeDetailSection(&text, "Policies", strings.Join(titles, "\n"))
+		reportdoc.WriteDetailSection(&text, "Policies", strings.Join(titles, "\n"))
 		writeMarkdownSection(&md, "Policies", markdownList(titles))
 	}
 
-	if mql := strings.TrimSpace(queryMql(query)); mql != "" {
-		writeDetailSection(&text, "Query", mql)
+	if mql := strings.TrimSpace(reportdoc.QueryMql(query)); mql != "" {
+		reportdoc.WriteDetailSection(&text, "Query", mql)
 		writeMarkdownSection(&md, "Query", markdownCode(mql))
 	}
 
-	if audit := queryAudit(query); audit != "" {
-		writeDetailSection(&text, "Audit", audit)
+	if audit := reportdoc.QueryAudit(query); audit != "" {
+		reportdoc.WriteDetailSection(&text, "Audit", audit)
 		writeMarkdownSection(&md, "Audit", audit)
 	}
 
-	writeDetailSection(&text, "Remediation", queryRemediation(query, ctx.platformKeys))
+	reportdoc.WriteDetailSection(&text, "Remediation", reportdoc.QueryRemediation(query, ctx.platformKeys))
 	writeMarkdownSection(&md, "Remediation", markdownRemediation(query, ctx.platformKeys))
 
-	writeDetailSection(&text, "References", queryReferences(query))
+	reportdoc.WriteDetailSection(&text, "References", reportdoc.QueryReferences(query))
 	writeMarkdownSection(&md, "References", markdownReferences(query))
 
-	if compliance := queryComplianceTags(query); len(compliance) > 0 {
+	if compliance := reportdoc.QueryComplianceTags(query); len(compliance) > 0 {
 		var lines []string
 		for _, framework := range sortedKeys(compliance) {
 			lines = append(lines, strings.TrimPrefix(framework, "compliance/")+": "+compliance[framework])
 		}
-		writeDetailSection(&text, "Compliance", strings.Join(lines, "\n"))
+		reportdoc.WriteDetailSection(&text, "Compliance", strings.Join(lines, "\n"))
 		writeMarkdownSection(&md, "Compliance", markdownList(lines))
 	}
 
@@ -411,7 +411,7 @@ func addAssetResults(run *sarif.Run, r *policy.ReportCollection, ctx *sarifRunCo
 			continue
 		}
 
-		ruleID := queryRuleID(query)
+		ruleID := reportdoc.QueryRuleID(query)
 		level := scoreToSarifLevel(score)
 		kind := scoreToSarifKind(score)
 
@@ -498,14 +498,14 @@ func addAssetResults(run *sarif.Run, r *policy.ReportCollection, ctx *sarifRunCo
 func checkResultMessage(query *policy.Mquery, score *policy.Score, detail string) (string, string) {
 	title := query.Title
 	if title == "" {
-		title = queryRuleID(query)
+		title = reportdoc.QueryRuleID(query)
 	}
 
 	// "FAIL · CRITICAL · score 0/100 · <what the check reported>"
 	status := scoreStatusLabel(score)
 	var details string
 	if score != nil && score.Type == policy.ScoreType_Result {
-		details += " · " + riskSeverityLabel(scoreRisk(score)) + " · score " + strconv.Itoa(int(score.Value)) + "/100"
+		details += " · " + reportdoc.RiskSeverityLabel(reportdoc.ScoreRisk(score)) + " · score " + strconv.Itoa(int(score.Value)) + "/100"
 	}
 	if msg := score.MessageLine(); msg != "" {
 		details += " · " + msg
@@ -537,8 +537,8 @@ func checkResultProperties(query *policy.Mquery, score *policy.Score, ctx *sarif
 		props["completion"] = score.Completion()
 		if score.Type == policy.ScoreType_Result {
 			props["score"] = score.Value
-			props["risk"] = scoreRisk(score)
-			props["severity"] = riskSeverityLabel(scoreRisk(score))
+			props["risk"] = reportdoc.ScoreRisk(score)
+			props["severity"] = reportdoc.RiskSeverityLabel(reportdoc.ScoreRisk(score))
 		}
 	}
 	if titles := ctx.policyTitles[query.Mrn]; len(titles) > 0 {
@@ -554,7 +554,7 @@ func withRiskRank(result *sarif.Result, score *policy.Score) {
 	if score == nil || score.Type != policy.ScoreType_Result || score.Value == 100 {
 		return
 	}
-	result.WithRank(float32(scoreRisk(score)))
+	result.WithRank(float32(reportdoc.ScoreRisk(score)))
 }
 
 // addAssetVulnerabilities emits the asset's vulnerability findings: one result per
@@ -573,7 +573,7 @@ func addAssetVulnerabilities(run *sarif.Run, vulnReport *mvd.VulnReport, ctx *sa
 		if pkg == nil || !pkg.Affected {
 			continue
 		}
-		affected[vulnPackageKey(pkg)] = pkg
+		affected[reportdoc.VulnPackageKey(pkg)] = pkg
 		byName[pkg.Name] = pkg
 	}
 	if len(affected) == 0 {
@@ -591,14 +591,14 @@ func addAssetVulnerabilities(run *sarif.Run, vulnReport *mvd.VulnReport, ctx *sa
 	sort.Slice(advisories, func(i, j int) bool { return advisories[i].ID < advisories[j].ID })
 
 	for _, advisory := range advisories {
-		pkgs := advisoryPackages(advisory, affected, byName)
+		pkgs := reportdoc.AdvisoryPackages(advisory, affected, byName)
 		if len(pkgs) == 0 {
 			continue
 		}
 
 		registerAdvisoryRule(run, advisory)
 		for _, pkg := range pkgs {
-			covered[vulnPackageKey(pkg)] = true
+			covered[reportdoc.VulnPackageKey(pkg)] = true
 			run.AddResult(vulnResult(advisory.ID, advisory, pkg, ctx))
 		}
 	}
@@ -627,34 +627,6 @@ func addAssetVulnerabilities(run *sarif.Run, vulnReport *mvd.VulnReport, ctx *sa
 	}
 }
 
-// advisoryPackages returns the packages of an advisory that the asset is actually
-// affected by, in deterministic order.
-func advisoryPackages(advisory *mvd.Advisory, affected, byName map[string]*mvd.Package) []*mvd.Package {
-	var res []*mvd.Package
-	seen := map[string]bool{}
-	for _, pkg := range advisory.Affected {
-		if pkg == nil {
-			continue
-		}
-		match, ok := affected[vulnPackageKey(pkg)]
-		if !ok {
-			// the advisory may carry a different version than the installed one
-			match, ok = byName[pkg.Name]
-			if !ok {
-				continue
-			}
-		}
-		key := vulnPackageKey(match)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		res = append(res, match)
-	}
-	sort.Slice(res, func(i, j int) bool { return vulnPackageKey(res[i]) < vulnPackageKey(res[j]) })
-	return res
-}
-
 // registerAdvisoryRule registers an advisory (e.g. USN-5825-1) as a SARIF rule,
 // carrying its description, CVEs and references.
 func registerAdvisoryRule(run *sarif.Run, advisory *mvd.Advisory) {
@@ -674,11 +646,11 @@ func registerAdvisoryRule(run *sarif.Run, advisory *mvd.Advisory) {
 		md.WriteString(desc + "\n")
 	}
 
-	severity := riskSeverityLabel(advisory.Score) + " (score " + securitySeverity(advisory.Score) + ")"
-	writeDetailSection(&text, "Severity", severity)
+	severity := reportdoc.RiskSeverityLabel(advisory.Score) + " (score " + securitySeverity(advisory.Score) + ")"
+	reportdoc.WriteDetailSection(&text, "Severity", severity)
 	writeMarkdownSection(&md, "Severity", severity)
 
-	cves := advisoryCves(advisory)
+	cves := reportdoc.AdvisoryCves(advisory)
 	if len(cves) > 0 {
 		var textLines, mdLines []string
 		for _, cve := range cves {
@@ -692,7 +664,7 @@ func registerAdvisoryRule(run *sarif.Run, advisory *mvd.Advisory) {
 			}
 			mdLines = append(mdLines, line)
 		}
-		writeDetailSection(&text, "CVEs", strings.Join(textLines, "\n"))
+		reportdoc.WriteDetailSection(&text, "CVEs", strings.Join(textLines, "\n"))
 		writeMarkdownSection(&md, "CVEs", markdownList(mdLines))
 	}
 
@@ -708,7 +680,7 @@ func registerAdvisoryRule(run *sarif.Run, advisory *mvd.Advisory) {
 		refLines = append(refLines, refTitle+": "+ref.Url)
 		refMdLines = append(refMdLines, "["+refTitle+"]("+ref.Url+")")
 	}
-	writeDetailSection(&text, "References", strings.Join(refLines, "\n"))
+	reportdoc.WriteDetailSection(&text, "References", strings.Join(refLines, "\n"))
 	writeMarkdownSection(&md, "References", markdownList(refMdLines))
 
 	if help := strings.TrimSpace(text.String()); help != "" {
@@ -723,7 +695,7 @@ func registerAdvisoryRule(run *sarif.Run, advisory *mvd.Advisory) {
 	props := sarif.Properties{
 		"tags":              []string{"security", "cnspec", "vulnerability", "advisory"},
 		"security-severity": securitySeverity(advisory.Score),
-		"severity":          riskSeverityLabel(advisory.Score),
+		"severity":          reportdoc.RiskSeverityLabel(advisory.Score),
 		"advisory":          advisory.ID,
 	}
 	if len(cves) > 0 {
@@ -741,18 +713,6 @@ func registerAdvisoryRule(run *sarif.Run, advisory *mvd.Advisory) {
 	}
 	rb.WithProperties(props)
 	rb.WithDefaultConfiguration(sarif.NewReportingConfiguration().WithLevel(riskSarifLevel(advisory.Score)))
-}
-
-// advisoryCves returns the CVEs of an advisory in deterministic order.
-func advisoryCves(advisory *mvd.Advisory) []*mvd.CVE {
-	res := make([]*mvd.CVE, 0, len(advisory.Cves))
-	for _, cve := range advisory.Cves {
-		if cve != nil && cve.ID != "" {
-			res = append(res, cve)
-		}
-	}
-	sort.Slice(res, func(i, j int) bool { return res[i].ID < res[j].ID })
-	return res
 }
 
 // vulnResult builds the finding for one affected package. When advisory is set the
@@ -778,8 +738,8 @@ func vulnResult(ruleID string, advisory *mvd.Advisory, pkg *mvd.Package, ctx *sa
 		text = pkg.Name + " " + pkg.Version + " is affected by " + advisory.ID + " (" + title + ")"
 		markdown = "**" + pkg.Name + "** " + pkg.Version + " is affected by **" + advisory.ID + "** — " + title
 	}
-	text += " · " + riskSeverityLabel(score) + " (score " + securitySeverity(score) + ") · " + update
-	markdown += "\n\n" + scoreIcon(score) + " **" + riskSeverityLabel(score) + "**" +
+	text += " · " + reportdoc.RiskSeverityLabel(score) + " (score " + securitySeverity(score) + ") · " + update
+	markdown += "\n\n" + scoreIcon(score) + " **" + reportdoc.RiskSeverityLabel(score) + "**" +
 		" · score " + securitySeverity(score) + " · " + update
 
 	logicalLocs := []*sarif.LogicalLocation{
@@ -792,7 +752,7 @@ func vulnResult(ruleID string, advisory *mvd.Advisory, pkg *mvd.Package, ctx *sa
 		"asset":             ctx.asset.Name,
 		"package":           pkg.Name,
 		"installedVersion":  pkg.Version,
-		"severity":          riskSeverityLabel(score),
+		"severity":          reportdoc.RiskSeverityLabel(score),
 		"security-severity": securitySeverity(score),
 		"status":            "fail",
 	}
@@ -823,15 +783,11 @@ func vulnResult(ruleID string, advisory *mvd.Advisory, pkg *mvd.Package, ctx *sa
 			sarif.NewLocation().WithLogicalLocations(logicalLocs),
 		}).
 		WithPartialFingerPrints(map[string]interface{}{
-			sarifFingerprintKey: sarifFingerprint(ruleID, ctx.assetMrn, vulnPackageKey(pkg)),
+			sarifFingerprintKey: sarifFingerprint(ruleID, ctx.assetMrn, reportdoc.VulnPackageKey(pkg)),
 		}).
 		WithRank(float32(score))
 	result.Properties = props
 	return result
-}
-
-func vulnPackageKey(pkg *mvd.Package) string {
-	return pkg.Name + "@" + pkg.Version
 }
 
 // assetLogicalLocation builds the SARIF logical location that identifies an asset.
@@ -840,7 +796,7 @@ func assetLogicalLocation(assetObj *inventory.Asset) *sarif.LogicalLocation {
 		WithName(assetObj.Name).
 		WithKind("asset")
 	if assetObj.Platform != nil {
-		platformName := getPlatformNameForAsset(assetObj)
+		platformName := reportdoc.PlatformName(assetObj)
 		if platformName != "" {
 			logicalLoc.WithFullyQualifiedName(assetObj.Name + " (" + platformName + ")")
 		}
@@ -889,14 +845,6 @@ func sarifFingerprint(parts ...string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// scoreRisk is the inverse of a score value: 0 (no risk) to 100 (critical).
-func scoreRisk(score *policy.Score) int32 {
-	if score == nil {
-		return 0
-	}
-	return 100 - int32(score.Value)
-}
-
 // scoreToSarifLevel maps a cnspec Score to a SARIF level using cnspec's
 // severity rating system:
 //
@@ -920,7 +868,7 @@ func scoreToSarifLevel(score *policy.Score) string {
 		if score.Value == 100 {
 			return "none" // pass
 		}
-		return riskSarifLevel(scoreRisk(score))
+		return riskSarifLevel(reportdoc.ScoreRisk(score))
 	default:
 		return "none"
 	}
@@ -999,23 +947,6 @@ func scoreIcon(risk int32) string {
 	return "ℹ️"
 }
 
-// queryRuleID returns a stable, human-readable rule ID for a query.
-// It prefers the UID, then extracts the resource name from the MRN
-// (stripping prefixes like //local.cnspec.io/run/local-execution/queries/),
-// and falls back to the code ID.
-func queryRuleID(query *policy.Mquery) string {
-	if query.Uid != "" {
-		return query.Uid
-	}
-	if query.Mrn != "" {
-		if name, err := mrn.GetResource(query.Mrn, policy.MRN_RESOURCE_QUERY); err == nil {
-			return name
-		}
-		return query.Mrn
-	}
-	return query.CodeId
-}
-
 // writeMarkdownSection appends a "**Title**\n\nbody" section to b.
 func writeMarkdownSection(b *strings.Builder, title, body string) {
 	body = strings.TrimSpace(body)
@@ -1055,7 +986,7 @@ func markdownCode(content string) string {
 // each variant introduced by its platform/tool id.
 func markdownRemediation(query *policy.Mquery, platformKeys map[string]bool) string {
 	var b strings.Builder
-	for _, item := range remediationItems(query, platformKeys) {
+	for _, item := range reportdoc.RemediationItems(query, platformKeys) {
 		if b.Len() > 0 {
 			b.WriteString("\n\n")
 		}
@@ -1069,7 +1000,7 @@ func markdownRemediation(query *policy.Mquery, platformKeys map[string]bool) str
 
 func markdownReferences(query *policy.Mquery) string {
 	var items []string
-	for _, ref := range queryRefs(query) {
+	for _, ref := range reportdoc.QueryRefs(query) {
 		title := ref.Title
 		if title == "" {
 			title = ref.Url
@@ -1094,4 +1025,24 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// riskSarifLevel maps a cnspec risk value to a SARIF level. The bands are the same
+// ones GitHub code scanning uses for security-severity (>= 7.0 error, >= 4.0
+// warning), which keeps level and security-severity consistent.
+func riskSarifLevel(risk int32) string {
+	switch {
+	case risk >= 70:
+		return "error"
+	case risk >= 40:
+		return "warning"
+	default:
+		return "note"
+	}
+}
+
+// securitySeverity renders a cnspec risk value (0-100) as the 0.0-10.0 string that
+// GitHub code scanning reads from the "security-severity" rule property.
+func securitySeverity(risk int32) string {
+	return strconv.FormatFloat(float64(risk)/10, 'f', 1, 64)
 }
