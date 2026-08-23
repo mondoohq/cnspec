@@ -9,8 +9,9 @@ import (
 	"strings"
 
 	"github.com/muesli/termenv"
-	"go.mondoo.com/cnspec/cli/reporter/ocsf"
 	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/reports/ocsf"
+	ocsfconvert "go.mondoo.com/cnspec/reports/ocsf/convert"
 )
 
 type Format byte
@@ -30,15 +31,17 @@ type PrintConfig struct {
 	// formats emit.
 	ocsfVersion ocsf.Version
 	// ocsfFindings selects which OCSF class check results are reported as.
-	ocsfFindings OcsfFindingClasses
+	ocsfFindings ocsf.FindingClasses
 }
 
-// ocsfConfig collects the OCSF settings the converter needs.
-func (p *PrintConfig) ocsfConfig() ocsfConfig {
-	return ocsfConfig{
-		version:     p.ocsfVersion,
-		findings:    p.ocsfFindings,
-		includeData: p.printData,
+// ocsfOptions translates the output options into what the OCSF converter takes.
+// It is the whole of what cli/reporter contributes to that format; everything
+// about the events themselves lives in reports/ocsf/convert.
+func (p *PrintConfig) ocsfOptions() ocsfconvert.Options {
+	return ocsfconvert.Options{
+		Version:     p.ocsfVersion,
+		Findings:    p.ocsfFindings,
+		IncludeData: p.printData,
 	}
 }
 
@@ -52,7 +55,7 @@ func defaultPrintConfig() *PrintConfig {
 		printRisks:           true,
 		printVulnerabilities: true,
 		ocsfVersion:          ocsf.DefaultVersion,
-		ocsfFindings:         OcsfFindingsCompliance,
+		ocsfFindings:         ocsf.FindingsCompliance,
 	}
 }
 
@@ -126,7 +129,7 @@ func ParseConfig[T string | Format](raw T) (*PrintConfig, error) {
 				continue
 			}
 			if isPair && key == OptionOcsfFindings {
-				findings, err := parseOcsfFindings(value)
+				findings, err := ocsf.ParseFindingClasses(value)
 				if err != nil {
 					return res, err
 				}
@@ -141,19 +144,6 @@ func ParseConfig[T string | Format](raw T) (*PrintConfig, error) {
 		return res, errors.New("unknown terms entered: " + strings.Join(unknown, ", ") + ". " + AllAvailableOptions())
 	}
 	return res, nil
-}
-
-// parseOcsfFindings resolves the ocsf-findings option.
-func parseOcsfFindings(raw string) (OcsfFindingClasses, error) {
-	switch strings.TrimSpace(raw) {
-	case "", "compliance":
-		return OcsfFindingsCompliance, nil
-	case "detection":
-		return OcsfFindingsDetection, nil
-	default:
-		return 0, errors.New("unknown " + OptionOcsfFindings + " value " + raw +
-			", expected one of: compliance, detection")
-	}
 }
 
 func AllAvailableOptions() string {
@@ -251,7 +241,7 @@ func AllOptions() string {
 		"[no]" + OptionPrintVulns + ", " +
 		"[no]" + OptionDetailed + " (junit), " +
 		OptionOcsfVersion + "=" + strings.Join(ocsf.SupportedVersions(), "|") + " (ocsf), " +
-		OptionOcsfFindings + "=compliance|detection (ocsf)"
+		OptionOcsfFindings + "=" + strings.Join(ocsf.SupportedFindingClasses(), "|") + " (ocsf)"
 }
 
 func (r *Reporter) scoreColored(rating policy.ScoreRating, s string) string {

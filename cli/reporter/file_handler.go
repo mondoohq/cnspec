@@ -9,8 +9,9 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/cli/reporter/hdf"
 	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/reports/hdf"
+	ocsfconvert "go.mondoo.com/cnspec/reports/ocsf/convert"
 )
 
 type localFileHandler struct {
@@ -51,5 +52,26 @@ func (h *hdfDirHandler) WriteReport(ctx context.Context, report *policy.ReportCo
 		return err
 	}
 	log.Info().Str("dir", h.dir).Int("files", len(files)).Msg("wrote OHDF reports to directory")
+	return nil
+}
+
+// ocsfDirHandler writes one file per OCSF event class into a directory. It is
+// selected when --output-target names a directory, and always for ocsf-parquet:
+// Parquet is binary and its schema is per-class, so it has no single-file form.
+// An ocsf-json target that is a plain file goes through localFileHandler instead
+// and gets every class in one newline-delimited stream, which is what a SIEM
+// ingesting a single file expects.
+type ocsfDirHandler struct {
+	dir      string
+	encoding ocsfconvert.Encoding
+	opts     ocsfconvert.Options
+}
+
+func (h *ocsfDirHandler) WriteReport(ctx context.Context, report *policy.ReportCollection) error {
+	files, err := ocsfconvert.ConvertToDir(report, h.dir, h.opts, h.encoding)
+	if err != nil {
+		return err
+	}
+	log.Info().Str("dir", h.dir).Int("files", len(files)).Msg("wrote OCSF events to directory")
 	return nil
 }

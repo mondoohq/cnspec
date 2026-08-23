@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"go.mondoo.com/cnspec/policy"
+	ocsfconvert "go.mondoo.com/cnspec/reports/ocsf/convert"
 	"go.mondoo.com/mql/utils/iox"
 	_ "gocloud.dev/pubsub/awssnssqs"
 	_ "gocloud.dev/pubsub/azuresb"
@@ -50,10 +51,19 @@ func NewOutputHandler(config HandlerConfig) (OutputHandler, error) {
 		if conf.format == FormatHDF && isDirTarget(config.OutputTarget) {
 			return &hdfDirHandler{dir: strings.TrimPrefix(config.OutputTarget, "file://")}, nil
 		}
-		// OCSF splits its events across one file per event class, so it brings
-		// its own handler instead of writing a single stream to one file.
-		if conf.format == FormatOcsfJson || conf.format == FormatOcsfParquet {
-			return &ocsfFileHandler{target: config.OutputTarget, conf: conf}, nil
+		// OCSF splits its events across one file per event class whenever it is
+		// given a directory, and Parquet has no other form at all.
+		if conf.format == FormatOcsfParquet ||
+			(conf.format == FormatOcsfJson && isDirTarget(config.OutputTarget)) {
+			encoding := ocsfconvert.EncodingJSON
+			if conf.format == FormatOcsfParquet {
+				encoding = ocsfconvert.EncodingParquet
+			}
+			return &ocsfDirHandler{
+				dir:      strings.TrimPrefix(config.OutputTarget, "file://"),
+				encoding: encoding,
+				opts:     conf.ocsfOptions(),
+			}, nil
 		}
 		return &localFileHandler{file: config.OutputTarget, conf: conf}, nil
 	case AWS_SQS:

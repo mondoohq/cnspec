@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/cli/reporter/internal/reportfixture"
+	"go.mondoo.com/cnspec/internal/reportfixture"
 )
 
 // What the document says is the hdf package's business; these cover the wiring that

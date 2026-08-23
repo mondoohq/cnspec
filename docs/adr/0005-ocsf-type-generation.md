@@ -59,10 +59,10 @@ invisible until a lake rejects the events.
 Generate the types from the compiled OCSF schema, from a spec that selects what to emit, and
 keep the generator internal to cnspec.
 
-- `cli/reporter/ocsf/gen.yaml` lists the classes, attributes and objects cnspec emits.
-- `cli/reporter/ocsf/schemas/schema-<version>.json.gz` holds the compiled schema per supported
+- `reports/ocsf/gen.yaml` lists the classes, attributes and objects cnspec emits.
+- `reports/ocsf/schemas/schema-<version>.json.gz` holds the compiled schema per supported
   version, produced by the OCSF Schema Compiler and checked in.
-- `cli/reporter/ocsf/internal/gen` reads both and emits `types.gen.go` and `enums.gen.go`:
+- `reports/ocsf/internal/gen` reads both and emits `types.gen.go` and `enums.gen.go`:
   attribute names, Go types, optionality, enum constants, captions, doc comments, and a
   constructor per class that fills in the classification attributes.
 - The same schemas are the input to `TestOcsfSchemaValidation`, which validates every emitted
@@ -72,9 +72,28 @@ Selection is the load-bearing part. "Compile the schema to Go and use all of it"
 existing libraries do and is exactly what does not work here; the spec is what keeps the
 Parquet schema at 24 columns and the object graph acyclic.
 
-The generator stays at `cli/reporter/ocsf/internal/gen`. It has one consumer, and a public
+The generator stays at `reports/ocsf/internal/gen`. It has one consumer, and a public
 module would mean a published API, a release process and cross-repo version bumps for no
 present benefit.
+
+### `reports/ocsf` imports no cnspec package, deliberately
+
+The schema package depends on `cockroachdb/errors`, `parquet-go` and the standard library, and
+on nothing of ours. Extracted with nothing but a `module go.mondoo.com/ocsf` line it builds and
+its tests pass, which is the whole of what publishing it would take — and that is why the
+property is worth stating rather than leaving to be rediscovered. One `policy.Score` in here
+would end it.
+
+So the mapping from a cnspec scan lives one directory down, in `reports/ocsf/convert`: which
+class a check becomes, how a score becomes a severity and a status, what travels in `unmapped`.
+The split is by direction of knowledge — `reports/ocsf` knows OCSF and nothing about cnspec,
+`convert` knows both — and `cli/reporter` sits above both with about fifteen lines that decide
+`-o ocsf-json` was asked for and where the bytes go.
+
+Neither package lives under `cli/` any more, because none of it is terminal-facing.
+`reports/reportdoc`, which every format reads its check documentation from, moved with them:
+it has to be reachable from both `reports/...` and `cli/reporter`, which an internal package
+under either would not be.
 
 ## Alternatives considered
 
@@ -87,15 +106,15 @@ present benefit.
   schema, 54–111 ms to parse at startup, a temp file (the loader takes a path, not a reader),
   and would not reach the Parquet path, which needs structs rather than maps.
 - **Publish `go.mondoo.com/ocsf`, or upstream the generator into `ocsf-toolkit`.** Both remain
-  open. The package boundary is deliberately clean — spec and schemas in, Go out — so either is
-  mechanical once a second consumer exists. Upstreaming is the better of the two if the
+  open. The package boundary is deliberately clean — spec and schemas in, Go out, and no cnspec
+  import in the package at all — so either is mechanical once a second consumer exists. Upstreaming is the better of the two if the
   generator matures: the OCSF project would maintain it, and the ecosystem has no Go codegen
   path today.
 
 ## Consequences
 
 - Adding or removing an attribute is an edit to `gen.yaml` plus
-  `go generate ./cli/reporter/ocsf/...`; nobody writes an OCSF struct field by hand.
+  `go generate ./reports/ocsf/...`; nobody writes an OCSF struct field by hand.
 - Generation fails when a listed attribute exists in no supported version, and annotates the
   ones that exist in only some. That is the `cpu_architecture` defect caught at generate time
   rather than at validation time.
@@ -180,8 +199,8 @@ files for classes it did not produce.
 
 ## References
 
-- `cli/reporter/ocsf/doc.go` — package documentation and the generation contract
-- `cli/reporter/ocsf/schemas/README.md` — how the compiled schemas are produced
+- `reports/ocsf/doc.go` — package documentation and the generation contract
+- `reports/ocsf/schemas/README.md` — how the compiled schemas are produced
 - [OCSF Schema](https://github.com/ocsf/ocsf-schema) ·
   [Schema Compiler](https://pypi.org/project/ocsf-schema-compiler/) ·
   [ocsf-toolkit](https://github.com/ocsf/ocsf-toolkit) ·

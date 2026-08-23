@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/cli/reporter/ocsf"
+	"go.mondoo.com/cnspec/reports/ocsf"
 )
 
 func TestParseConfig(t *testing.T) {

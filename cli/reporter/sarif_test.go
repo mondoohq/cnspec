@@ -6,16 +6,15 @@ package reporter
 import (
 	"bytes"
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/owenrumney/go-sarif/v2/sarif"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/cli/reporter/internal/reportfixture"
-	"go.mondoo.com/cnspec/cli/reporter/reportdoc"
+	"go.mondoo.com/cnspec/internal/reportfixture"
 	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/reports/reportdoc"
 	"go.mondoo.com/mql/cli/printer"
 	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
@@ -151,8 +150,7 @@ func TestSarifDeterministicOutput(t *testing.T) {
 // would make rule ids (and with them the fingerprints consumers dedup on) flip
 // between runs of the same report.
 func TestSarifDeterministicRuleIDs(t *testing.T) {
-	raw, err := os.ReadFile("./testdata/report-ubuntu.json")
-	require.NoError(t, err)
+	raw := reportfixture.UbuntuScanJSON()
 
 	var first string
 	for i := 0; i < 5; i++ {
@@ -422,7 +420,7 @@ func TestSarifResultKinds(t *testing.T) {
 }
 
 func TestSarifDetailedRuleContent(t *testing.T) {
-	report := toSarif(t, detailedReportCollection())
+	report := toSarif(t, reportfixture.Detailed())
 	require.Len(t, report.Runs, 1)
 	run := report.Runs[0]
 
@@ -479,7 +477,7 @@ func TestSarifDetailedRuleContent(t *testing.T) {
 }
 
 func TestSarifRuleSeverity(t *testing.T) {
-	yr := detailedReportCollection()
+	yr := reportfixture.Detailed()
 	yr.Bundle.Queries[0].Impact = &policy.Impact{Value: &policy.ImpactValue{Value: 80}}
 
 	run := toSarif(t, yr).Runs[0]
@@ -496,7 +494,7 @@ func TestSarifRuleSeverity(t *testing.T) {
 }
 
 func TestSarifComplianceTags(t *testing.T) {
-	yr := detailedReportCollection()
+	yr := reportfixture.Detailed()
 	yr.Bundle.Queries[0].Tags = map[string]string{
 		"compliance/iso-27001-2022": "iso-27001-2022-a-8-24",
 		"compliance/bsi-sys-1-5":    "false", // explicitly turned off, must be dropped
@@ -518,7 +516,7 @@ func TestSarifComplianceTags(t *testing.T) {
 }
 
 func TestSarifVulnerabilities(t *testing.T) {
-	yr := detailedReportCollection()
+	yr := reportfixture.Detailed()
 	assetMrn := "//assets.api.mondoo.app/spaces/test/assets/abc"
 	yr.VulnReports = map[string]*mvd.VulnReport{
 		assetMrn: {
@@ -589,8 +587,7 @@ func resultMessages(run *sarif.Run) string {
 // SARIF report too - the static documentation on the rule, the dynamic outcome on
 // the result.
 func TestSarifMatchesDetailedJunitContent(t *testing.T) {
-	raw, err := os.ReadFile("./testdata/report-ubuntu.json")
-	require.NoError(t, err)
+	raw := reportfixture.UbuntuScanJSON()
 	yr := &policy.ReportCollection{}
 	require.NoError(t, json.Unmarshal(raw, yr))
 

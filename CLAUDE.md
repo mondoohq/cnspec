@@ -14,7 +14,8 @@ cnspec is an open-source, cloud-native security and policy project that assesses
 - **`policy/`** — policy engine core (resolution, execution, scoring). See `policy/CLAUDE.md` for engine internals, scanning flow, and protobuf/gRPC patterns.
 - **`content/`** — default security policies (`*.mql.yaml`) and, under `querypacks/`, data-collection bundles that do not score. `content/CLAUDE.md` holds the authoring rules (variants, compliance tags, MQL semantics); `content/README.md` is the user-facing catalog.
 - **`content/validation/`** — every test and validator that runs against those policies, plus its fixtures. `content/validation/README.md` is the definitive reference for content validation.
-- **`cli/`** — reusable CLI components and reporters (SARIF, JUnit, JSON, …).
+- **`cli/`** — terminal-facing components, and the output formats still coupled to the CLI (compact, SARIF, JUnit, JSON, CSV). `cli/reporter` also owns `PrintConfig`, the format registry and the output handlers for every format.
+- **`reports/`** — the report standards, none of which is terminal-facing. `reports/ocsf` is the OCSF schema and **imports no cnspec package**, deliberately, so it stays extractable as `go.mondoo.com/ocsf` (see `docs/adr/0005-ocsf-type-generation.md`); cnspec's mapping onto it lives in `reports/ocsf/convert`. `reports/hdf` is OHDF, and `reports/reportdoc` is what every format reads a check's documentation and outcome from.
 - **`internal/bundle/`, `internal/datalakes/`, `internal/lsp/`** — bundle loading, storage, LSP support.
 - **`examples/`, `test/`, `docs/`** — examples, integration tests, docs.
 

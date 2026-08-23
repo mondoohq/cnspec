@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/jstemmer/go-junit-report/v2/junit"
-	"go.mondoo.com/cnspec/cli/reporter/reportdoc"
 	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/reports/reportdoc"
 	"go.mondoo.com/mql/cli/printer"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/utils/iox"

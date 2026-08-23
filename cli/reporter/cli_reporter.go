@@ -11,8 +11,9 @@ import (
 	"os"
 
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/cli/reporter/hdf"
 	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/reports/hdf"
+	ocsfconvert "go.mondoo.com/cnspec/reports/ocsf/convert"
 	"go.mondoo.com/mql"
 	"go.mondoo.com/mql/cli/printer"
 	"go.mondoo.com/mql/cli/theme/colors"
@@ -170,7 +171,7 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 		writer := iox.IOWriter{Writer: r.out}
 		return hdf.Convert(data, &writer)
 	case FormatOcsfJson:
-		return ConvertToOCSFJSON(data, r.Conf, r.out)
+		return ocsfconvert.Convert(data, r.out, r.Conf.ocsfOptions())
 	case FormatOcsfParquet:
 		// Parquet is a binary, seek-and-footer format with one event class per
 		// file. It needs a destination directory, never a terminal.
@@ -208,7 +209,7 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
 	case FormatHDF:
 		return errors.New("'hdf' is not supported for vuln reports, please use one of the other formats")
 	case FormatOcsfJson:
-		return VulnReportToOCSFJSON(target, data, r.Conf.ocsfVersion, r.out)
+		return ocsfconvert.ConvertVulnReport(target, data, r.Conf.ocsfVersion, r.out)
 	case FormatOcsfParquet:
 		return errors.New("'ocsf-parquet' is not supported for vuln reports, please use 'ocsf-json'")
 	case FormatCSV:

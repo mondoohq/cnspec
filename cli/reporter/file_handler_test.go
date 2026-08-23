@@ -5,7 +5,6 @@ package reporter
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -14,15 +13,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/internal/reportfixture"
 )
 
 func TestFileHandler(t *testing.T) {
-	reportCollectionRaw, err := os.ReadFile("./testdata/report-ubuntu.json")
-	require.NoError(t, err)
-
-	yr := &policy.ReportCollection{}
-	err = json.Unmarshal(reportCollectionRaw, yr)
+	yr, err := reportfixture.UbuntuScan()
 	require.NoError(t, err)
 
 	now := time.Now().Format(time.RFC3339)

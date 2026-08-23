@@ -12,8 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/cli/reporter/internal/reportfixture"
-	"go.mondoo.com/cnspec/cli/reporter/ocsf"
+	"go.mondoo.com/cnspec/internal/reportfixture"
+	"go.mondoo.com/cnspec/reports/ocsf"
 )
 
 func TestOutputHandlerAwsSqs(t *testing.T) {
@@ -128,7 +128,7 @@ func TestOutputHandlerOcsfFindingsDetection(t *testing.T) {
 		OutputTarget: dir,
 	})
 	require.NoError(t, err)
-	require.IsType(t, &ocsfFileHandler{}, handler)
+	require.IsType(t, &ocsfDirHandler{}, handler)
 	require.NoError(t, handler.WriteReport(t.Context(), reportfixture.Sample()))
 
 	require.NoFileExists(t, filepath.Join(dir, ocsf.ClassComplianceFinding+".jsonl"),
@@ -151,4 +151,54 @@ func TestOutputHandlerOcsfFindingsDetection(t *testing.T) {
 		// unmapped instead.
 		assert.NotContains(t, event, "compliance")
 	}
+}
+
+// TestOutputHandlerOcsfTargets pins which handler each OCSF target reaches, which
+// is the whole of what cli/reporter decides about this format.
+//
+// ocsf-json writes every class into one newline-delimited stream unless the
+// target names a directory, and "names a directory" is isDirTarget for every
+// format alike -- an extensionless path that does not exist is a file, not a
+// directory to fill with per-class files. ocsf-parquet has no single-file form,
+// so it takes the directory branch whatever the target looks like.
+func TestOutputHandlerOcsfTargets(t *testing.T) {
+	dir := t.TempDir()
+	existingDir := filepath.Join(dir, "events")
+	require.NoError(t, os.Mkdir(existingDir, 0o755))
+
+	tests := []struct {
+		name   string
+		format string
+		target string
+		want   OutputHandler
+	}{
+		{"ocsf-json to a file", "ocsf-json", filepath.Join(dir, "report.jsonl"), &localFileHandler{}},
+		{"ocsf-json to an extensionless path", "ocsf-json", filepath.Join(dir, "results"), &localFileHandler{}},
+		{"ocsf-json to an existing directory", "ocsf-json", existingDir, &ocsfDirHandler{}},
+		{"ocsf-json to a trailing separator", "ocsf-json", filepath.Join(dir, "out") + "/", &ocsfDirHandler{}},
+		{"ocsf-parquet is always a directory", "ocsf-parquet", filepath.Join(dir, "report.parquet"), &ocsfDirHandler{}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			handler, err := NewOutputHandler(HandlerConfig{Format: tc.format, OutputTarget: tc.target})
+			require.NoError(t, err)
+			require.IsType(t, tc.want, handler)
+		})
+	}
+}
+
+// TestOutputHandlerOcsfJsonSingleFile walks the file branch end to end: one
+// stream, every class in it.
+func TestOutputHandlerOcsfJsonSingleFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "report.jsonl")
+
+	handler, err := NewOutputHandler(HandlerConfig{Format: "ocsf-json", OutputTarget: "file://" + path})
+	require.NoError(t, err)
+	require.NoError(t, handler.WriteReport(t.Context(), reportfixture.Sample()))
+
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	assert.Len(t, lines, 4, "3 checks + 1 inventory event, all in one stream")
 }
