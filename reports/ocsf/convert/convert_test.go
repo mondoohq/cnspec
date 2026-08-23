@@ -34,6 +34,13 @@ func toOcsf(t *testing.T, r *policy.ReportCollection) *ocsf.Events {
 	return events
 }
 
+// findingByRule finds the finding a rule produced on the sample fixture's asset.
+// The lookup composes the uid rather than matching the rule id alone because
+// finding_info.uid identifies a check *on an asset*; see findingUID.
+func findingByRule(events *ocsf.Events, ruleID string) *ocsf.ComplianceFinding {
+	return findingByUID(events, ruleID+"/"+reportfixture.AssetMrn)
+}
+
 func findingByUID(events *ocsf.Events, uid string) *ocsf.ComplianceFinding {
 	for i := range events.ComplianceFindings {
 		if events.ComplianceFindings[i].FindingInfo.UID == uid {
@@ -65,7 +72,7 @@ func TestOcsfConverter(t *testing.T) {
 	}
 
 	// a passing check is informational and compliant
-	pass := findingByUID(events, "mondoo-linux-security-snmp-server-is-not-enabled")
+	pass := findingByRule(events, "mondoo-linux-security-snmp-server-is-not-enabled")
 	require.NotNil(t, pass)
 	assert.Equal(t, ocsf.SeverityInformational, pass.SeverityID)
 	assert.Equal(t, ocsf.ComplianceStatusPass, pass.Compliance.StatusID)
@@ -74,14 +81,14 @@ func TestOcsfConverter(t *testing.T) {
 	assert.Contains(t, pass.Message, "PASS")
 
 	// an errored check is reported as a coverage gap, not as a compliance verdict
-	errored := findingByUID(events, "mondoo-kubernetes-security-kubelet-event-record-qps")
+	errored := findingByRule(events, "mondoo-kubernetes-security-kubelet-event-record-qps")
 	require.NotNil(t, errored)
 	assert.Equal(t, ocsf.SeverityMedium, errored.SeverityID)
 	assert.Equal(t, ocsf.ComplianceStatusUnknown, errored.Compliance.StatusID)
 	assert.Equal(t, ocsf.StatusOther, errored.StatusID)
 
 	// a skipped check is suppressed
-	skipped := findingByUID(events, "mondoo-kubernetes-security-secure-scheduler_conf")
+	skipped := findingByRule(events, "mondoo-kubernetes-security-secure-scheduler_conf")
 	require.NotNil(t, skipped)
 	assert.Equal(t, ocsf.StatusSuppressed, skipped.StatusID)
 	assert.Equal(t, ocsf.ComplianceStatusOther, skipped.Compliance.StatusID)
@@ -110,7 +117,11 @@ func TestOcsfVulnerabilityFindings(t *testing.T) {
 	assert.Equal(t, ocsf.ClassUIDVulnerabilityFinding, vuln.ClassUID)
 	assert.EqualValues(t, ocsf.VulnerabilityFindingTypeUIDCreate, vuln.TypeUID)
 	assert.Equal(t, ocsf.SeverityCritical, vuln.SeverityID, "an advisory score of 95 is critical")
-	assert.Equal(t, "USN-1234-1", vuln.FindingInfo.UID)
+	// One finding is one advisory on one asset, so the uid carries both. The
+	// advisory id alone repeats across every asset it affects, which collapses a
+	// fleet to one row for anything correlating on this field.
+	assert.Equal(t, "USN-1234-1/"+reportfixture.AssetMrn, vuln.FindingInfo.UID)
+	assert.Contains(t, vuln.FindingInfo.UID, "USN-1234-1", "the advisory is still recoverable from the uid")
 
 	require.Len(t, vuln.Vulnerabilities, 1, "one entry per CVE of the advisory")
 	require.NotNil(t, vuln.Vulnerabilities[0].CVE)
@@ -178,7 +189,8 @@ func TestOcsfComplianceMappings(t *testing.T) {
 	assert.Equal(t, []string{"1.4", "a-8-24"}, finding.Compliance.Requirements)
 	assert.Equal(t, "1.4", finding.Compliance.Control)
 	assert.Equal(t, ocsf.ComplianceStatusFail, finding.Compliance.StatusID)
-	assert.Equal(t, ocsf.SeverityCritical, finding.SeverityID, "a score of 0 is a risk of 100")
+	assert.Equal(t, ocsf.SeverityCritical, finding.SeverityID,
+		"with no declared impact the risk stands in, and a score of 0 is a risk of 100")
 
 	// the check documentation travels with the finding
 	assert.Equal(t, "Root login over SSH should be disabled.", finding.FindingInfo.Desc)
@@ -238,7 +250,7 @@ func TestOcsfAssetError(t *testing.T) {
 	report.Errors = map[string]string{assetMrn: "could not connect to the asset"}
 
 	events := toOcsf(t, report)
-	errFinding := findingByUID(events, "asset-error")
+	errFinding := findingByRule(events, "asset-error")
 	require.NotNil(t, errFinding, "an asset that failed to scan must not look clean")
 	assert.Equal(t, ocsf.SeverityHigh, errFinding.SeverityID)
 	assert.Equal(t, ocsf.StatusOther, errFinding.StatusID)
@@ -486,7 +498,8 @@ func TestOcsfDetectionFindings(t *testing.T) {
 	finding := events.DetectionFindings[0]
 	assert.Equal(t, ocsf.ClassUIDDetectionFinding, finding.ClassUID)
 	assert.EqualValues(t, ocsf.DetectionFindingTypeUIDCreate, finding.TypeUID)
-	assert.Equal(t, ocsf.SeverityCritical, finding.SeverityID)
+	assert.Equal(t, ocsf.SeverityHigh, finding.SeverityID,
+		"the check declares impact 80, and severity follows the declared impact")
 
 	// the risk and impact attributes 2004 has, which 2003 does not
 	assert.Equal(t, 100, finding.RiskScore, "a score of 0 is a risk of 100")

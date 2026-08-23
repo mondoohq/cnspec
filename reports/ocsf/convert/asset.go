@@ -138,7 +138,7 @@ func osTypeOf(platform *inventory.Platform) int {
 // buildCloud fills in the cloud environment of an asset. It returns nil for
 // assets that are not cloud resources, which keeps the cloud profile off those
 // events.
-func buildCloud(asset *inventory.Asset) *ocsf.Cloud {
+func buildCloud(asset *inventory.Asset, version ocsf.Version) *ocsf.Cloud {
 	provider := cloudProvider(asset)
 	if provider == "" {
 		return nil
@@ -153,7 +153,17 @@ func buildCloud(asset *inventory.Asset) *ocsf.Cloud {
 	}
 	for _, id := range asset.PlatformIds {
 		if project, ok := platformIDSegment(id, "/runtime/gcp/projects/"); ok {
-			res.ProjectUID = project
+			// A GCP project is the account of a GCP asset, and account.uid is where
+			// OCSF wants it. project_uid used to be the only home for it, but 1.9
+			// deprecates the attribute in favor of account.uid -- a validator warns
+			// on every event of a GCP asset that still carries it, so it is gated
+			// the same way compliance.status_detail and device_hw_info.cpu_type
+			// are. Setting the account regardless is what keeps the project id in
+			// the document at 1.9, where project_uid is gone.
+			res.Account = &ocsf.Account{UID: project, Type: "GCP Project"}
+			if !version.AtLeast(ocsf.Version190) {
+				res.ProjectUID = project
+			}
 		}
 		if sub, ok := platformIDSegment(id, "/runtime/azure/subscriptions/"); ok {
 			res.Account = &ocsf.Account{UID: sub, Type: "Azure Subscription"}

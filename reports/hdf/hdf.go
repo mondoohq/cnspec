@@ -227,7 +227,11 @@ func ConvertToDir(r *policy.ReportCollection, dir string) ([]string, error) {
 		return nil, err
 	}
 
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// 0700, not 0755: an OHDF document carries the MQL source of every check, the
+	// rendered assessment with the observed values in it, and the asset's platform
+	// and cloud identity. A scan is routinely run as root, and a world-readable
+	// directory under it hands all of that to every local account.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
 
@@ -252,7 +256,8 @@ func ConvertToDir(r *policy.ReportCollection, dir string) ([]string, error) {
 
 // writeHDFFile renders one document to its own file.
 func writeHDFFile(report *hdfReport, path string) error {
-	f, err := os.Create(path)
+	// os.Create would leave the document 0644; see ConvertToDir for what is in it.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}

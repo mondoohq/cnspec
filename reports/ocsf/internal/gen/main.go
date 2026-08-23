@@ -15,6 +15,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"flag"
 	"fmt"
@@ -130,7 +131,7 @@ func run() error {
 	if len(paths) == 0 {
 		return fmt.Errorf("no compiled schemas in %s", filepath.Join(root, "schemas"))
 	}
-	sort.Strings(paths)
+	sortSchemaPaths(paths)
 
 	schemas := make([]schema, 0, len(paths))
 	for _, path := range paths {
@@ -138,7 +139,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		want := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), "schema-"), ".json.gz")
+		want := schemaVersion(path)
 		if s.Version != want {
 			return fmt.Errorf("%s declares version %q", filepath.Base(path), s.Version)
 		}
@@ -167,6 +168,69 @@ func run() error {
 		}
 	}
 	return nil
+}
+
+// sortSchemaPaths orders the schema files oldest first, by version number rather
+// than by filename.
+//
+// lookup takes the caption and documentation of the first schema that has an
+// attribute, so this order decides which version's wording every generated field
+// carries. Lexicographically "schema-1.10.0" sorts before "schema-1.3.0", so
+// sorting the names as strings would silently make the newest schema the source
+// of truth for the oldest as soon as a 1.10 arrives -- rewriting every doc
+// comment in the generated file, from a change nobody would read as reordering
+// anything.
+func sortSchemaPaths(paths []string) {
+	slices.SortFunc(paths, func(a, b string) int {
+		return compareVersions(schemaVersion(a), schemaVersion(b))
+	})
+}
+
+// schemaVersion is the version a schema file's name declares, e.g. "1.9.0" for
+// schemas/schema-1.9.0.json.gz.
+func schemaVersion(path string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), "schema-"), ".json.gz")
+}
+
+// compareVersions orders two dotted version numbers component by component, so
+// 1.9.0 sorts before 1.10.0. A component that is not a number sorts last and
+// then compares as text, which keeps the order total for a filename that is not
+// a version at all rather than silently treating it as 0.
+func compareVersions(a, b string) int {
+	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(as) && i < len(bs); i++ {
+		an, aok := parseUint(as[i])
+		bn, bok := parseUint(bs[i])
+		switch {
+		case aok && bok && an != bn:
+			return cmp.Compare(an, bn)
+		case aok != bok:
+			// the numeric component is the older-style one; it sorts first
+			if aok {
+				return -1
+			}
+			return 1
+		case !aok && as[i] != bs[i]:
+			return strings.Compare(as[i], bs[i])
+		}
+	}
+	return cmp.Compare(len(as), len(bs))
+}
+
+// parseUint is strconv.Atoi restricted to a non-negative number, reported as a
+// pair rather than an error because the caller only branches on it.
+func parseUint(raw string) (int, bool) {
+	if raw == "" {
+		return 0, false
+	}
+	n := 0
+	for _, r := range raw {
+		if r < '0' || r > '9' {
+			return 0, false
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n, true
 }
 
 // packageRoot is the ocsf package directory, two levels up from internal/gen.

@@ -159,7 +159,7 @@ func (c *converter) stream(r *policy.ReportCollection, emit func(*ocsf.Events) e
 			platformKeys: reportdoc.PlatformRemediationKeys(asset.Platform),
 			policyTitles: policyTitles,
 			device:       buildDevice(asset, c.version),
-			cloud:        buildCloud(asset),
+			cloud:        buildCloud(asset, c.version),
 			resource:     buildResource(asset),
 		}
 

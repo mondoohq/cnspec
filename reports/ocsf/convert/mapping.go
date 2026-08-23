@@ -19,9 +19,37 @@ import (
 	"go.mondoo.com/mql/cli/printer"
 )
 
-func (c *converter) findingInfo(query *policy.Mquery, score *policy.Score, title string) ocsf.FindingInfo {
+// findingUID identifies one finding: one check on one asset.
+//
+// OCSF defines finding_info.uid as "the unique identifier of the reported
+// finding", and a finding is a check *on an asset* -- so the rule id alone is not
+// it. With the rule id there, count(DISTINCT finding_info.uid) over a 500-asset
+// scan returns the number of checks, and every asset's copy of a check collapses
+// onto one row in any consumer that keys on the uid. Prowler, the producer this
+// class is modeled on, splits the two the same way: the finding gets a per-asset
+// uid and the rule stays in analytic.uid, which is where cnspec already puts it
+// (and in compliance.control for class 2003).
+//
+// It is composed rather than hashed so it stays readable, and it is composed of
+// nothing but the two identities, so two runs of the same scan produce the same
+// uid.
+func findingUID(ruleID string, ctx *assetContext) string {
+	if ctx == nil {
+		return ruleID
+	}
+	asset := ctx.assetMrn
+	if asset == "" {
+		asset = ctx.resource.UID
+	}
+	if asset == "" {
+		return ruleID
+	}
+	return ruleID + "/" + asset
+}
+
+func (c *converter) findingInfo(query *policy.Mquery, score *policy.Score, title string, ctx *assetContext) ocsf.FindingInfo {
 	res := ocsf.FindingInfo{
-		UID:           reportdoc.QueryRuleID(query),
+		UID:           findingUID(reportdoc.QueryRuleID(query), ctx),
 		Title:         title,
 		Desc:          reportdoc.QueryDescription(query),
 		CreatedTime:   c.now,
@@ -123,8 +151,21 @@ func refURLs(query *policy.Mquery) []string {
 }
 
 // checkSeverity maps a check outcome to an OCSF severity. A check that passed
-// or did not run is informational; a failing one carries the severity of its risk.
-func checkSeverity(score *policy.Score) int {
+// or did not run is informational; a failing one carries the severity the policy
+// author gave it.
+//
+// That severity is the check's declared impact, not its risk. A leaf check's
+// score.Value is exactly 100 or 0 -- policy/executor/internal/nodes.go scores a
+// check as one or the other, never in between -- so ScoreRisk is 100 for every
+// failure, and deriving the severity from it reports the whole scan as Critical.
+// The declared impact is the only thing that distinguishes a failing check from
+// its neighbour, which is why the SARIF reporter has always read
+// reportdoc.QueryImpact for its severity and security-severity properties.
+//
+// Risk stays as the fallback for a check with no impact set, where it is the only
+// signal there is. Aggregate (non-leaf) scores do land between 0 and 100, and for
+// those the risk band is meaningful.
+func checkSeverity(query *policy.Mquery, score *policy.Score) int {
 	if score == nil {
 		return ocsf.SeverityInformational
 	}
@@ -136,6 +177,9 @@ func checkSeverity(score *policy.Score) int {
 	case policy.ScoreType_Result:
 		if score.Value == 100 {
 			return ocsf.SeverityInformational
+		}
+		if impact, ok := reportdoc.QueryImpact(query); ok {
+			return severityFromRisk(impact)
 		}
 		return severityFromRisk(reportdoc.ScoreRisk(score))
 	default:
