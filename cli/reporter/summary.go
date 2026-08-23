@@ -27,56 +27,79 @@ func NewSummaryRenderer(print *printer.Printer) *summaryPrinter {
 	}
 }
 
-type summaryStats struct {
-	assetScores map[string]*policy.Score
-	assetNames  map[string]string
-	policyStats map[string][]*policy.Score
-	policyNames map[string]string
+// SummaryStats is the per-asset and per-policy view of a report collection: the
+// score of every asset (synthesized for assets that errored or were never
+// reported on) and, per policy, one score per asset. It is what the summary
+// renderer draws and what the report viewer filters on.
+type SummaryStats struct {
+	// AssetScores maps an asset MRN to its overall score.
+	AssetScores map[string]*policy.Score
+	// AssetNames maps an asset MRN to its human-readable name.
+	AssetNames map[string]string
+	// PolicyStats maps a policy MRN to the score it got on each asset, in the
+	// order the assets were visited.
+	PolicyStats map[string][]*policy.Score
+	// PolicyNames maps a policy MRN to its human-readable name.
+	PolicyNames map[string]string
 }
 
-func (s *summaryPrinter) GenerateStats(report *policy.ReportCollection) summaryStats {
+// GenerateStats extracts the per-asset and per-policy scores from a report
+// collection. An asset with no report is not an asset without findings: it gets
+// a synthesized ScoreType_Error score carrying the scan error, or a
+// ScoreType_Unknown score when there is no error either.
+func GenerateStats(report *policy.ReportCollection) SummaryStats {
 	// stats data
-	stats := summaryStats{
-		assetScores: map[string]*policy.Score{},
-		assetNames:  map[string]string{},
-		policyStats: map[string][]*policy.Score{},
-		policyNames: map[string]string{},
+	stats := SummaryStats{
+		AssetScores: map[string]*policy.Score{},
+		AssetNames:  map[string]string{},
+		PolicyStats: map[string][]*policy.Score{},
+		PolicyNames: map[string]string{},
 	}
 
 	// extract statistics from scan report
-	pbm := report.Bundle.ToMap()
+	//
+	// A collection can arrive without a bundle: a scan where every asset failed
+	// to connect never resolves policies, so there is nothing to attach. That is
+	// the case a caller most wants stats for -- it is the difference between
+	// "no findings" and "nothing ran" -- so it must not be the case that panics.
+	// An empty map rather than a nil one: the policy loop below then simply
+	// finds nothing, instead of every caller needing its own guard.
+	pbm := &policy.PolicyBundleMap{}
+	if report.Bundle != nil {
+		pbm = report.Bundle.ToMap()
+	}
 	for assetMrn := range report.Assets {
-		stats.assetNames[assetMrn] = report.Assets[assetMrn].Name
+		stats.AssetNames[assetMrn] = report.Assets[assetMrn].Name
 		assetReport, ok := report.Reports[assetMrn]
 		if !ok {
 			if errMsg := report.Errors[assetMrn]; errMsg != "" {
-				stats.assetScores[assetMrn] = &policy.Score{
+				stats.AssetScores[assetMrn] = &policy.Score{
 					QrId:    assetMrn,
 					Type:    policy.ScoreType_Error,
 					Message: errMsg,
 				}
 			} else {
-				stats.assetScores[assetMrn] = &policy.Score{
+				stats.AssetScores[assetMrn] = &policy.Score{
 					QrId: assetMrn,
 					Type: policy.ScoreType_Unknown,
 				}
 			}
 			continue
 		} else {
-			stats.assetScores[assetMrn] = assetReport.Scores[assetMrn]
+			stats.AssetScores[assetMrn] = assetReport.Scores[assetMrn]
 		}
-		// stats.assetNames[assetMrn] = report.Assets[assetMrn].Name
+		// stats.AssetNames[assetMrn] = report.Assets[assetMrn].Name
 
 		// iterate over each policy to get the score results per assets
 		for k := range pbm.Policies {
 			p := pbm.Policies[k]
-			stats.policyNames[k] = p.Name
+			stats.PolicyNames[k] = p.Name
 
 			score := assetReport.Scores[k]
-			if stats.policyStats[k] == nil {
-				stats.policyStats[k] = []*policy.Score{}
+			if stats.PolicyStats[k] == nil {
+				stats.PolicyStats[k] = []*policy.Score{}
 			}
-			stats.policyStats[k] = append(stats.policyStats[k], score)
+			stats.PolicyStats[k] = append(stats.PolicyStats[k], score)
 		}
 	}
 
@@ -84,7 +107,7 @@ func (s *summaryPrinter) GenerateStats(report *policy.ReportCollection) summaryS
 }
 
 func (s *summaryPrinter) Render(report *policy.ReportCollection) string {
-	summaryStats := s.GenerateStats(report)
+	stats := GenerateStats(report)
 
 	var res bytes.Buffer
 	res.WriteString(s.print.H1("Summary"))
@@ -95,12 +118,12 @@ func (s *summaryPrinter) Render(report *policy.ReportCollection) string {
 
 	// render policy list
 	microScoreCard := components.NewMicroScoreCard()
-	for k := range summaryStats.assetScores {
-		score := summaryStats.assetScores[k]
+	for k := range stats.AssetScores {
+		score := stats.AssetScores[k]
 		res.WriteString("■ ")
 		res.WriteString(microScoreCard.Render(score))
 		res.WriteString(" ")
-		res.WriteString(summaryStats.assetNames[k])
+		res.WriteString(stats.AssetNames[k])
 		res.WriteString(NewLineCharacter)
 	}
 	res.WriteString(NewLineCharacter)
@@ -122,19 +145,19 @@ func (s *summaryPrinter) Render(report *policy.ReportCollection) string {
 		Entries: []components.StackBarDataEntry{},
 	}
 
-	if len(summaryStats.policyStats) > 0 {
+	if len(stats.PolicyStats) > 0 {
 
 		entries := []components.StackBarDataEntry{}
 		ratings := []map[string]int{}
 
-		for k := range summaryStats.policyNames {
+		for k := range stats.PolicyNames {
 			// We are looking for MRNs that are policies only. Everything else
 			// may be filtered
 			if err := policy.IsPolicyMrn(k); err != nil {
 				continue
 			}
 
-			scores := summaryStats.policyStats[k]
+			scores := stats.PolicyStats[k]
 			total := 0
 			r := map[string]int{}
 			for i := range scores {
@@ -166,7 +189,7 @@ func (s *summaryPrinter) Render(report *policy.ReportCollection) string {
 			ratings = append(ratings, r)
 
 			entry := components.StackBarDataEntry{
-				Key:    summaryStats.policyNames[k],
+				Key:    stats.PolicyNames[k],
 				Values: []float64{0, 0, 0, 0, 0, 0},
 			}
 
