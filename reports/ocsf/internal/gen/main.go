@@ -25,6 +25,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"sigs.k8s.io/yaml"
@@ -223,12 +224,17 @@ func parseUint(raw string) (int, bool) {
 	if raw == "" {
 		return 0, false
 	}
-	n := 0
 	for _, r := range raw {
 		if r < '0' || r > '9' {
 			return 0, false
 		}
-		n = n*10 + int(r-'0')
+	}
+	// Digits only above, so Atoi cannot see a sign here; it is used for the
+	// conversion because it reports overflow, which accumulating by hand does
+	// not -- a long enough numeric filename would have wrapped silently.
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, false
 	}
 	return n, true
 }

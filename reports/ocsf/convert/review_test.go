@@ -257,6 +257,19 @@ func TestOcsfVulnCvssScoreIsACvssScore(t *testing.T) {
 	require.Len(t, events.VulnerabilityFindings, 1)
 	assert.Equal(t, "9.5", events.VulnerabilityFindings[0].Unmapped["cvss_score"],
 		"the advisory scores 95 on cnspec's 0-100 scale, which is CVSS 9.5")
+
+	// A whole number keeps its decimal. Shortest-round-trip formatting renders
+	// 100 as "10", which reads like a different scale again next to "9.5", and
+	// CVSS is published with one decimal everywhere.
+	//
+	// Only non-zero scores: a zero advisory score falls back to the package's,
+	// so it cannot be used to probe the formatting.
+	for score, want := range map[int32]string{100: "10.0", 70: "7.0", 55: "5.5"} {
+		r := advisoryReportCollection()
+		r.VulnReports[reportfixture.AssetMrn].Advisories[0].Score = score
+		got := toOcsf(t, r).VulnerabilityFindings[0].Unmapped["cvss_score"]
+		assert.Equal(t, want, got, "cnspec score %d", score)
+	}
 }
 
 // TestConvertToDirEmptyScanKeepsPreviousOutput covers a conversion that produces
