@@ -6,6 +6,8 @@ package reporter
 import (
 	"bytes"
 	"context"
+	"os"
+	"strings"
 
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/utils/iox"
@@ -43,6 +45,11 @@ func NewOutputHandler(config HandlerConfig) (OutputHandler, error) {
 	typ := determineOutputType(config.OutputTarget)
 	switch typ {
 	case LOCAL_FILE:
+		// An OHDF document describes a single asset, so a multi-asset scan needs a
+		// file each. Pointing --output-target at a directory asks for exactly that.
+		if conf.format == FormatHDF && isDirTarget(config.OutputTarget) {
+			return &hdfDirHandler{dir: strings.TrimPrefix(config.OutputTarget, "file://")}, nil
+		}
 		return &localFileHandler{file: config.OutputTarget, conf: conf}, nil
 	case AWS_SQS:
 		return &awsSqsHandler{sqsQueueUrl: config.OutputTarget, format: conf.format}, nil
@@ -72,6 +79,20 @@ func determineOutputType(target string) OutputTarget {
 	}
 
 	return LOCAL_FILE
+}
+
+// isDirTarget reports whether an output target names a directory: one that already
+// exists, or a path written with a trailing separator to ask for one.
+func isDirTarget(target string) bool {
+	target = strings.TrimPrefix(target, "file://")
+	if target == "" {
+		return false
+	}
+	if strings.HasSuffix(target, "/") || strings.HasSuffix(target, string(os.PathSeparator)) {
+		return true
+	}
+	info, err := os.Stat(target)
+	return err == nil && info.IsDir()
 }
 
 func reportToYamlV1(report *policy.ReportCollection) ([]byte, error) {

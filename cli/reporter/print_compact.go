@@ -18,6 +18,7 @@ import (
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
 	cnspecComponents "go.mondoo.com/cnspec/cli/components"
+	"go.mondoo.com/cnspec/cli/reporter/reportdoc"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
@@ -189,7 +190,7 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 		if val, ok := asset.Labels["mondoo.com/project-id"]; ok {
 			projectId = val
 		}
-		platformName := getPlatformNameForAsset(asset)
+		platformName := reportdoc.PlatformName(asset)
 		if platformName != "" {
 			assetsByPlatform[platformName] = append(assetsByPlatform[platformName], asset)
 		}
@@ -325,7 +326,7 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 			target = assetMrn
 		}
 
-		r.out(r.Printer.H2("Asset: (" + getPlatformNameForAsset(asset) + ") " + target))
+		r.out(r.Printer.H2("Asset: (" + reportdoc.PlatformName(asset) + ") " + target))
 		r.assetBodyPrinted = false
 
 		errorMsg, ok := r.data.Errors[assetMrn]

@@ -11,6 +11,7 @@ import (
 	"os"
 
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnspec/cli/reporter/hdf"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql"
 	"go.mondoo.com/mql/cli/printer"
@@ -165,6 +166,9 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 	case FormatSarif:
 		writer := iox.IOWriter{Writer: r.out}
 		return ConvertToSarif(data, &writer)
+	case FormatHDF:
+		writer := iox.IOWriter{Writer: r.out}
+		return hdf.Convert(data, &writer)
 	// case FormatCSV:
 	// 	res, err = data.ToCsv()
 	default:
@@ -194,6 +198,8 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
 		return errors.New("'junit' is not supported for vuln reports, please use one of the other formats")
 	case FormatSarif:
 		return errors.New("'sarif' is not supported for vuln reports, please use one of the other formats")
+	case FormatHDF:
+		return errors.New("'hdf' is not supported for vuln reports, please use one of the other formats")
 	case FormatCSV:
 		writer := iox.IOWriter{Writer: r.out}
 		return VulnReportToCSV(data, &writer)

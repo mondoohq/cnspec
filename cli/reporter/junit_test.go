@@ -11,110 +11,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.mondoo.com/cnspec/cli/reporter/internal/reportfixture"
+	"go.mondoo.com/cnspec/cli/reporter/reportdoc"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
-	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/mql/utils/iox"
 )
 
-func sampleReportCollection() *policy.ReportCollection {
-	return &policy.ReportCollection{
-		Assets: map[string]*inventory.Asset{
-			"//assets.api.mondoo.app/spaces/dazzling-golick-767384/assets/2DRZ1cCWFyTYCArycAXHwvn1oU2": {
-				Name:        "X1",
-				PlatformIds: []string{"//platformid.api.mondoo.app/hostname/X1"},
-				State:       inventory.State_STATE_ONLINE,
-				Platform: &inventory.Platform{
-					Name:    "ubuntu",
-					Arch:    "amd64",
-					Kind:    "baremetal",
-					Version: "22.04",
-					Family:  []string{"debian", "linux", "unix", "os"},
-				},
-			},
-		},
-		ResolvedPolicies: map[string]*policy.ResolvedPolicy{
-			"//assets.api.mondoo.app/spaces/dazzling-golick-767384/assets/2DRZ1cCWFyTYCArycAXHwvn1oU2": {
-				CollectorJob: &policy.CollectorJob{
-					ReportingQueries: map[string]*policy.StringArray{
-						"+u6doYoYG5E=": nil,
-						"057itYF8s30=": nil,
-						"GyJVAziB/tU=": nil,
-					},
-				},
-			},
-		},
-		Bundle: &policy.Bundle{
-			Policies: nil, // not needed for this test since junit does not sort by policy
-			Queries: []*policy.Mquery{
-				{
-					Mrn:    "//policy.api.mondoo.app/queries/mondoo-linux-security-snmp-server-is-not-enabled",
-					CodeId: "+u6doYoYG5E=",
-					Title:  "Ensure SNMP server is stopped and not enabled",
-				},
-				{
-					Mrn:    "//policy.api.mondoo.app/queries/mondoo-kubernetes-security-kubelet-event-record-qps",
-					CodeId: "057itYF8s30=",
-					Title:  "Configure kubelet to capture all event creation",
-				},
-				{
-					Mrn:    "//policy.api.mondoo.app/queries/mondoo-kubernetes-security-secure-scheduler_conf",
-					CodeId: "GyJVAziB/tU=",
-					Title:  "Set secure file permissions on the scheduler.conf file",
-				},
-			},
-		},
-		Reports: map[string]*policy.Report{
-			"//assets.api.mondoo.app/spaces/dazzling-golick-767384/assets/2DRZ1cCWFyTYCArycAXHwvn1oU2": {
-				ScoringMrn: "//assets.api.mondoo.app/spaces/dazzling-golick-767384/assets/2DRZ1cCWFyTYCArycAXHwvn1oU2",
-				EntityMrn:  "//assets.api.mondoo.app/spaces/dazzling-golick-767384/assets/2DRZ1cCWFyTYCArycAXHwvn1oU2",
-				Score: &policy.Score{
-					Value:           29,
-					ScoreCompletion: 100,
-					DataCompletion:  100,
-				},
-				// add passed, failed and skipped test
-				Scores: map[string]*policy.Score{
-					"+u6doYoYG5E=": {
-						Type:  2, // result
-						Value: 100,
-					},
-					"057itYF8s30=": {
-						Type:  4, // error
-						Value: 0,
-					},
-					"GyJVAziB/tU=": {
-						Type:  8, // skip
-						Value: 0,
-					},
-				},
-			},
-		},
-		VulnReports: map[string]*mvd.VulnReport{
-			"//assets.api.mondoo.app/spaces/dazzling-golick-767384/assets/2DRZ1cCWFyTYCArycAXHwvn1oU2": {
-				Packages: []*mvd.Package{
-					{
-						Name:      "libssl1.1",
-						Version:   "1.1.1f-3ubuntu2.19",
-						Affected:  true,
-						Score:     100,
-						Available: "1.1.1f-3ubuntu2.20",
-					},
-				},
-				Stats: &mvd.ReportStats{
-					Packages: &mvd.ReportStatsPackages{
-						Total:    1,
-						Critical: 1,
-						Affected: 1,
-					},
-				},
-			},
-		},
-	}
-}
-
 func TestJunitConverter(t *testing.T) {
-	yr := sampleReportCollection()
+	yr := reportfixture.Sample()
 	buf := bytes.Buffer{}
 	writer := iox.IOWriter{Writer: &buf}
 	err := ConvertToJunit(yr, &writer, false)
@@ -262,23 +167,23 @@ func TestQueryRemediationPlatformFilter(t *testing.T) {
 	tf := &policy.TypedDoc{Id: "terraform", Desc: "terraform fix"}
 	def := &policy.TypedDoc{Id: "default", Desc: "generic fix"}
 
-	tfKeys := platformRemediationKeys(&inventory.Platform{Name: "terraform-hcl", Family: []string{"terraform"}})
+	tfKeys := reportdoc.PlatformRemediationKeys(&inventory.Platform{Name: "terraform-hcl", Family: []string{"terraform"}})
 
 	// family match ("terraform" via terraform-hcl) keeps only the terraform item
-	out := queryRemediation(mkQuery(console, tf), tfKeys)
+	out := reportdoc.QueryRemediation(mkQuery(console, tf), tfKeys)
 	assert.Contains(t, out, "[terraform] terraform fix")
 	assert.NotContains(t, out, "console fix")
 
 	// no platform-specific match -> fall back to all items (never drop remediation)
-	out = queryRemediation(mkQuery(console), tfKeys)
+	out = reportdoc.QueryRemediation(mkQuery(console), tfKeys)
 	assert.Contains(t, out, "[console] console fix")
 
 	// platform-agnostic "default" is kept and shown without a label
-	out = queryRemediation(mkQuery(def, console), tfKeys)
+	out = reportdoc.QueryRemediation(mkQuery(def, console), tfKeys)
 	assert.Contains(t, out, "generic fix")
 	assert.NotContains(t, out, "[default]")
 	assert.NotContains(t, out, "console fix")
 
 	// nil docs / nil remediation are safe
-	assert.Equal(t, "", queryRemediation(&policy.Mquery{}, tfKeys))
+	assert.Equal(t, "", reportdoc.QueryRemediation(&policy.Mquery{}, tfKeys))
 }
