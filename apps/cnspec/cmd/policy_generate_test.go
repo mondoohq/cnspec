@@ -263,22 +263,33 @@ func TestBundlePropsCarriesDefiningQuery(t *testing.T) {
 // generated query. It is the end-to-end proof for prop typing: the props a
 // check declares must reach the compiler carrying enough type information to
 // resolve `props.<name>`.
+//
+// Whether a check can say anything is decided by asking the provider registry
+// what is installed, never by inspecting the compile error. Both failures look
+// alike from the outside — a missing provider and an untyped prop each end in
+// "does not compile" — so a test that inferred the environment from the error
+// would quietly reclassify a real regression as "provider not installed" and
+// skip. It did exactly that when first written.
+//
+// Checks whose provider is installed are held strictly: they must compile. The
+// rest are unverifiable here and are counted, so a run that proved nothing
+// cannot be mistaken for a run that passed.
 func TestPropUsingContentChecksValidate(t *testing.T) {
 	v, err := generate.NewCompileValidator()
 	if err != nil {
-		t.Skipf("no validator: %v", err)
+		t.Skipf("no validator available: %v", err)
 	}
-	if err := v.(generate.ProviderChecker).CheckProvider("core"); err != nil {
-		t.Skipf("providers unavailable: %v", err)
+	checker, ok := v.(generate.ProviderChecker)
+	if !ok {
+		t.Skip("validator cannot report which providers are installed")
 	}
 
-	root := "../../../content"
-	files, _ := filepath.Glob(filepath.Join(root, "*.mql.yaml"))
+	files, _ := filepath.Glob(filepath.Join("../../../content", "*.mql.yaml"))
 	if len(files) == 0 {
 		t.Skip("content/ not present")
 	}
 
-	var checked, ok, failed int
+	var found, verified, unverifiable, failed int
 	var failures []string
 	for _, f := range files {
 		data, err := os.ReadFile(f)
@@ -296,22 +307,41 @@ func TestPropUsingContentChecksValidate(t *testing.T) {
 			if !strings.Contains(q.Mql, "props.") {
 				continue
 			}
-			checked++
-			if err := v.Validate(generate.ValidationRequest{MQL: q.Mql, Props: bundleProps(q)}); err != nil {
+			found++
+
+			props := bundleProps(q)
+			provider, _ := generate.ResolveProvider(generate.Check{
+				UID:     q.Uid,
+				Filters: bundle.QueryFilterStrings(q),
+			})
+			// an unresolved provider is not a safe "check it anyway": these are
+			// the os/network checks, whose resources are just as absent on a bare
+			// box as a named provider's would be.
+			if provider == "" || checker.CheckProvider(provider) != nil {
+				unverifiable++
+				continue
+			}
+
+			verified++
+			if err := v.Validate(generate.ValidationRequest{MQL: q.Mql, Props: props}); err != nil {
 				failed++
 				if len(failures) < 5 {
 					failures = append(failures, q.Uid+": "+err.Error())
 				}
-				continue
 			}
-			ok++
 		}
 	}
-	t.Logf("prop-using checks: %d checked, %d compiled, %d failed", checked, ok, failed)
-	if checked == 0 {
-		t.Fatal("checked 0 prop-using checks — the corpus walk found nothing, so this test asserts nothing")
+
+	t.Logf("prop-using checks: %d found, %d verified against installed providers, %d unverifiable",
+		found, verified, unverifiable)
+	if found == 0 {
+		t.Fatal("found 0 prop-using checks — the corpus walk found nothing, so this test asserts nothing")
 	}
-	if failed != 0 {
-		t.Errorf("%d/%d prop-using checks failed to compile:\n%s", failed, checked, strings.Join(failures, "\n"))
+	if failed > 0 {
+		t.Errorf("%d of %d verifiable prop-using checks failed to compile (first %d shown):\n%s",
+			failed, verified, len(failures), strings.Join(failures, "\n"))
+	}
+	if verified == 0 {
+		t.Skipf("no provider for any of the %d prop-using checks is installed; prop typing was not exercised", found)
 	}
 }
