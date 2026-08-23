@@ -12,9 +12,12 @@
 // platform being scanned - a Terraform scan showed Kubernetes remediation in one
 // format and not in another.
 //
-// Nothing here knows about an output format. That is what lets the format packages
-// (cli/reporter and cli/reporter/hdf) depend on it without depending on each other:
-// the OHDF converter lives in its own package precisely because it needs these
-// helpers, and a shared package underneath both is what keeps that from being an
-// import cycle.
+// Nothing here knows about an output format. That is what lets every format
+// package depend on it without depending on each other: the OHDF and OCSF
+// converters live in packages of their own precisely because they need these
+// helpers, and a shared package underneath all of them is what keeps that from
+// being an import cycle. It sits under reports/ rather than under cli/ for the
+// same reason they do - none of it is terminal-facing, and reports/reportdoc is
+// reachable from both reports/... and cli/reporter, which an internal package
+// under either would not be.
 package reportdoc

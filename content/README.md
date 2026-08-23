@@ -218,17 +218,60 @@ cnspec scan local -o hdf > results.hdf.json
 # An OHDF document describes one asset, so a multi-asset scan writes a file each
 cnspec scan k8s -o hdf --output-target ./hdf-results/
 
+# OCSF (security data lakes and SIEMs), newline-delimited JSON
+cnspec scan local -o ocsf-json > results.ocsf.jsonl
+
+# OCSF in Parquet, one file per event class, for Amazon Security Lake
+cnspec scan local -o ocsf-parquet --output-target ./ocsf/
+
+# OCSF as Detection Findings (2004), the class Splunk Enterprise Security models on
+cnspec scan local -o ocsf-json,ocsf-findings=detection --output-target ./ocsf/
+
 # Full detailed output
 cnspec scan local -o full
 ```
 
-The full set is `compact` (the default), `csv`, `full`, `hdf`, `json`, `json-v1`, `json-v2`, `junit`, `report`, `sarif`, `summary`, `yaml`, `yaml-v1`, and `yaml-v2`. Run `cnspec scan --help` for the current list.
+The full set is `compact` (the default), `csv`, `full`, `hdf`, `json`, `json-v1`, `json-v2`, `junit`, `ocsf-json`, `ocsf-parquet`, `report`, `sarif`, `summary`, `yaml`, `yaml-v1`, and `yaml-v2`. Run `cnspec scan --help` for the current list.
 
 `hdf` is the one format whose document is per-asset: Heimdall and the SAF CLI resolve
 an OHDF document down to a single profile, so several assets in one file would lose
 all but the first. Point `--output-target` at a directory (an existing one, or a path
 ending in `/`) to get one `<asset>.hdf.json` per asset. Sent to stdout, a multi-asset
 scan comes out as a JSON array of documents instead.
+
+The OCSF formats emit Compliance Finding (2003) per check, Vulnerability Finding (2002) per
+advisory, and Device Inventory Info (5001) per asset. `ocsf-findings=detection` reports checks
+as Detection Finding (2004) instead, which is the class Splunk Enterprise Security models
+findings on and the one Prowler emits. Every check is reported exactly once, in one class,
+with its outcome in `status_code`; class 2004 has no compliance object, so the framework
+mappings travel in `unmapped`, and it carries the risk and impact attributes 2003 lacks. They
+default to OCSF
+1.3.0, the highest version Amazon Security Lake accepts for custom sources; pass
+`-o ocsf-json,ocsf-version=1.9.0` for the current schema instead. Point `--output-target` at a
+directory (an existing one, or a path ending in `/`) to get one file per event class, or at a
+file to get every class in one newline-delimited JSON stream. `ocsf-parquet` is binary and
+per-class, so it always writes a directory whichever way the target is written. Re-running into
+the same directory removes the class files the new run does not produce, so switching
+`ocsf-findings` does not leave the previous run's findings behind to be counted twice.
+
+cnspec writes the events; it does not deliver them. Move the files with whatever already
+carries data into your lake or SIEM -- an S3 upload for Amazon Security Lake, a Splunk
+universal forwarder or a `curl` to an HTTP Event Collector -- or let Mondoo Platform deliver
+scan results to the destination for you.
+
+Two things to know before running this over a fleet:
+
+- **Prefer `ocsf-parquet` at scale.** The events repeat each check's query, description and
+  audit text once per asset, which Parquet's dictionary encoding collapses and newline-delimited
+  JSON does not. On a 200-asset, 50-check scan the same events are 19.8 MB of JSON against
+  0.1 MB of Parquet.
+- **The events carry scan content.** `status_detail` and `message` hold the assessment, which
+  includes the actual resource values a check compared, and `unmapped` holds the check's MQL and
+  audit steps. That is what makes a finding actionable, and it is the same content as SARIF's
+  detailed output, but it is worth knowing when the destination is a shared SIEM index.
+
+Every event of every supported version is validated in CI against the official compiled OCSF
+schema with the OCSF project's own validator, [`ocsf-toolkit`](https://github.com/ocsf/ocsf-toolkit).
 
 ## Policy Structure
 

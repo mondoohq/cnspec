@@ -13,8 +13,8 @@ import (
 
 	"github.com/owenrumney/go-sarif/v2/sarif"
 	"go.mondoo.com/cnspec"
-	"go.mondoo.com/cnspec/cli/reporter/reportdoc"
 	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/reports/reportdoc"
 	"go.mondoo.com/mql/cli/printer"
 	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
@@ -874,29 +874,27 @@ func scoreToSarifLevel(score *policy.Score) string {
 	}
 }
 
-// scoreToSarifKind maps a cnspec Score to a SARIF result kind. The kind tells
+// scoreToSarifKind maps a check outcome to a SARIF result kind. The kind tells
 // consumers what the result means; the level only says how loud it is. SARIF
 // requires the level to be "none" for every kind other than "fail", which
 // scoreToSarifLevel guarantees.
+//
+// SARIF's kind enum has no member for a check that could not be evaluated, so an
+// errored check is reported as "fail". That is SARIF's own lossy choice and it
+// stops here: the word ERROR still reaches the reader through scoreStatusLabel,
+// and the other formats map reportdoc.OutcomeError to whatever they have for it
+// rather than inheriting this fold. Reading the error case back out of "fail" is
+// what three of them used to do.
 func scoreToSarifKind(score *policy.Score) string {
-	if score == nil {
-		return "review"
-	}
-
-	switch score.Type {
-	case policy.ScoreType_Error:
+	switch reportdoc.OutcomeOf(score) {
+	case reportdoc.OutcomePass:
+		return "pass"
+	case reportdoc.OutcomeFail, reportdoc.OutcomeError:
 		return "fail"
-	case policy.ScoreType_Skip, policy.ScoreType_OutOfScope, policy.ScoreType_Disabled:
+	case reportdoc.OutcomeSkipped:
 		return "notApplicable"
-	case policy.ScoreType_Unscored:
+	case reportdoc.OutcomeUnscored:
 		return "informational"
-	case policy.ScoreType_Unknown:
-		return "review"
-	case policy.ScoreType_Result:
-		if score.Value == 100 {
-			return "pass"
-		}
-		return "fail"
 	default:
 		return "review"
 	}
@@ -904,33 +902,18 @@ func scoreToSarifKind(score *policy.Score) string {
 
 // scoreStatusLabel is the human-readable outcome of a check.
 func scoreStatusLabel(score *policy.Score) string {
-	switch scoreToSarifKind(score) {
-	case "pass":
-		return "PASS"
-	case "fail":
-		if score != nil && score.Type == policy.ScoreType_Error {
-			return "ERROR"
-		}
-		return "FAIL"
-	case "notApplicable":
-		return "SKIPPED"
-	case "informational":
-		return "UNSCORED"
-	default:
-		return "UNKNOWN"
-	}
+	return reportdoc.OutcomeOf(score).Label()
 }
 
 func scoreStatusIcon(score *policy.Score) string {
-	switch scoreToSarifKind(score) {
-	case "pass":
+	switch reportdoc.OutcomeOf(score) {
+	case reportdoc.OutcomePass:
 		return "✅"
-	case "fail":
-		if score != nil && score.Type == policy.ScoreType_Error {
-			return "⚠️"
-		}
+	case reportdoc.OutcomeFail:
 		return "❌"
-	case "notApplicable":
+	case reportdoc.OutcomeError:
+		return "⚠️"
+	case reportdoc.OutcomeSkipped:
 		return "⏭️"
 	default:
 		return "ℹ️"

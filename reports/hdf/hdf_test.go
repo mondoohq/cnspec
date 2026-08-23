@@ -6,13 +6,12 @@ package hdf
 import (
 	"bytes"
 	"encoding/json"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/cli/reporter/internal/reportfixture"
+	"go.mondoo.com/cnspec/internal/reportfixture"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/utils/iox"
 )
@@ -492,13 +491,10 @@ func TestHDFMissingBundle(t *testing.T) {
 func TestHDFUbuntuReport(t *testing.T) {
 	pinHDFClock(t)
 
-	raw, err := os.ReadFile("../testdata/report-ubuntu.json")
+	r, err := reportfixture.UbuntuScan()
 	require.NoError(t, err)
 
-	var r policy.ReportCollection
-	require.NoError(t, json.Unmarshal(raw, &r))
-
-	report := toHDF(t, &r)
+	report := toHDF(t, r)
 	require.NotEmpty(t, report.Profiles)
 
 	var controls int

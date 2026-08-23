@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xeipuuv/gojsonschema"
-	"go.mondoo.com/cnspec/cli/reporter/internal/reportfixture"
+	"go.mondoo.com/cnspec/internal/reportfixture"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 )
@@ -74,7 +74,7 @@ func TestHDFConformsToSchema(t *testing.T) {
 		{"checks and vulnerabilities", reportfixture.Sample()},
 		{"checks only", noVulns},
 		{"asset error", errored},
-		{"recorded ubuntu scan", loadReportCollection(t, "../testdata/report-ubuntu.json")},
+		{"recorded ubuntu scan", loadUbuntuScan(t)},
 	}
 
 	for _, test := range tests {
@@ -287,14 +287,11 @@ func TestHDFMultiAssetStream(t *testing.T) {
 	assert.NotEqual(t, reports[0].Platform.TargetID, reports[1].Platform.TargetID)
 }
 
-func loadReportCollection(t *testing.T, path string) *policy.ReportCollection {
+func loadUbuntuScan(t *testing.T) *policy.ReportCollection {
 	t.Helper()
-	raw, err := os.ReadFile(path)
+	r, err := reportfixture.UbuntuScan()
 	require.NoError(t, err)
-
-	var r policy.ReportCollection
-	require.NoError(t, json.Unmarshal(raw, &r))
-	return &r
+	return r
 }
 
 // multiAssetReportCollection clones the sample scan onto a second asset running a

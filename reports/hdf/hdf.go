@@ -21,8 +21,8 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec"
-	"go.mondoo.com/cnspec/cli/reporter/reportdoc"
 	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/reports/reportdoc"
 	"go.mondoo.com/mql/cli/printer"
 	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
@@ -722,22 +722,17 @@ func hdfLocationLabel(ctx llx.SourceContext) string {
 	return ctx.Path
 }
 
-// hdfStatus maps a cnspec score onto an OHDF result status. Everything that is
-// neither a result nor an error - skipped, out of scope, disabled, unscored,
-// unknown - reports as skipped; hdfControlImpact then decides whether Heimdall
-// renders it as "Not Applicable" or "Not Reviewed".
+// hdfStatus maps a check outcome onto an OHDF result status. OHDF has the four
+// statuses below and nothing else, so everything that produced neither a verdict
+// nor an error - skipped, unscored, unknown - reports as skipped; hdfControlImpact
+// then decides whether Heimdall renders it as "Not Applicable" or "Not Reviewed".
 func hdfStatus(score *policy.Score) string {
-	if score == nil {
-		return hdfStatusSkipped
-	}
-
-	switch score.Type {
-	case policy.ScoreType_Result:
-		if score.Value == 100 {
-			return hdfStatusPassed
-		}
+	switch reportdoc.OutcomeOf(score) {
+	case reportdoc.OutcomePass:
+		return hdfStatusPassed
+	case reportdoc.OutcomeFail:
 		return hdfStatusFailed
-	case policy.ScoreType_Error:
+	case reportdoc.OutcomeError:
 		return hdfStatusError
 	default:
 		return hdfStatusSkipped

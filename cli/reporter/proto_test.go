@@ -4,22 +4,16 @@
 package reporter
 
 import (
-	"encoding/json"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/internal/reportfixture"
 )
 
 func TestProtoConversion(t *testing.T) {
 	t.Run("test policy report conversion", func(t *testing.T) {
-		reportCollectionRaw, err := os.ReadFile("./testdata/report-ubuntu.json")
-		require.NoError(t, err)
-
-		yr := &policy.ReportCollection{}
-		err = json.Unmarshal(reportCollectionRaw, yr)
+		yr, err := reportfixture.UbuntuScan()
 		require.NoError(t, err)
 
 		report, err := ConvertToProto(yr)

@@ -6,14 +6,13 @@ package reporter
 import (
 	"bytes"
 	"encoding/json"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/cli/reporter/internal/reportfixture"
-	"go.mondoo.com/cnspec/cli/reporter/reportdoc"
+	"go.mondoo.com/cnspec/internal/reportfixture"
 	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/reports/reportdoc"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/utils/iox"
 )
@@ -48,66 +47,8 @@ func TestJunitNilReport(t *testing.T) {
 	assert.Equal(t, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites></testsuites>\n", buf.String())
 }
 
-// detailedReportCollection builds a minimal collection with a single failing
-// check that carries a description, MQL, remediation, and references. It has no
-// ExecutionJob, so the assessment section is intentionally absent here (that path
-// is covered by TestJunitConverterDetailedAssessment).
-func detailedReportCollection() *policy.ReportCollection {
-	assetMrn := "//assets.api.mondoo.app/spaces/test/assets/abc"
-	codeID := "abc123=="
-	return &policy.ReportCollection{
-		Assets: map[string]*inventory.Asset{
-			assetMrn: {
-				Name:     "X1",
-				Platform: &inventory.Platform{Name: "terraform-hcl", Family: []string{"terraform"}},
-			},
-		},
-		ResolvedPolicies: map[string]*policy.ResolvedPolicy{
-			assetMrn: {
-				CollectorJob: &policy.CollectorJob{
-					ReportingQueries: map[string]*policy.StringArray{
-						codeID: nil,
-					},
-				},
-			},
-		},
-		Bundle: &policy.Bundle{
-			Queries: []*policy.Mquery{
-				{
-					Mrn:    "//policy.api.mondoo.app/queries/test-check",
-					CodeId: codeID,
-					Title:  "Ensure the thing is configured",
-					Mql:    "sshd.config.params['PermitRootLogin'] == \"no\"",
-					Docs: &policy.MqueryDocs{
-						Desc: "Root login over SSH should be disabled.",
-						Remediation: &policy.Remediation{
-							Items: []*policy.TypedDoc{
-								{Id: "console", Desc: "Use the AWS console to fix it."},
-								{Id: "terraform", Desc: "Set PermitRootLogin to no in your TF config."},
-								{Id: "cloudformation", Desc: "Use CloudFormation to fix it."},
-							},
-						},
-						Refs: []*policy.MqueryRef{
-							{Title: "CIS Benchmark", Url: "https://example.com/cis"},
-						},
-					},
-				},
-			},
-		},
-		Reports: map[string]*policy.Report{
-			assetMrn: {
-				ScoringMrn: assetMrn,
-				EntityMrn:  assetMrn,
-				Scores: map[string]*policy.Score{
-					codeID: {Type: policy.ScoreType_Result, Value: 0},
-				},
-			},
-		},
-	}
-}
-
 func TestJunitConverterDetailed(t *testing.T) {
-	yr := detailedReportCollection()
+	yr := reportfixture.Detailed()
 
 	buf := bytes.Buffer{}
 	writer := iox.IOWriter{Writer: &buf}
@@ -142,8 +83,7 @@ func TestJunitConverterDetailed(t *testing.T) {
 // Query2Assessment -> Assessment path against a real report fixture that carries
 // a compiled execution job and failing assertion checks.
 func TestJunitConverterDetailedAssessment(t *testing.T) {
-	raw, err := os.ReadFile("./testdata/report-ubuntu.json")
-	require.NoError(t, err)
+	raw := reportfixture.UbuntuScanJSON()
 	yr := &policy.ReportCollection{}
 	require.NoError(t, json.Unmarshal(raw, yr))
 

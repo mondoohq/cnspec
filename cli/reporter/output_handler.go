@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"go.mondoo.com/cnspec/policy"
+	ocsfconvert "go.mondoo.com/cnspec/reports/ocsf/convert"
 	"go.mondoo.com/mql/utils/iox"
 	_ "gocloud.dev/pubsub/awssnssqs"
 	_ "gocloud.dev/pubsub/azuresb"
@@ -50,6 +51,20 @@ func NewOutputHandler(config HandlerConfig) (OutputHandler, error) {
 		if conf.format == FormatHDF && isDirTarget(config.OutputTarget) {
 			return &hdfDirHandler{dir: strings.TrimPrefix(config.OutputTarget, "file://")}, nil
 		}
+		// OCSF splits its events across one file per event class whenever it is
+		// given a directory, and Parquet has no other form at all.
+		if conf.format == FormatOcsfParquet ||
+			(conf.format == FormatOcsfJson && isDirTarget(config.OutputTarget)) {
+			encoding := ocsfconvert.EncodingJSON
+			if conf.format == FormatOcsfParquet {
+				encoding = ocsfconvert.EncodingParquet
+			}
+			return &ocsfDirHandler{
+				dir:      strings.TrimPrefix(config.OutputTarget, "file://"),
+				encoding: encoding,
+				opts:     conf.ocsfOptions(),
+			}, nil
+		}
 		return &localFileHandler{file: config.OutputTarget, conf: conf}, nil
 	case AWS_SQS:
 		return &awsSqsHandler{sqsQueueUrl: config.OutputTarget, format: conf.format}, nil
@@ -77,12 +92,19 @@ func determineOutputType(target string) OutputTarget {
 	if sbusRegex.MatchString(target) {
 		return AZURE_SBUS
 	}
-
 	return LOCAL_FILE
 }
 
 // isDirTarget reports whether an output target names a directory: one that already
 // exists, or a path written with a trailing separator to ask for one.
+//
+// Every format that can write per-asset or per-class files shares this, so
+// --output-target means the same thing whichever one is selected. It decides on
+// facts (the path is a directory) or explicit intent (a trailing separator) and
+// never on a guess: an earlier copy in the OCSF handler also read a
+// non-existent extensionless path as a directory, which silently turns an
+// ordinary Unix file target like "results" into a directory full of files.
+// Anything that does not exist yet and does not end in a separator is a file.
 func isDirTarget(target string) bool {
 	target = strings.TrimPrefix(target, "file://")
 	if target == "" {

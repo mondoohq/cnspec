@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.mondoo.com/cnspec/internal/reportfixture"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/cli/printer"
 	"go.mondoo.com/mql/cli/theme/colors"
@@ -22,11 +23,7 @@ import (
 )
 
 func TestCompactReporter(t *testing.T) {
-	reportCollectionRaw, err := os.ReadFile("./testdata/report-ubuntu.json")
-	require.NoError(t, err)
-
-	yr := &policy.ReportCollection{}
-	err = json.Unmarshal(reportCollectionRaw, yr)
+	yr, err := reportfixture.UbuntuScan()
 	require.NoError(t, err)
 
 	buf := bytes.Buffer{}

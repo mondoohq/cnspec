@@ -3,11 +3,14 @@
 
 // Package reportfixture holds the hand-built scan the reporter tests convert.
 //
-// It is a package rather than a helper in one test file because the JUnit, SARIF
-// and OHDF reporters now live in separate packages and have to be compared on the
-// same scan: the point of the fixture is that one asset carries a passing, an
+// It is a package rather than a helper in one test file because the JUnit, SARIF,
+// OHDF and OCSF reporters now live in separate packages and have to be compared on
+// the same scan. It sits at the module root rather than under one of them because
+// an internal package is only reachable from below its own parent, and these
+// readers are spread across cli/reporter and reports/...: the point of Sample is that one asset carries a passing, an
 // errored and a skipped check plus an affected package, so every reporter is shown
 // the same four outcomes and their treatment of them can be read side by side.
+// Detailed does the same for the check documentation.
 package reportfixture
 
 import (
@@ -111,6 +114,67 @@ func Sample() *policy.ReportCollection {
 						Critical: 1,
 						Affected: 1,
 					},
+				},
+			},
+		},
+	}
+}
+
+// Detailed is a scan of one Terraform asset with a single failing check that
+// carries a description, MQL, platform-specific remediation and a reference.
+// Where Sample covers the outcomes, this one covers the check documentation: it
+// is what the reporters are compared on for how they render a finding.
+//
+// It has no ExecutionJob, so a converter's assessment path is deliberately not
+// reached from here.
+func Detailed() *policy.ReportCollection {
+	const assetMrn = "//assets.api.mondoo.app/spaces/test/assets/abc"
+	const codeID = "abc123=="
+	return &policy.ReportCollection{
+		Assets: map[string]*inventory.Asset{
+			assetMrn: {
+				Name:     "X1",
+				Platform: &inventory.Platform{Name: "terraform-hcl", Family: []string{"terraform"}},
+			},
+		},
+		ResolvedPolicies: map[string]*policy.ResolvedPolicy{
+			assetMrn: {
+				CollectorJob: &policy.CollectorJob{
+					ReportingQueries: map[string]*policy.StringArray{
+						codeID: nil,
+					},
+				},
+			},
+		},
+		Bundle: &policy.Bundle{
+			Queries: []*policy.Mquery{
+				{
+					Mrn:    "//policy.api.mondoo.app/queries/test-check",
+					CodeId: codeID,
+					Title:  "Ensure the thing is configured",
+					Mql:    "sshd.config.params['PermitRootLogin'] == \"no\"",
+					Docs: &policy.MqueryDocs{
+						Desc: "Root login over SSH should be disabled.",
+						Remediation: &policy.Remediation{
+							Items: []*policy.TypedDoc{
+								{Id: "console", Desc: "Use the AWS console to fix it."},
+								{Id: "terraform", Desc: "Set PermitRootLogin to no in your TF config."},
+								{Id: "cloudformation", Desc: "Use CloudFormation to fix it."},
+							},
+						},
+						Refs: []*policy.MqueryRef{
+							{Title: "CIS Benchmark", Url: "https://example.com/cis"},
+						},
+					},
+				},
+			},
+		},
+		Reports: map[string]*policy.Report{
+			assetMrn: {
+				ScoringMrn: assetMrn,
+				EntityMrn:  assetMrn,
+				Scores: map[string]*policy.Score{
+					codeID: {Type: policy.ScoreType_Result, Value: 0},
 				},
 			},
 		},

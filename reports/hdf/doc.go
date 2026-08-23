@@ -25,10 +25,11 @@
 // compliance mappings) comes from the same helpers the JUnit and SARIF reporters
 // use, so all three surface identical content.
 //
-// It is a package of its own so that the format and the CLI plumbing can move
-// independently: cli/reporter decides that `-o hdf` was asked for and where the
-// bytes go, and everything about what those bytes say lives here. The dependency
-// runs one way - cli/reporter imports hdf, never the reverse - which is why the
-// check documentation both of them read comes from cli/reporter/reportdoc rather
-// than from cli/reporter itself.
+// It is a package of its own, under reports/ rather than cli/, so that the format
+// and the CLI plumbing can move independently: cli/reporter decides that `-o hdf`
+// was asked for and where the bytes go - fifteen lines of it - and everything
+// about what those bytes say lives here. Nothing in here is terminal-facing. The
+// dependency runs one way - cli/reporter imports hdf, never the reverse - which is
+// why the check documentation both of them read comes from reports/reportdoc
+// rather than from cli/reporter itself.
 package hdf

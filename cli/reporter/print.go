@@ -10,6 +10,8 @@ import (
 
 	"github.com/muesli/termenv"
 	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/reports/ocsf"
+	ocsfconvert "go.mondoo.com/cnspec/reports/ocsf/convert"
 )
 
 type Format byte
@@ -25,6 +27,22 @@ type PrintConfig struct {
 	// detailed enables rich per-check output (description, query, assessment,
 	// remediation, references). Currently consumed by the JUnit reporter.
 	detailed bool
+	// ocsfVersion is the OCSF schema version the ocsf-json and ocsf-parquet
+	// formats emit.
+	ocsfVersion ocsf.Version
+	// ocsfFindings selects which OCSF class check results are reported as.
+	ocsfFindings ocsf.FindingClasses
+}
+
+// ocsfOptions translates the output options into what the OCSF converter takes.
+// It is the whole of what cli/reporter contributes to that format; everything
+// about the events themselves lives in reports/ocsf/convert.
+func (p *PrintConfig) ocsfOptions() ocsfconvert.Options {
+	return ocsfconvert.Options{
+		Version:     p.ocsfVersion,
+		Findings:    p.ocsfFindings,
+		IncludeData: p.printData,
+	}
 }
 
 func defaultPrintConfig() *PrintConfig {
@@ -36,6 +54,8 @@ func defaultPrintConfig() *PrintConfig {
 		printData:            false,
 		printRisks:           true,
 		printVulnerabilities: true,
+		ocsfVersion:          ocsf.DefaultVersion,
+		ocsfFindings:         ocsf.FindingsCompliance,
 	}
 }
 
@@ -46,6 +66,14 @@ const (
 	OptionPrintRisks    = "risks"
 	OptionPrintVulns    = "vulns"
 	OptionDetailed      = "detailed"
+
+	// OptionOcsfVersion selects the OCSF schema version, e.g.
+	// "--output ocsf-json,ocsf-version=1.9.0".
+	OptionOcsfVersion = "ocsf-version"
+
+	// OptionOcsfFindings selects the OCSF class check results are reported as:
+	// compliance (the default) or detection.
+	OptionOcsfFindings = "ocsf-findings"
 )
 
 func ParseConfig[T string | Format](raw T) (*PrintConfig, error) {
@@ -91,6 +119,23 @@ func ParseConfig[T string | Format](raw T) (*PrintConfig, error) {
 		case "no" + OptionDetailed:
 			res.detailed = false
 		default:
+			key, value, isPair := strings.Cut(cur, "=")
+			if isPair && key == OptionOcsfVersion {
+				version, err := ocsf.ParseVersion(value)
+				if err != nil {
+					return res, err
+				}
+				res.ocsfVersion = version
+				continue
+			}
+			if isPair && key == OptionOcsfFindings {
+				findings, err := ocsf.ParseFindingClasses(value)
+				if err != nil {
+					return res, err
+				}
+				res.ocsfFindings = findings
+				continue
+			}
 			unknown = append(unknown, cur)
 		}
 	}
@@ -147,6 +192,8 @@ const (
 	FormatYAMLv2
 	FormatSarif
 	FormatHDF
+	FormatOcsfJson
+	FormatOcsfParquet
 )
 
 // Formats that are supported by the reporter
@@ -167,13 +214,18 @@ var Formats = map[string]Format{
 	"csv":     FormatCSV,
 	"sarif":   FormatSarif,
 	"hdf":     FormatHDF,
+	// OCSF, for security data lakes. "ocsf" is an alias for the JSON flavor.
+	"ocsf":         FormatOcsfJson,
+	"ocsf-json":    FormatOcsfJson,
+	"ocsf-parquet": FormatOcsfParquet,
 }
 
 func AllFormats() string {
 	var res []string
 	for k := range Formats {
 		if k != "" && // default if nothing is provided, ignore
-			k != "yml" { // don't show both yaml and yml
+			k != "yml" && // don't show both yaml and yml
+			k != "ocsf" { // don't show both ocsf and ocsf-json
 			res = append(res, k)
 		}
 	}
@@ -187,7 +239,9 @@ func AllOptions() string {
 		"[no]" + OptionPrintData + ", " +
 		"[no]" + OptionPrintRisks + ", " +
 		"[no]" + OptionPrintVulns + ", " +
-		"[no]" + OptionDetailed + " (junit)"
+		"[no]" + OptionDetailed + " (junit), " +
+		OptionOcsfVersion + "=" + strings.Join(ocsf.SupportedVersions(), "|") + " (ocsf), " +
+		OptionOcsfFindings + "=" + strings.Join(ocsf.SupportedFindingClasses(), "|") + " (ocsf)"
 }
 
 func (r *Reporter) scoreColored(rating policy.ScoreRating, s string) string {

@@ -4,13 +4,12 @@
 package hdf
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/rs/zerolog"
 
+	"go.mondoo.com/cnspec/internal/reportfixture"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/utils/iox"
@@ -21,12 +20,8 @@ import (
 // work on without a 2.4 MB fixture per asset.
 func benchCollection(b testing.TB, assets int) *policy.ReportCollection {
 	b.Helper()
-	raw, err := os.ReadFile("../testdata/report-ubuntu.json")
+	r, err := reportfixture.UbuntuScan()
 	if err != nil {
-		b.Fatal(err)
-	}
-	var r policy.ReportCollection
-	if err := json.Unmarshal(raw, &r); err != nil {
 		b.Fatal(err)
 	}
 	var srcMrn string
@@ -40,7 +35,7 @@ func benchCollection(b testing.TB, assets int) *policy.ReportCollection {
 		r.Reports[m] = srcRep
 		r.ResolvedPolicies[m] = srcRes
 	}
-	return &r
+	return r
 }
 
 type discard struct{}
