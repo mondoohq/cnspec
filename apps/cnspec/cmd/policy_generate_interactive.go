@@ -10,14 +10,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/cockroachdb/errors"
 	"go.mondoo.com/cnspec/internal/bundle"
 	"go.mondoo.com/cnspec/internal/generate"
-	"go.mondoo.com/mql/providers"
 )
 
 // errInputClosed reports that the wizard's input stream ended (EOF: Ctrl-D, a
@@ -30,11 +27,9 @@ import (
 // loop, and `[a]ccept` on a successful one, which wrote MQL no human ever saw.
 var errInputClosed = errors.New("input closed")
 
-// errUIDExists reports that a check uid is already taken in the target bundle.
-var errUIDExists = errors.New("uid already used in this bundle")
+// bundle.ErrUIDExists reports that a check uid is already taken in the target bundle.
 
-// generatedGroupTitle is the policy group the wizard adds its checks to.
-const generatedGroupTitle = "Generated checks"
+// bundle.GeneratedGroupTitle is the policy group the wizard adds its checks to.
 
 // wizardOpts is everything the wizard needs from the command line. In and Out
 // are injected so the flow can be driven by a test with scripted stdin.
@@ -129,11 +124,11 @@ func (w *wizard) loop(ctx context.Context, file string) error {
 		if err != nil {
 			return err
 		}
-		provider, err := w.line("Target provider (aws, gcp, azure, os, k8s, …)", guessProvider(title))
+		provider, err := w.line("Target provider (aws, gcp, azure, os, k8s, …)", generate.GuessProvider(title))
 		if err != nil {
 			return err
 		}
-		filter, err := w.line("Asset filter", defaultFilter(provider))
+		filter, err := w.line("Asset filter", generate.DefaultFilter(provider))
 		if err != nil {
 			return err
 		}
@@ -141,7 +136,7 @@ func (w *wizard) loop(ctx context.Context, file string) error {
 		w.showGrounding(title+" "+desc, provider)
 
 		check := generate.Check{
-			UID:   slugify(title),
+			UID:   bundle.Slugify(title),
 			Title: title,
 			Desc:  desc,
 		}
@@ -191,16 +186,16 @@ func (w *wizard) showGrounding(intent, provider string) {
 // writeCheck asks for the uid and adds the accepted check to the bundle, or
 // previews it under --dry-run.
 func (w *wizard) writeCheck(file, title, desc, filter, mql string) error {
-	uid, err := w.uniqueUID(file, slugify(title))
+	uid, err := w.uniqueUID(file, bundle.Slugify(title))
 	if err != nil {
 		return err
 	}
 
-	b, err := loadBundleFile(file)
+	b, err := bundle.LoadFile(file)
 	if err != nil {
 		return err
 	}
-	if err := addCheck(b, policyUIDForFile(file), uid, title, desc, filter, mql); err != nil {
+	if err := bundle.AddCheck(b, bundle.PolicyUIDForFile(file), uid, title, desc, filter, mql); err != nil {
 		return err
 	}
 	out, err := bundle.FormatBundle(b, false)
@@ -225,14 +220,14 @@ func (w *wizard) writeCheck(file, title, desc, filter, mql string) error {
 // the target bundle: appending a duplicate produces a bundle that fails
 // `cnspec policy lint` with query-uid-unique, which the user only finds later.
 func (w *wizard) uniqueUID(file, suggested string) (string, error) {
-	b, err := loadBundleFile(file)
+	b, err := bundle.LoadFile(file)
 	if err != nil {
 		return "", err
 	}
 	taken := bundle.QueryUIDs(b)
 
 	for {
-		uid, err := w.line("Check UID", nextFreeUID(suggested, taken))
+		uid, err := w.line("Check UID", bundle.NextFreeUID(suggested, taken))
 		if err != nil {
 			return "", err
 		}
@@ -245,20 +240,6 @@ func (w *wizard) uniqueUID(file, suggested string) (string, error) {
 		}
 		fmt.Fprintf(w.out, "  uid %q is already used in %s; pick another.\n", uid, file)
 		suggested = uid
-	}
-}
-
-// nextFreeUID suffixes a uid until it is free, so the prompt's default is one
-// the user can accept rather than a collision they have to resolve by hand.
-func nextFreeUID(uid string, taken map[string]bool) string {
-	if uid == "" || !taken[uid] {
-		return uid
-	}
-	for i := 2; ; i++ {
-		candidate := fmt.Sprintf("%s-%d", uid, i)
-		if !taken[candidate] {
-			return candidate
-		}
 	}
 }
 
@@ -419,134 +400,6 @@ func editViaEditor(editor, current string) (string, error) {
 
 // loadBundleFile parses a bundle file, returning an empty bundle when the file
 // does not exist yet.
-func loadBundleFile(file string) (*bundle.Bundle, error) {
-	data, err := os.ReadFile(file)
-	if os.IsNotExist(err) {
-		return &bundle.Bundle{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	b, err := bundle.ParseYaml(data)
-	if err != nil {
-		return nil, errors.Wrapf(err, "could not parse %s", file)
-	}
-	return b, nil
-}
-
-// appendCheck adds a new check to a bundle file (creating it if absent),
-// preserving existing formatting/comments and writing atomically.
-func appendCheck(file, uid, title, desc, filter, mql string) error {
-	b, err := loadBundleFile(file)
-	if err != nil {
-		return err
-	}
-	if err := addCheck(b, policyUIDForFile(file), uid, title, desc, filter, mql); err != nil {
-		return err
-	}
-	out, err := bundle.FormatBundle(b, false)
-	if err != nil {
-		return err
-	}
-	return writeFileAtomic(file, out)
-}
-
-// addCheck places a check inside a policy group.
-//
-// A check that lives only in the top-level `queries:` block is not scannable:
-// lint reports it as query-unassigned and `cnspec scan --policy-bundle` then
-// fails with "a policy or framework mrn is required". The wizard tells the user
-// to lint and scan what it wrote, so what it writes has to survive both.
-func addCheck(b *bundle.Bundle, policyUID, uid, title, desc, filter, mql string) error {
-	if b == nil {
-		return errors.New("no bundle to add the check to")
-	}
-	if strings.TrimSpace(uid) == "" {
-		return errors.New("a check needs a uid")
-	}
-	if bundle.QueryUIDs(b)[uid] {
-		return errors.Wrapf(errUIDExists, "check %q", uid)
-	}
-
-	q := &bundle.Mquery{Uid: uid, Title: title, Mql: mql}
-	if strings.TrimSpace(filter) != "" {
-		q.Filters = &bundle.Filters{Items: map[string]*bundle.Mquery{"": {Mql: filter}}}
-	}
-	if strings.TrimSpace(desc) != "" {
-		q.Docs = &bundle.MqueryDocs{Desc: desc}
-	}
-
-	group := generatedGroup(targetPolicy(b, policyUID))
-	group.Checks = append(group.Checks, q)
-	return nil
-}
-
-// targetPolicy returns the policy new checks join: the bundle's first policy
-// when it has one, otherwise a new minimal policy (uid + name + semver version
-// are what `cnspec policy lint` requires).
-func targetPolicy(b *bundle.Bundle, policyUID string) *bundle.Policy {
-	if len(b.Policies) > 0 && b.Policies[0] != nil {
-		return b.Policies[0]
-	}
-	p := &bundle.Policy{
-		Uid:     policyUID,
-		Name:    humanize(policyUID),
-		Version: "1.0.0",
-	}
-	b.Policies = append(b.Policies, p)
-	return p
-}
-
-// generatedGroup returns the group new checks are appended to, creating it when
-// needed.
-//
-// It is deliberately a group of its own rather than the policy's first group: a
-// group-level filter gates every check inside it, so dropping a fresh check into
-// an existing group can silently restrict it to assets it was never written for
-// (a group filtered to hosts running kube-apiserver, say). The checks carry
-// their own filters, which is what policy-missing-asset-filter asks for.
-func generatedGroup(p *bundle.Policy) *bundle.PolicyGroup {
-	for _, g := range p.Groups {
-		if g != nil && g.Title == generatedGroupTitle && (g.Filters == nil || len(g.Filters.Items) == 0) {
-			return g
-		}
-	}
-	g := &bundle.PolicyGroup{Title: generatedGroupTitle}
-	p.Groups = append(p.Groups, g)
-	return g
-}
-
-// policyUidRe mirrors the uid requirement `cnspec policy lint` enforces on a
-// policy (bundle-invalid-uid): 4-100 characters of lowercase letters, digits,
-// dashes and underscores.
-var policyUidRe = regexp.MustCompile(`^([\d\-_]|[a-z]){4,100}$`)
-
-// policyUIDForFile derives the uid of the policy the wizard creates from the
-// bundle's file name, falling back to a generic uid when that would not lint.
-func policyUIDForFile(file string) string {
-	base := filepath.Base(file)
-	base = strings.TrimSuffix(base, ".yaml")
-	base = strings.TrimSuffix(base, ".yml")
-	base = strings.TrimSuffix(base, ".mql")
-	uid := slugify(base)
-	if !policyUidRe.MatchString(uid) {
-		return "generated-policy"
-	}
-	return uid
-}
-
-// humanize turns a uid into a policy name ("aws-s3" -> "Aws S3").
-func humanize(uid string) string {
-	fields := strings.FieldsFunc(uid, func(r rune) bool { return r == '-' || r == '_' })
-	for i, f := range fields {
-		fields[i] = strings.ToUpper(f[:1]) + f[1:]
-	}
-	if len(fields) == 0 {
-		return uid
-	}
-	return strings.Join(fields, " ")
-}
-
 // --- small prompt + text helpers -------------------------------------------
 
 // rawLine reads one line, reporting errInputClosed at EOF. A final line without
@@ -619,153 +472,6 @@ func (w *wizard) choice(label string, opts ...string) (string, error) {
 
 // guessProvider makes a light guess at the target provider from the title so the
 // prompt can offer a sensible default.
-func guessProvider(title string) string {
-	t := strings.ToLower(title)
-	switch {
-	case containsAny(t, "aws", "s3", "ec2", "iam", "cloudtrail", "rds", "eks", "lambda"):
-		return "aws"
-	case containsAny(t, "gcp", "gke", "bigquery", "cloud sql", "compute engine"):
-		return "gcp"
-	case containsAny(t, "azure", "aks", "blob"):
-		return "azure"
-	case containsAny(t, "ssh", "sshd", "kernel", "linux", "package", "systemd", "sudo", "pam"):
-		return "os"
-	case containsAny(t, "kubernetes", "k8s", "pod", "container"):
-		return "k8s"
-	}
-	return ""
-}
-
-// curatedFilters maps a provider to the asset filter the wizard proposes.
-//
-// These are *platform* names, not provider names, and the two differ for most
-// providers. A filter naming a platform that does not exist is dead: it lints
-// clean, it scans clean, and it never matches an asset — which is what
-// `asset.platform == "gcp"` and `asset.platform == "k8s"` were, since neither
-// name exists (gcp's platforms are gcp-project, gcp-gke-cluster, …; "k8s" is a
-// platform *family*, and its platforms are k8s-cluster, k8s-pod, …).
-//
-// Every name here is taken from installed provider metadata
-// (~/.config/mondoo/providers/<n>/<n>.json, Platforms[].name and .family) and is
-// in use by real checks in content/ — see TestDefaultFilterUsesRealPlatformNames,
-// which re-derives both. The choice among a provider's platforms is the scope
-// where that provider's account-wide resources resolve.
-var curatedFilters = map[string]string{
-	// the account-level asset; content/ uses it for ~200 checks
-	"aws": `asset.platform == "aws"`,
-	// the subscription-level asset
-	"azure": `asset.platform == "azure"`,
-	// there is no platform named "gcp"; the project is the account-level asset
-	"gcp": `asset.platform == "gcp-project"`,
-	// cluster and manifest are the two scopes where the cluster-wide k8s.*
-	// resources resolve; workload platforms (k8s-pod, k8s-deployment, …) are
-	// per-object and too narrow to guess at
-	"k8s": `asset.platform == "k8s-cluster" || asset.platform == "k8s-manifest"`,
-	// os platforms are per-distribution (ubuntu, redhat, …); the family is the
-	// portable way to say "any Linux"
-	"os": `asset.family.contains("linux")`,
-}
-
-// defaultFilter proposes an asset filter for a provider: a curated one where the
-// provider has many platforms and only some are plausible, otherwise one derived
-// from the installed provider metadata. Returns "" when neither knows the
-// provider — an empty prompt the user fills in beats a filter that silently
-// matches nothing.
-func defaultFilter(provider string) string {
-	provider = strings.TrimSpace(provider)
-	if provider == "" {
-		return ""
-	}
-	if f, ok := curatedFilters[provider]; ok {
-		return f
-	}
-	name, family := lookupPlatform(provider)
-	switch {
-	case name != "":
-		return fmt.Sprintf(`asset.platform == %q`, name)
-	case family != "":
-		return fmt.Sprintf(`asset.family.contains(%q)`, family)
-	}
-	return ""
-}
-
-// installedPlatforms reports the platform names and families a provider
-// declares. It is a variable so tests can drive defaultFilter without depending
-// on which providers happen to be installed.
-var installedPlatforms = func(provider string) (names []string, families []string) {
-	// ListAll only reads the installed provider metadata: no network, no
-	// installs, and resource schemas stay unparsed.
-	all, err := providers.ListAll()
-	if err != nil {
-		return nil, nil
-	}
-	seen := map[string]bool{}
-	for _, p := range all {
-		if p == nil || p.Provider == nil || p.Name != provider {
-			continue
-		}
-		for _, pl := range p.Platforms {
-			if pl == nil {
-				continue
-			}
-			names = append(names, pl.Name)
-			for _, f := range pl.Family {
-				if !seen[f] {
-					seen[f] = true
-					families = append(families, f)
-				}
-			}
-		}
-	}
-	return names, families
-}
-
-// lookupPlatform resolves a provider name against installed metadata: an exact
-// platform of that name (aws, digitalocean, oci, …), else a family of that name
-// (github, terraform, …). Anything more ambiguous is left to the user.
-func lookupPlatform(provider string) (name, family string) {
-	names, families := installedPlatforms(provider)
-	for _, n := range names {
-		if n == provider {
-			return n, ""
-		}
-	}
-	for _, f := range families {
-		if f == provider {
-			return "", f
-		}
-	}
-	return "", ""
-}
-
-func containsAny(s string, subs ...string) bool {
-	for _, sub := range subs {
-		if strings.Contains(s, sub) {
-			return true
-		}
-	}
-	return false
-}
-
-// slugify turns a title into a lowercase, dash-separated uid.
-func slugify(s string) string {
-	var b strings.Builder
-	lastDash := false
-	for _, r := range strings.ToLower(s) {
-		switch {
-		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
-			b.WriteRune(r)
-			lastDash = false
-		default:
-			if !lastDash && b.Len() > 0 {
-				b.WriteByte('-')
-				lastDash = true
-			}
-		}
-	}
-	return strings.Trim(b.String(), "-")
-}
-
 func indentBlock(s string) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
 	for i := range lines {

@@ -4,11 +4,9 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -17,188 +15,6 @@ import (
 	"go.mondoo.com/cnspec/internal/bundle"
 	"go.mondoo.com/cnspec/internal/generate"
 )
-
-func TestSlugify(t *testing.T) {
-	cases := map[string]string{
-		"S3 buckets must be encrypted": "s3-buckets-must-be-encrypted",
-		"  Trim  --  dashes  ":         "trim-dashes",
-		"CIS 1.2: root/login!":         "cis-1-2-root-login",
-		"":                             "",
-	}
-	for in, want := range cases {
-		if got := slugify(in); got != want {
-			t.Errorf("slugify(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-func TestGuessProvider(t *testing.T) {
-	if p := guessProvider("S3 buckets must be encrypted"); p != "aws" {
-		t.Errorf("aws guess = %q", p)
-	}
-	if p := guessProvider("SSH root login disabled"); p != "os" {
-		t.Errorf("os guess = %q", p)
-	}
-	if p := guessProvider("Something generic"); p != "" {
-		t.Errorf("expected no guess, got %q", p)
-	}
-}
-
-// --- default asset filters ---------------------------------------------------
-
-var (
-	platformFilterRe = regexp.MustCompile(`asset\.platform\s*==\s*"([a-z0-9._-]+)"`)
-	familyFilterRe   = regexp.MustCompile(`asset\.family\.contains\("([a-z0-9._-]+)"\)`)
-)
-
-// TestDefaultFilterUsesRealPlatformNames validates every filter the wizard
-// proposes against authorities outside this file: the platform and family names
-// that real checks in content/ filter on, and — when providers are installed —
-// the Platforms[] metadata of the provider itself.
-//
-// It replaces a test that restated defaultFilter's implementation back to
-// itself, which is how `asset.platform == "gcp"` and `asset.platform == "k8s"`
-// shipped green: neither name exists (gcp's platforms are gcp-project,
-// gcp-gke-cluster, …; k8s is a family, its platforms are k8s-cluster, k8s-pod,
-// …), so both filters matched no asset, ever, while lint stayed silent.
-func TestDefaultFilterUsesRealPlatformNames(t *testing.T) {
-	contentPlatforms, contentFamilies := contentFilterNames(t)
-	if len(contentPlatforms) == 0 {
-		t.Fatal("found no asset.platform filters in content/; the corpus this test derives from is missing")
-	}
-
-	var checkedMeta, skippedMeta int
-	for provider := range curatedFilters {
-		filter := defaultFilter(provider)
-		platforms := allSubmatches(platformFilterRe, filter)
-		families := allSubmatches(familyFilterRe, filter)
-		if len(platforms)+len(families) == 0 {
-			t.Errorf("defaultFilter(%q) = %q names neither a platform nor a family", provider, filter)
-			continue
-		}
-
-		for _, name := range platforms {
-			if !contentPlatforms[name] {
-				t.Errorf("defaultFilter(%q) = %q filters on platform %q, which no check in content/ uses; a platform name that does not exist matches no asset", provider, filter, name)
-			}
-		}
-		for _, name := range families {
-			if !contentFamilies[name] {
-				t.Errorf("defaultFilter(%q) = %q filters on family %q, which no check in content/ uses", provider, filter, name)
-			}
-		}
-
-		// second authority: the provider's own metadata, when it is installed
-		metaPlatforms, metaFamilies := installedPlatforms(provider)
-		if len(metaPlatforms) == 0 {
-			skippedMeta++
-			continue
-		}
-		checkedMeta++
-		known := map[string]bool{}
-		for _, n := range metaPlatforms {
-			known[n] = true
-		}
-		knownFamily := map[string]bool{}
-		for _, f := range metaFamilies {
-			knownFamily[f] = true
-		}
-		for _, name := range platforms {
-			if !known[name] {
-				t.Errorf("defaultFilter(%q) = %q filters on platform %q, which the installed %s provider does not declare (Platforms[].name)", provider, filter, name, provider)
-			}
-		}
-		for _, name := range families {
-			if !knownFamily[name] {
-				t.Errorf("defaultFilter(%q) = %q filters on family %q, which the installed %s provider does not declare (Platforms[].family)", provider, filter, name, provider)
-			}
-		}
-	}
-
-	// CI runs with no providers installed, so say out loud how much of this test
-	// actually ran instead of reporting a vacuous pass.
-	t.Logf("checked %d/%d provider default(s) against installed provider metadata (%d skipped: provider not installed); all %d checked against content/",
-		checkedMeta, len(curatedFilters), skippedMeta, len(curatedFilters))
-}
-
-// TestDefaultFilterDerivesUnknownProviders covers the providers with no curated
-// default: the filter has to come from installed metadata, and when metadata
-// cannot answer, the wizard must offer no default at all rather than the old
-// `asset.platform == <provider name>` guess, which is dead for every provider
-// whose platforms are not named after it (github, terraform, gitlab, …).
-func TestDefaultFilterDerivesUnknownProviders(t *testing.T) {
-	orig := installedPlatforms
-	t.Cleanup(func() { installedPlatforms = orig })
-	installedPlatforms = func(provider string) ([]string, []string) {
-		switch provider {
-		case "github":
-			return []string{"github-org", "github-user", "github-repo"}, []string{"github"}
-		case "digitalocean":
-			return []string{"digitalocean", "digitalocean-database"}, []string{"digitalocean"}
-		}
-		return nil, nil
-	}
-
-	cases := map[string]string{
-		// a platform is named after the provider: use it
-		"digitalocean": `asset.platform == "digitalocean"`,
-		// none is, but the family is: use the family
-		"github": `asset.family.contains("github")`,
-		// nothing knows this provider: no default beats a dead one
-		"nosuchprovider": "",
-		"":               "",
-	}
-	for provider, want := range cases {
-		if got := defaultFilter(provider); got != want {
-			t.Errorf("defaultFilter(%q) = %q, want %q", provider, got, want)
-		}
-	}
-}
-
-// contentFilterNames returns the platform and family names that checks in
-// content/ actually filter on.
-func contentFilterNames(t *testing.T) (platforms, families map[string]bool) {
-	t.Helper()
-	platforms, families = map[string]bool{}, map[string]bool{}
-
-	files, err := filepath.Glob(filepath.Join("..", "..", "..", "content", "*.mql.yaml"))
-	if err != nil {
-		t.Fatalf("glob content: %v", err)
-	}
-	packs, err := filepath.Glob(filepath.Join("..", "..", "..", "content", "querypacks", "*.mql.yaml"))
-	if err != nil {
-		t.Fatalf("glob querypacks: %v", err)
-	}
-	for _, f := range append(files, packs...) {
-		fh, err := os.Open(f)
-		if err != nil {
-			t.Fatalf("open %s: %v", f, err)
-		}
-		sc := bufio.NewScanner(fh)
-		sc.Buffer(make([]byte, 1024*1024), 1024*1024)
-		for sc.Scan() {
-			line := sc.Text()
-			for _, m := range allSubmatches(platformFilterRe, line) {
-				platforms[m] = true
-			}
-			for _, m := range allSubmatches(familyFilterRe, line) {
-				families[m] = true
-			}
-		}
-		fh.Close()
-	}
-	return platforms, families
-}
-
-func allSubmatches(re *regexp.Regexp, s string) []string {
-	var out []string
-	for _, m := range re.FindAllStringSubmatch(s, -1) {
-		out = append(out, m[1])
-	}
-	return out
-}
-
-// --- wizard plumbing for tests ----------------------------------------------
 
 // cappedBuffer is a concurrency-safe writer that stops growing past a limit. The
 // cap matters: a wizard that mishandles EOF spins, and an unbounded buffer turns
@@ -491,7 +307,7 @@ func TestWizardJoinsExistingPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := appendCheck(file, "new-check", "A new check", "", `asset.platform == "aws"`, "aws.s3.buckets.length > 0"); err != nil {
+	if err := bundle.AppendCheck(file, "new-check", "A new check", "", `asset.platform == "aws"`, "aws.s3.buckets.length > 0"); err != nil {
 		t.Fatalf("appendCheck: %v", err)
 	}
 
@@ -526,10 +342,10 @@ func TestWizardJoinsExistingPolicy(t *testing.T) {
 func TestAppendCheck(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "policy.mql.yaml")
 
-	if err := appendCheck(file, "c1", "First check", "does a thing", `asset.platform == "aws"`, "aws.s3.buckets.length > 0"); err != nil {
+	if err := bundle.AppendCheck(file, "c1", "First check", "does a thing", `asset.platform == "aws"`, "aws.s3.buckets.length > 0"); err != nil {
 		t.Fatalf("appendCheck 1: %v", err)
 	}
-	if err := appendCheck(file, "c2", "Second check", "", "", "users.all(uid >= 0)"); err != nil {
+	if err := bundle.AppendCheck(file, "c2", "Second check", "", "", "users.all(uid >= 0)"); err != nil {
 		t.Fatalf("appendCheck 2: %v", err)
 	}
 
@@ -563,10 +379,10 @@ func TestAppendCheck(t *testing.T) {
 // (query-uid-unique) the user only discovers later.
 func TestAppendCheckRejectsDuplicateUID(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "policy.mql.yaml")
-	if err := appendCheck(file, "c1", "First check", "does a thing", `asset.platform == "aws"`, "aws.s3.buckets.length > 0"); err != nil {
+	if err := bundle.AppendCheck(file, "c1", "First check", "does a thing", `asset.platform == "aws"`, "aws.s3.buckets.length > 0"); err != nil {
 		t.Fatalf("appendCheck 1: %v", err)
 	}
-	err := appendCheck(file, "c1", "Second check", "", "", "users.all(uid >= 0)")
+	err := bundle.AppendCheck(file, "c1", "Second check", "", "", "users.all(uid >= 0)")
 	if err == nil {
 		t.Fatal("appending a duplicate uid succeeded; want an error")
 	}
@@ -587,7 +403,7 @@ func TestWizardRePromptsOnUIDCollision(t *testing.T) {
 	bin, _ := scriptedAgent(t, okAgentReply)
 	gen := testGenerator(t, bin)
 	file := filepath.Join(t.TempDir(), "policy.mql.yaml")
-	if err := appendCheck(file, "taken", "Existing", "", `asset.platform == "aws"`, "existing.value == 1"); err != nil {
+	if err := bundle.AppendCheck(file, "taken", "Existing", "", `asset.platform == "aws"`, "existing.value == 1"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -650,10 +466,10 @@ func TestWizardOutputFlagIsHonoured(t *testing.T) {
 
 func TestNextFreeUID(t *testing.T) {
 	taken := map[string]bool{"a": true, "a-2": true}
-	if got := nextFreeUID("a", taken); got != "a-3" {
+	if got := bundle.NextFreeUID("a", taken); got != "a-3" {
 		t.Errorf("nextFreeUID = %q, want a-3", got)
 	}
-	if got := nextFreeUID("b", taken); got != "b" {
+	if got := bundle.NextFreeUID("b", taken); got != "b" {
 		t.Errorf("nextFreeUID = %q, want b", got)
 	}
 }
@@ -668,8 +484,8 @@ func TestPolicyUIDForFile(t *testing.T) {
 		"/tmp/dir/checks.mql.foobar": "checks-mql-foobar",
 	}
 	for in, want := range cases {
-		if got := policyUIDForFile(in); got != want {
-			t.Errorf("policyUIDForFile(%q) = %q, want %q", in, got, want)
+		if got := bundle.PolicyUIDForFile(in); got != want {
+			t.Errorf("bundle.PolicyUIDForFile(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

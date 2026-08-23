@@ -26,6 +26,10 @@ const (
 	phaseForm phase = iota
 	phaseScanning
 	phaseViewing
+	// phaseAuthoring is the check-authoring pane. It leads back to phaseForm
+	// like the other two: the point of holding the terminal is that the next
+	// thing the user does does not need a new program.
+	phaseAuthoring
 )
 
 // startScan moves the launcher onto the scanning screen and forks the child.
