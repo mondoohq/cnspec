@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/muesli/termenv"
+	"go.mondoo.com/cnspec/cli/reporter/ocsf"
 	"go.mondoo.com/cnspec/policy"
 )
 
@@ -25,6 +26,20 @@ type PrintConfig struct {
 	// detailed enables rich per-check output (description, query, assessment,
 	// remediation, references). Currently consumed by the JUnit reporter.
 	detailed bool
+	// ocsfVersion is the OCSF schema version the ocsf-json and ocsf-parquet
+	// formats emit.
+	ocsfVersion ocsf.Version
+	// ocsfFindings selects which OCSF class check results are reported as.
+	ocsfFindings OcsfFindingClasses
+}
+
+// ocsfConfig collects the OCSF settings the converter needs.
+func (p *PrintConfig) ocsfConfig() ocsfConfig {
+	return ocsfConfig{
+		version:     p.ocsfVersion,
+		findings:    p.ocsfFindings,
+		includeData: p.printData,
+	}
 }
 
 func defaultPrintConfig() *PrintConfig {
@@ -36,6 +51,8 @@ func defaultPrintConfig() *PrintConfig {
 		printData:            false,
 		printRisks:           true,
 		printVulnerabilities: true,
+		ocsfVersion:          ocsf.DefaultVersion,
+		ocsfFindings:         OcsfFindingsCompliance,
 	}
 }
 
@@ -46,6 +63,14 @@ const (
 	OptionPrintRisks    = "risks"
 	OptionPrintVulns    = "vulns"
 	OptionDetailed      = "detailed"
+
+	// OptionOcsfVersion selects the OCSF schema version, e.g.
+	// "--output ocsf-json,ocsf-version=1.9.0".
+	OptionOcsfVersion = "ocsf-version"
+
+	// OptionOcsfFindings selects the OCSF class check results are reported as:
+	// compliance (the default) or detection.
+	OptionOcsfFindings = "ocsf-findings"
 )
 
 func ParseConfig[T string | Format](raw T) (*PrintConfig, error) {
@@ -91,6 +116,23 @@ func ParseConfig[T string | Format](raw T) (*PrintConfig, error) {
 		case "no" + OptionDetailed:
 			res.detailed = false
 		default:
+			key, value, isPair := strings.Cut(cur, "=")
+			if isPair && key == OptionOcsfVersion {
+				version, err := ocsf.ParseVersion(value)
+				if err != nil {
+					return res, err
+				}
+				res.ocsfVersion = version
+				continue
+			}
+			if isPair && key == OptionOcsfFindings {
+				findings, err := parseOcsfFindings(value)
+				if err != nil {
+					return res, err
+				}
+				res.ocsfFindings = findings
+				continue
+			}
 			unknown = append(unknown, cur)
 		}
 	}
@@ -99,6 +141,19 @@ func ParseConfig[T string | Format](raw T) (*PrintConfig, error) {
 		return res, errors.New("unknown terms entered: " + strings.Join(unknown, ", ") + ". " + AllAvailableOptions())
 	}
 	return res, nil
+}
+
+// parseOcsfFindings resolves the ocsf-findings option.
+func parseOcsfFindings(raw string) (OcsfFindingClasses, error) {
+	switch strings.TrimSpace(raw) {
+	case "", "compliance":
+		return OcsfFindingsCompliance, nil
+	case "detection":
+		return OcsfFindingsDetection, nil
+	default:
+		return 0, errors.New("unknown " + OptionOcsfFindings + " value " + raw +
+			", expected one of: compliance, detection")
+	}
 }
 
 func AllAvailableOptions() string {
@@ -147,6 +202,8 @@ const (
 	FormatYAMLv2
 	FormatSarif
 	FormatHDF
+	FormatOcsfJson
+	FormatOcsfParquet
 )
 
 // Formats that are supported by the reporter
@@ -167,13 +224,18 @@ var Formats = map[string]Format{
 	"csv":     FormatCSV,
 	"sarif":   FormatSarif,
 	"hdf":     FormatHDF,
+	// OCSF, for security data lakes. "ocsf" is an alias for the JSON flavor.
+	"ocsf":         FormatOcsfJson,
+	"ocsf-json":    FormatOcsfJson,
+	"ocsf-parquet": FormatOcsfParquet,
 }
 
 func AllFormats() string {
 	var res []string
 	for k := range Formats {
 		if k != "" && // default if nothing is provided, ignore
-			k != "yml" { // don't show both yaml and yml
+			k != "yml" && // don't show both yaml and yml
+			k != "ocsf" { // don't show both ocsf and ocsf-json
 			res = append(res, k)
 		}
 	}
@@ -187,7 +249,9 @@ func AllOptions() string {
 		"[no]" + OptionPrintData + ", " +
 		"[no]" + OptionPrintRisks + ", " +
 		"[no]" + OptionPrintVulns + ", " +
-		"[no]" + OptionDetailed + " (junit)"
+		"[no]" + OptionDetailed + " (junit), " +
+		OptionOcsfVersion + "=" + strings.Join(ocsf.SupportedVersions(), "|") + " (ocsf), " +
+		OptionOcsfFindings + "=compliance|detection (ocsf)"
 }
 
 func (r *Reporter) scoreColored(rating policy.ScoreRating, s string) string {

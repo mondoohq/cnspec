@@ -31,9 +31,11 @@ require (
 	github.com/mitchellh/hashstructure/v2 v2.0.2
 	github.com/muesli/reflow v0.3.0
 	github.com/muesli/termenv v0.16.0
+	github.com/ocsf/ocsf-toolkit v0.8.0
 	github.com/olekukonko/tablewriter v1.1.4
 	github.com/owenrumney/go-sarif/v2 v2.3.3
 	github.com/package-url/packageurl-go v0.1.5
+	github.com/parquet-go/parquet-go v0.32.0
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10
 	github.com/protobom/protobom v0.5.8
 	github.com/rs/zerolog v1.35.1
@@ -99,6 +101,7 @@ require (
 	github.com/alecthomas/participle/v2 v2.1.4 // indirect
 	github.com/alecthomas/repr v0.5.1 // indirect
 	github.com/anchore/go-struct-converter v0.1.0 // indirect
+	github.com/andybalholm/brotli v1.1.1 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/apparentlymart/go-textseg/v17 v17.0.1 // indirect
@@ -275,6 +278,8 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pandatix/go-cvss v0.6.2 // indirect
+	github.com/parquet-go/bitpack v1.0.0 // indirect
+	github.com/parquet-go/jsonlite v1.0.0 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/petermattis/goid v0.0.0-20260819104326-d9896a8858b2 // indirect
@@ -320,6 +325,7 @@ require (
 	github.com/tliron/go-kutil v0.4.0 // indirect
 	github.com/tonistiigi/go-csvvalue v0.0.0-20240814133006-030d3b2625d0 // indirect
 	github.com/toravir/csd v0.0.0-20200911003203-13ae77ad849c // indirect
+	github.com/twpayne/go-geom v1.6.1 // indirect
 	github.com/ulikunitz/xz v0.5.16 // indirect
 	github.com/wasilibs/go-pgquery v0.0.0-20250409022910-10ac41983c07 // indirect
 	github.com/wasilibs/wazero-helpers v0.0.0-20240620070341-3dff1577cd52 // indirect

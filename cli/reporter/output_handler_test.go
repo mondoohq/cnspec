@@ -4,9 +4,16 @@
 package reporter
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.mondoo.com/cnspec/cli/reporter/internal/reportfixture"
+	"go.mondoo.com/cnspec/cli/reporter/ocsf"
 )
 
 func TestOutputHandlerAwsSqs(t *testing.T) {
@@ -60,4 +67,88 @@ func TestCliReporter(t *testing.T) {
 	rep, err := NewOutputHandler(HandlerConfig{})
 	require.NoError(t, err)
 	require.IsType(t, &Reporter{}, rep)
+}
+
+// TestIsDirTarget pins the one definition of "--output-target names a directory".
+//
+// Every format that can write per-asset or per-class files shares this helper, so
+// the flag has to mean the same thing for all of them. A second copy in the OCSF
+// handler used to disagree on exactly one row -- the marked one below -- by
+// reading a non-existent extensionless path as a directory. That guess turns an
+// ordinary Unix file target like "results" into a directory full of files, so the
+// rule is facts (it exists and is a directory) or explicit intent (a trailing
+// separator), never an extension heuristic.
+func TestIsDirTarget(t *testing.T) {
+	dir := t.TempDir()
+
+	existingFile := filepath.Join(dir, "report.json")
+	require.NoError(t, os.WriteFile(existingFile, []byte("{}"), 0o600))
+
+	existingDirNoExt := filepath.Join(dir, "results")
+	require.NoError(t, os.Mkdir(existingDirNoExt, 0o755))
+
+	tests := []struct {
+		name   string
+		target string
+		want   bool
+	}{
+		{"empty target is not a directory", "", false},
+		{"trailing slash asks for one", filepath.Join(dir, "out") + "/", true},
+		{"trailing slash wins over a file extension", filepath.Join(dir, "out.json") + "/", true},
+		{"the file:// prefix is stripped before the stat", "file://" + existingDirNoExt, true},
+		{"the file:// prefix on an existing file", "file://" + existingFile, false},
+		{"existing directory", existingDirNoExt, true},
+		{"existing file", existingFile, false},
+		// The row the two copies disagreed on.
+		{"non-existent extensionless path is a file", filepath.Join(dir, "does-not-exist"), false},
+		{"non-existent path with an extension is a file", filepath.Join(dir, "nope.json"), false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, isDirTarget(tc.target))
+		})
+	}
+}
+
+// TestOutputHandlerOcsfFindingsDetection walks the whole detection path: the
+// option string a user types, through the handler --output-target picks, to the
+// events on disk.
+//
+// The narrower tests cover the converter and the file handler with a config built
+// in Go. Nothing else proves that `-o ocsf-json,ocsf-findings=detection` parses,
+// routes to the OCSF file handler, and lands class 2004 rather than 2003. An HEC
+// output target used to be a second way to reach class 2004, so with it gone this
+// is the only path there and wants a test that spans the whole of it.
+func TestOutputHandlerOcsfFindingsDetection(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "out") + string(os.PathSeparator)
+
+	handler, err := NewOutputHandler(HandlerConfig{
+		Format:       "ocsf-json,ocsf-findings=detection",
+		OutputTarget: dir,
+	})
+	require.NoError(t, err)
+	require.IsType(t, &ocsfFileHandler{}, handler)
+	require.NoError(t, handler.WriteReport(t.Context(), reportfixture.Sample()))
+
+	require.NoFileExists(t, filepath.Join(dir, ocsf.ClassComplianceFinding+".jsonl"),
+		"a check is reported in one class, and detection was the one asked for")
+
+	raw, err := os.ReadFile(filepath.Join(dir, ocsf.ClassDetectionFinding+".jsonl"))
+	require.NoError(t, err)
+
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	require.Len(t, lines, 3, "one detection finding per reporting check")
+	for _, line := range lines {
+		var event map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &event))
+		assert.EqualValues(t, ocsf.ClassUIDDetectionFinding, event["class_uid"])
+		// The attributes class 2004 carries and 2003 has nowhere to put, which is
+		// what the option exists for.
+		assert.Contains(t, event, "risk_level_id")
+		assert.Contains(t, event["finding_info"], "analytic")
+		// Class 2004 has no compliance object, so the framework mappings travel in
+		// unmapped instead.
+		assert.NotContains(t, event, "compliance")
+	}
 }
