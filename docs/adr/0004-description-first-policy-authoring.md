@@ -281,6 +281,18 @@ binary).
   therefore equivalent to feeding attacker-controlled text to your agent. The
   command documents this and it is a trust boundary users must respect; we do not
   sandbox the agent (it is the user's own tool, invoked with their environment).
+- **The trust boundary is the working directory, not just the bundle.** Two of
+  the agent's inputs are resolved relative to the current directory rather than
+  to the install: the grounding corpus defaults to `./content` when present, and
+  `findSkills()` (`apps/cnspec/cmd/policy_generate.go`) probes `./skills` and
+  `../skills` *before* the executable's own directory, so a `skills/mql/SKILL.md`
+  planted in the working tree is handed to the agent as instructions in
+  preference to the shipped one. That is an injection route with no bundle
+  involved, so "only generate from bundles you trust" understates it: the
+  accurate guidance is to run `policy generate` only in a directory you trust.
+  Pinning skills to the install directory and requiring `--corpus` to be explicit
+  would close it; that is deferred, and the help text states the boundary as it
+  actually stands.
 - **cnspec adds no credentials, and forwards only an allowlisted environment.**
   cnspec holds no model credentials and stores none; the agent uses its own
   configured auth. It does not follow that the agent sees nothing sensitive: a

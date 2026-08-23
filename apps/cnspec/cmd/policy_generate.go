@@ -50,8 +50,9 @@ generated MQL is validated by compiling it in-process before it is written.
 
 Security note: each check's title and description are sent to the coding-agent
 CLI as its prompt. Because that agent can run tools and commands, only run this
-on policy bundles you trust — a crafted description in an untrusted bundle is
-prompt-injection input to your agent.
+in a directory you trust, on bundles you trust — a crafted description is
+prompt-injection input to your agent, and the grounding corpus and agent skill
+files are resolved relative to the working directory.
 
 Examples:
   cnspec policy generate policy.mql.yaml --in-place
