@@ -30,12 +30,12 @@ func (c *converter) complianceFinding(resolved *policy.ResolvedPolicy, report *p
 
 	finding := ocsf.NewComplianceFinding(ocsf.ComplianceFindingActivityCreate)
 	finding.Compliance = c.compliance(resolved, report, query, score, ctx)
-	finding.FindingInfo = c.findingInfo(query, score, title)
+	finding.FindingInfo = c.findingInfo(query, score, title, ctx)
 	finding.Resources = []ocsf.ResourceDetails{ctx.resource}
 	finding.Device = ctx.device
 	finding.Cloud = ctx.cloud
 	finding.Time = c.now
-	finding.SeverityID = checkSeverity(score)
+	finding.SeverityID = checkSeverity(query, score)
 	finding.Severity = ocsf.SeverityName(finding.SeverityID)
 	finding.StatusID, finding.Status = findingStatus(score)
 	finding.StatusCode = outcome
@@ -114,7 +114,7 @@ func (c *converter) complianceAssetError(errMsg string, ctx *assetContext) ocsf.
 	finding.Metadata = c.metadata(ctx.findingProfiles()...)
 	finding.Unmapped = assetErrorUnmapped(ctx)
 	finding.Compliance = c.errorCompliance(errMsg)
-	finding.FindingInfo = c.assetErrorInfo()
+	finding.FindingInfo = c.assetErrorInfo(ctx)
 	finding.Resources = []ocsf.ResourceDetails{ctx.resource}
 	finding.Device = ctx.device
 	finding.Cloud = ctx.cloud

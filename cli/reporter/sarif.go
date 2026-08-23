@@ -188,16 +188,19 @@ func addRunScoreProperties(props sarif.Properties, r *policy.ReportCollection, a
 			continue
 		}
 		total++
-		switch scoreToSarifKind(score) {
-		case "pass":
+		// The counts switch on the outcome, not on the SARIF kind. SARIF has no
+		// error kind, so scoreToSarifKind folds Error into "fail"; counting off it
+		// meant reaching back into policy.ScoreType to undo that fold right after
+		// the helper had discarded it. reportdoc.Outcome is the shared collapse
+		// that keeps the error case distinct, which is the whole reason it exists.
+		switch reportdoc.OutcomeOf(score) {
+		case reportdoc.OutcomePass:
 			passed++
-		case "fail":
-			if score != nil && score.Type == policy.ScoreType_Error {
-				errored++
-			} else {
-				failed++
-			}
-		case "notApplicable":
+		case reportdoc.OutcomeFail:
+			failed++
+		case reportdoc.OutcomeError:
+			errored++
+		case reportdoc.OutcomeSkipped:
 			skipped++
 		}
 	}

@@ -68,10 +68,12 @@ func (c *converter) addAssetError(events *ocsf.Events, r *policy.ReportCollectio
 	events.ComplianceFindings = append(events.ComplianceFindings, c.complianceAssetError(errMsg, ctx))
 }
 
-// assetErrorInfo is the finding_info both classes give a failed scan.
-func (c *converter) assetErrorInfo() ocsf.FindingInfo {
+// assetErrorInfo is the finding_info both classes give a failed scan. Its uid is
+// per-asset for the same reason a check's is: a fleet scan where a hundred assets
+// were unreachable is a hundred findings, not one repeated.
+func (c *converter) assetErrorInfo(ctx *assetContext) ocsf.FindingInfo {
 	return ocsf.FindingInfo{
-		UID:         assetErrorUID,
+		UID:         findingUID(assetErrorUID, ctx),
 		Title:       "Asset scan error",
 		Desc:        "cnspec could not complete the scan of this asset. No policy results are available for it.",
 		CreatedTime: c.now,

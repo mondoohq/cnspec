@@ -84,6 +84,11 @@ its tests pass, which is the whole of what publishing it would take — and that
 property is worth stating rather than leaving to be rediscovered. One `policy.Score` in here
 would end it.
 
+Stating it is not enough to keep it, so `TestPackageImportsNoCnspecPackage` in
+`reports/ocsf/deps_test.go` walks `go list -deps` over the package and fails on any
+`go.mondoo.com/cnspec/...` edge. It reads the transitive dependencies rather than the import
+block, because an indirect edge costs exactly as much as a direct one.
+
 So the mapping from a cnspec scan lives one directory down, in `reports/ocsf/convert`: which
 class a check becomes, how a score becomes a severity and a status, what travels in `unmapped`.
 The split is by direction of knowledge — `reports/ocsf` knows OCSF and nothing about cnspec,

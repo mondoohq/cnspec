@@ -29,13 +29,27 @@ import (
 // not exist in the class, values of the wrong type, enum siblings that disagree,
 // missing required attributes, and profile attributes used without the profile
 // being declared. It is why cnspec output is safe to hand to a data lake.
+//
+// It only catches what a fixture puts in front of it, which is why the set is
+// wide rather than minimal. cloud.project_uid was set unconditionally and is
+// deprecated at 1.9, and this suite stayed green through it because the only
+// cloud fixture was an EC2 asset, which has no project id -- hence the GCP one.
 func TestOcsfSchemaValidation(t *testing.T) {
+	recorded, err := reportfixture.UbuntuScan()
+	require.NoError(t, err)
+
 	reports := map[string]*policy.ReportCollection{
 		"sample":     reportfixture.Sample(),
 		"detailed":   reportfixture.Detailed(),
 		"cloud":      cloudAssetReportCollection(),
+		"gcp":        gcpAssetReportCollection(),
 		"advisories": advisoryReportCollection(),
 		"scan error": erroredReportCollection(),
+		// The recorded scan is the only fixture with an ExecutionJob, so it is the
+		// only one that exercises checkAssessment -- the rendered "expected vs
+		// actual" that goes into compliance.status_detail and, on class 2004, into
+		// status_detail. The hand-built fixtures reach none of it.
+		"recorded": recorded,
 	}
 
 	// Both finding classes are validated: a check is reported as one or the

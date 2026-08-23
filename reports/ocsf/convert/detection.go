@@ -39,7 +39,7 @@ func (c *converter) detectionFinding(resolved *policy.ResolvedPolicy, report *po
 
 	finding := ocsf.NewDetectionFinding(ocsf.DetectionFindingActivityCreate)
 	finding.Time = c.now
-	finding.SeverityID = checkSeverity(score)
+	finding.SeverityID = checkSeverity(query, score)
 	finding.Severity = ocsf.SeverityName(finding.SeverityID)
 	finding.StatusID, finding.Status = findingStatus(score)
 	finding.StatusCode = outcome
@@ -48,7 +48,7 @@ func (c *converter) detectionFinding(resolved *policy.ResolvedPolicy, report *po
 	finding.Metadata = c.metadata(ctx.findingProfiles()...)
 	finding.Unmapped = c.detectionUnmapped(query, score, ctx)
 
-	finding.FindingInfo = c.findingInfo(query, score, title)
+	finding.FindingInfo = c.findingInfo(query, score, title, ctx)
 	finding.FindingInfo.Analytic = &ocsf.Analytic{
 		TypeID:   ocsf.AnalyticTypeRule,
 		Type:     ocsf.AnalyticTypeName(ocsf.AnalyticTypeRule),
@@ -120,7 +120,7 @@ func (c *converter) detectionAssetError(errMsg string, ctx *assetContext) ocsf.D
 	finding.Message = "Asset scan error: " + errMsg
 	finding.Metadata = c.metadata(ctx.findingProfiles()...)
 	finding.Unmapped = assetErrorUnmapped(ctx)
-	finding.FindingInfo = c.assetErrorInfo()
+	finding.FindingInfo = c.assetErrorInfo(ctx)
 	finding.Resources = []ocsf.ResourceDetails{ctx.resource}
 	finding.Device = ctx.device
 	finding.Cloud = ctx.cloud

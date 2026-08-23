@@ -385,8 +385,20 @@ func TestSarifRunMetadata(t *testing.T) {
 	assert.Equal(t, "22.04", run.Properties["platformVersion"])
 	assert.EqualValues(t, 3, run.Properties["checksTotal"])
 	assert.EqualValues(t, 1, run.Properties["checksPassed"])
+	assert.EqualValues(t, 0, run.Properties["checksFailed"])
 	assert.EqualValues(t, 1, run.Properties["checksErrored"])
 	assert.EqualValues(t, 1, run.Properties["checksSkipped"])
+
+	// A failing check is counted as failed and not as errored. SARIF has no error
+	// kind, so scoreToSarifKind folds Error into "fail"; the counts read
+	// reportdoc.Outcome, which keeps the two apart, rather than folding and then
+	// reaching back into policy.ScoreType to undo the fold.
+	failing := toSarif(t, reportfixture.Detailed()).Runs[0]
+	assert.EqualValues(t, 1, failing.Properties["checksTotal"])
+	assert.EqualValues(t, 1, failing.Properties["checksFailed"])
+	assert.EqualValues(t, 0, failing.Properties["checksErrored"])
+	assert.EqualValues(t, 0, failing.Properties["checksPassed"])
+	assert.EqualValues(t, 0, failing.Properties["checksSkipped"])
 
 	// vulnerability stats mirror the JUnit vulnerability suite properties
 	assert.EqualValues(t, 1, run.Properties["packagesTotal"])

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -99,6 +100,34 @@ func TestHDFDirConformsToSchema(t *testing.T) {
 		doc, err := os.ReadFile(path)
 		require.NoError(t, err)
 		assertValidOHDF(t, schema, doc, filepath.Base(path))
+	}
+}
+
+// TestHDFDirWritesPrivateFiles pins the permissions of the output.
+//
+// An OHDF document carries the MQL source of every check, the rendered assessment
+// with the observed values in it, and the asset's platform and cloud identity. A
+// scan is routinely run as root, and 0755/0644 hands all of that to every local
+// account on the host.
+func TestHDFDirWritesPrivateFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits do not apply on Windows")
+	}
+	pinHDFClock(t)
+
+	dir := filepath.Join(t.TempDir(), "out")
+	files, err := ConvertToDir(multiAssetReportCollection(t), dir)
+	require.NoError(t, err)
+	require.NotEmpty(t, files)
+
+	info, err := os.Stat(dir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm(), "the output directory is not world-readable")
+
+	for _, path := range files {
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "%s is not world-readable", path)
 	}
 }
 
