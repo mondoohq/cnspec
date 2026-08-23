@@ -88,6 +88,12 @@ func (m Model) View() string {
 			clipLines(m.scan.view(l, m.spinner.View()), l.BodyH) + "\n" + m.scan.viewFooter(l)
 	}
 
+	// Authoring takes the body outright: it is a different verb from the one
+	// the two panes behind it describe, and its keys mean what it says they do.
+	if m.phase == phaseAuthoring {
+		return m.viewHeader(l) + "\n" + clipLines(m.viewAuthor(l), l.BodyH) + "\n" + m.viewFooter(l)
+	}
+
 	// An open picker takes over the body: nothing moves behind it, and the
 	// arrow keys mean one thing while it is up.
 	// The reporting chooser takes the body the way a picker does: while it is
@@ -592,6 +598,7 @@ func (m Model) viewFooter(l layout) string {
 	// Shown even without credentials: the chooser is where a user finds out
 	// why their scans stay local and what to do about it.
 	hints += tui.HintSep + tui.Kbd("^r", "reporting")
+	hints += tui.HintSep + tui.Kbd("^g", "author")
 	hints += m.exportHint()
 	if m.viewer.loaded {
 		// Only offered once there is one. A key hint for a report that does not

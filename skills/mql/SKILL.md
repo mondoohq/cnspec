@@ -1,17 +1,17 @@
 ---
 name: mql
-description: Use when writing MQL (Mondoo Query Language) queries, working with Mondoo MCP tools, or developing security policies
+description: Use when writing MQL (Mondoo Query Language) queries, generating MQL from a check's title and description, or developing security policies
 ---
 
 # MQL Development Skill
 
 ## Overview
 
-This skill provides guidance for writing MQL (Mondoo Query Language) queries and validating them using either the cnspec CLI or Mondoo's MCP tools.
+This skill provides guidance for writing MQL (Mondoo Query Language) queries, generating them from natural-language check descriptions, and validating them using the cnspec CLI.
 
 **Two-tier knowledge system:**
-- **Reference Files** (static): MQL syntax docs, platform-specific examples
-- **Schema Tools** (live): Real-time schema lookup and query validation via cnspec CLI or MCP
+- **Reference Files** (static): MQL syntax docs, platform-specific examples, correctness traps
+- **Schema Tools** (live): Real-time schema lookup and query validation via the cnspec CLI
 
 ## When to Use
 
@@ -36,11 +36,7 @@ Located within this skill directory:
 
 ## Schema Discovery & Query Validation
 
-Two equivalent interfaces are available for real-time schema lookup and query validation. Use whichever is available in your environment — they provide the same data.
-
-### cnspec CLI (recommended — works everywhere)
-
-The cnspec CLI provides structured JSON output for all schema operations. No MCP server required.
+The cnspec CLI is the single source of schema data and query validation. It provides structured JSON output for all schema operations and works in any environment where cnspec is installed.
 
 #### List all providers
 
@@ -134,20 +130,16 @@ cnspec policy format policy.mql.yaml --sort
 cnspec policy init example.mql.yaml
 ```
 
-### Mondoo MCP Server Tools (alternative)
+### Find similar existing checks (grounding)
 
-If the Mondoo MCP server is available, you can use these tools instead of the CLI.
+Before writing MQL from scratch, look for a validated check that already does
+something similar and mirror its patterns — real MQL for the same provider is
+the strongest guide you have.
 
-| MCP Tool | CLI Equivalent |
-|----------|---------------|
-| `mcp__mondoo-mcp-http__mql-schema-providers` | `cnspec providers list --json` |
-| `mcp__mondoo-mcp-http__mql-schema-overview` | `cnspec providers resources <provider> --json` |
-| `mcp__mondoo-mcp-http__mql-schema-resource` | `cnspec providers resources <provider> <resource> --json` |
-| `mcp__mondoo-mcp-http__mql-schema-suggestion` | No CLI equivalent (use LSP) |
-| `mcp__mondoo-mcp-http__mql-compiler` | `cnspec run local -c "query" --ast` |
-| `mcp__mondoo-mcp-http__mql-bundle-lint` | `cnspec policy lint file.mql.yaml -o sarif` |
-| `mcp__mondoo-mcp-http__mql-bundle-format` | `cnspec policy format file.mql.yaml` |
-| `mcp__mondoo-mcp-http__mql-policy-bundle` | `cnspec policy init file.mql.yaml` |
+```bash
+cnspec policy graph search "s3 buckets must be encrypted" ./content --similar --provider aws
+cnspec policy graph search "containers must not run as root" ./content --similar --limit 5 --json
+```
 
 ### When to Use What
 
@@ -294,15 +286,77 @@ users.all(shell == "/bin/bash")                     # Bad
 users.where(shell != null).all(shell == "/bin/bash") # Good
 ```
 
+### Correctness Traps (a query can compile and still be wrong)
+
+Compilation (`--ast`) catches unknown resources, unknown fields, and syntax
+errors. It does NOT catch these semantic traps, which cause a check to return a
+confidently wrong verdict. Follow these rules — they are the difference between
+MQL that compiles and MQL that is correct:
+
+- **Assert presence before comparing.** `null && null` evaluates to **`true`**,
+  so a check that only compares fields silently *passes* when the data never
+  resolved. Write `field != empty && field == "x"`, not `field == "x"` alone.
+- **Use `!= empty`, never `!= ""`** for non-empty checks — `null != ""` is true,
+  so `!= ""` is not null-safe.
+- **`.all()` / `.none()` on `null` errors**; on an empty list they pass
+  vacuously. Guard absent collections: `x == empty || x.all(...)`.
+- **A dotted path that is also a resource name compiles to an empty husk** — every
+  field then reads `null` and `null != "x"` is true. Reach sub-objects through an
+  accessor path or a block bound to the parent: `parent { child.field != "none" }`.
+- **No parenthesized grouping** of booleans. Rely on precedence (`&&` binds
+  tighter than `||`) or split into separate `.any()` / `.all()` calls.
+- **Newline-as-AND**: multiple lines in an `mql:` block are implicitly AND-ed.
+- **`filters:` is asset selection, not logic.** Keep `asset.platform == ...` in
+  `filters:`; predicate logic belongs in `mql:`.
+
+## Generating MQL from a check's description
+
+`cnspec policy generate` fills in `mql:` for checks that have a `title` and
+`docs.desc` but no query yet. cnspec resolves each check's target provider from
+its `filters:`, searches similar existing checks for grounding, and validates
+the generated MQL by compiling it — delegating the model call to a coding-agent
+CLI you already have installed (Claude Code, Codex, Kimi, DeepSeek).
+
+```bash
+cnspec policy generate --interactive                   # guided: describe → generate → review → write
+cnspec policy generate policy.mql.yaml --in-place      # fill empty mql, write back
+cnspec policy generate policy.mql.yaml --dry-run       # preview without writing
+cnspec policy generate policy.mql.yaml --force         # also regenerate existing mql
+cnspec policy generate policy.mql.yaml --agent codex --explain
+cnspec policy generate policy.mql.yaml --test-target aws  # execute-and-assert, not just compile
+```
+
+`--interactive` (`-i`) is the guided authoring flow: it asks what the check
+should verify, guesses the provider and filter, shows similar existing checks as
+grounding, generates the MQL, and lets you accept / edit / regenerate-with-
+feedback before writing it into a bundle — one check at a time.
+
+By default generated MQL is validated by compiling it. Pass `--test-target
+<provider>` (e.g. `local`, `aws`, `gcp`, `azure`) to additionally run each query
+against a live asset, or `--test-recording <file>` to run against a recording
+(reproducible, no live credentials), and require it to resolve to a concrete
+true/false verdict. This catches the correctness traps below — a query that
+compiles but resolves to `null` (null-unsafe access, unresolved field, or a
+dotted-path husk) is rejected.
+
+When generating MQL by hand for a check, follow the same loop cnspec does:
+1. Read the intent from `title` + `docs.desc`.
+2. Resolve the provider from `filters:` (`asset.platform == "..."`).
+3. `cnspec policy graph search "<intent>" <path> --similar --provider <p>` to find checks to mirror.
+4. Confirm fields with `cnspec providers resources <provider> <resource> --json`.
+5. Apply the correctness traps above.
+6. Validate: `cnspec run <connection> -c "<mql>" --ast`.
+
 ## Workflow
 
 1. **Understand requirements** - What resources need to be checked?
 2. **Explore schema** - Use `cnspec providers resources <provider> --json`
-3. **Check samples** - Look for similar patterns in `samples/*.md`
-4. **Write query** - Follow patterns from `mql-reference.md`
-5. **Validate** - Use `cnspec run local -c "query" --ast` to verify syntax
-6. **Test** - Run with `cnspec run` against target systems
-7. **Wire up validation** - For policies in the cnspec repository, add fixtures for any IaC variant and register the policy with the validators that cover its remediation, in the same change. See [Wiring Policies into Content Validation](#wiring-policies-into-content-validation)
+3. **Find similar checks** - `cnspec policy graph search "<intent>" <path> --similar --provider <p>`
+4. **Check samples** - Look for similar patterns in `samples/*.md`
+5. **Write query** - Follow patterns from `mql-reference.md` and the correctness traps
+6. **Validate** - Use `cnspec run local -c "query" --ast` to verify it compiles
+7. **Test** - Run with `cnspec run` against target systems
+8. **Wire up validation** - For policies in the cnspec repository, add fixtures for any IaC variant and register the policy with the validators that cover its remediation, in the same change. See [Wiring Policies into Content Validation](#wiring-policies-into-content-validation)
 
 ## Platform-Specific Guidance
 
