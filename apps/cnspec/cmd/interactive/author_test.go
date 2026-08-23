@@ -21,8 +21,7 @@ func authoringModel(t *testing.T) Model {
 	t.Helper()
 	m := newTestModel()
 	m.phase = phaseAuthoring
-	m.author = authorState{seq: 1, step: authorIntent}
-	m.author.fields[fieldFile] = filepath.Join(t.TempDir(), "out.mql.yaml")
+	m.author = newAuthorState(1, nil, filepath.Join(t.TempDir(), "out.mql.yaml"))
 	return m
 }
 
@@ -217,5 +216,68 @@ func TestAuthorSurfacesAWriteFailure(t *testing.T) {
 	}
 	if m.author.step == authorDone {
 		t.Error("a failed write was reported as done")
+	}
+}
+
+// TestAuthorAnotherCheckAcceptsTyping pins a crash: "author another" rebuilt
+// the pane by struct literal and left the text box zero-valued, so the next
+// keystroke panicked on a nil cursor. Every field of authorState has a usable
+// zero value except that one, which is why construction goes through
+// newAuthorState.
+func TestAuthorAnotherCheckAcceptsTyping(t *testing.T) {
+	m := authoringModel(t)
+	m.author.step = authorDone
+	m.author.wrote = "out.mql.yaml"
+
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = nm.(Model)
+	if m.author.step != authorIntent {
+		t.Fatalf("'a' did not start another check, step=%d", m.author.step)
+	}
+
+	// the keystroke that used to panic
+	m = typeString(m, "another check")
+	if got := m.author.fields[fieldTitle]; got != "another check" {
+		t.Errorf("typing after 'author another' did not reach the title: %q", got)
+	}
+}
+
+// TestAuthorFocusedRowDrawsTheLiveInput pins the difference between a form
+// field and a menu row.
+//
+// The focused row has to draw the text box, because that is what carries the
+// cursor. Drawing the stored string instead -- or banding the whole row the way
+// a list selection does -- leaves an empty field as a slab of accent colour
+// with nothing to show where typing would go. view.go makes the same split for
+// the connector form: only the label takes the band.
+//
+// The assertion is on the value drawn rather than on colour, because lipgloss
+// emits no escape codes without a TTY and a test for them passes vacuously in
+// CI.
+func TestAuthorFocusedRowDrawsTheLiveInput(t *testing.T) {
+	m := authoringModel(t)
+	m.author.moveCursor(fieldTitle)
+
+	// force a divergence the renderer has to resolve one way or the other
+	m.author.fields[fieldTitle] = "STORED"
+	m.author.input.SetValue("LIVE")
+
+	view := m.View()
+	if !strings.Contains(view, "LIVE") {
+		t.Error("the focused row does not draw the text box, so it carries no cursor")
+	}
+	if strings.Contains(view, "STORED") {
+		t.Error("the focused row drew the stored value instead of the live input")
+	}
+}
+
+// TestAuthorEmptyFieldShowsAPlaceholder: a blank row must read as "not filled
+// in yet", not as a value that failed to load.
+func TestAuthorEmptyFieldShowsAPlaceholder(t *testing.T) {
+	m := authoringModel(t)
+	m.author.moveCursor(fieldTitle) // so Desc is unfocused and empty
+
+	if !strings.Contains(m.View(), fieldDesc.placeholder()) {
+		t.Errorf("an empty unfocused field shows nothing at all:\n%s", m.View())
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"go.mondoo.com/cnspec/cli/tui"
@@ -66,6 +67,21 @@ func (f authorField) label() string {
 	}
 }
 
+// placeholder is what an empty field shows, so a blank row reads as "not filled
+// in yet" rather than as a value that failed to load.
+func (f authorField) placeholder() string {
+	switch f {
+	case fieldTitle:
+		return "SSH must not permit direct root login"
+	case fieldDesc:
+		return "PermitRootLogin must be set to no"
+	case fieldFilter:
+		return "proposed from the title once you type one"
+	default:
+		return "generated-policy.mql.yaml"
+	}
+}
+
 func (f authorField) hint() string {
 	switch f {
 	case fieldTitle:
@@ -95,11 +111,66 @@ type authorState struct {
 
 	gen *generate.Generator
 
+	// input edits whichever field has the cursor. It is the same arrangement
+	// detailState uses: one text box bound to the focused field, loaded on
+	// entry and stored on the way out, so the cursor is real rather than a
+	// block drawn at the end of a string.
+	input textinput.Model
+
 	mql         string
 	explanation string
 	warn        string // the gate rejected it, but the candidate is still offered
 	err         string
 	wrote       string
+}
+
+// loadField binds the text box to the field under the cursor.
+func (a *authorState) loadField() {
+	a.input.SetValue(a.fields[a.cursor])
+	a.input.CursorEnd()
+	a.input.Focus()
+}
+
+// storeField writes the text box back into the focused field.
+func (a *authorState) storeField() {
+	a.fields[a.cursor] = a.input.Value()
+}
+
+// moveCursor stores the field being left and binds the one being entered, so
+// the box and the field under the cursor never disagree.
+func (a *authorState) moveCursor(to authorField) {
+	if to < 0 || to >= authorFieldCount {
+		return
+	}
+	a.storeField()
+	a.cursor = to
+	a.loadField()
+}
+
+// newAuthorState builds an authoring pane ready to type into.
+//
+// It exists because every field of authorState has a usable zero value except
+// one: a zero textinput.Model panics the first time it is focused. Two paths
+// built the state by literal -- opening the pane and "author another" -- and
+// only one of them remembered the box.
+func newAuthorState(seq int, gen *generate.Generator, file string) authorState {
+	a := authorState{
+		seq:   seq,
+		step:  authorIntent,
+		gen:   gen,
+		input: newAuthorInput(),
+	}
+	a.fields[fieldFile] = file
+	a.loadField()
+	return a
+}
+
+// newAuthorInput is the text box the pane edits with.
+func newAuthorInput() textinput.Model {
+	ti := textinput.New()
+	ti.Prompt = ""
+	ti.CharLimit = 0
+	return ti
 }
 
 // authorGeneratedMsg carries one agent run's outcome back to the event loop.
@@ -166,12 +237,7 @@ func (m Model) openAuthor() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	m.author = authorState{
-		seq:  m.author.seq + 1,
-		step: authorIntent,
-		gen:  gen,
-	}
-	m.author.fields[fieldFile] = defaultAuthorFile()
+	m.author = newAuthorState(m.author.seq+1, gen, defaultAuthorFile())
 	m.phase = phaseAuthoring
 	return m, nil
 }
@@ -347,15 +413,28 @@ func (m Model) viewAuthor(l layout) string {
 		}
 
 	default:
+		// Only the label takes the selection band; the value keeps its own
+		// styling so the text cursor stays visible. Banding the whole row is
+		// what a list does, and it turns an empty field into a solid slab --
+		// see the same split in view.go's field rows.
+		const labelW = 18
 		for f := authorField(0); f < authorFieldCount; f++ {
-			label := f.label()
+			label := tui.PadRight(f.label(), labelW)
+
 			value := a.fields[f]
-			line := tui.Truncate(label+": "+value, contentW-2)
+			display := value
 			if f == a.cursor {
-				b.WriteString(tui.Bar("▸ "+line+"▌", contentW, tui.BandSelected) + "\n")
+				display = a.input.View()
+			} else if strings.TrimSpace(value) == "" {
+				display = tui.StyleFaint.Render(f.placeholder())
+			}
+
+			if f == a.cursor {
+				b.WriteString(tui.BandSelected.Render(cursorMark+label) + " " + display + "\n")
 				continue
 			}
-			b.WriteString("  " + tui.StyleText.Render(line) + "\n")
+			b.WriteString("  " + tui.StyleDim.Render(label) + " " +
+				tui.Truncate(display, max(contentW-labelW-3, 8)) + "\n")
 		}
 		b.WriteString("\n" + tui.StyleFaint.Render(tui.Truncate(a.cursor.hint(), contentW)))
 		b.WriteString("\n\n" + tui.StyleFaint.Render(tui.Truncate(
@@ -429,10 +508,8 @@ func (m Model) authorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "a":
 			// another check, same file: keep the destination, drop the intent
-			file := a.fields[fieldFile]
-			gen := a.gen
-			m.author = authorState{seq: a.seq + 1, gen: gen}
-			m.author.fields[fieldFile] = file
+			// another check, same file: keep the destination, drop the intent
+			m.author = newAuthorState(a.seq+1, a.gen, a.fields[fieldFile])
 			return m, nil
 		case "esc", "enter":
 			return m.closeAuthor()
@@ -445,46 +522,38 @@ func (m Model) authorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		return m.closeAuthor()
 	case "up", "shift+tab":
-		if a.cursor > 0 {
-			a.cursor--
-		}
+		a.moveCursor(a.cursor - 1)
 		return m, nil
 	case "down", "tab":
-		if a.cursor < authorFieldCount-1 {
-			a.cursor++
-		}
+		a.moveCursor(a.cursor + 1)
+		a.proposeFilter()
 		return m, nil
-	case "ctrl+g", "enter":
-		if a.cursor < authorFieldCount-1 && msg.String() == "enter" {
-			// enter advances through the fields; only the last one, or ^g
-			// anywhere, commits. Generating from a half-filled form wastes a
-			// billed run on an intent the user was still writing.
-			a.cursor++
+	case "ctrl+g":
+		a.storeField()
+		return m.startAuthorGeneration()
+	case "enter":
+		// enter walks the fields; only the last one commits. Generating from a
+		// half-filled form spends a billed run on an intent still being
+		// written.
+		if a.cursor < authorFieldCount-1 {
+			a.moveCursor(a.cursor + 1)
 			a.proposeFilter()
 			return m, nil
 		}
+		a.storeField()
 		return m.startAuthorGeneration()
-	case "backspace":
-		a.fields[a.cursor] = trimLastRune(a.fields[a.cursor])
-		if a.cursor == fieldFilter {
-			a.touched = true
-		}
-		return m, nil
 	}
 
-	if msg.Type == tea.KeyRunes {
-		a.fields[a.cursor] += string(msg.Runes)
-		if a.cursor == fieldFilter {
-			a.touched = true
-		}
-		if a.cursor == fieldTitle {
-			a.proposeFilter()
-		}
-		return m, nil
+	// everything else is typing: the text box handles runes, backspace, and
+	// the cursor keys within the line.
+	var cmd tea.Cmd
+	a.input, cmd = a.input.Update(msg)
+	a.storeField()
+	if a.cursor == fieldFilter {
+		a.touched = true
 	}
-	if msg.Type == tea.KeySpace {
-		a.fields[a.cursor] += " "
-		return m, nil
+	if a.cursor == fieldTitle {
+		a.proposeFilter()
 	}
-	return m, nil
+	return m, cmd
 }
