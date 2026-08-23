@@ -71,6 +71,48 @@ func TestGetUpstreamConfig(t *testing.T) {
 		_, err = scanner.getUpstreamConfig(true, &Job{})
 		require.NoError(t, err)
 	})
+
+	// Which field carries the space is a compatibility question, not a
+	// formatting one: scope_mrn replaced parent_mrn, and service accounts
+	// issued before that only ever carry the old one. Getting it wrong does not
+	// fail loudly -- SpaceMrn just ends up empty and the scan reports nowhere --
+	// so each of the three cases is pinned rather than inferred from NoError.
+	t.Run("space mrn comes from scope_mrn, falling back to parent_mrn", func(t *testing.T) {
+		pk, err := os.ReadFile("../testdata/private-key.p8")
+		require.NoError(t, err)
+		cert, err := os.ReadFile("../testdata/cert.pem")
+		require.NoError(t, err)
+
+		for _, tc := range []struct {
+			name      string
+			scopeMrn  string
+			parentMrn string
+			want      string
+		}{
+			{"scope_mrn only", "scope-mrn", "", "scope-mrn"},
+			{"parent_mrn only, a service account issued before scope_mrn", "", "parent-mrn", "parent-mrn"},
+			{"both set, scope_mrn wins", "scope-mrn", "parent-mrn", "scope-mrn"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				creds := &upstream.ServiceAccountCredentials{
+					ApiEndpoint: "api",
+					ScopeMrn:    tc.scopeMrn,
+					PrivateKey:  string(pk),
+					Certificate: string(cert),
+				}
+				creds.ParentMrn = tc.parentMrn //nolint:staticcheck // the field under test
+
+				scanner := NewLocalScanner(AllowJobCredentials())
+				conf, err := scanner.getUpstreamConfig(false, &Job{
+					Inventory: &inventory.Inventory{
+						Spec: &inventory.InventorySpec{UpstreamCredentials: creds},
+					},
+				})
+				require.NoError(t, err)
+				require.Equal(t, tc.want, conf.SpaceMrn)
+			})
+		}
+	})
 }
 
 func TestDefaultConfig(t *testing.T) {

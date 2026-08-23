@@ -24,35 +24,60 @@ type FormatHandler interface {
 	Render(w io.Writer, bom *AiBom) error
 }
 
-func AllFormats() string {
-	return strings.Join([]string{
-		FormatMarkdown, FormatJSON, FormatCycloneDxJSON, FormatCycloneDxXML,
-	}, ", ")
+// format is one value --output accepts: what builds it, and whether it is
+// advertised. AllFormats, IsSupportedFormat and NewFormatter all read this, so
+// a format cannot be constructible but rejected by the guard, or accepted and
+// then silently fall through to a default. Those were three hand-kept lists.
+type format struct {
+	name       string
+	documented bool
+	new        func() FormatHandler
 }
 
-// IsSupportedFormat returns true if NewFormatter can render the given format.
-// NewFormatter falls back to markdown for anything it does not recognize, so
-// callers that want to reject an unknown format have to ask this first.
-func IsSupportedFormat(format string) bool {
-	switch format {
-	case FormatMarkdown, FormatJSON, FormatCycloneDxJSON, FormatCycloneDxXML:
-		return true
-	default:
-		return false
-	}
-}
-
-func NewFormatter(format string) FormatHandler {
-	switch format {
-	case FormatCycloneDxJSON:
+var formats = []format{
+	{FormatMarkdown, true, func() FormatHandler { return &TextListFormatter{} }},
+	{FormatJSON, true, func() FormatHandler { return &JSONFormatter{} }},
+	{FormatCycloneDxJSON, true, func() FormatHandler {
 		return &CycloneDXFormatter{Format: cyclonedx.BOMFileFormatJSON}
-	case FormatCycloneDxXML:
+	}},
+	{FormatCycloneDxXML, true, func() FormatHandler {
 		return &CycloneDXFormatter{Format: cyclonedx.BOMFileFormatXML}
-	case FormatJSON:
-		return &JSONFormatter{}
-	case FormatMarkdown:
-		fallthrough
-	default:
-		return &TextListFormatter{}
+	}},
+}
+
+func lookup(name string) (format, bool) {
+	for _, f := range formats {
+		if f.name == name {
+			return f, true
+		}
 	}
+	return format{}, false
+}
+
+// AllFormats lists the documented formats, for the error a bad --output gets.
+func AllFormats() string {
+	names := make([]string, 0, len(formats))
+	for _, f := range formats {
+		if f.documented {
+			names = append(names, f.name)
+		}
+	}
+	return strings.Join(names, ", ")
+}
+
+// IsSupportedFormat reports whether NewFormatter can render the format.
+// NewFormatter falls back to markdown for anything else, so a caller that wants
+// to refuse an unknown --output has to ask this first.
+func IsSupportedFormat(format string) bool {
+	_, ok := lookup(format)
+	return ok
+}
+
+// NewFormatter returns the handler for a format. It keeps the historical
+// fallback to markdown for callers that did not check IsSupportedFormat first.
+func NewFormatter(name string) FormatHandler {
+	if f, ok := lookup(name); ok {
+		return f.new()
+	}
+	return &TextListFormatter{}
 }
