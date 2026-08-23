@@ -29,7 +29,10 @@ func ConvertToJunit(r *policy.ReportCollection, out iox.OutputHelper, detailed b
 	// render asset errors
 	// r is nil if no assets were scanned
 	if r != nil {
-		for assetMrn, errMsg := range r.Errors {
+		// Sorted so a re-run of the same scan produces the same document. CI
+		// systems diff these, and Go randomises map iteration.
+		for _, assetMrn := range sortedKeys(r.Errors) {
+			errMsg := r.Errors[assetMrn]
 			a := r.Assets[assetMrn]
 
 			properties := []junit.Property{}
@@ -61,7 +64,8 @@ func ConvertToJunit(r *policy.ReportCollection, out iox.OutputHelper, detailed b
 		queries := reportdoc.QueryMap(bundle)
 
 		// iterate over asset mrns
-		for assetMrn, assetObj := range r.Assets {
+		for _, assetMrn := range sortedKeys(r.Assets) {
+			assetObj := r.Assets[assetMrn]
 			// add check results
 			ts := assetPolicyTests(r, assetMrn, assetObj, queries, detailed)
 			suites.Suites = append(suites.Suites, ts)
@@ -113,7 +117,8 @@ func assetPolicyTests(r *policy.ReportCollection, assetMrn string, assetObj *inv
 	// failed/errored checks carry their meta information (description, query, assessment,
 	// remediation, references) in the failure body below.
 	platformKeys := reportdoc.PlatformRemediationKeys(assetObj.Platform)
-	for id, score := range report.Scores {
+	for _, id := range sortedKeys(report.Scores) {
+		score := report.Scores[id]
 		_, ok := resolved.CollectorJob.ReportingQueries[id]
 		if !ok {
 			continue

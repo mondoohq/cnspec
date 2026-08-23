@@ -187,3 +187,40 @@ func TestQueryRemediationPlatformFilter(t *testing.T) {
 	// nil docs / nil remediation are safe
 	assert.Equal(t, "", reportdoc.QueryRemediation(&policy.Mquery{}, tfKeys))
 }
+
+// A JUnit document is consumed by CI systems that diff one run against the next,
+// so the same scan has to render the same bytes. Go randomises map iteration, and
+// three walks here read straight off maps until they were sorted: errors, assets
+// and scores.
+//
+// The shared fixture only catches the scores walk -- it has one asset and no
+// errors, so the other two are order-free in it and a regression would sail past.
+// This fixture carries several of each on purpose.
+func TestJunitOrderingIsDeterministic(t *testing.T) {
+	multi := func() *policy.ReportCollection {
+		r := reportfixture.Sample()
+		if r.Errors == nil {
+			r.Errors = map[string]string{}
+		}
+		for _, n := range []string{"aa", "bb", "cc", "dd"} {
+			mrn := reportfixture.AssetMrn + "-" + n
+			r.Assets[mrn] = &inventory.Asset{
+				Name:     "asset-" + n,
+				State:    inventory.State_STATE_ERROR,
+				Platform: &inventory.Platform{Name: "ubuntu", Version: "22.04"},
+			}
+			r.Errors[mrn] = "could not reach " + n
+		}
+		return r
+	}
+	render := func(r *policy.ReportCollection) string {
+		var buf bytes.Buffer
+		w := iox.IOWriter{Writer: &buf}
+		require.NoError(t, ConvertToJunit(r, &w, false))
+		return buf.String()
+	}
+	first := render(multi())
+	for i := 1; i < 50; i++ {
+		require.Equal(t, first, render(multi()), "render %d differs: the document is not deterministic", i)
+	}
+}
