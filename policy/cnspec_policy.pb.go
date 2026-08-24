@@ -1685,7 +1685,19 @@ type Mquery struct {
 	Props    []*Property       `protobuf:"bytes,38,rep,name=props,proto3" json:"props,omitempty"`
 	Variants []*ObjectRef      `protobuf:"bytes,39,rep,name=variants,proto3" json:"variants,omitempty"`
 	// Action is used for all query overrides (eg: in packs, policies, APIs etc)
-	Action        Action `protobuf:"varint,41,opt,name=action,proto3,enum=cnspec.policy.v1.Action" json:"action,omitempty"`
+	Action Action `protobuf:"varint,41,opt,name=action,proto3,enum=cnspec.policy.v1.Action" json:"action,omitempty"`
+	// Derived, not authored. Records the MQL strict mode (mql ADR 043) this
+	// query was compiled under, taken from the policy that owns it.
+	//
+	// Queries are recompiled well after bundle compilation - the resolver
+	// rebuilds executable code, and the datalake refreshes checksums - each
+	// time from a
+	// compiler config that knows nothing about the owning policy. Carrying the
+	// mode on the query is what keeps those recompiles agreeing with the code id
+	// the bundle already published. Without it the reporting job looks for
+	// checksums the execution job never produces and the check silently goes
+	// unscored.
+	Strict        *bool `protobuf:"varint,42,opt,name=strict,proto3,oneof" json:"strict,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1846,6 +1858,13 @@ func (x *Mquery) GetAction() Action {
 	return Action_UNSPECIFIED
 }
 
+func (x *Mquery) GetStrict() bool {
+	if x != nil && x.Strict != nil {
+		return *x.Strict
+	}
+	return false
+}
+
 type QueryPackDocs struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Desc          string                 `protobuf:"bytes,1,opt,name=desc,proto3" json:"desc,omitempty"`
@@ -2002,6 +2021,9 @@ type QueryPack struct {
 	Created         int64             `protobuf:"varint,32,opt,name=created,proto3" json:"created,omitempty"`
 	Modified        int64             `protobuf:"varint,33,opt,name=modified,proto3" json:"modified,omitempty"`
 	Tags            map[string]string `protobuf:"bytes,34,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// See Policy.strict. Query packs run through the policy framework
+	// (ConvertQuerypacks), so they carry the same declaration.
+	Strict *bool `protobuf:"varint,50,opt,name=strict,proto3,oneof" json:"strict,omitempty"`
 	// internal fields
 	LocalContentChecksum   string `protobuf:"bytes,23,opt,name=local_content_checksum,json=localContentChecksum,proto3" json:"local_content_checksum,omitempty"`
 	LocalExecutionChecksum string `protobuf:"bytes,24,opt,name=local_execution_checksum,json=localExecutionChecksum,proto3" json:"local_execution_checksum,omitempty"`
@@ -2170,6 +2192,13 @@ func (x *QueryPack) GetTags() map[string]string {
 		return x.Tags
 	}
 	return nil
+}
+
+func (x *QueryPack) GetStrict() bool {
+	if x != nil && x.Strict != nil {
+		return *x.Strict
+	}
+	return false
 }
 
 func (x *QueryPack) GetLocalContentChecksum() string {
@@ -2611,8 +2640,16 @@ type Policy struct {
 	// aggregation of all filters applicable to this policy. auto-generated
 	ComputedFilters *Filters     `protobuf:"bytes,43,opt,name=computed_filters,json=computedFilters,proto3" json:"computed_filters,omitempty"`
 	QueryCounts     *QueryCounts `protobuf:"bytes,42,opt,name=query_counts,json=queryCounts,proto3" json:"query_counts,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Compile this policy's queries under MQL strict mode (mql ADR 043): every
+	// link in an access chain must resolve, and `?` marks one optional.
+	//
+	// Tri-state on purpose. A policy's outcome has to be predictable no matter
+	// who runs it, so "unset" stays distinguishable from an explicit "no": the
+	// former falls back to the operator's config default, the latter does not.
+	// Applies to the whole policy; nothing below it can override.
+	Strict        *bool `protobuf:"varint,49,opt,name=strict,proto3,oneof" json:"strict,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Policy) Reset() {
@@ -2804,6 +2841,13 @@ func (x *Policy) GetQueryCounts() *QueryCounts {
 		return x.QueryCounts
 	}
 	return nil
+}
+
+func (x *Policy) GetStrict() bool {
+	if x != nil && x.Strict != nil {
+		return *x.Strict
+	}
+	return false
 }
 
 type Policies struct {
@@ -9598,7 +9642,7 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\acontext\x18\a \x01(\tR\acontext\x12-\n" +
 	"\x03for\x18\b \x03(\v2\x1b.cnspec.policy.v1.ObjectRefR\x03for\x12\x14\n" +
 	"\x05title\x18\x14 \x01(\tR\x05title\x12\x12\n" +
-	"\x04desc\x18# \x01(\tR\x04desc\"\xb9\x05\n" +
+	"\x04desc\x18# \x01(\tR\x04desc\"\xe1\x05\n" +
 	"\x06Mquery\x12\x14\n" +
 	"\x05query\x18( \x01(\tR\x05query\x12/\n" +
 	"\x04refs\x18\x16 \x03(\v2\x1b.cnspec.policy.v1.MqueryRefR\x04refs\x12\x10\n" +
@@ -9617,10 +9661,12 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\afilters\x18% \x01(\v2\x19.cnspec.policy.v1.FiltersR\afilters\x120\n" +
 	"\x05props\x18& \x03(\v2\x1a.cnspec.policy.v1.PropertyR\x05props\x127\n" +
 	"\bvariants\x18' \x03(\v2\x1b.cnspec.policy.v1.ObjectRefR\bvariants\x120\n" +
-	"\x06action\x18) \x01(\x0e2\x18.cnspec.policy.v1.ActionR\x06action\x1a7\n" +
+	"\x06action\x18) \x01(\x0e2\x18.cnspec.policy.v1.ActionR\x06action\x12\x1b\n" +
+	"\x06strict\x18* \x01(\bH\x00R\x06strict\x88\x01\x01\x1a7\n" +
 	"\tTagsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"#\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\t\n" +
+	"\a_strict\"#\n" +
 	"\rQueryPackDocs\x12\x12\n" +
 	"\x04desc\x18\x01 \x01(\tR\x04desc\"\xd3\x01\n" +
 	"\n" +
@@ -9630,7 +9676,7 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\afilters\x18\x14 \x01(\v2\x19.cnspec.policy.v1.FiltersR\afilters\x12\x14\n" +
 	"\x05title\x18\x18 \x01(\tR\x05title\x12\x18\n" +
 	"\acreated\x18  \x01(\x03R\acreated\x12\x1a\n" +
-	"\bmodified\x18! \x01(\x03R\bmodified\"\xad\a\n" +
+	"\bmodified\x18! \x01(\x03R\bmodified\"\xd5\a\n" +
 	"\tQueryPack\x12\x10\n" +
 	"\x03uid\x18$ \x01(\tR\x03uid\x12\x18\n" +
 	"\acontext\x18\b \x01(\tR\acontext\x12\x10\n" +
@@ -9650,12 +9696,14 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\aauthors\x18\x1e \x03(\v2\x18.cnspec.policy.v1.AuthorR\aauthors\x12\x18\n" +
 	"\acreated\x18  \x01(\x03R\acreated\x12\x1a\n" +
 	"\bmodified\x18! \x01(\x03R\bmodified\x129\n" +
-	"\x04tags\x18\" \x03(\v2%.cnspec.policy.v1.QueryPack.TagsEntryR\x04tags\x124\n" +
+	"\x04tags\x18\" \x03(\v2%.cnspec.policy.v1.QueryPack.TagsEntryR\x04tags\x12\x1b\n" +
+	"\x06strict\x182 \x01(\bH\x00R\x06strict\x88\x01\x01\x124\n" +
 	"\x16local_content_checksum\x18\x17 \x01(\tR\x14localContentChecksum\x128\n" +
 	"\x18local_execution_checksum\x18\x18 \x01(\tR\x16localExecutionChecksum\x1a7\n" +
 	"\tTagsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\a\x10\bJ\x04\b\x14\x10\x15J\x04\b+\x10,\"[\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\t\n" +
+	"\a_strictJ\x04\b\a\x10\bJ\x04\b\x14\x10\x15J\x04\b+\x10,\"[\n" +
 	"\bPropsReq\x12\x1d\n" +
 	"\n" +
 	"entity_mrn\x18\x01 \x01(\tR\tentityMrn\x120\n" +
@@ -9689,7 +9737,7 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\x06impact\x18\x17 \x01(\v2\x18.cnspec.policy.v1.ImpactR\x06impact\x12F\n" +
 	"\x0escoring_system\x18* \x01(\x0e2\x1f.cnspec.policy.v1.ScoringSystemR\rscoringSystem\x12!\n" +
 	"\flast_applied\x18+ \x01(\x03R\vlastApplied\x12\x1a\n" +
-	"\bchecksum\x18\x04 \x01(\tR\bchecksum\"\xcb\b\n" +
+	"\bchecksum\x18\x04 \x01(\tR\bchecksum\"\xf3\b\n" +
 	"\x06Policy\x12\x10\n" +
 	"\x03mrn\x18\x01 \x01(\tR\x03mrn\x12\x10\n" +
 	"\x03uid\x18$ \x01(\tR\x03uid\x12\x12\n" +
@@ -9714,10 +9762,12 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\x18local_execution_checksum\x18' \x01(\tR\x16localExecutionChecksum\x128\n" +
 	"\x18graph_execution_checksum\x18( \x01(\tR\x16graphExecutionChecksum\x12D\n" +
 	"\x10computed_filters\x18+ \x01(\v2\x19.cnspec.policy.v1.FiltersR\x0fcomputedFilters\x12@\n" +
-	"\fquery_counts\x18* \x01(\v2\x1d.cnspec.policy.v1.QueryCountsR\vqueryCounts\x1a7\n" +
+	"\fquery_counts\x18* \x01(\v2\x1d.cnspec.policy.v1.QueryCountsR\vqueryCounts\x12\x1b\n" +
+	"\x06strict\x181 \x01(\bH\x00R\x06strict\x88\x01\x01\x1a7\n" +
 	"\tTagsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\":\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\t\n" +
+	"\a_strict\":\n" +
 	"\bPolicies\x12.\n" +
 	"\x05items\x18\x02 \x03(\v2\x18.cnspec.policy.v1.PolicyR\x05items\"S\n" +
 	"\vRequirement\x12\x0e\n" +
@@ -11026,6 +11076,9 @@ func file_cnspec_policy_proto_init() {
 	if File_cnspec_policy_proto != nil {
 		return
 	}
+	file_cnspec_policy_proto_msgTypes[11].OneofWrappers = []any{}
+	file_cnspec_policy_proto_msgTypes[14].OneofWrappers = []any{}
+	file_cnspec_policy_proto_msgTypes[19].OneofWrappers = []any{}
 	file_cnspec_policy_proto_msgTypes[95].OneofWrappers = []any{
 		(*Metric_IntValue)(nil),
 		(*Metric_DoubleValue)(nil),

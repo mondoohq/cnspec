@@ -150,6 +150,7 @@ func init() {
 	rootCmd.PersistentFlags().String("logging-config", "", "Path to a logging configuration file (YAML or JSON) that selects the log writer, level, and writer-specific options")
 	rootCmd.PersistentFlags().String("api-proxy", "", "Set the proxy for communications with Mondoo Platform API")
 	rootCmd.PersistentFlags().Bool("auto-update", true, "Enable automatic provider installation and update")
+	rootCmd.PersistentFlags().Bool("strict", false, "Default MQL strict mode for policies that do not declare one: every link in an MQL chain must resolve")
 	// Set NoOptDefVal to allow space-separated bool values (--auto-update false)
 	// Without this, "false" would be treated as a positional argument instead of the flag value
 	rootCmd.PersistentFlags().Lookup("auto-update").NoOptDefVal = "true"
@@ -158,7 +159,9 @@ func init() {
 	_ = viper.BindPFlag("logging-config", rootCmd.PersistentFlags().Lookup("logging-config"))
 	_ = viper.BindPFlag("api_proxy", rootCmd.PersistentFlags().Lookup("api-proxy"))
 	_ = viper.BindPFlag("auto-update", rootCmd.PersistentFlags().Lookup("auto-update"))
+	_ = viper.BindPFlag("strict", rootCmd.PersistentFlags().Lookup("strict"))
 	_ = viper.BindEnv("features")
+	_ = viper.BindEnv("strict")
 	_ = viper.BindEnv("providers_url")
 
 	config.Init(rootCmd)

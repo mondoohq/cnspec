@@ -78,6 +78,9 @@ type LocalScanner struct {
 	// scanSource records how the scan was triggered (e.g. "interactive" or
 	// "service"). When set, it is applied as a label to every scanned asset.
 	scanSource string
+	// strict is the fallback MQL strict mode (mql ADR 043) for policies that
+	// declare none of their own. A policy that declares one always wins.
+	strict bool
 }
 
 const (
@@ -143,6 +146,14 @@ func WithRuntime(r *providers.Runtime) ScannerOption {
 // WithScanSource records how scans run by this scanner were triggered. The
 // value (e.g. ScanSourceInteractive or ScanSourceService) is stamped onto every
 // scanned asset as the LabelScanSource label so it can be aggregated upstream.
+// WithStrict sets the fallback MQL strict mode for policies that do not declare
+// one. It never overrides a policy that does.
+func WithStrict(strict bool) ScannerOption {
+	return func(s *LocalScanner) {
+		s.strict = strict
+	}
+}
+
 func WithScanSource(source string) ScannerOption {
 	return func(s *LocalScanner) {
 		s.scanSource = source
@@ -1015,6 +1026,10 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 			log.Debug().Str("asset", job.Asset.Name).Str("dir", assetDir).
 				Msg("debug dumps for this asset will be written here")
 		}
+		// The datalake builds services without knowing about the CLI, so the
+		// operator's default is applied here, where both are in scope.
+		services.Strict = s.strict
+
 		scanner := &localAssetScanner{
 			services:         services,
 			job:              job,

@@ -31,6 +31,11 @@ const (
 
 type LintOptions struct {
 	SkipProviderDownload bool
+	// RequireStrictDeclaration turns on the check that every policy states its
+	// MQL strict mode (mql ADR 043). Opt-in while first-party content is being
+	// migrated - it fires on every policy written before the field existed - and
+	// becomes the default in v14.
+	RequireStrictDeclaration bool
 }
 
 // Lint loads a file and lints its content
@@ -157,17 +162,20 @@ func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []
 		aggregatedEntries = append(aggregatedEntries, lintDeprecatedSymbols(schema, compilerConfig, filename, policyBundle)...)
 	}
 
-	aggregatedEntries = append(aggregatedEntries, lintParsedBundle(schema, filename, policyBundle)...)
+	aggregatedEntries = append(aggregatedEntries, lintParsedBundle(schema, filename, policyBundle, opts)...)
 
 	return aggregatedEntries
 }
 
 // lintParsedBundle lints parsed bundle with the default set of rules
-func lintParsedBundle(schema resources.ResourcesSchema, filename string, policyBundle *Bundle) []*Entry {
+func lintParsedBundle(schema resources.ResourcesSchema, filename string, policyBundle *Bundle, opts LintOptions) []*Entry {
 	aggregatedEntries := []*Entry{}
 
 	bundleRules := GetBundleLintRules()
 	policyRules := GetPolicyLintRules()
+	if opts.RequireStrictDeclaration {
+		policyRules = append(policyRules, StrictDeclarationLintRule())
+	}
 	querypackRules := GetQueryPackLintRules()
 	queryRules := GetQueryLintRules()
 	migrationRules := GetBundleMigrationsLintRules()

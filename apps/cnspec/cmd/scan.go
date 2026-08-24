@@ -301,7 +301,11 @@ func getPoliciesForCompletion() []string {
 }
 
 type scanConfig struct {
-	Features     mql.Features
+	Features mql.Features
+	// Strict is the operator's fallback MQL strict mode (mql ADR 043) for
+	// policies that declare none of their own, read from `strict` in the config
+	// file or --strict. A policy that declares a mode always wins.
+	Strict       bool
 	Inventory    *inventory.Inventory
 	ReportType   scan.ReportType
 	OutputTarget string
@@ -427,6 +431,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 
 	conf := scanConfig{
 		Features:      features,
+		Strict:        opts.GetStrict(),
 		IsIncognito:   viper.GetBool("incognito"),
 		Inventory:     inv,
 		ReportType:    reportType,
@@ -615,6 +620,7 @@ func (c *scanConfig) loadPolicies(ctx context.Context) error {
 		// prepare the bundle for compilation
 		bundle.Prepare()
 		conf := mqlc.NewConfig(c.runtime.Schema(), mql.DefaultFeatures)
+		conf.Strict = config.Strict
 
 		_, err = bundle.CompileExt(ctx, policy.BundleCompileConf{
 			CompilerConfig: conf,
@@ -644,6 +650,9 @@ func RunScan(parentCtx context.Context, config *scanConfig, scannerOpts ...scan.
 		opts = append(opts, scan.WithUpstream(config.runtime.UpstreamConfig))
 	}
 	opts = append(opts, scan.WithRecording(config.runtime.Recording()))
+	// Fallback strict mode for policies that declare none; a policy that
+	// declares one is unaffected (mql ADR 043 §6).
+	opts = append(opts, scan.WithStrict(config.Strict))
 
 	scanner := scan.NewLocalScanner(opts...)
 	// parentCtx carries scandump.WithRun (when debug dumping is on) plus

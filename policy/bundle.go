@@ -180,6 +180,9 @@ func (p *Bundle) ConvertQuerypacks() {
 			Props:    pack.Props,
 			Require:  pack.Require,
 			Groups:   convertQueryPackGroups(pack),
+			// packs declare strict mode the same way policies do; carry the
+			// tri-state across so "unset" keeps falling back to the config default
+			Strict: pack.Strict,
 			// we need this to indicate that the policy was converted from a querypack
 			ScoringSystem: ScoringSystem_DATA_ONLY,
 		}
@@ -789,6 +792,7 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 		lookupQuery:   map[string]*Mquery{},
 		codeBundles:   map[string]*llx.CodeBundle{},
 		parents:       map[string][]parent{},
+		strictClaims:  map[string]strictClaim{},
 	}
 
 	// Process variants and inherit attributes filled from their parents
@@ -826,6 +830,19 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 	for i := range p.Policies {
 		policy := p.Policies[i]
 		policyCache := cache.clone()
+
+		// Strict mode is declared by the policy and applies to all of its
+		// queries. An undeclared policy inherits the operator's default, which is
+		// why Policy.Strict is a tri-state (mql ADR 043 §6).
+		//
+		// Note this covers the policy's queries, checks and risk factors, but not
+		// its asset filters: those are compiled on the bundle-wide config above.
+		// Filters are deduplicated across policies by CodeId, so compiling the
+		// same filter two ways would split matching rather than just change the
+		// mode. Filters are predicates over asset metadata, not assertions, so
+		// they gain little from strictness.
+		policyCache.conf.Strict = policy.EffectiveStrict(conf.Strict)
+		policyCache.strictOwner = policy
 
 		// !this is very important to prevent user overrides! vv
 		policy.InvalidateAllChecksums()
@@ -1097,6 +1114,18 @@ type bundleCache struct {
 	conf          BundleCompileConf
 	errors        []error
 	parents       map[string][]parent
+	// strictOwner is the policy this (cloned) cache is compiling for, if any.
+	// Set only on the per-policy clones; the bundle-wide pass leaves it nil.
+	strictOwner *Policy
+	// strictClaims records which strict mode each query was compiled under and
+	// by which policy. Shared across clones on purpose - it is what detects two
+	// policies disagreeing about a query they both use.
+	strictClaims map[string]strictClaim
+}
+
+type strictClaim struct {
+	strict bool
+	policy string
 }
 
 func (c *bundleCache) clone() *bundleCache {
@@ -1109,6 +1138,7 @@ func (c *bundleCache) clone() *bundleCache {
 		bundle:        c.bundle,
 		errors:        c.errors,
 		conf:          c.conf,
+		strictClaims:  c.strictClaims,
 	}
 	for k, v := range c.lookupQuery {
 		res.lookupQuery[k] = v
@@ -1613,6 +1643,10 @@ func (r *QueryPropsResolver) walkParents(f func(p hasProps) bool) {
 // dependencies have been processed. Properties must be compiled. Connected
 // queries may not be ready yet, but we have to have precompiled them.
 func (c *bundleCache) compileQuery(query *Mquery) {
+	if !c.claimStrictMode(query) {
+		return
+	}
+
 	props, err := newQueryPropsResolver(query, c.parents)
 	if err != nil {
 		c.errors = append(c.errors, errors.New("failed to prepare property resolver for query "+query.Mrn))
@@ -1631,6 +1665,42 @@ func (c *bundleCache) compileQuery(query *Mquery) {
 	if len(props.errors) != 0 {
 		c.errors = append(c.errors, props.errors...)
 	}
+}
+
+// claimStrictMode records the strict mode this query is being compiled under and
+// reports whether compilation should proceed.
+//
+// Queries live at bundle level and are shared by MRN, so the same object is
+// compiled once per policy that references it, each time overwriting its
+// checksum and code id. That is harmless while every policy agrees on the mode
+// and silently wrong the moment they do not - the last policy compiled would
+// decide the semantics for all of them. Rather than pick a winner, refuse.
+//
+// Only policy-driven compiles stake a claim. The bundle-wide pass runs first
+// over every query with the operator's default and is expected to be superseded.
+func (c *bundleCache) claimStrictMode(query *Mquery) bool {
+	if c.strictOwner == nil {
+		return true
+	}
+
+	claim := strictClaim{strict: c.conf.Strict, policy: c.strictOwner.Mrn}
+	prev, ok := c.strictClaims[query.Mrn]
+	if ok && prev.strict != claim.strict {
+		c.errors = append(c.errors, fmt.Errorf(
+			"query %s is used by policies that disagree about strict mode: %s wants strict=%v, %s wants strict=%v. "+
+				"Strict mode applies to a whole policy, so a shared query cannot be compiled both ways",
+			query.Mrn, prev.policy, prev.strict, claim.policy, claim.strict))
+		return false
+	}
+
+	c.strictClaims[query.Mrn] = claim
+
+	// Record the mode on the query so every later recompile agrees with the code
+	// id this compilation is about to publish. See Mquery.Compile.
+	strict := claim.strict
+	query.Strict = &strict
+
+	return true
 }
 
 func (c *bundleCache) compileRisk(risk *RiskFactor, policy *Policy) error {

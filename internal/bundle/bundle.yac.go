@@ -1192,6 +1192,7 @@ type Mquery struct {
 	Context     string            `protobuf:"bytes,7,opt,name=context,proto3" json:"context,omitempty" yaml:"context,omitempty"`
 	Desc        string            `protobuf:"bytes,35,opt,name=desc,proto3" json:"desc,omitempty" yaml:"desc,omitempty"`
 	Action      Action            `protobuf:"varint,41,opt,name=action,proto3,enum=cnspec.policy.v1.Action" json:"action,omitempty" yaml:"action,omitempty"`
+	Strict      *bool             `protobuf:"varint,42,opt,name=strict,proto3,oneof" json:"strict,omitempty" yaml:"strict,omitempty"`
 	FileContext FileContext       `json:"-" yaml:"-"`
 	Comments    Comments          `json:"-" yaml:"-"`
 }
@@ -1403,6 +1404,7 @@ type Policy struct {
 	GraphExecutionChecksum string               `protobuf:"bytes,40,opt,name=graph_execution_checksum,json=graphExecutionChecksum,proto3" json:"graph_execution_checksum,omitempty" yaml:"graph_execution_checksum,omitempty"`
 	ComputedFilters        *Filters             `protobuf:"bytes,43,opt,name=computed_filters,json=computedFilters,proto3" json:"computed_filters,omitempty" yaml:"computed_filters,omitempty"`
 	QueryCounts            *QueryCounts         `protobuf:"bytes,42,opt,name=query_counts,json=queryCounts,proto3" json:"query_counts,omitempty" yaml:"query_counts,omitempty"`
+	Strict                 *bool                `protobuf:"varint,49,opt,name=strict,proto3,oneof" json:"strict,omitempty" yaml:"strict,omitempty"`
 	Uid                    string               `protobuf:"bytes,36,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`
 	OwnerMrn               string               `protobuf:"bytes,8,opt,name=owner_mrn,json=ownerMrn,proto3" json:"owner_mrn,omitempty" yaml:"owner_mrn,omitempty"`
 	Mrn                    string               `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
@@ -1851,6 +1853,7 @@ type QueryPack struct {
 	Summary                string            `protobuf:"bytes,46,opt,name=summary,proto3" json:"summary,omitempty" yaml:"summary,omitempty"`
 	Created                int64             `protobuf:"varint,32,opt,name=created,proto3" json:"created,omitempty" yaml:"created,omitempty"`
 	Modified               int64             `protobuf:"varint,33,opt,name=modified,proto3" json:"modified,omitempty" yaml:"modified,omitempty"`
+	Strict                 *bool             `protobuf:"varint,50,opt,name=strict,proto3,oneof" json:"strict,omitempty" yaml:"strict,omitempty"`
 	LocalContentChecksum   string            `protobuf:"bytes,23,opt,name=local_content_checksum,json=localContentChecksum,proto3" json:"local_content_checksum,omitempty" yaml:"local_content_checksum,omitempty"`
 	LocalExecutionChecksum string            `protobuf:"bytes,24,opt,name=local_execution_checksum,json=localExecutionChecksum,proto3" json:"local_execution_checksum,omitempty" yaml:"local_execution_checksum,omitempty"`
 	Uid                    string            `protobuf:"bytes,36,opt,name=uid,proto3" json:"uid,omitempty" yaml:"uid,omitempty"`

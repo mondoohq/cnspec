@@ -59,6 +59,7 @@ const (
 	PolicyWrongVersionRuleID         = "policy-wrong-version"
 	PolicyRequiredTagsMissingRuleID  = "policy-required-tags-missing"
 	PolicyMissingRequireRuleID       = "policy-missing-require"
+	PolicyMissingStrictRuleID        = "policy-missing-strict"
 
 	QueryPackMissingRequireRuleID = "querypack-missing-require"
 )
@@ -253,6 +254,51 @@ func runRulePolicyMissingVersion(ctx *LintContext, item any) []*Entry {
 		}}
 	}
 	return nil
+}
+
+// StrictDeclarationLintRule requires a policy to declare its MQL strict mode.
+//
+// Kept out of the default rule set for now: it fires on every policy written
+// before the field existed, so enabling it by default would bury real findings
+// under migration noise. Opt in with LintOptions.RequireStrictDeclaration; it
+// becomes the default in v14.
+func StrictDeclarationLintRule() LintRule {
+	return LintRule{
+		ID:          PolicyMissingStrictRuleID,
+		Name:        "Policy Strict Mode Declaration",
+		Description: "Ensures every policy states whether its MQL compiles in strict mode, so its result does not depend on the operator's configuration.",
+		Severity:    LevelWarning,
+		Run:         runRulePolicyMissingStrict,
+	}
+}
+
+// runRulePolicyMissingStrict requires a policy to state its MQL strict mode
+// (mql ADR 043) rather than inheriting whatever the operator has configured.
+//
+// An undeclared policy is one whose checks can pass on one machine and fail on
+// another purely because of a config file, which is the ambiguity the tri-state
+// exists to expose. Warning rather than error while content is being migrated;
+// it becomes an error in v14.
+func runRulePolicyMissingStrict(ctx *LintContext, item any) []*Entry {
+	p, ok := item.(*Policy)
+	if !ok {
+		return nil
+	}
+	if p.Strict != nil {
+		return nil
+	}
+	return []*Entry{{
+		RuleID: PolicyMissingStrictRuleID,
+		Message: fmt.Sprintf(
+			"%s does not declare `strict`. Set `strict: true` to require every link in an MQL chain to resolve (mark optional ones with `?`), or `strict: false` to keep the current behavior explicitly.",
+			policyIdentifier(p)),
+		Level: LevelWarning,
+		Location: []Location{{
+			File:   ctx.FilePath,
+			Line:   p.FileContext.Line,
+			Column: p.FileContext.Column,
+		}},
+	}}
 }
 
 func runRulePolicyWrongVersion(ctx *LintContext, item any) []*Entry {

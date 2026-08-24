@@ -439,6 +439,20 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 	}
 	executionChecksum = executionChecksum.AddUint(uint64(p.ScoringSystem))
 
+	// Strict mode changes what this policy's queries mean, so it has to reach
+	// the execution checksum: otherwise the same policy compiled strict and
+	// non-strict resolves to the same plan and the cache serves whichever ran
+	// first.
+	//
+	// The *effective* mode, not the declaration. An undeclared policy inherits
+	// the operator's default, so two runs of it with different defaults produce
+	// genuinely different plans and must not share a checksum. Mixed in only
+	// when strict, so everything compiled the way it is today keeps its existing
+	// checksum.
+	if p.EffectiveStrict(conf.Strict) {
+		executionChecksum = executionChecksum.Add("strict")
+	}
+
 	// PROPS (must be sorted)
 	sort.Slice(p.Props, func(i, j int) bool {
 		return p.Props[i].Mrn < p.Props[j].Mrn
@@ -670,6 +684,27 @@ func (p *Policy) InvalidateLocalChecksums() {
 func (p *Policy) InvalidateExecutionChecksums() {
 	p.LocalExecutionChecksum = ""
 	p.GraphExecutionChecksum = ""
+}
+
+// EffectiveStrict resolves this policy's strict-mode declaration against the
+// operator's default (mql ADR 043).
+//
+// The declaration is a tri-state: a policy that says nothing inherits the
+// default, while one that explicitly says false keeps its own semantics no
+// matter how the operator is configured. That distinction is the point - a
+// policy's outcome should not depend on whose machine it runs on, so v14 lints
+// for an explicit declaration rather than relying on this fallback.
+func (p *Policy) EffectiveStrict(defaultStrict bool) bool {
+	if p == nil || p.Strict == nil {
+		return defaultStrict
+	}
+	return *p.Strict
+}
+
+// DeclaresStrict reports whether the policy states a strict mode of its own,
+// as opposed to inheriting the operator's default.
+func (p *Policy) DeclaresStrict() bool {
+	return p != nil && p.Strict != nil
 }
 
 func (p *Policy) InvalidateAllChecksums() {

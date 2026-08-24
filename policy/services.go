@@ -42,10 +42,14 @@ type Services struct {
 // yield results for a request, and the upstream handler is defined, it will
 // be used instead.
 type LocalServices struct {
-	DataLake    DataLake
-	Upstream    *Services
-	Incognito   bool
-	Runtime     llx.Runtime
+	DataLake  DataLake
+	Upstream  *Services
+	Incognito bool
+	Runtime   llx.Runtime
+	// Strict is the fallback MQL strict mode (mql ADR 043) for policies that
+	// declare none of their own. A policy that declares one always wins; this
+	// only decides what an undeclared policy inherits.
+	Strict      bool
 	NowProvider func() time.Time
 }
 
@@ -91,7 +95,9 @@ func (l *LocalServices) Schema() resources.ResourcesSchema {
 }
 
 func (l *LocalServices) NewCompilerConfig() mqlc.CompilerConfig {
-	return mqlc.NewConfig(l.Schema(), mql.DefaultFeatures)
+	conf := mqlc.NewConfig(l.Schema(), mql.DefaultFeatures)
+	conf.Strict = l.Strict
+	return conf
 }
 
 // maxParallelConnHTTPTransport restricts the parallel connections upstream.

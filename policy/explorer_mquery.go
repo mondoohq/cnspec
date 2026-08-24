@@ -31,6 +31,15 @@ func (m *Mquery) Compile(props mqlc.PropsHandler, conf mqlc.CompilerConfig) (*ll
 		m.Query = ""
 	}
 
+	// A query that has already been compiled under a policy's strict mode keeps
+	// compiling under it. Later recompiles (the resolver building executable
+	// code, the datalake refreshing checksums) are handed a config that knows
+	// nothing about the owning policy, and disagreeing with the published code
+	// id leaves the check unscored rather than merely mis-scored.
+	if m.Strict != nil {
+		conf.Strict = *m.Strict
+	}
+
 	v2Code, err := mqlc.Compile(m.Mql, props, conf)
 	if err != nil {
 		return nil, err
@@ -84,6 +93,15 @@ func (m *Mquery) RefreshChecksum(
 		Add(m.Type).
 		Add(m.Title).Add("v2").
 		AddUint(m.Impact.Checksum())
+
+	// The strict mode this query was compiled under. CodeId already differs
+	// between the two compilations, so this is belt-and-braces - but a variant
+	// query has no CodeId of its own, and nothing should have to know that the
+	// mode reaches the checksum only by way of another field. Mixed in only when
+	// strict, so non-strict content keeps the checksums it has today.
+	if m.GetStrict() {
+		c = c.Add("strict")
+	}
 
 	for i := range m.Props {
 		prop := m.Props[i]
