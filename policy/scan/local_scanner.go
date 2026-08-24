@@ -143,9 +143,6 @@ func WithRuntime(r *providers.Runtime) ScannerOption {
 	}
 }
 
-// WithScanSource records how scans run by this scanner were triggered. The
-// value (e.g. ScanSourceInteractive or ScanSourceService) is stamped onto every
-// scanned asset as the LabelScanSource label so it can be aggregated upstream.
 // WithStrict sets the fallback MQL strict mode for policies that do not declare
 // one. It never overrides a policy that does.
 func WithStrict(strict bool) ScannerOption {
@@ -154,6 +151,9 @@ func WithStrict(strict bool) ScannerOption {
 	}
 }
 
+// WithScanSource records how scans run by this scanner were triggered. The
+// value (e.g. ScanSourceInteractive or ScanSourceService) is stamped onto every
+// scanned asset as the LabelScanSource label so it can be aggregated upstream.
 func WithScanSource(source string) ScannerOption {
 	return func(s *LocalScanner) {
 		s.scanSource = source
