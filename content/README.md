@@ -85,6 +85,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 
 - **Atlassian** - `mondoo-atlassian-security.mql.yaml` - Detect high and critical security issues in Atlassian Cloud organizations, Jira projects, and Confluence spaces
 - **Databricks** - `mondoo-databricks-security.mql.yaml` - Secure Databricks accounts, workspaces, clusters, and access controls
+- **Datadog** - `mondoo-datadog-security.mql.yaml` - Harden Datadog organization single sign-on, membership allowlisting, and sharing
 - **GitHub Security** - `mondoo-github-security.mql.yaml` - GitHub repository and organization security
 - **GitHub Best Practices** - `mondoo-github-best-practices.mql.yaml` - GitHub repository best practices
 - **GitLab** - `mondoo-gitlab-security.mql.yaml` - GitLab security configuration assessment
