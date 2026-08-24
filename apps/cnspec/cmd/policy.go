@@ -54,6 +54,7 @@ func init() {
 	policyLintCmd.Flags().StringP("output", "o", "cli", "Set the output format: compact, sarif")
 	policyLintCmd.Flags().String("output-file", "", "Set the output file")
 	policyLintCmd.Flags().StringSlice("strict-rule", nil, "Treat warnings from these rule IDs as errors (repeatable). Use 'all' to promote every warning to an error.")
+	policyLintCmd.Flags().Bool("require-strict-declaration", false, "Warn about policies that don't declare `strict`. Off by default while content is migrated; becomes the default in v14.")
 	policyCmd.AddCommand(policyLintCmd)
 
 	// fmt
@@ -671,8 +672,10 @@ func runPolicyLint(cmd *cobra.Command, args []string) {
 	}
 
 	runtime := providers.DefaultRuntime()
+	requireStrict, _ := cmd.Flags().GetBool("require-strict-declaration")
 	result, err := bundle.Lint(runtime.Schema(), bundle.LintOptions{
-		SkipProviderDownload: autoUpdate,
+		SkipProviderDownload:     autoUpdate,
+		RequireStrictDeclaration: requireStrict,
 	}, files...)
 	if err != nil {
 		log.Fatal().Err(err).Msg("could not lint bundle files")

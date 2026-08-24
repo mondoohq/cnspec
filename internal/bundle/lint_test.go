@@ -313,3 +313,60 @@ func TestLinter_Fail(t *testing.T) {
 		}
 	})
 }
+
+// TestLinter_StrictDeclaration covers the v14 requirement that a policy states
+// its MQL strict mode rather than inheriting the operator's config. The rule is
+// opt-in for now, so this also pins that it stays quiet by default while
+// first-party content is migrated.
+func TestLinter_StrictDeclaration(t *testing.T) {
+	hasStrictEntry := func(entries []*Entry) bool {
+		for _, entry := range entries {
+			if entry.RuleID == PolicyMissingStrictRuleID {
+				return true
+			}
+		}
+		return false
+	}
+
+	file := "./testdata/pass-rules.mql.yaml"
+
+	t.Run("off by default", func(t *testing.T) {
+		results, err := Lint(schema, testLintOptions, file)
+		require.NoError(t, err)
+		assert.False(t, hasStrictEntry(results.Entries),
+			"the rule must not fire unless it is asked for")
+	})
+
+	t.Run("opt-in flags an undeclared policy", func(t *testing.T) {
+		opts := testLintOptions
+		opts.RequireStrictDeclaration = true
+		results, err := Lint(schema, opts, file)
+		require.NoError(t, err)
+		assert.True(t, hasStrictEntry(results.Entries),
+			"a policy that declares no strict mode must be reported")
+		// a warning, not an error: it becomes an error in v14
+		assert.False(t, results.HasError())
+	})
+
+	t.Run("an explicit declaration satisfies it", func(t *testing.T) {
+		for _, decl := range []string{"true", "false"} {
+			data := []byte(`
+policies:
+- uid: strict-declared
+  name: Strict declared
+  version: "1.0.0"
+  strict: ` + decl + `
+  groups:
+  - filters: "true"
+    checks:
+    - uid: a-check
+      mql: 'asset.name != ""'
+`)
+			opts := testLintOptions
+			opts.RequireStrictDeclaration = true
+			entries := LintPolicyBundle(schema, "inline.mql.yaml", data, opts)
+			assert.False(t, hasStrictEntry(entries),
+				"strict: %s is a declaration and must satisfy the rule", decl)
+		}
+	})
+}

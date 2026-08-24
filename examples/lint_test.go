@@ -30,7 +30,10 @@ func TestMain(m *testing.M) {
 	providers.DefaultPath = dir
 
 	err := ensureProviders([]string{
-		"go.mondoo.com/cnquery/v9/providers/os",
+		// v14 dropped the version from provider IDs (mql #10268). The registry
+		// only serves the versionless ID now, so looking up the v9 one here
+		// fails to install anything and the suite panics before it runs.
+		"go.mondoo.com/mql/providers/os",
 	})
 	if err != nil {
 		panic(err)
