@@ -1141,6 +1141,18 @@ type Metadata struct {
 	// The product that reported the event.
 	Product Product `json:"product" parquet:"product"`
 
+	// Log Name
+	//
+	// The event log name. For example, syslog file name or Windows logging
+	// subsystem: Security.
+	LogName string `json:"log_name,omitempty" parquet:"log_name,optional"`
+
+	// Log Provider
+	//
+	// The logging provider or logging service that logged the event. For
+	// example, Microsoft-Windows-Security-Auditing.
+	LogProvider string `json:"log_provider,omitempty" parquet:"log_provider,optional"`
+
 	// Logged Time
 	//
 	// The time when the logging system collected and logged the event.This
