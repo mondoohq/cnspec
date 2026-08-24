@@ -66,6 +66,9 @@ func TestOcsfConverter(t *testing.T) {
 		assert.Equal(t, fixedScanTime.UnixMilli(), finding.Time)
 		assert.Equal(t, string(ocsf.Version130), finding.Metadata.Version)
 		assert.Equal(t, "cnspec", finding.Metadata.Product.Name)
+		assert.Equal(t, "cnspec", finding.Metadata.LogProvider)
+		assert.Equal(t, "cnspec scan", finding.Metadata.LogName,
+			"the events of a scan name the stream they came from")
 		assert.NotEmpty(t, finding.Compliance.Standards, "standards is a required attribute")
 		require.Len(t, finding.Resources, 1)
 		assert.Equal(t, "X1", finding.Resources[0].Name)
@@ -654,4 +657,22 @@ func TestOcsfStreamedParquetAcrossAssets(t *testing.T) {
 	// classes the scan did not produce must not leave empty files behind
 	_, err = os.Stat(filepath.Join(dir, ocsf.ClassDetectionFinding+".parquet"))
 	assert.True(t, os.IsNotExist(err), "no file for a class with no events")
+}
+
+// TestVulnReportLogName covers the other source of OCSF events: cnspec vuln has
+// no scan behind it, and a SIEM filtering on the log name has to be able to tell
+// the two apart.
+func TestVulnReportLogName(t *testing.T) {
+	report := advisoryReportCollection().VulnReports[reportfixture.AssetMrn]
+
+	buf := bytes.Buffer{}
+	require.NoError(t, ConvertVulnReport("X1", report, ocsf.DefaultVersion, &buf))
+
+	var event map[string]any
+	line := strings.Split(strings.TrimSpace(buf.String()), "\n")[0]
+	require.NoError(t, json.Unmarshal([]byte(line), &event))
+
+	metadata := event["metadata"].(map[string]any)
+	assert.Equal(t, "cnspec vuln", metadata["log_name"])
+	assert.Equal(t, "cnspec", metadata["log_provider"])
 }

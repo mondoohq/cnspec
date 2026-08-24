@@ -18,6 +18,15 @@ import (
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
 )
 
+// logNameScan and logNameVulnReport name the stream an event came out of, which
+// is what metadata.log_name is for: the two commands produce different events
+// about different things, and a SIEM routing or filtering on the log name should
+// be able to tell them apart.
+const (
+	logNameScan       = "cnspec scan"
+	logNameVulnReport = "cnspec vuln"
+)
+
 // productName and friends identify cnspec as the producer of the events.
 const (
 	productName   = "cnspec"
@@ -73,6 +82,7 @@ func Stream(r *policy.ReportCollection, w ocsf.Writer, opts Options) error {
 // the target names the asset and there is nothing else to report about it.
 func ConvertVulnReport(target string, data *mvd.VulnReport, version ocsf.Version, out io.Writer) error {
 	c := newConverter(Options{Version: version}, time.Now())
+	c.logName = logNameVulnReport
 	asset := &inventory.Asset{Name: target}
 	events := &ocsf.Events{}
 	c.addVulnerabilityFindings(events, data, &assetContext{
@@ -97,6 +107,7 @@ func newConverter(opts Options, now time.Time) *converter {
 		version:     opts.Version,
 		findings:    opts.Findings,
 		includeData: opts.IncludeData,
+		logName:     logNameScan,
 		now:         now.UnixMilli(),
 	}
 }
@@ -106,6 +117,8 @@ type converter struct {
 	version     ocsf.Version
 	findings    ocsf.FindingClasses
 	includeData bool
+	// logName is the stream these events came from, for metadata.log_name.
+	logName string
 	// now is the scan time in milliseconds since the epoch. It is a field rather
 	// than a call to time.Now so that a conversion is reproducible.
 	now int64
@@ -206,7 +219,12 @@ func (c *converter) metadata(profiles ...string) ocsf.Metadata {
 			Version:    cnspec.GetVersion(),
 			URLString:  productURL,
 		},
-		LoggedTime: c.now,
+		// The provider is the service that logged the event and the name is the
+		// stream within it, which is how the schema's own example splits
+		// Microsoft-Windows-Security-Auditing from the Security log.
+		LogProvider: productName,
+		LogName:     c.logName,
+		LoggedTime:  c.now,
 	}
 	if len(profiles) > 0 {
 		res.Profiles = profiles
