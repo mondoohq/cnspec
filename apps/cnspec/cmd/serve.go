@@ -194,6 +194,7 @@ func getServeConfig() (*scanConfig, *cnspec_config.CliConfig, error) {
 
 	conf := scanConfig{
 		Features:     opts.GetFeatures(),
+		Strict:       opts.GetStrict(),
 		DoRecord:     viper.GetBool("record"),
 		ReportType:   scan.ReportType_ERROR,
 		OutputFormat: "",

@@ -620,7 +620,10 @@ func (c *scanConfig) loadPolicies(ctx context.Context) error {
 		// prepare the bundle for compilation
 		bundle.Prepare()
 		conf := mqlc.NewConfig(c.runtime.Schema(), mql.DefaultFeatures)
-		conf.Strict = config.Strict
+		// c.Strict, not the config package's: this is the value resolved for
+		// this scan. `config` here is the imported package, which reads like the
+		// receiver and is why this was wrong to begin with.
+		conf.Strict = c.Strict
 
 		_, err = bundle.CompileExt(ctx, policy.BundleCompileConf{
 			CompilerConfig: conf,
@@ -651,7 +654,9 @@ func RunScan(parentCtx context.Context, config *scanConfig, scannerOpts ...scan.
 	}
 	opts = append(opts, scan.WithRecording(config.runtime.Recording()))
 	// Fallback strict mode for policies that declare none; a policy that
-	// declares one is unaffected (mql ADR 043 §6).
+	// declares one is unaffected (mql ADR 043 §6). `config` is the *scanConfig
+	// parameter here, not the config package - the two are easy to confuse in
+	// this file, so this reads the per-scan value deliberately.
 	opts = append(opts, scan.WithStrict(config.Strict))
 
 	scanner := scan.NewLocalScanner(opts...)
