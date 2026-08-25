@@ -47,12 +47,15 @@ jobs:
         with:
           sparse-checkout: '.github/scripts'
           sparse-checkout-cone-mode: false
-      # Route the bump PR to the right branch by comparing the incoming mql
-      # major with the mql major currently imported on main. Matching major
-      # -> base=main; any other major -> base=v{major} support branch
-      # (e.g. an mql v13.35.1 tag while main is on mql v14 -> base=v13).
-      # Logic lives in .github/scripts/determine-mql-bump-base.sh and is
-      # unit-tested via .github/scripts/tests/determine-mql-bump-base.bats.
+      # Route the bump PR to the right branch. When main's go.mod still
+      # carries a major-suffixed mql import, the incoming major is compared
+      # against it: matching -> base=main, otherwise -> base=v{major}. mql
+      # dropped the suffix for its v14 line, so when main pins the
+      # unversioned go.mondoo.com/mql there is no major to compare and the
+      # release routes to the v{major} support branch when cnspec has one
+      # (an mql v13.36.0 tag while main tracks v14 -> base=v13), and to main
+      # otherwise. Logic lives in .github/scripts/determine-mql-bump-base.sh
+      # and is unit-tested via .github/scripts/tests/determine-mql-bump-base.bats.
       - name: Determine base branch
         id: base
         env:
@@ -94,8 +97,16 @@ jobs:
         env:
           MQL_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          MAJOR=$(echo "${MQL_VERSION}" | cut -d. -f1)
-          go get go.mondoo.com/mql/${MAJOR}@${MQL_VERSION}
+          # Take the module path from the branch we are bumping: support
+          # branches import go.mondoo.com/mql/v{major}, while main tracks
+          # mql's unversioned path. Matching a version after the path skips
+          # the commented-out replace directive at the top of go.mod.
+          MQL_MODULE=$(grep -oE 'go\.mondoo\.com/mql(/v[0-9]+)?[[:space:]]+v[0-9]' go.mod | head -1 | awk '{print $1}')
+          if [ -z "${MQL_MODULE}" ]; then
+            echo "Could not find an mql import in go.mod"
+            exit 1
+          fi
+          go get "${MQL_MODULE}@${MQL_VERSION}"
           go mod tidy
           echo "${MQL_VERSION}" > VERSION
 
