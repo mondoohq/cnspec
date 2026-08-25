@@ -47,11 +47,15 @@ prep: prep/tools
 # or download them from the internet, so we are making sure the repo exists this way.
 # An alternative (especially for local development) is to soft-link a local copy of the repo
 # yourself. We don't pin submodules at this time, but we may want to check if they are up to date here.
+# This branch tracks mql v13, so it needs mql's v13 branch: mql main declares
+# its protos as go_package "go.mondoo.com/mql/...", and generating against
+# those emits imports this branch's go.mod (go.mondoo.com/mql/v13) does not
+# provide.
 prep/repos:
-	test -x mql || git clone https://github.com/mondoohq/mql.git mql
+	test -x mql || git clone -b v13 https://github.com/mondoohq/mql.git mql
 
 prep/repos/update: prep/repos
-	cd mql; git checkout main && git pull; cd -;
+	cd mql; git checkout v13 && git pull; cd -;
 
 prep/tools/windows:
 	go get google.golang.org/protobuf
