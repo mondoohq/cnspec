@@ -46,11 +46,19 @@ prep: prep/tools
 # or download them from the internet, so we are making sure the repo exists this way.
 # An alternative (especially for local development) is to soft-link a local copy of the repo
 # yourself. We don't pin submodules at this time, but we may want to check if they are up to date here.
+# Which mql line code generation reads. cnspec's *.pb.go bake in the
+# go_package of mql's protos, so this has to be the mql branch this cnspec
+# branch imports, or generation emits imports go.mod does not provide.
+# main tracks mql main. A support branch cut from here has to set this to
+# its own major's mql branch: mql no longer carries the major in its module
+# path (mondoohq/mql#10234), so nothing in the tree can infer it.
+MQL_BRANCH ?= main
+
 prep/repos:
-	test -x mql || git clone https://github.com/mondoohq/mql.git mql
+	test -x mql || git clone -b $(MQL_BRANCH) https://github.com/mondoohq/mql.git mql
 
 prep/repos/update: prep/repos
-	cd mql; git checkout main && git pull; cd -;
+	cd mql; git checkout $(MQL_BRANCH) && git pull; cd -;
 
 prep/tools/windows:
 	go get google.golang.org/protobuf
