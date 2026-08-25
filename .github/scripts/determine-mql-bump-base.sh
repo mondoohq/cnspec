@@ -12,25 +12,40 @@
 #
 #   2. Unversioned path (go.mondoo.com/mql). mql dropped the major suffix
 #      for its v14 development line, which cnspec's main tracks through
-#      pseudo-versions, so the path no longer carries a major. Released
-#      majors still live on their own mql branch, and cnspec mirrors them
-#      with a v{major} support branch — so the incoming release routes to
-#      v{major} when that branch exists, and to main otherwise (the release
-#      belongs to the unversioned development line main is already on).
+#      pseudo-versions, so the path carries no major to compare against.
+#      Both repos instead branch a major off when main moves to the next
+#      one (mql and cnspec both cut v13 on 2026-08-18), so the branches
+#      answer the question the path no longer can:
+#
+#        cnspec has v{major}              -> v{major}, the support branch
+#        mql has v{major}, cnspec has not -> error; the release comes from
+#                                            an mql maintenance line whose
+#                                            cnspec branch is missing, and
+#                                            landing it on main would
+#                                            downgrade main's mql
+#        neither has v{major}             -> main, which is the only line
+#                                            this major can belong to
+#
+#      Nothing here is pinned to a specific major, so v15 needs no change:
+#      once mql and cnspec cut v14 and main moves on, v14.x releases route
+#      to v14 and v15.x releases route to main.
 #
 # Inputs:
 #   $1 (required)    incoming mql version (e.g. v13.36.0 or 14.0.0-rc.1)
 #   $MAIN_GOMOD      content of main's go.mod. If unset, fetched via `gh api`
 #                    using $GH_REPO (owner/repo) and $GH_TOKEN.
-#   $KNOWN_BRANCHES  space/newline separated branch names to check the
-#                    v{major} support branch against. If unset, existence is
-#                    queried via `gh api` using $GH_REPO and $GH_TOKEN.
+#   $KNOWN_BRANCHES  space/newline separated cnspec branch names to check the
+#                    support branch against. If unset, existence is queried
+#                    via `gh api` using $GH_REPO and $GH_TOKEN.
+#   $MQL_BRANCHES    same, for mql's branches. If unset, queried via `gh api`
+#                    using $MQL_REPO (default mondoohq/mql).
 #
 # Output: prints the base branch to stdout ("main" or "v{major}").
-#         Exits non-zero if main's mql import cannot be found at all.
+#         Exits non-zero if the base branch cannot be determined.
 set -euo pipefail
 
 MQL_VERSION="${1:?mql version required as first argument}"
+MQL_REPO="${MQL_REPO:-mondoohq/mql}"
 
 V="${MQL_VERSION#v}"
 RELEASE_MAJOR="${V%%.*}"
@@ -43,14 +58,26 @@ if [ -z "${MAIN_GOMOD+set}" ]; then
   MAIN_GOMOD=$(gh api "/repos/${GH_REPO}/contents/go.mod?ref=main" --jq '.content' | base64 -d)
 fi
 
-# Does branch $1 exist in the repo?
+# Does branch $2 exist in repo $1? $3 names the env var holding a
+# pre-supplied branch list, so tests can answer without the network.
+# Only an HTTP 404 counts as "no such branch" — any other API failure is
+# fatal, so a bad token or a network blip cannot be read as "not a support
+# branch" and quietly route the bump to main.
 branch_exists() {
-  if [ -n "${KNOWN_BRANCHES+set}" ]; then
-    printf '%s' "$KNOWN_BRANCHES" | tr ' ' '\n' | grep -qx -- "$1"
+  local repo="$1" branch="$2" list_var="$3" err
+  if [ -n "${!list_var+set}" ]; then
+    printf '%s' "${!list_var}" | tr ' ' '\n' | grep -qx -- "$branch"
     return
   fi
-  : "${GH_REPO:?GH_REPO or KNOWN_BRANCHES required}"
-  gh api "/repos/${GH_REPO}/branches/$1" >/dev/null 2>&1
+  : "${repo:?repository required to look up branch ${branch}}"
+  if err=$(gh api "/repos/${repo}/branches/${branch}" 2>&1 >/dev/null); then
+    return 0
+  fi
+  if printf '%s' "$err" | grep -q 'HTTP 404'; then
+    return 1
+  fi
+  echo "Could not query ${repo} for branch ${branch}: ${err}" >&2
+  exit 1
 }
 
 MAIN_MAJOR=$(printf '%s' "$MAIN_GOMOD" \
@@ -68,15 +95,29 @@ if [ -n "$MAIN_MAJOR" ]; then
 fi
 
 # No major suffix on main. Confirm main imports mql at all before falling
-# back to the support-branch lookup, so a go.mod without mql still fails
-# loudly instead of silently routing somewhere.
+# back to the branch lookup, so a go.mod without mql still fails loudly
+# instead of silently routing somewhere.
 if ! printf '%s' "$MAIN_GOMOD" | grep -qE 'go\.mondoo\.com/mql[[:space:]]+v[0-9]'; then
   echo "Could not find an mql import in main's go.mod" >&2
   exit 1
 fi
 
-if branch_exists "v${RELEASE_MAJOR}"; then
-  echo "v${RELEASE_MAJOR}"
-else
-  echo main
+GH_REPO="${GH_REPO:-}"
+SUPPORT_BRANCH="v${RELEASE_MAJOR}"
+
+if branch_exists "$GH_REPO" "$SUPPORT_BRANCH" KNOWN_BRANCHES; then
+  echo "$SUPPORT_BRANCH"
+  exit 0
 fi
+
+if branch_exists "$MQL_REPO" "$SUPPORT_BRANCH" MQL_BRANCHES; then
+  cat >&2 <<EOF
+mql ${MQL_VERSION} comes from the ${SUPPORT_BRANCH} maintenance branch of
+${MQL_REPO}, but ${GH_REPO:-cnspec} has no ${SUPPORT_BRANCH} branch to open the bump
+against. Cut ${SUPPORT_BRANCH} in ${GH_REPO:-cnspec} and re-run — landing this on main
+would downgrade the mql main tracks.
+EOF
+  exit 1
+fi
+
+echo main
