@@ -36,9 +36,6 @@ type defaultReporter struct {
 	output io.Writer
 	data   *policy.ReportCollection
 
-	// indicates if the StoreResourcesData MQL feature is enabled
-	isStoreResourcesEnabled bool
-
 	// tracks whether any section of the current asset's body (controls,
 	// queries, checks, risks, vulnerabilities) has already printed content
 	// since the asset header. It is used to emit exactly one blank line
@@ -249,7 +246,13 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 			r.out("See more scan results and asset relationships on the Mondoo App: ")
 			r.out(url + NewLineCharacter)
 
-			if len(orderedAssets) == 1 && orderedAssets[0].Mrn != "" && r.isStoreResourcesEnabled {
+			// The MRN is the handle for follow-up queries against the
+			// platform (resources, findings, exports) — worth printing for
+			// any single-asset upstream scan, not just resource-recording
+			// ones. This used to be gated on the StoreResourcesData
+			// feature, which threaded a flag through the reporter for one
+			// line of output.
+			if len(orderedAssets) == 1 && orderedAssets[0].Mrn != "" {
 				r.out("Asset MRN: " + orderedAssets[0].Mrn + NewLineCharacter)
 			}
 		}

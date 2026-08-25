@@ -114,14 +114,12 @@ func (r *Reporter) WithOutput(out io.Writer) *Reporter {
 }
 
 func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollection) error {
-	features := mql.GetFeatures(ctx)
 	switch r.Conf.format {
 	case FormatCompact, FormatSummary, FormatFull:
 		rr := &defaultReporter{
-			Reporter:                r,
-			output:                  r.out,
-			data:                    data,
-			isStoreResourcesEnabled: features.IsActive(mql.StoreResourcesData),
+			Reporter: r,
+			output:   r.out,
+			data:     data,
 		}
 		return rr.print()
 	case FormatReport:

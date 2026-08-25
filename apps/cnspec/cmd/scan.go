@@ -446,15 +446,18 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		Parallelism:   viper.GetInt("parallelism"),
 	}
 
-	// FIXME: DEPRECATED, remove in v12.0 and make this the default for all
-	// use-cases where we have upstream recording enabled vv
-	// Instead of depending on the feature-flag, we look at the config
-	if conf.Features.IsActive(mql.StoreResourcesData) {
+	// Resource recording rides the uploaded scan database: the server
+	// advertises UploadResourcesData per scope (ScanParameters), and the
+	// recorded data is delivered only inside the UploadResultsV2 scandb —
+	// recording without v2 would be pure cost with no delivery path, so
+	// both features gate it. StoreResourcesData (the predecessor) is
+	// retired: it needed a resolved-policy second key and sent resources
+	// through the legacy StoreResults RPC.
+	if conf.Features.IsActive(mql.UploadResourcesData) && conf.Features.IsActive(mql.UploadResultsV2) {
 		if err = runtime.EnableResourcesRecording(); err != nil {
 			log.Fatal().Err(err).Msg("failed to enable resources recording")
 		}
 	}
-	// ^^
 
 	// if users want to get more information on available output options,
 	// print them before executing the scan

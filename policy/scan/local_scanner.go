@@ -1196,7 +1196,16 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 		return nil, err
 	}
 
-	if mql.GetFeatures(s.job.Ctx).IsActive(mql.StoreResourcesData) && resolvedPolicy.HasFeature(policy.ServerFeature_STORE_RESOURCES_DATA) {
+	// UploadResourcesData delivers resource recordings inside the uploaded
+	// scan database only: under UploadResultsV2, s.services is the local
+	// sqlite-backed service (WithServices below), so this StoreResults
+	// writes into the scandb that gets uploaded — never an upstream RPC.
+	// Without v2 there is no delivery path, so nothing is stored. The old
+	// StoreResourcesData two-key gate (client feature + a
+	// ServerFeature_STORE_RESOURCES_DATA stamp on the resolved policy) and
+	// its legacy upstream StoreResults send are retired with it.
+	feats := mql.GetFeatures(s.job.Ctx)
+	if feats.IsActive(mql.UploadResourcesData) && feats.IsActive(mql.UploadResultsV2) {
 		log.Info().Str("mrn", s.job.Asset.Mrn).Msg("store resources for asset")
 		recording := s.Runtime.Recording()
 		data, ok := recording.GetAssetData(s.job.Asset.Mrn)
