@@ -239,7 +239,6 @@ func gatherScoreValue(score *policy.Score) *ScoreValue {
 	}
 
 	return &ScoreValue{
-		Score:     score.Value,
 		Status:    status,
 		RiskScore: 100 - score.Value,
 	}
