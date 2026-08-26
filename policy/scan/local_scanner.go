@@ -1187,6 +1187,28 @@ type localAssetScanner struct {
 // case of an error, the results may contain partial results. The error is only returned if the scan failed to run not
 // when individual policies failed.
 func (s *localAssetScanner) run() (*AssetReport, error) {
+	// Resource recording must be armed BEFORE any query executes — the
+	// recording captures resource data as the policy run touches it. Armed
+	// here rather than at CLI setup because UploadResourcesData usually
+	// arrives server-driven (ScanParameters → withServerFeatures) on the
+	// job ctx, which does not exist when the CLI parses its local config —
+	// and the sync batcher stamps runtimes with the scanner-level recording
+	// (Null by default) before this point. This is the one site that sees
+	// both the final feature set and the final runtime.
+	feats := mql.GetFeatures(s.job.Ctx)
+	if feats.IsActive(mql.UploadResourcesData) && feats.IsActive(mql.UploadResultsV2) && s.job.runtime != nil {
+		// EnsureResourcesRecording mounts an in-memory recording (Null-only
+		// swap — a --record recording is never clobbered) AND registers the
+		// job asset with it, which is what makes enabling after connect
+		// work: the recording machinery's invariants live behind that one
+		// call. The job asset is passed because it carries the
+		// platform-assigned MRN the store step reads back by. job.runtime
+		// is the same runtime as s.Runtime, just concretely typed.
+		if err := s.job.runtime.EnsureResourcesRecording(s.job.Asset); err != nil {
+			log.Warn().Err(err).Str("asset", s.job.Asset.Mrn).Msg("could not enable resources recording")
+		}
+	}
+
 	if err := s.prepareAsset(); err != nil {
 		return nil, err
 	}
@@ -1204,7 +1226,6 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 	// StoreResourcesData two-key gate (client feature + a
 	// ServerFeature_STORE_RESOURCES_DATA stamp on the resolved policy) and
 	// its legacy upstream StoreResults send are retired with it.
-	feats := mql.GetFeatures(s.job.Ctx)
 	if feats.IsActive(mql.UploadResourcesData) && feats.IsActive(mql.UploadResultsV2) {
 		log.Info().Str("mrn", s.job.Asset.Mrn).Msg("store resources for asset")
 		recording := s.Runtime.Recording()
