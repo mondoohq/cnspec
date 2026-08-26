@@ -1196,34 +1196,17 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 	// (Null by default) before this point. This is the one site that sees
 	// both the final feature set and the final runtime.
 	feats := mql.GetFeatures(s.job.Ctx)
-	if feats.IsActive(mql.UploadResourcesData) && feats.IsActive(mql.UploadResultsV2) &&
-		s.job.Asset != nil && len(s.job.Asset.Connections) > 0 {
-		// Mount an in-memory recording if none is mounted — the same
-		// Null-only swap EnableResourcesRecording performs, done through
-		// the llx.Runtime interface so a recording the user mounted (e.g.
-		// --record) is never clobbered.
-		if _, isNull := s.Runtime.Recording().(recording.Null); isNull {
-			rec, err := recording.NewWithFile("", recording.RecordingOptions{
-				DoRecord:  true,
-				DoNotSave: true,
-			})
-			if err != nil {
-				log.Warn().Err(err).Str("asset", s.job.Asset.Mrn).Msg("could not enable resources recording")
-			} else if err := s.Runtime.SetRecording(rec); err != nil {
-				log.Warn().Err(err).Str("asset", s.job.Asset.Mrn).Msg("could not set resources recording")
-			}
+	if feats.IsActive(mql.UploadResourcesData) && feats.IsActive(mql.UploadResultsV2) && s.job.runtime != nil {
+		// EnsureResourcesRecording mounts an in-memory recording (Null-only
+		// swap — a --record recording is never clobbered) AND registers the
+		// job asset with it, which is what makes enabling after connect
+		// work: the recording machinery's invariants live behind that one
+		// call. The job asset is passed because it carries the
+		// platform-assigned MRN the store step reads back by. job.runtime
+		// is the same runtime as s.Runtime, just concretely typed.
+		if err := s.job.runtime.EnsureResourcesRecording(s.job.Asset); err != nil {
+			log.Warn().Err(err).Str("asset", s.job.Asset.Mrn).Msg("could not enable resources recording")
 		}
-		// The runtime connected BEFORE this recording existed, so its asset
-		// was registered with the previous (Null) recording: EnsureAsset
-		// normally runs at connect time, AddData silently drops rows for
-		// connections the recording does not know, and GetAssetData at the
-		// store step looks up by the platform-assigned asset MRN — which
-		// only the JOB asset carries (the connection asset predates MRN
-		// assignment). Register the job asset so the recording is indexed
-		// by both the connection id (conf.Id) writes use and the MRN the
-		// store reads back. The providerID/connectionID arguments are
-		// connection metadata only — EnsureAsset indexes by conf.Id.
-		s.Runtime.Recording().EnsureAsset(s.job.Asset, "", 0, s.job.Asset.Connections[0])
 	}
 
 	if err := s.prepareAsset(); err != nil {
