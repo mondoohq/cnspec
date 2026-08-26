@@ -1187,6 +1187,38 @@ type localAssetScanner struct {
 // case of an error, the results may contain partial results. The error is only returned if the scan failed to run not
 // when individual policies failed.
 func (s *localAssetScanner) run() (*AssetReport, error) {
+	// Resource recording must be armed BEFORE any query executes — the
+	// recording captures resource data as the policy run touches it. Armed
+	// here rather than at CLI setup because UploadResourcesData usually
+	// arrives server-driven (ScanParameters → withServerFeatures) on the
+	// job ctx, which does not exist when the CLI parses its local config —
+	// and the sync batcher stamps runtimes with the scanner-level recording
+	// (Null by default) before this point. This is the one site that sees
+	// both the final feature set and the final runtime.
+	feats := mql.GetFeatures(s.job.Ctx)
+	if feats.IsActive(mql.UploadResourcesData) && feats.IsActive(mql.UploadResultsV2) {
+		if rt, ok := s.Runtime.(*providers.Runtime); ok {
+			if err := rt.EnableResourcesRecording(); err != nil {
+				log.Warn().Err(err).Str("asset", s.job.Asset.Mrn).Msg("could not enable resources recording")
+			} else if rt.Provider != nil && rt.Provider.Connection != nil &&
+				s.job.Asset != nil && len(s.job.Asset.Connections) > 0 {
+				// The runtime connected BEFORE the recording was armed, so
+				// its asset was registered with the old Null recording:
+				// EnsureAsset runs at connect time, AddData silently drops
+				// rows for connections the recording does not know, and
+				// GetAssetData at the store step looks up by the
+				// platform-assigned asset MRN — which only the JOB asset
+				// carries (the connection asset predates MRN assignment).
+				// Register the job asset, so the recording is indexed by
+				// both the connection id and the MRN the store reads back.
+				rt.Recording().EnsureAsset(s.job.Asset, rt.Provider.Instance.ID,
+					rt.Provider.Connection.Id, s.job.Asset.Connections[0])
+			}
+		} else {
+			log.Warn().Str("asset", s.job.Asset.Mrn).Msg("cannot enable resources recording on this runtime type")
+		}
+	}
+
 	if err := s.prepareAsset(); err != nil {
 		return nil, err
 	}
@@ -1204,7 +1236,6 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 	// StoreResourcesData two-key gate (client feature + a
 	// ServerFeature_STORE_RESOURCES_DATA stamp on the resolved policy) and
 	// its legacy upstream StoreResults send are retired with it.
-	feats := mql.GetFeatures(s.job.Ctx)
 	if feats.IsActive(mql.UploadResourcesData) && feats.IsActive(mql.UploadResultsV2) {
 		log.Info().Str("mrn", s.job.Asset.Mrn).Msg("store resources for asset")
 		recording := s.Runtime.Recording()

@@ -446,18 +446,11 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		Parallelism:   viper.GetInt("parallelism"),
 	}
 
-	// Resource recording rides the uploaded scan database: the server
-	// advertises UploadResourcesData per scope (ScanParameters), and the
-	// recorded data is delivered only inside the UploadResultsV2 scandb —
-	// recording without v2 would be pure cost with no delivery path, so
-	// both features gate it. StoreResourcesData (the predecessor) is
-	// retired: it needed a resolved-policy second key and sent resources
-	// through the legacy StoreResults RPC.
-	if conf.Features.IsActive(mql.UploadResourcesData) && conf.Features.IsActive(mql.UploadResultsV2) {
-		if err = runtime.EnableResourcesRecording(); err != nil {
-			log.Fatal().Err(err).Msg("failed to enable resources recording")
-		}
-	}
+	// Resource recording (UploadResourcesData) is NOT armed here: the
+	// feature usually arrives server-driven via ScanParameters, which this
+	// CLI setup never sees. The per-asset scanner arms it against the final
+	// feature set instead (localAssetScanner.run) — the recorded rows are
+	// delivered inside the uploaded scan database (UploadResultsV2 only).
 
 	// if users want to get more information on available output options,
 	// print them before executing the scan
