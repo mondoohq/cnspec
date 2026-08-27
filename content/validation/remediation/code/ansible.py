@@ -36,6 +36,7 @@ TARGETS = {
     "windows": [
         CONTENT_DIR / "mondoo-windows-security.mql.yaml",
         CONTENT_DIR / "mondoo-windows-workstation-security.mql.yaml",
+        CONTENT_DIR / "mondoo-windows-update-readiness.mql.yaml",
     ],
     "macos": [CONTENT_DIR / "mondoo-macos-security.mql.yaml"],
     "kubernetes": [CONTENT_DIR / "mondoo-kubernetes-security.mql.yaml"],
