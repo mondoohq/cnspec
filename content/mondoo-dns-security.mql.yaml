@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-dns-security
     name: Mondoo DNS Security
-    version: 1.5.1
+    version: 1.6.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -35,6 +35,20 @@ policies:
       # The root cause is upstream (initDns substitutes an empty fqdn for an IP
       # target); this guard is what protects users until they pick that up, since
       # the network provider versions independently of cnspec.
+      #
+      # The four checks carrying `dns.fqdn == dns.zone.fqdn` are zone-wide, and
+      # that filter keeps them on the one name able to answer them. DNSKEY, NS
+      # and SOA records exist at a zone apex and nowhere else inside the zone,
+      # so asking www.example.com whether its zone is signed, or how many
+      # nameservers serve it, reads empty and fails a name that has nothing to
+      # misconfigure. Scanning an apex surfaces the `www` host as an asset of
+      # its own, which is where those failures were reported.
+      #
+      # The apex is established by delegation (`dns.zone`) rather than by the
+      # public suffix list, so a delegated subdomain is audited as the zone it
+      # is: `cs.cmu.edu` has its own nameservers and its own signing state, and
+      # an eTLD+1 test would skip it as a subdomain of `cmu.edu`. This needs
+      # network provider 13.3.2 or newer, which is where `dns.zone` lands.
       - title: Networking
         filters: |
           asset.family.contains('network') && dns.fqdn != empty
@@ -52,7 +66,7 @@ queries:
   - uid: mondoo-dns-security-no-cname-for-root-domain
     title: Ensure no CNAME is used for root domain
     impact: 60
-    filters: domainName.fqdn == domainName.effectiveTLDPlusOne
+    filters: dns.fqdn == dns.zone.fqdn
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
@@ -143,6 +157,7 @@ queries:
   - uid: mondoo-dns-security-no-ip-for-ns-mx-records
     title: Ensure NS and MX records are not pointing to IP addresses
     impact: 75
+    filters: dns.fqdn == dns.zone.fqdn
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
@@ -410,6 +425,7 @@ queries:
   - uid: mondoo-dns-security-dnssec-enabled
     title: Ensure DNSSEC is enabled
     impact: 75
+    filters: dns.fqdn == dns.zone.fqdn
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
@@ -620,6 +636,7 @@ queries:
   - uid: mondoo-dns-security-ns-redundancy
     title: Ensure at least two NS records exist
     impact: 60
+    filters: dns.fqdn == dns.zone.fqdn
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
