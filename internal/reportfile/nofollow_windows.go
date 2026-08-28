@@ -3,7 +3,7 @@
 
 //go:build windows
 
-package convert
+package reportfile
 
 // oNoFollow has no Windows equivalent: the syscall package defines no
 // O_NOFOLLOW there and CreateFile has no flag for it. The exposure is also
