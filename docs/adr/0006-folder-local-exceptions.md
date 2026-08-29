@@ -1,4 +1,4 @@
-# ADR-0005: Folder-Local Exceptions
+# ADR-0006: Folder-Local Exceptions
 
 **Date:** 2026-08-22
 **Status:** Proposed
@@ -84,6 +84,11 @@ config governed an asset (below) is a requirement and not a nicety.
 Each ingested config carries an **origin record** — provider, repository and ref where
 applicable, and path — so that reports can name the file that governed a result.
 
+Because one config can govern many assets ([§4.1](#41-path-scoping)), the provider also
+returns each asset's path **relative to that config's directory**. That relative path is
+what path scoping matches against, and an asset that has none is governed only by
+unscoped entries.
+
 ### 3. A context config may only carry exceptions
 
 The config schema includes credentials, endpoints and feature flags. A context config is
@@ -123,25 +128,73 @@ exceptions:
     justification: >                            # required
       Access logging is handled centrally by the org-wide CloudTrail trail.
     valid_until: 2026-11-01                     # RFC3339 date
+
+  - checks:
+      - mondoo-terraform-aws-security-s3-bucket-public-access
+    paths:                                      # optional; scopes the entry
+      - infra/staging
+    action: risk-accepted
+    justification: >
+      Staging buckets serve public test fixtures.
+    valid_until: 2026-11-01
 ```
 
 | Field | Required | Notes |
 |---|---|---|
 | `title` | no | Free text, carried through to upstream when set. Not an identifier. |
 | `checks` | yes | Check UID, or MRN when precision is wanted. Several per entry. **No globs** in the first pass — you name what you mean. |
+| `paths` | no | Path prefixes, relative to the config's own directory, that scope the entry. Absent means the whole config scope. See [§4.1](#41-path-scoping). |
 | `action` | yes | See below. |
 | `justification` | **yes** | An exception without a stated reason cannot be defended when it comes up for renewal. |
 | `valid_until` | no | RFC3339. Only meaningful for the scoring actions; on `disable` it has no effect, and lint warns. |
 
 Deliberately absent:
 
-- **No `paths`.** Tools whose ignore file is global need a path field to scope entries. A
-  context config is already scoped to its folder.
 - **No declared authors or approvers.** Both are derived; see [§8](#8-provenance).
 - **No per-file expiry policy.** The upstream scope may enforce one, and duplicating that
   in a file the scope does not control would be theatre.
 - **No exception identifier.** An entry naming N checks is N check exceptions; identity
-  comes from the scope, the check and the action.
+  comes from the scope — the config origin and the entry's path scope — the check and
+  the action.
+
+### 4.1 Path scoping
+
+The `github` provider reads one `mondoo.yml` at the repository root and discovers every
+module beneath it, so in a monorepo — or any repository holding more than one module — a
+single file governs assets that have nothing to do with one another. With no way to scope
+an entry, accepting a risk for `infra/staging` accepts it for `infra/prod` as well, and
+the file becomes an all-or-nothing instrument at exactly the scale where that is least
+acceptable.
+
+`paths` is a list of **path prefixes, relative to the directory containing the config**,
+matched on directory boundaries against the asset's path in that same frame:
+
+- `infra/staging` matches the asset at `infra/staging` and everything beneath it. It does
+  not match `infra/staging-2`.
+- An entry with no `paths` applies to every asset the config governs — the common case
+  for a config sitting in the single module it governs.
+- An asset with no path relative to the config root, the repository asset itself for
+  instance, matches only unscoped entries.
+
+Two rules keep a scoped file honest:
+
+- **No escape.** Absolute paths, and any `..` segment, are rejected by lint. A file can
+  only speak for its own subtree, which is the same property that will make a nested file
+  safe once cascading lookup lands.
+- **No silent conflict.** Entries are additive: an asset gets every entry that matches
+  it. Where two matching entries name the same check with different actions, the longer
+  prefix wins; at equal specificity lint rejects the file rather than picking for you.
+
+Prefix matching, not globs. A prefix names a subtree and cannot be misread, and subtrees
+are the monorepo case that motivates the field; `infra/*/staging` and `**/test/**` are
+deferred alongside globs on check identifiers.
+
+**`paths` does not replace cascading lookup**, and neither subsumes the other. Path
+scoping lets one file govern many modules; cascading would let many files govern one
+asset. Scanning `infra/prod` directly still reads `infra/prod/mondoo.yml` and never sees
+the repository root file, and scanning the repository still reads the root file and never
+sees the module's — the [origin record](#2-providers-find-and-expose-the-context-config)
+is what tells a reader which was in play.
 
 ### 5. Action vocabulary and its effect
 
@@ -251,6 +304,14 @@ is triggered.
 Scope granularity matters here too: context exceptions are asset-scoped and belong with
 the per-asset resolve, while user-scope exceptions apply across the whole configured
 scope and must be submitted once per run rather than once per asset.
+
+Path scoping splits that submission in two. An asset's resolve carries the subset of
+entries that matched *that* asset; deletion is made to work by a separate, per-origin
+declaration of every entry key the file contains. Path matching stays in cnspec — the
+upstream never has to learn what `infra/staging` means — and the completeness rule in
+[requirement 3](#what-this-requires-from-an-upstream) applies to that declared key list,
+never to whatever one asset happened to match. Without the split, scanning a single
+module would retire every entry in the file scoped to the modules the run did not cover.
 
 ### 8. Provenance
 
@@ -431,7 +492,10 @@ an integration:
    that source's next submission, is no longer in effect — that is how deleting a line
    from a file retires an exception ([Stage 3](#stage-3--the-local-exception-is-removed)).
    It also means a source can only ever speak for its own exceptions: removing an entry
-   from a file must never disturb one created elsewhere.
+   from a file must never disturb one created elsewhere. A source is a **config file, not
+   an asset**: where entries are path-scoped a run submits per-asset subsets, so
+   completeness is declared against the file's full entry-key list ([§7](#7-syncing-without-flooding-the-upstream))
+   and must never be inferred from one asset's subset.
 4. **Report a per-entry decision**, returned with the resolved policy: for each
    submitted exception, whether it was accepted or rejected, the reason for a rejection
    where there is one, and for an accepted one whether a person approved it — and who —
@@ -486,6 +550,8 @@ two halves disagree.
 - Reporting comes almost free: the local application produces exactly the impacts
   `buildExceptionSet` already reads.
 - Expiry is enforced by machinery that already exists.
+- A repository-root config can govern a monorepo without becoming all-or-nothing:
+  `paths` scopes an entry to the module it was written for.
 
 **Negative**
 
@@ -493,6 +559,9 @@ two halves disagree.
   until cascading lookup lands.
 - A `mondoo.yml` in a repository is untrusted input, and the allowlist and the
   parsed-separately rule are load-bearing rather than defensive extras.
+- An entry's reach is no longer evident from where its file sits, so reports must name
+  the matched path scope and not just the file, and the no-escape rule joins the
+  allowlist as load-bearing.
 - Exception behaviour differs between a connected and a disconnected scan: connected, the
   upstream decides what applies; disconnected, everything in the file applies. That is
   correct but it needs to be explained in the docs.
@@ -510,7 +579,8 @@ Deferred deliberately, so the first pass stays small:
 
 - Other providers — cloudformation, helm, kustomize, bicep, ansible, k8s, os, gitlab.
 - Cascading config lookup through parent directories.
-- Globs on check identifiers.
+- Globs on check identifiers, and glob syntax in `paths` — prefix matching only in the
+  first pass.
 - Exceptions for controls, CVEs, advisories and third-party findings.
 - Folder-local properties and policy selection.
 - Inline source comments, e.g. a `#mondoo:ignore` marker in the HCL itself.
