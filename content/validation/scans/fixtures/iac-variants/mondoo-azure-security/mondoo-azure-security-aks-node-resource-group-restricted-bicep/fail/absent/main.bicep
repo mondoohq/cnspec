@@ -1,4 +1,4 @@
-resource aks 'Microsoft.ContainerService/managedClusters@2024-02-01' = {
+resource aks 'Microsoft.ContainerService/managedClusters@2025-02-01' = {
   name: 'production-aks'
   location: 'eastus'
   identity: {

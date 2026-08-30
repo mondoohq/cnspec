@@ -1,7 +1,7 @@
 // DNAT publishing SSH straight to an internal host puts a management port on
 // the public internet behind a single NAT rule.
 resource ruleGroup 'Microsoft.Network/firewallPolicies/ruleCollectionGroups@2023-09-01' = {
-  name: 'prod-nat'
+  name: 'prod-policy/prod-nat'
   properties: {
     priority: 300
     ruleCollections: [

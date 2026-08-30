@@ -6,8 +6,10 @@ resource vault 'Microsoft.RecoveryServices/vaults@2023-06-01' = {
     tier: 'Standard'
   }
   properties: {
-    softDeleteSettings: {
-      softDeleteState: 'Enabled'
+    securitySettings: {
+      softDeleteSettings: {
+        softDeleteState: 'Enabled'
+      }
     }
   }
 }

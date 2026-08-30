@@ -8,6 +8,6 @@ resource search 'Microsoft.Search/searchServices@2023-11-01' = {
     replicaCount: 2
     partitionCount: 1
     hostingMode: 'default'
-    publicNetworkAccess: 'Disabled'
+    publicNetworkAccess: 'disabled'
   }
 }

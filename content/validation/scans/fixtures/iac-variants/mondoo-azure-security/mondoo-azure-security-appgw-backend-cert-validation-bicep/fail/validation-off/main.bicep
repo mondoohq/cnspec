@@ -1,6 +1,6 @@
 // HTTPS to the backend, but the certificate chain is not verified, so the
 // encrypted hop can be man-in-the-middled inside the VNet.
-resource appgw 'Microsoft.Network/applicationGateways@2023-09-01' = {
+resource appgw 'Microsoft.Network/applicationGateways@2024-10-01' = {
   name: 'public-appgw'
   location: 'eastus'
   properties: {

@@ -9,7 +9,5 @@ resource site 'Microsoft.Web/sites@2023-12-01' = {
 resource scmPolicy 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2023-12-01' = {
   parent: site
   name: 'scm'
-  properties: {
-    updatable: true
-  }
+  properties: {}
 }

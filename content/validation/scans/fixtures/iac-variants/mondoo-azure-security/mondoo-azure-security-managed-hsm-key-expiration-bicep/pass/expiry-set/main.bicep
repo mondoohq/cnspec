@@ -1,5 +1,5 @@
 resource hsmKey 'Microsoft.KeyVault/managedHSMs/keys@2023-07-01' = {
-  name: 'payment-signing'
+  name: 'prod-hsm/payment-signing'
   properties: {
     kty: 'EC-HSM'
     curveName: 'P-256'
