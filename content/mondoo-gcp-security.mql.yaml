@@ -43983,8 +43983,7 @@ queries:
         values['network_spec'] != empty &&
         values['network_spec'].all(_['network'] != null && _['network'] != "")
       )
-  # No Terraform variants for the runtime resource: google_workbench_instance gen-2 stores its service account in a nested gce_setup.service_accounts block; the Terraform coverage below targets the legacy google_notebooks_instance whose flat service_account argument matches the runtime notebooksService.instances resource this check evaluates.
-  # The google provider removed google_notebooks_instance in 8.0, so these variants now only judge state and plan documents written by an earlier provider. They stay because that is the population the runtime notebooksService.instances resource covers; pointing them at google_workbench_instance instead would have them judge assets their runtime sibling cannot see. The remediation names the Workbench resource because that is the only one a reader can still declare.
+  # The Terraform variants judge both Workbench resources: google_workbench_instance carries its service account in a nested gce_setup.service_accounts block, while the legacy google_notebooks_instance uses a flat service_account argument. The google provider removed the legacy resource in 8.0, so only the Workbench form can still be written, but plan and state documents from earlier provider versions carry either.
   - uid: mondoo-gcp-security-workbench-instance-no-default-service-account
     title: Ensure Vertex AI Workbench instances use a non-default service account
     impact: 70
@@ -44104,22 +44103,55 @@ queries:
         serviceAccount != empty && serviceAccount.contains("-compute@developer.gserviceaccount.com") == false
       )
   - uid: mondoo-gcp-security-workbench-instance-no-default-service-account-terraform-hcl
-    filters: asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_notebooks_instance')
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_workbench_instance' || nameLabel == 'google_notebooks_instance')
     mql: |
+      terraform.resources('google_workbench_instance').all(
+        blocks.where(type == 'gce_setup') != empty &&
+        blocks.where(type == 'gce_setup').all(
+          blocks.where(type == 'service_accounts') != empty &&
+          blocks.where(type == 'service_accounts').all(
+            arguments['email'] != null && arguments['email'] != "" &&
+            arguments['email'].contains("-compute@developer.gserviceaccount.com") == false
+          )
+        )
+      )
       terraform.resources('google_notebooks_instance').all(
         arguments['service_account'] != null && arguments['service_account'] != "" &&
         arguments['service_account'].contains("-compute@developer.gserviceaccount.com") == false
       )
   - uid: mondoo-gcp-security-workbench-instance-no-default-service-account-terraform-plan
-    filters: asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_notebooks_instance')
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_workbench_instance' || type == 'google_notebooks_instance')
     mql: |
+      terraform.plan.resourceChanges.where(type == 'google_workbench_instance').all(
+        change.after['gce_setup'] != empty &&
+        change.after['gce_setup'].all(
+          _['service_accounts'] != empty &&
+          _['service_accounts'].all(
+            _['email'] != null && _['email'] != "" &&
+            _['email'].contains("-compute@developer.gserviceaccount.com") == false
+          )
+        )
+      )
       terraform.plan.resourceChanges.where(type == 'google_notebooks_instance').all(
         change.after['service_account'] != null && change.after['service_account'] != "" &&
         change.after['service_account'].contains("-compute@developer.gserviceaccount.com") == false
       )
   - uid: mondoo-gcp-security-workbench-instance-no-default-service-account-terraform-state
-    filters: asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_notebooks_instance')
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_workbench_instance' || type == 'google_notebooks_instance')
     mql: |
+      terraform.state.resources.where(type == 'google_workbench_instance').all(
+        values['gce_setup'] != empty &&
+        values['gce_setup'].all(
+          _['service_accounts'] != empty &&
+          _['service_accounts'].all(
+            _['email'] != null && _['email'] != "" &&
+            _['email'].contains("-compute@developer.gserviceaccount.com") == false
+          )
+        )
+      )
       terraform.state.resources.where(type == 'google_notebooks_instance').all(
         values['service_account'] != null && values['service_account'] != "" &&
         values['service_account'].contains("-compute@developer.gserviceaccount.com") == false
