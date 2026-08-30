@@ -1,5 +1,5 @@
 resource ruleGroup 'Microsoft.Network/firewallPolicies/ruleCollectionGroups@2023-09-01' = {
-  name: 'prod-nat'
+  name: 'prod-policy/prod-nat'
   properties: {
     priority: 300
     ruleCollections: [

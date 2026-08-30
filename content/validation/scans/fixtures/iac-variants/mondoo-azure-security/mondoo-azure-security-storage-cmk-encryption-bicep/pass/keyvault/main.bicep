@@ -14,7 +14,7 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     supportsHttpsTrafficOnly: true
     encryption: {
       keySource: 'Microsoft.Keyvault'
-      keyVaultProperties: {
+      keyvaultproperties: {
         keyname: 'storagekey'
         keyvaulturi: 'https://examplevault.vault.azure.net'
       }

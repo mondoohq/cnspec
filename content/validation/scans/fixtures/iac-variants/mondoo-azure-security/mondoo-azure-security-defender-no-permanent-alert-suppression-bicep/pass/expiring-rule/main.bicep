@@ -1,3 +1,5 @@
+targetScope = 'subscription'
+
 resource suppression 'Microsoft.Security/alertsSuppressionRules@2019-01-01-preview' = {
   name: 'suppress-known-scanner'
   properties: {

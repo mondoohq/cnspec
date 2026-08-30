@@ -1,5 +1,5 @@
 resource association 'Microsoft.Network/networkSecurityPerimeters/resourceAssociations@2023-08-01-preview' = {
-  name: 'storage-association'
+  name: 'prod-perimeter/storage-association'
   properties: {
     accessMode: 'Enforced'
     privateLinkResource: {

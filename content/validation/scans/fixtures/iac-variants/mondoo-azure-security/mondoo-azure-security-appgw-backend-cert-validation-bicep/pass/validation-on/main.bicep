@@ -1,4 +1,4 @@
-resource appgw 'Microsoft.Network/applicationGateways@2023-09-01' = {
+resource appgw 'Microsoft.Network/applicationGateways@2024-10-01' = {
   name: 'public-appgw'
   location: 'eastus'
   properties: {

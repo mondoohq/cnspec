@@ -1175,6 +1175,10 @@ queries:
       properties['EncryptionConfiguration']['KmsKeyId'] != empty &&
       properties['EncryptionConfiguration']['KmsKeyId'] != "S3_MANAGED_KEY"
       )
+  # No CloudFormation variant: `AWS::NetworkFirewall::LoggingConfiguration` requires
+  # `LoggingConfiguration.LogDestinationConfigs` with at least one entry, so a variant filtered on that resource
+  # asserts exactly what the schema already guarantees. What this check is about, a firewall with no logging
+  # configuration at all, is outside the reach of a filter that selects the logging configuration.
   - uid: mondoo-aws-security-networkfirewall-logging-enabled
     title: Ensure Network Firewall firewalls have logging enabled
     impact: 80
@@ -1210,10 +1214,6 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-networkfirewall-logging-enabled-cloudformation
-        tags:
-          mondoo.com/filter-title: CloudFormation
-          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that AWS Network Firewall records the traffic it inspects, by requiring at least one logging destination on each firewall. A firewall is created with no logging configuration, so by default neither the flows it inspects nor the actions it takes are written anywhere.
@@ -1332,13 +1332,6 @@ queries:
       terraform.state.resources.where(type == "aws_networkfirewall_logging_configuration").all(
         values.logging_configuration != empty &&
         values.logging_configuration.all( _['log_destination_config'] != empty )
-      )
-  - uid: mondoo-aws-security-networkfirewall-logging-enabled-cloudformation
-    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::NetworkFirewall::LoggingConfiguration")
-    mql: |
-      cloudformation.template.resources.where(type == "AWS::NetworkFirewall::LoggingConfiguration").all(
-      properties['LoggingConfiguration'] != empty &&
-      properties['LoggingConfiguration']['LogDestinationConfigs'] != empty
       )
   - uid: mondoo-aws-security-networkfirewall-change-protection-enabled
     title: Ensure Network Firewall firewalls enable delete and change protection
@@ -25777,6 +25770,9 @@ queries:
       terraform.state.resources.where(type == "aws_inspector2_enabler").all(
       values.resource_types.contains("LAMBDA")
       )
+  # No CloudFormation variant: `AWS::SSM::Parameter` accepts only `String` and `StringList` for `Type`, and has no
+  # `KeyId` property, so a template can neither create a SecureString parameter nor name the key that encrypts one.
+  # The remediation below says the same and points at the CLI.
   - uid: mondoo-aws-security-ssm-parameter-encryption
     title: Ensure SSM SecureString parameters use KMS encryption
     impact: 80
@@ -25812,10 +25808,6 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-ssm-parameter-encryption-cloudformation
-        tags:
-          mondoo.com/filter-title: CloudFormation
-          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that AWS Systems Manager Parameter Store parameters of type `SecureString` name an explicit KMS key. SSM always encrypts `SecureString` parameters, but using the default AWS-managed key limits visibility and control over the encryption lifecycle.
@@ -25910,12 +25902,6 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_ssm_parameter" && values["type"] == "SecureString").all(
       values["key_id"] != null && values["key_id"] != ""
-      )
-  - uid: mondoo-aws-security-ssm-parameter-encryption-cloudformation
-    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SSM::Parameter")
-    mql: |
-      cloudformation.template.resources.where(type == "AWS::SSM::Parameter").all(
-      properties['Type'] == "SecureString" && properties['KeyId'] != empty
       )
   - uid: mondoo-aws-security-dms-replication-not-public
     title: Ensure DMS replication instances are not publicly accessible
@@ -31957,6 +31943,9 @@ queries:
       cloudformation.template.resources.where(type == "AWS::Route53::HostedZone").where(properties['VPCs'] == null).all(
         properties['QueryLoggingConfig'] != empty
       )
+  # No CloudFormation variant: `AWS::Route53::HealthCheck` has no `Disabled` property. `HealthCheckConfig` sets
+  # `additionalProperties: false` and does not carry one, so a template cannot disable a health check and a variant
+  # over it could only restate what the deployment already rejects.
   - uid: mondoo-aws-security-route53-health-check-not-disabled
     title: Ensure Route 53 health checks are not disabled
     impact: 50
@@ -31992,10 +31981,6 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-route53-health-check-not-disabled-cloudformation
-        tags:
-          mondoo.com/filter-title: CloudFormation
-          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that no Amazon Route 53 health check is in a disabled state. A disabled health check causes Route 53 to treat the endpoint as healthy regardless of what it is actually doing.
@@ -32112,12 +32097,6 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_route53_health_check").all(
       values.disabled != true
-      )
-  - uid: mondoo-aws-security-route53-health-check-not-disabled-cloudformation
-    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Route53::HealthCheck")
-    mql: |
-      cloudformation.template.resources.where(type == "AWS::Route53::HealthCheck").all(
-      properties['HealthCheckConfig'] != empty && properties['HealthCheckConfig']['Disabled'] != true
       )
   - uid: mondoo-aws-security-route53-health-check-https
     title: Ensure Route 53 endpoint health checks use HTTPS
@@ -39257,7 +39236,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Glue::Crawler")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Glue::Crawler").all(
-      properties['SecurityConfiguration'] != ""
+      properties['CrawlerSecurityConfiguration'] != ""
       )
   - uid: mondoo-aws-security-glue-catalog-encryption-enabled
     title: Ensure AWS Glue Data Catalog encryption at rest is enabled
@@ -69971,6 +69950,8 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.appstream.images.where(baseImageArn != null && baseImageArn != "").all(visibility != "PUBLIC")
+  # No CloudFormation variant: the items of `EmbedHostDomains` are constrained to a hostname pattern that admits
+  # neither a wildcard nor an empty string, so neither failing state can be written in a template.
   - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards
     title: Ensure AppStream stack embedHostDomains do not contain wildcards
     impact: 80
@@ -70006,10 +69987,6 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-cloudformation
-        tags:
-          mondoo.com/filter-title: CloudFormation
-          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check verifies that the `embedHostDomains` allowlist on each AppStream 2.0 stack contains only specific fully qualified domain names, with no wildcard entries and no empty strings. That list controls which host pages may embed the streaming session in an iframe.
@@ -70117,13 +70094,6 @@ queries:
       terraform.state.resources.where(type == "aws_appstream_stack").all(
         values["embed_host_domains"] == null ||
         values["embed_host_domains"].none(_.contains("*") || _ == "")
-      )
-  - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-cloudformation
-    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::AppStream::Stack")
-    mql: |
-      cloudformation.template.resources.where(type == "AWS::AppStream::Stack").all(
-        properties['EmbedHostDomains'] == null ||
-        properties['EmbedHostDomains'].none(_.contains("*") || _ == "")
       )
   - uid: mondoo-aws-security-workspaces-web-ip-access-no-public
     title: Ensure WorkSpaces Web IP access settings exclude public CIDR ranges
