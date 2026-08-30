@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 12.13.0
+    version: 12.14.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -810,6 +810,18 @@ policies:
       - title: Amazon AppFlow
         checks:
           - uid: mondoo-aws-security-appflow-flow-cmk-encryption
+      - title: AWS Account
+        checks:
+          - uid: mondoo-aws-security-account-security-contact-registered
+          - uid: mondoo-aws-security-account-alternate-contacts-registered
+          - uid: mondoo-aws-security-account-contact-information-complete
+      - title: AWS Organizations
+        checks:
+          - uid: mondoo-aws-security-organizations-account-in-organization
+          - uid: mondoo-aws-security-organizations-ai-services-opt-out
+          - uid: mondoo-aws-security-organizations-tag-policies-attached
+          - uid: mondoo-aws-security-organizations-scp-restrict-regions
+          - uid: mondoo-aws-security-organizations-delegated-admins-active
     scoring_system: highest impact
 queries:
   - uid: mondoo-aws-security-eks-cluster-cmks-in-kms
@@ -88920,3 +88932,119 @@ queries:
   - uid: mondoo-aws-security-iam-securityaudit-role-exists-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_iam_role_policy_attachment")
     mql: terraform.state.resources.where(type == "aws_iam_role_policy_attachment").any(values.policy_arn == "arn:aws:iam::aws:policy/SecurityAudit")
+  - uid: mondoo-aws-security-account-security-contact-registered
+    title: Ensure a security contact is registered for the AWS account
+    impact: 80
+    filters: asset.platform == "aws"
+    mql: |
+      aws.account.securityContact.exists == true
+      aws.account.securityContact.emailAddress != ""
+    docs:
+      desc: |
+        This check verifies that a security alternate contact with an email address is registered for the AWS account. AWS uses the security contact to reach the right team for abuse reports, security notifications, and incident communication; without it, those messages go to the account's primary (often billing or management) contact and can be missed.
+      audit: |
+        Run `aws account get-alternate-contact --alternate-contact-type SECURITY`. A passing account returns a contact with an email address; a failing account returns a ResourceNotFoundException.
+      remediation: |
+        In the console, go to **Account** settings, then **Alternate contacts**, and add a security contact. Via CLI: `aws account put-alternate-contact --alternate-contact-type SECURITY --email-address <email> --name <name> --phone-number <phone> --title <title>`.
+  - uid: mondoo-aws-security-account-alternate-contacts-registered
+    title: Ensure billing, operations, and security alternate contacts are registered
+    impact: 60
+    filters: asset.platform == "aws"
+    mql: |
+      aws.account.billingContact.exists == true
+      aws.account.operationsContact.exists == true
+      aws.account.securityContact.exists == true
+    docs:
+      desc: |
+        This check verifies that all three alternate contacts (billing, operations, and security) are registered for the AWS account, so AWS notifications reach the teams responsible for each area instead of only the primary account holder.
+      audit: |
+        Run `aws account get-alternate-contact --alternate-contact-type BILLING` (and `OPERATIONS`, `SECURITY`). A passing account returns a contact for each type.
+      remediation: |
+        In the console, go to **Account** settings, then **Alternate contacts**, and register all three contacts, or use `aws account put-alternate-contact` for each type.
+  - uid: mondoo-aws-security-account-contact-information-complete
+    title: Ensure the AWS account primary contact information is complete
+    impact: 50
+    filters: asset.platform == "aws"
+    mql: |
+      aws.account.contactInformation["fullName"] != ""
+      aws.account.contactInformation["addressLine1"] != ""
+      aws.account.contactInformation["phoneNumber"] != ""
+    docs:
+      desc: |
+        This check verifies that the account's primary contact information carries a full name, address, and phone number. AWS uses the primary contact to verify account ownership and to reach the owner during security incidents or account recovery; incomplete details delay both.
+      audit: |
+        Run `aws account get-contact-information` and review that full name, address line 1, and phone number are set.
+      remediation: |
+        In the console, go to **Account** settings, then **Contact information**, and complete the details, or use `aws account put-contact-information`.
+  - uid: mondoo-aws-security-organizations-account-in-organization
+    title: Ensure the AWS account is part of an AWS Organization
+    impact: 60
+    filters: asset.platform == "aws"
+    mql: aws.account.isOrganizationMember == true
+    docs:
+      desc: |
+        This check verifies that the account belongs to an AWS Organization. Standalone accounts cannot receive service control policies, centralized CloudTrail, delegated security administration, or consolidated guardrails, so organization membership is the foundation of multi-account governance.
+      audit: |
+        Run `aws organizations describe-organization`. A passing account returns the organization; a standalone account returns AWSOrganizationsNotInUseException.
+      remediation: |
+        Create an organization from the designated management account (`aws organizations create-organization`) or invite the account into the existing organization (`aws organizations invite-account-to-organization`).
+  - uid: mondoo-aws-security-organizations-ai-services-opt-out
+    title: Ensure an AI services opt-out policy is in effect for the account
+    impact: 50
+    filters: asset.platform == "aws" && aws.account.isOrganizationMember
+    mql: aws.account.effectivePolicies.any(type == "AISERVICES_OPT_OUT_POLICY")
+    docs:
+      desc: |
+        This check verifies that an AI services opt-out policy applies to the account. Without one, AWS AI services may use customer content processed by those services to develop and improve AWS and affiliate technologies; the opt-out policy documents and enforces the organization's choice.
+      audit: |
+        Run `aws organizations describe-effective-policy --policy-type AISERVICES_OPT_OUT_POLICY`. A passing account returns an effective policy.
+      remediation: |
+        Enable the AISERVICES_OPT_OUT_POLICY policy type on the organization root and attach a policy that opts out of content use, e.g. with `"default": {"@@operators_allowed_for_child_policies":["@@none"],"optOut": {...}}` semantics, from the management account.
+  - uid: mondoo-aws-security-organizations-tag-policies-attached
+    title: Ensure a tag policy is in effect for the account
+    impact: 40
+    filters: asset.platform == "aws" && aws.account.isOrganizationMember
+    mql: aws.account.effectivePolicies.any(type == "TAG_POLICY")
+    docs:
+      desc: |
+        This check verifies that a tag policy applies to the account. Tag policies standardize the tags that security tooling, cost allocation, and access controls rely on; accounts outside any tag policy drift from the tagging standard unnoticed.
+      audit: |
+        Run `aws organizations describe-effective-policy --policy-type TAG_POLICY`. A passing account returns an effective policy.
+      remediation: |
+        Enable tag policies on the organization root and attach a tag policy to the account or one of its parent organizational units from the management account.
+  - uid: mondoo-aws-security-organizations-scp-restrict-regions
+    title: Ensure service control policies restrict usable AWS regions
+    impact: 60
+    filters: |
+      asset.platform == "aws" &&
+      aws.account.isOrganizationMember &&
+      aws.organization.masterAccountId == aws.account.id
+    mql: |
+      aws.organization.serviceControlPolicies.any(
+        statements.any(
+          effect == "Deny" && conditions.values.any(_.keys.any(_ == "aws:RequestedRegion"))
+        )
+      )
+    docs:
+      desc: |
+        This check verifies that at least one service control policy denies API activity based on the requested region. Region-restricting SCPs prevent resources (and attackers) from using unmonitored regions where logging, scanning, and guardrails are typically not set up. The check evaluates on the organization's management account, where service control policies are readable.
+      audit: |
+        From the management account, list policies with `aws organizations list-policies --filter SERVICE_CONTROL_POLICY` and review their content for a Deny statement conditioned on `aws:RequestedRegion`.
+      remediation: |
+        Attach an SCP that denies all actions outside the approved regions, for example a Deny statement with `"Condition": {"StringNotEquals": {"aws:RequestedRegion": ["eu-central-1", ...]}}`, from the management account.
+  - uid: mondoo-aws-security-organizations-delegated-admins-active
+    title: Ensure delegated administrators are active and reviewed
+    impact: 60
+    filters: |
+      asset.platform == "aws" &&
+      aws.account.isOrganizationMember &&
+      aws.organization.masterAccountId == aws.account.id
+    mql: |
+      aws.organization.delegatedAdministrators.all(status == "ACTIVE")
+    docs:
+      desc: |
+        This check verifies that every delegated administrator account in the organization is in the ACTIVE state. Delegated administrators hold organization-wide power for their services; suspended or closed accounts that still hold delegations indicate stale, unreviewed privileged access. The check evaluates on the organization's management account, where the delegation list is readable, and passes when no delegations exist.
+      audit: |
+        From the management account, run `aws organizations list-delegated-administrators` and review each entry's status and owning team.
+      remediation: |
+        Remove stale delegations with `aws organizations deregister-delegated-administrator --account-id <id> --service-principal <service>` from the management account.
