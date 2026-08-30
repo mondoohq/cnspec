@@ -54,6 +54,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # content/validati
 from paths import DATA_DIR, DUMP_DIR, REPO_ROOT, VALIDATION_DIR  # noqa: E402
 
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "validate-remediation.yaml"
+# Read for the artifact download URLs only. Never written: an installation
+# token cannot push a change under .github/workflows/, which is why the pins
+# the bumper rewrites live in TOOL_PINS instead.
+TOOL_PINS = VALIDATION_DIR / "upstream" / "tool-pins.env"
 OPENAPI_MODULE = VALIDATION_DIR / "remediation" / "commands" / "openapi.py"
 TERRAFORM_VALIDATOR = VALIDATION_DIR / "remediation" / "code" / "terraform.py"
 API_SPECS_DUMP = VALIDATION_DIR / "upstream" / "dump" / "api_specs.py"
@@ -299,14 +303,19 @@ class Pin:
         return self.apply is not None
 
 
-def _sub_once(text: str, pattern: str, new_value: str, path: Path) -> str:
+def _sub_once(text: str, pattern: str, new_value: str, path: Path, flags: int = 0) -> str:
     """Replace group 1 of the first `pattern` match with `new_value`.
 
     Every rewrite in this module goes through here so that a pattern which
     stopped matching (upstream reformatted the file, someone moved the pin)
     raises instead of writing a file that looks bumped but is not.
+
+    `flags` is for the line-anchored patterns in tool-pins.env, whose `^` means
+    nothing without re.MULTILINE -- and which, read with the same flags they
+    are matched with here, would otherwise find the pin and then fail to write
+    it.
     """
-    m = re.search(pattern, text)
+    m = re.search(pattern, text, flags)
     if not m:
         raise ValueError(f"pin pattern no longer matches in {path}: {pattern}")
     start, end = m.span(1)
@@ -314,22 +323,33 @@ def _sub_once(text: str, pattern: str, new_value: str, path: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Pins declared in the workflow's `run:` steps
+# Tool pins declared in upstream/tool-pins.env
 # ---------------------------------------------------------------------------
+#
+# Read from the data file, not from the workflow that installs them, so that
+# the weekly bumper can push the result: GitHub refuses a GitHub App
+# installation token any push touching `.github/workflows/`, and these are the
+# only pins a bot rewrites that ever lived there. `tool-pins.env` has the whole
+# argument.
+#
+# The download URLs stay in the workflow and are read back out of it, which is
+# what keeps the re-checksum honest -- the bytes hashed are the bytes CI
+# fetches. That is a read of the workflow, never a write.
 
 # Tools installed at a bare version string, with nothing to checksum.
-# (display name, regex capturing the pinned version, resolver)
+# (display name, env var in tool-pins.env, resolver)
 WORKFLOW_TOOLS = [
-    ("cfn-lint", r"pipx install cfn-lint==([0-9][^\s]*)", lambda: latest_pypi("cfn-lint")),
-    ("ansible-lint", r"pipx install ansible-lint==([0-9][^\s]*)", lambda: latest_pypi("ansible-lint")),
-    ("cookstyle", r"gem install cookstyle -v ([0-9][^\s]*)", lambda: latest_rubygem("cookstyle")),
-    ("tflint", r"tflint_version:\s*v?([0-9][^\s]*)", lambda: latest_github_release("terraform-linters/tflint")),
+    ("cfn-lint", "CFN_LINT_VERSION", lambda: latest_pypi("cfn-lint")),
+    ("ansible-lint", "ANSIBLE_LINT_VERSION", lambda: latest_pypi("ansible-lint")),
+    ("cookstyle", "COOKSTYLE_VERSION", lambda: latest_rubygem("cookstyle")),
+    ("tflint", "TFLINT_VERSION", lambda: latest_github_release("terraform-linters/tflint")),
 ]
 
-# Tools downloaded as a release artifact and verified against a checksum. The
-# workflow declares each as an `X_VERSION` / `X_SHA256` env pair; the artifact
-# URL is read out of the same step, so bumping one of these re-downloads
-# exactly what CI will download and recomputes the digest from it.
+# Tools downloaded as a release artifact and verified against a checksum.
+# `tool-pins.env` declares each as an `X_VERSION` / `X_SHA256` pair; the
+# artifact URL is read out of the workflow step that interpolates `X_VERSION`,
+# so bumping one of these re-downloads exactly what CI will download and
+# recomputes the digest from it.
 # (display name, env var prefix, resolver)
 WORKFLOW_CHECKSUMMED = [
     ("bicep", "BICEP", lambda: latest_github_release("Azure/bicep")),
@@ -339,6 +359,21 @@ WORKFLOW_CHECKSUMMED = [
     ("databricks", "DATABRICKS", lambda: latest_github_release("databricks/cli")),
     ("stackit", "STACKIT", lambda: latest_github_release("stackitcloud/stackit-cli")),
 ]
+
+
+def _pin_pattern(var: str) -> str:
+    """Match `VAR=value` on its own line in tool-pins.env.
+
+    Anchored per line so a mention of the name inside a comment cannot be
+    rewritten in place of the pin, and so `BICEP_VERSION` cannot match inside
+    some future `BICEP_VERSION_SUFFIX`.
+    """
+    return rf"^{var}=([^\s#]+)"
+
+
+def _read_pin(text: str, var: str) -> str | None:
+    m = re.search(_pin_pattern(var), text, re.MULTILINE)
+    return m.group(1) if m else None
 
 
 def _workflow_url_for(text: str, version_var: str) -> str | None:
@@ -355,70 +390,72 @@ def _workflow_url_for(text: str, version_var: str) -> str | None:
     return None
 
 
-def check_workflow_tools() -> list[Pin]:
-    if not WORKFLOW.exists():
+def check_tool_pins() -> list[Pin]:
+    if not TOOL_PINS.exists():
         return []
-    text = WORKFLOW.read_text()
+    text = TOOL_PINS.read_text()
+    workflow_text = WORKFLOW.read_text() if WORKFLOW.exists() else ""
     out: list[Pin] = []
 
-    for name, pattern, resolver in WORKFLOW_TOOLS:
-        m = re.search(pattern, text)
-        if not m:
+    for name, var, resolver in WORKFLOW_TOOLS:
+        pinned = _read_pin(text, var)
+        if pinned is None:
             out.append(Pin(name, "linter", "unknown", "unknown",
-                           "no pin found in validate-remediation.yaml"))
+                           f"{var} not found in tool-pins.env"))
             continue
 
-        def make_apply(pat: str) -> Callable[[str], list[Path]]:
+        def make_apply(v: str) -> Callable[[str], list[Path]]:
             def apply(new_version: str) -> list[Path]:
-                WORKFLOW.write_text(_sub_once(WORKFLOW.read_text(), pat, new_version, WORKFLOW))
-                return [WORKFLOW]
+                TOOL_PINS.write_text(
+                    _sub_once(TOOL_PINS.read_text(), _pin_pattern(v), new_version,
+                              TOOL_PINS, re.MULTILINE)
+                )
+                return [TOOL_PINS]
             return apply
 
-        out.append(Pin(name, "linter", m.group(1), resolver(),
-                       apply=make_apply(pattern), files=[WORKFLOW]))
+        out.append(Pin(name, "linter", pinned, resolver(),
+                       apply=make_apply(var), files=[TOOL_PINS]))
 
     for name, prefix, resolver in WORKFLOW_CHECKSUMMED:
         version_var, sha_var = f"{prefix}_VERSION", f"{prefix}_SHA256"
-        version_pat = rf'{version_var}:\s*"?([0-9][^"\s]*)'
-        sha_pat = rf'{sha_var}:\s*"?([0-9a-f]{{64}})'
-        vm = re.search(version_pat, text)
-        if not vm:
+        pinned = _read_pin(text, version_var)
+        if pinned is None:
             out.append(Pin(name, "cli", "unknown", "unknown",
-                           f"{version_var} not found in validate-remediation.yaml"))
+                           f"{version_var} not found in tool-pins.env"))
             continue
-        url_template = _workflow_url_for(text, version_var)
+        url_template = _workflow_url_for(workflow_text, version_var)
         note = "" if url_template else f"no download URL interpolating ${{{version_var}}}"
 
         # Every loop variable the closure needs is passed in explicitly: bound
         # by reference they would all resolve to the last tool in the list, and
         # a bump would then hash the wrong artifact into the right pin.
-        def make_apply(vpat: str, spat: str, template: str, var: str) -> Callable[[str], list[Path]]:
+        def make_apply(vvar: str, svar: str, template: str) -> Callable[[str], list[Path]]:
             def apply(new_version: str) -> list[Path]:
-                url = template.replace("${" + var + "}", new_version)
+                url = template.replace("${" + vvar + "}", new_version)
                 blob = fetch_bytes(url)
                 if not blob:
                     raise ValueError(f"could not download {url} to re-checksum")
                 digest = hashlib.sha256(blob).hexdigest()
-                body = WORKFLOW.read_text()
-                body = _sub_once(body, vpat, new_version, WORKFLOW)
-                body = _sub_once(body, spat, digest, WORKFLOW)
-                WORKFLOW.write_text(body)
-                return [WORKFLOW]
+                body = TOOL_PINS.read_text()
+                body = _sub_once(body, _pin_pattern(vvar), new_version, TOOL_PINS, re.MULTILINE)
+                body = _sub_once(body, _pin_pattern(svar), digest, TOOL_PINS, re.MULTILINE)
+                TOOL_PINS.write_text(body)
+                return [TOOL_PINS]
             return apply
 
         out.append(Pin(
-            name, "cli", vm.group(1), resolver(), note,
-            apply=(make_apply(version_pat, sha_pat, url_template, version_var)
+            name, "cli", pinned, resolver(), note,
+            apply=(make_apply(version_var, sha_var, url_template)
                    if url_template else None),
-            files=[WORKFLOW],
+            files=[TOOL_PINS],
         ))
 
     return out
 
 
-def verify_workflow_checksums() -> list[tuple[str, bool, str]]:
+def verify_tool_checksums() -> list[tuple[str, bool, str]]:
     """Re-derive each checksummed CLI's digest at the version it is *already*
-    pinned to, and compare it against the digest in the workflow.
+    pinned to, and compare it against the digest in tool-pins.env.
 
     This is the one thing about the auto-bump that is not self-evident from a
     diff: everything else rewrites a string that a reviewer can eyeball, but a
@@ -429,33 +466,35 @@ def verify_workflow_checksums() -> list[tuple[str, bool, str]]:
 
     Returns (name, matches, detail) per tool.
     """
-    if not WORKFLOW.exists():
+    if not TOOL_PINS.exists():
         return []
-    text = WORKFLOW.read_text()
+    text = TOOL_PINS.read_text()
+    workflow_text = WORKFLOW.read_text() if WORKFLOW.exists() else ""
     out = []
     for name, prefix, _ in WORKFLOW_CHECKSUMMED:
-        version_var = f"{prefix}_VERSION"
-        vm = re.search(rf'{version_var}:\s*"?([0-9][^"\s]*)', text)
-        sm = re.search(rf'{prefix}_SHA256:\s*"?([0-9a-f]{{64}})', text)
-        if not vm or not sm:
-            out.append((name, False, f"{version_var}/{prefix}_SHA256 not found"))
+        version_var, sha_var = f"{prefix}_VERSION", f"{prefix}_SHA256"
+        pinned = _read_pin(text, version_var)
+        recorded = _read_pin(text, sha_var)
+        if not pinned or not recorded:
+            out.append((name, False, f"{version_var}/{sha_var} not found in tool-pins.env"))
             continue
-        template = _workflow_url_for(text, version_var)
+        template = _workflow_url_for(workflow_text, version_var)
         if not template:
             out.append((name, False, f"no download URL interpolating ${{{version_var}}}"))
             continue
-        url = template.replace("${" + version_var + "}", vm.group(1))
+        url = template.replace("${" + version_var + "}", pinned)
         blob = fetch_bytes(url)
         if blob is None:
             out.append((name, False, f"could not download {url}"))
             continue
         digest = hashlib.sha256(blob).hexdigest()
         out.append((
-            name, digest == sm.group(1),
-            f"v{vm.group(1)} {url}" if digest == sm.group(1)
-            else f"v{vm.group(1)} computed {digest}, pinned {sm.group(1)}",
+            name, digest == recorded,
+            f"v{pinned} {url}" if digest == recorded
+            else f"v{pinned} computed {digest}, pinned {recorded}",
         ))
     return out
+
 
 
 # ---------------------------------------------------------------------------
@@ -764,7 +803,7 @@ def check_spec_dumps() -> list[Pin]:
 def discover() -> list[Pin]:
     """Every watched pin, with its current value and what upstream has."""
     return (
-        check_workflow_tools()
+        check_tool_pins()
         + check_terraform_pins()
         + check_spec_pins()
         + check_spec_dumps()

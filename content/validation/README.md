@@ -310,14 +310,16 @@ Every validator above is only as good as the thing it checks against, and each o
 
 | Pin | Declared in |
 |---|---|
-| linter releases (`cfn-lint`, `ansible-lint`, `cookstyle`, `tflint`) | `.github/workflows/validate-remediation.yaml` |
-| CLI release artifacts (`bicep`, `doctl`, `glab`, `hcloud`, `databricks`) — version **and** SHA-256 | `.github/workflows/validate-remediation.yaml` |
+| linter releases (`cfn-lint`, `ansible-lint`, `cookstyle`, `tflint`) | `upstream/tool-pins.env` |
+| CLI release artifacts (`bicep`, `doctl`, `glab`, `hcloud`, `databricks`, `stackit`) — version **and** SHA-256 | `upstream/tool-pins.env` |
 | tflint ruleset plugins, Terraform provider `~>` constraints | `remediation/code/terraform.py` (`TFLINT_PLUGIN_MAP`, `PROVIDER_MAP`) |
 | OpenAPI specs pinned to a commit | `remediation/commands/openapi.py` (`*_OPENAPI_SHA`) |
 | YAML-only OpenAPI specs, converted and checked in | `upstream/dump/api_specs.py` (`OKTA_SPEC_VERSION`, `PORTAINER_SPEC_SHA`) |
 | checked-in CLI grammars | the `_meta` block of each `data/*.json` |
 
-Dependabot watches `gomod` and `github-actions`. It watches none of the above. `upstream/pins.py` is the single registry: it reads each pin out of the file that declares it, so there is no second copy to go stale. Adding an entry to `PROVIDER_MAP` or `TFLINT_PLUGIN_MAP` puts it under watch automatically; a new linter or CLI needs a line in `WORKFLOW_TOOLS` or `WORKFLOW_CHECKSUMMED`.
+Dependabot watches `gomod` and `github-actions`. It watches none of the above. `upstream/pins.py` is the single registry: it reads each pin out of the file that declares it, so there is no second copy to go stale. Adding an entry to `PROVIDER_MAP` or `TFLINT_PLUGIN_MAP` puts it under watch automatically; a new linter or CLI needs a line in `WORKFLOW_TOOLS` or `WORKFLOW_CHECKSUMMED` *and* a `KEY=value` line in `upstream/tool-pins.env`.
+
+`tool-pins.env` is a data file rather than the `env:` block of the step that installs the tool, which is where these pins started. A GitHub App installation token is refused any push whose diff touches `.github/workflows/`, so once the weekly bumper started rewriting them it could never land them: `bump linter` and `bump cli` failed on exactly the weeks a linter or CLI had moved, while every other kind merged. `validate-remediation.yaml` appends the file's `KEY=value` lines to `$GITHUB_ENV` and reads them as environment variables; the download URLs stay in the workflow, and `pins.py` reads them back out of it so the digest it records is of the bytes CI fetches.
 
 ```bash
 python3 content/validation/upstream/check.py                  # what has moved
@@ -388,7 +390,7 @@ The failure mode is loud once you have fixtures (`check did not run against …`
 Which registry depends on how the vendor's interface is reached, and anything that introduces a new binary needs a CI change too:
 
 - **A new REST API** — add an entry to `API_PROVIDERS` in `commands/openapi.py` with the policy file, host, and spec source. A spec pinned to a commit SHA also needs its constant registered in `upstream/pins.py`; a YAML-only spec is converted once by `upstream/dump/api_specs.py` and checked into `data/`.
-- **A new Cobra CLI** — add an entry to `COBRA_CLIS` in `commands/cobra.py` (CLI name, policy list, `include_audit`, install hint). The CLI must also be installed by the `validate-remediation.yaml` commands job, pinned by version **and** SHA-256.
+- **A new Cobra CLI** — add an entry to `COBRA_CLIS` in `commands/cobra.py` (CLI name, policy list, `include_audit`, install hint). The CLI must also be installed by the `validate-remediation.yaml` commands job, pinned by version **and** SHA-256 in `upstream/tool-pins.env`.
 - **A new cloud CLI with its own grammar source** — a module beside `aws.py`/`azure.py`/`gcloud.py` plus an entry in `CLI_VALIDATORS` in `commands/validate.py`, and the same CI install step.
 - **An existing validator gaining a second policy** — some validators name their policies in module constants rather than a registry (`azure.py` validates both `mondoo-azure-security` and `mondoo-m365-security`, because the M365 policy's CLI remediations also use `az`). Add the file there.
 
