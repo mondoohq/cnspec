@@ -4,22 +4,22 @@ resource "azurerm_monitor_diagnostic_setting" "activity" {
   target_resource_id         = "/subscriptions/00000000-0000-0000-0000-000000000000"
   log_analytics_workspace_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.OperationalInsights/workspaces/law"
 
-  log {
+  enabled_log {
     category = "Administrative"
     enabled  = true
   }
 
-  log {
+  enabled_log {
     category = "Security"
     enabled  = true
   }
 
-  log {
+  enabled_log {
     category = "Alert"
     enabled  = true
   }
 
-  log {
+  enabled_log {
     category = "Policy"
     enabled  = true
   }

@@ -7,6 +7,6 @@ resource "azurerm_redis_cache" "pass" {
   sku_name            = "Standard"
 
   redis_configuration {
-    enable_authentication = true
+    authentication_enabled = true
   }
 }

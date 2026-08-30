@@ -8,7 +8,7 @@ resource "azurerm_monitor_diagnostic_setting" "activity" {
     category = "ServiceHealth"
   }
 
-  metric {
+  enabled_metric {
     category = "AllMetrics"
     enabled  = true
   }

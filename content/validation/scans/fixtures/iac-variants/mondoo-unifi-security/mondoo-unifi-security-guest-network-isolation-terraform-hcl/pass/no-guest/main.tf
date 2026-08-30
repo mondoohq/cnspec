@@ -7,5 +7,5 @@ resource "unifi_network" "corp" {
 resource "unifi_network" "vlan" {
   name    = "vlan-only"
   purpose = "vlan-only"
-  vlan_id = 40
+  vlan    = 40
 }

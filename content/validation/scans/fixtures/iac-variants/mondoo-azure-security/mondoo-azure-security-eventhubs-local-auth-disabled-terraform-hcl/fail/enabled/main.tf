@@ -1,7 +1,7 @@
 resource "azurerm_eventhub_namespace" "example" {
-  name                = "example-ehns"
-  location            = "eastus"
-  resource_group_name = "example-rg"
-  sku                 = "Standard"
-  local_auth_enabled  = true
+  name                         = "example-ehns"
+  location                     = "eastus"
+  resource_group_name          = "example-rg"
+  sku                          = "Standard"
+  local_authentication_enabled = true
 }
