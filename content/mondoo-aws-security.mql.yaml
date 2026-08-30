@@ -9255,7 +9255,7 @@ queries:
       asset.platform == "aws-ebs-volume" &&
       aws.ec2.volume.state != /deleting|deleted|error/ &&
       aws.ec2.volume.encrypted == true
-    mql: aws.ec2.volume.sseType == "sse-kms"
+    mql: aws.ec2.volume.sseType == "sse-kms" || aws.ec2.volume.sseType == empty && aws.ec2.volume.kmsKey != null
   - uid: mondoo-aws-security-ec2-ebs-kms-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /^aws_(ebs_volume|instance|launch_template)$/)
     mql: |
@@ -10043,7 +10043,7 @@ queries:
   - uid: mondoo-aws-security-elb-ssl-listener-aws
     filters: asset.platform == "aws-elb-loadbalancer"
     mql: |
-      aws.elb.loadbalancer.listenerDescriptions.all(Protocol == "HTTPS" || Protocol == "HTTP" && DefaultActions.any(Type == "redirect" && RedirectConfig["Protocol"] == "HTTPS"))
+      aws.elb.loadbalancer.listeners.all(protocol == "HTTPS" || protocol == "HTTP" && defaultActions.any(_["Type"] == "redirect" && _["RedirectConfig"]["Protocol"] == "HTTPS"))
   - uid: mondoo-aws-security-elb-ssl-listener-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lb_listener")
     mql: |
@@ -13374,7 +13374,8 @@ queries:
   - uid: mondoo-aws-security-api-gw-tls-aws
     filters: asset.platform == "aws-gateway-restapi"
     mql: |
-      aws.apigateway.restapi.securityPolicy == "TLS_1_2"
+      aws.apigateway.restapi.securityPolicy == "TLS_1_2" ||
+      aws.apigateway.restapi.securityPolicy == /^SecurityPolicy_TLS1[23]/
   - uid: mondoo-aws-security-api-gw-tls-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_api_gateway_domain_name")
     mql: |
@@ -15326,8 +15327,8 @@ queries:
   - uid: mondoo-aws-security-eks-cluster-logging-enabled-aws
     filters: asset.platform == "aws-eks-cluster"
     mql: |
-      aws.eks.cluster.logging['clusterLogging'] != null
-      aws.eks.cluster.logging['clusterLogging'].any(_['enabled'] == true)
+      aws.eks.cluster.logging['ClusterLogging'] != null
+      aws.eks.cluster.logging['ClusterLogging'].any(_['Enabled'] == true)
   - uid: mondoo-aws-security-eks-cluster-logging-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_eks_cluster") || asset.platform == "terraform-hcl" && terraform.blocks.contains(type == "module" && arguments["source"] != null && arguments["source"] == /terraform-aws-eks|terraform-aws-modules\/eks\/aws/)
     mql: |
@@ -17829,7 +17830,7 @@ queries:
         title: AWS Documentation - EFS controls
   - uid: mondoo-aws-security-efs-backup-enabled-aws
     filters: asset.platform == "aws-efs-filesystem"
-    mql: aws.efs.filesystem.backupPolicy["Status"] == "ENABLED"
+    mql: aws.efs.filesystem.backupPolicy["BackupPolicy"]["Status"] == "ENABLED"
   - uid: mondoo-aws-security-efs-backup-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_efs_file_system")
     mql: |
@@ -18719,7 +18720,7 @@ queries:
         title: AWS Documentation - Security in AWS CodeBuild
   - uid: mondoo-aws-security-codebuild-no-privileged-mode-aws
     filters: asset.platform == "aws-codebuild-project"
-    mql: aws.codebuild.project.environment["privilegedMode"] != true
+    mql: aws.codebuild.project.environment["PrivilegedMode"] != true
   - uid: mondoo-aws-security-codebuild-no-privileged-mode-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_codebuild_project")
     mql: |
@@ -18933,11 +18934,11 @@ queries:
   - uid: mondoo-aws-security-codebuild-no-plaintext-credentials-aws
     filters: asset.platform == "aws-codebuild-project"
     mql: |
-      aws.codebuild.project.environment["environmentVariables"]
+      aws.codebuild.project.environmentVariables
         .where(_["type"] == "PLAINTEXT")
         .none(_["name"] == /(?i)(PASSWORD|SECRET|KEY|TOKEN|CREDENTIAL)/)
-      aws.codebuild.project.environment["imagePullCredentialsType"] == "CODEBUILD" ||
-      aws.codebuild.project.environment["imagePullCredentialsType"] == "SERVICE_ROLE"
+      aws.codebuild.project.environmentImagePullCredentialsType == "CODEBUILD" ||
+      aws.codebuild.project.environmentImagePullCredentialsType == "SERVICE_ROLE"
   - uid: mondoo-aws-security-codebuild-no-plaintext-credentials-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_codebuild_project")
     mql: |
@@ -23786,8 +23787,8 @@ queries:
   - uid: mondoo-aws-security-redshift-cluster-require-ssl-aws
     filters: asset.platform == "aws-redshift-cluster"
     mql: |
-      aws.redshift.cluster.parameters.where(_['ParameterName'] == "require_ssl").all(
-        _['ParameterValue'] == "true"
+      aws.redshift.cluster.parameters.one(
+        _['ParameterName'] == "require_ssl" && _['ParameterValue'] == "true"
       )
   - uid: mondoo-aws-security-redshift-cluster-require-ssl-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_redshift_parameter_group")
@@ -24355,7 +24356,7 @@ queries:
       aws.guardduty.detectors.length > 0 &&
       aws.guardduty.detectors.all(
         featureConfigurations.where(
-          name == /S3_DATA_EVENTS|EKS_AUDIT_LOGS|EBS_MALWARE_PROTECTION|RDS_LOGIN_EVENTS|LAMBDA_NETWORK_LOGS|RUNTIME_MONITORING/
+          name == /^(S3_DATA_EVENTS|EKS_AUDIT_LOGS|EBS_MALWARE_PROTECTION|RDS_LOGIN_EVENTS|LAMBDA_NETWORK_LOGS|RUNTIME_MONITORING)$/
         ).all(status == "ENABLED")
       )
   - uid: mondoo-aws-security-guardduty-all-features-enabled-terraform-hcl
@@ -38326,7 +38327,9 @@ queries:
         title: AWS KMS Customer Managed Keys
   - uid: mondoo-aws-security-redshift-cluster-cmk-encryption-aws
     filters: asset.platform == "aws-redshift-cluster"
-    mql: aws.redshift.cluster.kmsKey { metadata.KeyManager == "CUSTOMER" }
+    mql: |
+      aws.redshift.cluster.kmsKey != null
+      aws.redshift.cluster.kmsKey.metadata.KeyManager == "CUSTOMER"
   - uid: mondoo-aws-security-redshift-cluster-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_redshift_cluster")
     mql: |
@@ -38490,7 +38493,7 @@ queries:
         title: AWS Security Hub Controls Reference
   - uid: mondoo-aws-security-redshift-cluster-current-maintenance-track-aws
     filters: asset.platform == "aws-redshift-cluster"
-    mql: aws.redshift.cluster.maintenanceTrackName == "Current"
+    mql: aws.redshift.cluster.maintenanceTrackName.downcase == "current"
   - uid: mondoo-aws-security-redshift-cluster-current-maintenance-track-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Redshift::Cluster")
     mql: |
@@ -43757,7 +43760,7 @@ queries:
   - uid: mondoo-aws-security-mq-audit-logging-aws
     filters: |
       asset.platform == "aws-mq-broker" &&
-      aws.mq.broker.engineType == "ACTIVEMQ"
+      aws.mq.broker.engineType == /(?i)^activemq$/
     mql: |
       aws.mq.broker.auditLogsEnabled == true
   - uid: mondoo-aws-security-mq-audit-logging-terraform-hcl
@@ -50179,8 +50182,8 @@ queries:
     filters: asset.platform == "aws-lambda-function"
     mql: |
       aws.lambda.function.policy == empty ||
-      aws.lambda.function.policy.Statement.where(Effect == "Allow" && Principal['Service'] != empty).all(
-        Condition.string.contains("SourceArn") || Condition.string.contains("SourceAccount")
+      aws.lambda.function.policyStatements.where(effect == "Allow" && principals["Service"] != empty).all(
+        conditions.values.any(_.keys.any(_ == /SourceArn|SourceAccount/))
       )
   - uid: mondoo-aws-security-lambda-source-arn-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lambda_permission")
@@ -60133,8 +60136,9 @@ queries:
   - uid: mondoo-aws-security-vpc-dhcp-custom-dns-aws
     filters: asset.platform == "aws-vpc"
     mql: |
-      aws.vpc.dhcpOptions.configurations.where(key == "domain-name-servers").all(
-        values.none(_ == "AmazonProvidedDNS")
+      aws.vpc.dhcpOptions.configurations.one(_["Key"] == "domain-name-servers")
+      aws.vpc.dhcpOptions.configurations.where(_["Key"] == "domain-name-servers").all(
+        _["Values"].none(_["Value"] == "AmazonProvidedDNS")
       )
   - uid: mondoo-aws-security-vpc-dhcp-custom-dns-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_vpc_dhcp_options")
