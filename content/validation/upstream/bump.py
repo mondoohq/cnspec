@@ -37,7 +37,7 @@ from pins import (  # noqa: E402
     Pin,
     discover,
     sync_dump_script_pins,
-    verify_workflow_checksums,
+    verify_tool_checksums,
 )
 
 
@@ -52,7 +52,7 @@ CAVEATS = {
         "question is whether the content or the pin is wrong."
     ),
     "cli": (
-        "The SHA-256 in the workflow was recomputed from the artifact this bump "
+        "The SHA-256 in `tool-pins.env` was recomputed from the artifact this bump "
         "points at, downloaded from the same URL CI uses. A red run means the "
         "vendor changed a command or flag that remediation or audit steps rely on."
     ),
@@ -224,7 +224,7 @@ def main() -> None:
         return
 
     if args.verify_checksums:
-        results = verify_workflow_checksums()
+        results = verify_tool_checksums()
         for name, ok, detail in results:
             print(f"[{'PASS' if ok else 'FAIL'}] {name:<12} {detail}")
         if any(not ok for _, ok, _ in results):

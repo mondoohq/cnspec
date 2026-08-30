@@ -250,3 +250,76 @@ PROVIDER_MAP = {
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BumpableFileTest(unittest.TestCase):
+    """No automatable pin may live under `.github/workflows/`.
+
+    A GitHub App installation token is refused any push whose diff touches a
+    workflow file unless the App holds the `workflows` permission, which the
+    bumper's token deliberately does not. Declaring a bot-bumped pin in a
+    workflow therefore does not fail at review time -- it fails weeks later,
+    inside `validation-dependency-updates.yaml`, as
+
+        ! [remote rejected] deps/validation/linter -> deps/validation/linter
+          (refusing to allow a GitHub App to create or update workflow
+           `.github/workflows/validate-remediation.yaml` without `workflows`
+           permission)
+
+    and only for the kinds whose pin happened to move that week, so the rest of
+    the run stays green and the gap reads as an ordinary quiet week. That is
+    what the `linter` and `cli` kinds did for every run between the workflow
+    landing and this test: the pins were declared in the workflow that installs
+    them, which is the obvious place for them and the one place they cannot be.
+    """
+
+    WORKFLOW_DIR = pins.REPO_ROOT / ".github" / "workflows"
+
+    def test_no_automatable_pin_writes_into_a_workflow(self):
+        # `files` is what the bumper stages and pushes, so it is the set that
+        # decides whether the push is accepted -- not where the pin is read
+        # from. `check_tool_pins` still *reads* the download URL out of the
+        # workflow to re-checksum against the bytes CI fetches; that is a read,
+        # and it is fine.
+        # Offline like every other test here: with both fetchers dark every
+        # resolver returns "unknown", which changes each pin's `state` but not
+        # its `files` or its `apply` -- the two this is about.
+        with mock.patch.object(pins, "fetch_json", return_value=None), \
+             mock.patch.object(pins, "fetch_bytes", return_value=None):
+            discovered = pins.discover()
+
+        for pin in discovered:
+            if not pin.automatable:
+                continue
+            for path in pin.files:
+                with self.subTest(pin=pin.slug, path=str(path)):
+                    self.assertFalse(
+                        self.WORKFLOW_DIR in Path(path).parents,
+                        f"{pin.slug} bumps {path}; a workflow file cannot be "
+                        f"pushed by the bumper's installation token. Move the "
+                        f"pin into content/validation/upstream/tool-pins.env.",
+                    )
+
+    def test_every_tool_pin_is_still_found(self):
+        """...and the test above is not passing because it examined nothing.
+
+        A pin whose pattern stops matching is not an error in `pins.py`: it
+        degrades to an unstamped Pin with no `apply`, which reports as
+        "unchecked" and opens no pull request. That is the right fail-safe for
+        a resolver and the wrong one here, because a silently unwatched pin and
+        a pin the test skipped look identical. Naming the count pins both down.
+        """
+        with mock.patch.object(pins, "fetch_json", return_value=None), \
+             mock.patch.object(pins, "fetch_bytes", return_value=None):
+            tools = pins.check_tool_pins()
+
+        self.assertEqual(
+            len(pins.WORKFLOW_TOOLS) + len(pins.WORKFLOW_CHECKSUMMED), len(tools)
+        )
+        for pin in tools:
+            with self.subTest(pin=pin.slug):
+                self.assertTrue(
+                    pin.automatable,
+                    f"{pin.slug} lost its bump: {pin.note or 'no apply'}",
+                )
+                self.assertEqual([pins.TOOL_PINS], pin.files)
