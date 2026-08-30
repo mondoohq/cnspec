@@ -1,0 +1,2207 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: windows-update-readiness
+    name: Windows Update Readiness Policy
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: best-practices
+      mondoo.com/platform: windows
+    require:
+      - provider: os
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Validate that the Windows Update Agent, its services, policy, and servicing stack can install updates successfully
+    docs:
+      desc: |
+        The Mondoo Windows Update Readiness Policy verifies that a Windows host is actually *able* to install updates. Missing-patch policies tell you a host is behind; this policy tells you why it will stay behind.
+
+        A host can sit unpatched for months while every dashboard reports it as merely "pending." The Windows Update Agent (WUA) fails quietly: when the agent cannot start or cannot complete a detection scan, `Get-WindowsUpdate` and the Settings UI return an empty list rather than an error, and management tooling that drives the WUA reports nothing to install. The host looks compliant right up until an audit counts its build number.
+
+        This policy asserts the preconditions for a successful update run, grouped by failure mode:
+
+        - **Agent and service health** - the `wuauserv` service is installed, startable, and its svchost registration is intact, along with the supporting services that download and commit packages
+        - **Agent liveness** - the host has installed updates recently, the agent can enumerate its catalog, and it reports no detection error
+        - **Policy and configuration** - automatic updates are not turned off, updates are not paused, deferrals are bounded, and a reachable catalog source is configured
+        - **Servicing capacity** - no pending reboot blocks the next package, the datastore directories exist, the component store is not corrupt, and the system drive has room for a cumulative update
+
+        Because the checks target the update *mechanism* rather than the update *inventory*, they surface hosts whose patch level has silently frozen. Pair this policy with a vulnerability scan: a host that fails here explains a host that is behind there.
+
+        Learn more about scanning Windows in the [cnspec Windows documentation](https://mondoo.com/docs/cnspec/os/windows).
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Update Agent and Service Health
+        filters: asset.family.contains('windows')
+        checks:
+          - uid: windows-update-readiness-service-enabled
+          - uid: windows-update-readiness-service-registration
+          - uid: windows-update-readiness-svchost-group-membership
+          - uid: windows-update-readiness-supporting-services
+      - title: Update Agent Liveness
+        filters: asset.family.contains('windows')
+        checks:
+          - uid: windows-update-readiness-recent-install
+          - uid: windows-update-readiness-agent-enumerates-catalog
+          - uid: windows-update-readiness-no-detection-error
+      - title: Update Policy and Configuration
+        filters: asset.family.contains('windows')
+        checks:
+          - uid: windows-update-readiness-automatic-updates-enabled
+          - uid: windows-update-readiness-updates-not-paused
+          - uid: windows-update-readiness-bounded-quality-deferral
+          - uid: windows-update-readiness-catalog-source-configured
+          - uid: windows-update-readiness-wsus-url-present
+      - title: Servicing Stack Capacity
+        filters: asset.family.contains('windows')
+        checks:
+          - uid: windows-update-readiness-no-pending-reboot
+          - uid: windows-update-readiness-datastore-present
+          - uid: windows-update-readiness-component-store-healthy
+          - uid: windows-update-readiness-free-disk-space
+queries:
+  # ---------------------------------------------------------------- agent and service health
+  - uid: windows-update-readiness-service-enabled
+    title: Ensure the Windows Update service is installed and not disabled
+    impact: 90
+    mql: |
+      windows.update.config.service.installed
+      windows.update.config.service.enabled
+    docs:
+      desc: |
+        This check ensures the Windows Update service (`wuauserv`) is installed and its start type is not `Disabled`. The service is demand-started, so it is normal for it to be stopped at any given moment; what matters is that Windows is permitted to start it.
+
+        When `wuauserv` is disabled, every path to patching closes at once. The Windows Update Agent COM API returns an empty result set instead of an error, so the Settings UI, `Get-WindowsUpdate`, and any RMM or patch-management product that drives the local agent all report that there is nothing to install.
+
+        **Why this matters**
+
+        - **Restores the only supported update path:** Windows Update, WSUS, and Windows Update for Business all route through this single service.
+        - **Removes a silent failure:** a disabled service produces empty results rather than errors, so hosts appear patched while their build number freezes.
+        - **Unblocks management tooling:** RMM and patch products carry no servicing stack of their own; they call this agent.
+
+        **Risk mitigation**
+
+        - **Closes the exposure window:** security updates resume on the normal monthly cadence instead of accruing indefinitely.
+        - **Restores reporting accuracy:** patch dashboards reflect real state once the agent can enumerate the catalog.
+      audit: |
+        Run the following in an elevated PowerShell session:
+
+        ```powershell
+        Get-Service wuauserv | Select-Object Name, Status, StartType
+        ```
+
+        A passing result shows the service present with `StartType` of `Manual` or `Automatic`. A failing result shows `StartType` of `Disabled`, or the service missing entirely.
+
+        Confirm the service can actually start, which is a stronger signal than the start type alone:
+
+        ```powershell
+        Start-Service wuauserv
+        Get-Service wuauserv | Select-Object Status
+        ```
+
+        A passing result reaches `Running`. Any error here, in particular `0x800700a1` (`The specified path is invalid`), indicates a broken service registration rather than a disabled service.
+      remediation:
+        - id: gui
+          desc: |
+            **Using the Services console**
+
+            1. Press `Win+R`, type `services.msc`, and press Enter.
+            2. Locate **Windows Update** in the list.
+            3. Right-click it and choose **Properties**.
+            4. Set **Startup type** to **Manual** (the Windows default for this service).
+            5. Click **Start**, then **OK**.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Reset the start type and start the service:
+
+            ```powershell
+            Set-Service -Name wuauserv -StartupType Manual
+            Start-Service -Name wuauserv
+            Get-Service wuauserv | Select-Object Name, Status, StartType
+            ```
+        - id: script
+          desc: |
+            **Using a PowerShell script**
+
+            Run the following as Administrator to restore the service to its default start type and verify it starts:
+
+            ```powershell
+            #Requires -RunAsAdministrator
+            Set-StrictMode -Version Latest
+
+            $svc = Get-Service -Name wuauserv -ErrorAction SilentlyContinue
+            if (-not $svc) {
+                Write-Error 'wuauserv is not installed. Repair the OS image with: DISM /Online /Cleanup-Image /RestoreHealth'
+                exit 1
+            }
+
+            if ($svc.StartType -eq 'Disabled') {
+                Set-Service -Name wuauserv -StartupType Manual
+                Write-Output 'Start type reset to Manual.'
+            }
+
+            try {
+                Start-Service -Name wuauserv -ErrorAction Stop
+                Write-Output "wuauserv is now $((Get-Service wuauserv).Status)."
+            } catch {
+                Write-Error ("wuauserv failed to start: {0} [0x{1:X8}]" -f $_.Exception.Message, $_.Exception.HResult)
+                Write-Output 'A start failure with the start type already correct points at the service registration. See the service-registration check.'
+                exit 1
+            }
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            ```yaml
+            ---
+            - name: Ensure the Windows Update service is startable
+              hosts: windows
+              tasks:
+                - name: Set wuauserv to manual start and ensure it runs
+                  ansible.windows.win_service:
+                    name: wuauserv
+                    start_mode: manual
+                    state: started
+            ```
+
+  - uid: windows-update-readiness-service-registration
+    title: Ensure the Windows Update service registration is intact
+    impact: 90
+    mql: |
+      registrykey.property(path: 'HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\wuauserv', name: 'ImagePath').exists
+      registrykey.property(path: 'HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\wuauserv', name: 'Start').data != 4
+      registrykey.property(path: 'HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\wuauserv\Parameters', name: 'ServiceDll').exists
+      registrykey.property(path: 'HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\wuauserv\Parameters', name: 'ServiceMain').exists
+      file('C:\Windows\System32\wuaueng.dll').exists
+    docs:
+      desc: |
+        This check verifies the registry registration that lets `svchost.exe` host the Windows Update Agent. `wuauserv` is not a standalone executable: `svchost` starts, reads `Parameters\ServiceDll` to learn which DLL to load, and calls the entry point named by `Parameters\ServiceMain`. If any link in that chain is missing, the service cannot start and Windows raises `0x800700a1` (`ERROR_BAD_PATHNAME`, "The specified path is invalid").
+
+        This failure is invisible to start-type checks. The service can report `Manual` start and correct credentials while being fundamentally unstartable, and the resulting empty update lists look identical to a fully patched host.
+
+        Registry cleaners, third-party "Windows Update repair" scripts, malware remediation, and interrupted servicing operations are the usual causes. Because such tooling is typically deployed fleet-wide, finding this on one host is a reason to check the others.
+
+        **Why this matters**
+
+        - **Detects an unstartable agent:** covers the case where start type and credentials are correct but the service still cannot load.
+        - **Names the broken link:** each registry value is scored as its own datapoint, so scan output points at the specific missing value.
+        - **Distinguishes two very different fixes:** a disabled service needs a start type change; a broken registration needs the registry repaired or the DLL restored.
+
+        **Risk mitigation**
+
+        - **Prevents indefinite drift:** hosts in this state never patch again until a human intervenes, because no retry succeeds.
+        - **Surfaces fleet-wide damage:** a shared root cause usually leaves the same fingerprint on many hosts.
+      audit: |
+        Run the following in an elevated PowerShell session:
+
+        ```powershell
+        $k = 'HKLM:\SYSTEM\CurrentControlSet\Services\wuauserv'
+        Get-ItemProperty $k | Select-Object ImagePath, Start, Type, ObjectName
+        (Get-Item $k).GetValueKind('ImagePath')
+        (Get-Item "$k\Parameters").Property
+        (Get-Item "$k\Parameters").GetValue('ServiceDll', $null, 'DoNotExpandEnvironmentNames')
+        (Get-Item "$k\Parameters").GetValueKind('ServiceDll')
+        Test-Path C:\Windows\System32\wuaueng.dll
+        ```
+
+        A passing result shows:
+
+        - `ImagePath` = `%systemroot%\system32\svchost.exe -k netsvcs`, kind `ExpandString`
+        - `Start` = `3`, `Type` = `32`, `ObjectName` = `LocalSystem`
+        - `Parameters` containing `ServiceDll`, `ServiceMain`, and `ServiceDllUnloadOnStop`
+        - `ServiceDll` = `%systemroot%\system32\wuaueng.dll`, kind `ExpandString`
+        - `Test-Path` returning `True`
+
+        A failing result is a missing value, or a value stored as `String` rather than `ExpandString`. The kind matters: `Get-ItemProperty` expands `REG_EXPAND_SZ` before displaying it, so a correct value and a wrongly-typed one print identically. Only `GetValueKind` distinguishes them, and a `%systemroot%` path stored as `REG_SZ` is never expanded, which produces exactly this error.
+      remediation:
+        - id: gui
+          desc: |
+            **Using Registry Editor**
+
+            Editing service registration by hand is error-prone; prefer importing the key from a known-good host of the same OS build (see the script method). If you must edit directly:
+
+            1. Press `Win+R`, type `regedit`, and press Enter.
+            2. Navigate to `HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\wuauserv`.
+            3. Confirm `ImagePath` exists as an **Expandable String Value** set to `%systemroot%\system32\svchost.exe -k netsvcs`.
+            4. Confirm `Start` is `3` and `Type` is `32`.
+            5. Open the `Parameters` subkey, creating it if absent.
+            6. Create or correct `ServiceDll` as an **Expandable String Value** set to `%systemroot%\system32\wuaueng.dll`.
+            7. Create or correct `ServiceMain` as a **String Value** set to `WUServiceMain`.
+            8. Reboot, then confirm the service starts.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Restore the registration values, then start the service. `ImagePath` and `ServiceDll` must be `ExpandString`; storing them as `String` leaves `%systemroot%` unexpanded and reproduces the fault:
+
+            ```powershell
+            $k = 'HKLM:\SYSTEM\CurrentControlSet\Services\wuauserv'
+            New-ItemProperty $k ImagePath -Value '%systemroot%\system32\svchost.exe -k netsvcs' -PropertyType ExpandString -Force
+            New-ItemProperty $k Start -Value 3 -PropertyType DWord -Force
+            New-ItemProperty $k Type -Value 32 -PropertyType DWord -Force
+            New-Item "$k\Parameters" -Force
+            New-ItemProperty "$k\Parameters" ServiceDll -Value '%systemroot%\system32\wuaueng.dll' -PropertyType ExpandString -Force
+            New-ItemProperty "$k\Parameters" ServiceMain -Value 'WUServiceMain' -PropertyType String -Force
+            New-ItemProperty "$k\Parameters" ServiceDllUnloadOnStop -Value 1 -PropertyType DWord -Force
+            Start-Service wuauserv
+            ```
+
+            If `wuaueng.dll` itself is missing, repair the component store first:
+
+            ```powershell
+            DISM /Online /Cleanup-Image /RestoreHealth
+            sfc /scannow
+            ```
+        - id: script
+          desc: |
+            **Using a PowerShell script**
+
+            The most reliable repair is to copy the key from a healthy host running the same OS build, which avoids transcription errors and captures any values this check does not assert. On the healthy host:
+
+            ```powershell
+            reg export "HKLM\SYSTEM\CurrentControlSet\Services\wuauserv" C:\temp\wuauserv-good.reg /y
+            ```
+
+            On the broken host, compare before importing so you know what actually changed:
+
+            ```powershell
+            #Requires -RunAsAdministrator
+            reg export "HKLM\SYSTEM\CurrentControlSet\Services\wuauserv" C:\temp\wuauserv-current.reg /y
+            Compare-Object (Get-Content C:\temp\wuauserv-current.reg) (Get-Content C:\temp\wuauserv-good.reg)
+
+            reg import C:\temp\wuauserv-good.reg
+
+            try {
+                Start-Service wuauserv -ErrorAction Stop
+                Write-Output "wuauserv is now $((Get-Service wuauserv).Status)."
+            } catch {
+                Write-Error ("Still failing: {0} [0x{1:X8}]" -f $_.Exception.Message, $_.Exception.HResult)
+                Write-Output 'Repair the component store next: DISM /Online /Cleanup-Image /RestoreHealth'
+            }
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            ```yaml
+            ---
+            - name: Repair the Windows Update service registration
+              hosts: windows
+              tasks:
+                - name: Ensure ImagePath is a REG_EXPAND_SZ svchost invocation
+                  ansible.windows.win_regedit:
+                    path: HKLM:\SYSTEM\CurrentControlSet\Services\wuauserv
+                    name: ImagePath
+                    data: '%systemroot%\system32\svchost.exe -k netsvcs'
+                    type: expandstring
+
+                - name: Ensure ServiceDll points at wuaueng.dll
+                  ansible.windows.win_regedit:
+                    path: HKLM:\SYSTEM\CurrentControlSet\Services\wuauserv\Parameters
+                    name: ServiceDll
+                    data: '%systemroot%\system32\wuaueng.dll'
+                    type: expandstring
+
+                - name: Ensure ServiceMain names the wuaueng entry point
+                  ansible.windows.win_regedit:
+                    path: HKLM:\SYSTEM\CurrentControlSet\Services\wuauserv\Parameters
+                    name: ServiceMain
+                    data: WUServiceMain
+                    type: string
+
+                - name: Start the Windows Update service
+                  ansible.windows.win_service:
+                    name: wuauserv
+                    start_mode: manual
+                    state: started
+            ```
+
+  - uid: windows-update-readiness-svchost-group-membership
+    title: Ensure the Windows Update service is a member of the netsvcs group
+    impact: 85
+    mql: |
+      powershell("if ((Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Svchost' -ErrorAction SilentlyContinue).netsvcs -contains 'wuauserv') { 'True' } else { 'False' }").stdout.trim == 'True'
+    docs:
+      desc: |
+        This check verifies that `wuauserv` appears in the `netsvcs` value under `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost`. The service's `ImagePath` invokes `svchost.exe -k netsvcs`, which asks `svchost` to host it inside the `netsvcs` group. That group membership is declared in a completely separate registry key from the service itself.
+
+        This is a distinct failure from a broken `ServiceDll`, and it is easy to miss: every value under the `wuauserv` key can be correct while the service is absent from the group list, so `svchost` is asked to host a service it has no record of. Inspecting only the service key gives a clean bill of health.
+
+        **Why this matters**
+
+        - **Covers a separate key:** the service key and the svchost group list are independent, and repairing one does not repair the other.
+        - **Explains an otherwise inexplicable failure:** a start error with a pristine service registration usually means missing group membership.
+
+        **Risk mitigation**
+
+        - **Prevents misdirected repair effort:** teams that verify only the service key conclude the registration is fine and look elsewhere.
+      audit: |
+        Run the following in an elevated PowerShell session:
+
+        ```powershell
+        (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost').netsvcs -contains 'wuauserv'
+        (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost').netsvcs
+        ```
+
+        A passing result returns `True`, and the full list includes `wuauserv` alongside the other `netsvcs` members such as `BITS`, `CryptSvc`, and `Dnscache`. A failing result returns `False`.
+
+        Compare the full list against a healthy host of the same OS build; other members may be missing too.
+      remediation:
+        - id: gui
+          desc: |
+            **Using Registry Editor**
+
+            1. Press `Win+R`, type `regedit`, and press Enter.
+            2. Navigate to `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost`.
+            3. Double-click the `netsvcs` multi-string value.
+            4. Add `wuauserv` on its own line, preserving the existing entries.
+            5. Click **OK** and reboot.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Append the service to the group, preserving the existing members:
+
+            ```powershell
+            $p = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost'
+            $g = (Get-ItemProperty $p).netsvcs
+            if ($g -notcontains 'wuauserv') {
+                Set-ItemProperty $p -Name netsvcs -Value ([string[]]($g + 'wuauserv'))
+            }
+            (Get-ItemProperty $p).netsvcs -contains 'wuauserv'
+            ```
+
+            Reboot, then confirm the service starts.
+        - id: script
+          desc: |
+            **Using a PowerShell script**
+
+            ```powershell
+            #Requires -RunAsAdministrator
+            $p = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost'
+            $group = (Get-ItemProperty -Path $p -Name netsvcs -ErrorAction Stop).netsvcs
+
+            if ($group -contains 'wuauserv') {
+                Write-Output 'wuauserv is already a member of netsvcs.'
+            } else {
+                Write-Output "Adding wuauserv to netsvcs ($($group.Count) existing members preserved)."
+                Set-ItemProperty -Path $p -Name netsvcs -Value ([string[]]($group + 'wuauserv'))
+                Write-Output 'Reboot required before wuauserv can start.'
+            }
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The full member list is OS-build specific. Read it from a healthy host of the same build and set it explicitly rather than hard-coding the list below:
+
+            ```yaml
+            ---
+            - name: Ensure wuauserv is hosted in the netsvcs svchost group
+              hosts: windows
+              tasks:
+                - name: Read the current netsvcs group members
+                  ansible.windows.win_reg_stat:
+                    path: HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost
+                    name: netsvcs
+                  register: netsvcs_group
+
+                - name: Add wuauserv to the netsvcs group
+                  ansible.windows.win_regedit:
+                    path: HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost
+                    name: netsvcs
+                    data: "{{ netsvcs_group.value + ['wuauserv'] }}"
+                    type: multistring
+                  when: "'wuauserv' not in netsvcs_group.value"
+            ```
+
+  - uid: windows-update-readiness-supporting-services
+    title: Ensure Windows Update supporting services are not disabled
+    impact: 80
+    mql: |
+      service('bits').enabled
+      service('cryptsvc').enabled
+      service('msiserver').enabled
+      service('TrustedInstaller').enabled
+    docs:
+      desc: |
+        This check ensures the services that Windows Update depends on to download and commit packages are not disabled. Each is demand-started, so being stopped is expected; being disabled is not.
+
+        - **BITS** (Background Intelligent Transfer Service) downloads update payloads. Disabled, detection may still succeed while every download fails.
+        - **CryptSvc** (Cryptographic Services) validates package signatures and maintains the catalog database. Disabled, packages are rejected as untrusted.
+        - **msiserver** (Windows Installer) commits updates delivered as MSI or MSP packages.
+        - **TrustedInstaller** (Windows Modules Installer) is the CBS servicing engine that applies cumulative updates and servicing stack updates. This is also the component `DISM /Add-Package` uses, which is why offline installation still works when `wuauserv` is broken but fails when TrustedInstaller is disabled.
+
+        Hardening baselines and service-minimization scripts disable these more often than administrators expect, and the resulting failures appear far from the cause: an update that downloads but never installs, or one that reports success and reverts on reboot.
+
+        **Why this matters**
+
+        - **Separates detection from delivery:** a host can see updates and still be unable to fetch or commit them.
+        - **Preserves the offline repair path:** TrustedInstaller is what makes `DISM` work when the update agent is broken.
+        - **Explains reverted updates:** signature and servicing failures often surface as a rollback rather than an error.
+
+        **Risk mitigation**
+
+        - **Prevents partial servicing:** a disabled servicing engine can leave the component store mid-transaction.
+        - **Keeps a fallback available:** offline package installation remains possible when the agent itself is unhealthy.
+      audit: |
+        Run the following in an elevated PowerShell session:
+
+        ```powershell
+        Get-Service bits, cryptsvc, msiserver, TrustedInstaller |
+          Select-Object Name, Status, StartType
+        ```
+
+        A passing result shows every service present with `StartType` of `Manual`, `Automatic`, or `AutomaticDelayedStart`. A failing result shows any of them as `Disabled`.
+      remediation:
+        - id: gui
+          desc: |
+            **Using the Services console**
+
+            1. Press `Win+R`, type `services.msc`, and press Enter.
+            2. For each of **Background Intelligent Transfer Service**, **Cryptographic Services**, **Windows Installer**, and **Windows Modules Installer**:
+               - Right-click the service and choose **Properties**.
+               - Set **Startup type** to **Manual** (Windows default for all four).
+               - Click **OK**.
+            3. Reboot if any start type changed.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Restore the default start types:
+
+            ```powershell
+            Set-Service -Name bits -StartupType Manual
+            Set-Service -Name cryptsvc -StartupType Automatic
+            Set-Service -Name msiserver -StartupType Manual
+            Set-Service -Name TrustedInstaller -StartupType Manual
+            Get-Service bits, cryptsvc, msiserver, TrustedInstaller | Select-Object Name, Status, StartType
+            ```
+        - id: script
+          desc: |
+            **Using a PowerShell script**
+
+            ```powershell
+            #Requires -RunAsAdministrator
+            $defaults = @{
+                bits             = 'Manual'
+                cryptsvc         = 'Automatic'
+                msiserver        = 'Manual'
+                TrustedInstaller = 'Manual'
+            }
+
+            foreach ($name in $defaults.Keys) {
+                $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
+                if (-not $svc) {
+                    Write-Warning "$name is not installed; repair the OS image with DISM /Online /Cleanup-Image /RestoreHealth"
+                    continue
+                }
+                if ($svc.StartType -eq 'Disabled') {
+                    Set-Service -Name $name -StartupType $defaults[$name]
+                    Write-Output "$name start type restored to $($defaults[$name])."
+                } else {
+                    Write-Output "$name already startable ($($svc.StartType))."
+                }
+            }
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            ```yaml
+            ---
+            - name: Ensure Windows Update supporting services are startable
+              hosts: windows
+              tasks:
+                - name: Restore default start modes
+                  ansible.windows.win_service:
+                    name: "{{ item.name }}"
+                    start_mode: "{{ item.mode }}"
+                  loop:
+                    - { name: bits, mode: manual }
+                    - { name: cryptsvc, mode: auto }
+                    - { name: msiserver, mode: manual }
+                    - { name: TrustedInstaller, mode: manual }
+            ```
+
+  # ---------------------------------------------------------------- agent liveness
+  - uid: windows-update-readiness-agent-enumerates-catalog
+    title: Ensure the update agent can enumerate its update catalog
+    impact: 85
+    props:
+      - uid: windowsUpdateReadinessMaxCatalogSilenceDays
+        title: Maximum number of days a host may report no available updates while installing nothing
+        mql: |
+          return 45
+    mql: |
+      windows.hotfixes.where(installedOn != null && time.now - installedOn < props.windowsUpdateReadinessMaxCatalogSilenceDays * time.day).length > 0 || windows.update.available.length > 0
+    docs:
+      desc: |
+        This check asserts that a host is either patching or has work queued: it must have installed an update recently, or its Windows Update Agent must be reporting at least one available update. Failing both is a contradiction that indicates the agent cannot enumerate its catalog.
+
+        The reasoning is that these two states are exhaustive for a healthy host. A host that is current has installed something recently. A host that is behind should see updates waiting. A host that has installed nothing for weeks *and* reports nothing available is claiming to be simultaneously up to date and idle, which cannot both be true. In practice the agent has failed to reach or parse its catalog and is returning an empty list rather than an error.
+
+        This is the check that catches the silent stall, and it is deliberately built from two independently reliable sources. The install side reads the WMI update inventory, which does not depend on the update agent at all. The catalog side reads the agent's available-update list. Neither relies on the agent's own freshness timestamps, which are commonly empty even on healthy hosts and therefore cannot support a check.
+
+        **Why this matters**
+
+        - **Detects an empty result mistaken for compliance:** an agent that returns nothing looks identical to a fully patched host in most reporting.
+        - **Cross-checks two independent sources:** WMI inventory and the agent's catalog view fail for different reasons, so requiring one of them to be healthy is robust.
+        - **Needs no per-build baseline:** the check compares the host against its own behavior rather than against an expected build number that goes stale monthly.
+
+        **Risk mitigation**
+
+        - **Surfaces indefinite drift:** hosts in this state never self-correct, because every retry returns the same empty list.
+        - **Finds shared root causes:** a broken agent deployed by common tooling produces this signature across many hosts at once.
+      audit: |
+        Establish both halves of the assertion in an elevated PowerShell session. First, when the host last installed anything, read from WMI so the result does not depend on the update agent:
+
+        ```powershell
+        Get-CimInstance Win32_QuickFixEngineering |
+          Sort-Object InstalledOn -Descending |
+          Select-Object -First 5 HotFixID, InstalledOn
+        ```
+
+        Second, what the agent believes is available:
+
+        ```powershell
+        $searcher = (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher()
+        $result = $searcher.Search('IsInstalled=0')
+        $result.ResultCode
+        $result.Updates.Count
+        $result.Updates | Select-Object Title, @{n='KB';e={$_.KBArticleIDs -join ','}}
+        ```
+
+        A passing result satisfies at least one side: a recent install date, or `Updates.Count` greater than zero with `ResultCode` of `2`.
+
+        A failing result shows an old install date together with zero available updates. Confirm the host really is behind by comparing its build revision against a known-current peer of the same OS:
+
+        ```powershell
+        $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+        '{0}.{1}' -f $cv.CurrentBuildNumber, $cv.UBR
+        ```
+
+        If the revision is behind a healthy peer while the agent reports nothing available, the agent cannot enumerate its catalog. An exception from the search call above surfaces the underlying HRESULT, which the Settings app suppresses.
+      remediation:
+        - id: gui
+          desc: |
+            **Using the Settings app**
+
+            1. Open **Settings** > **Windows Update** and click **Check for updates**.
+            2. If the scan reports the host is up to date, compare its build against a known-current machine of the same OS. Open **Settings** > **System** > **About** and read **OS build**.
+            3. If the build is behind while the scan claims no updates, the agent cannot reach its catalog. Open **Advanced options** > **Troubleshoot** and run the **Windows Update** troubleshooter.
+            4. Re-run **Check for updates** and confirm updates are now offered.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Force a fresh scan and read the result code directly rather than trusting the UI:
+
+            ```powershell
+            Start-Service wuauserv
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+            $searcher = (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher()
+            $searcher.Search('IsInstalled=0').Updates.Count
+            ```
+
+            If the count is still zero on a host that is demonstrably behind, reset the agent datastore so detection rebuilds from scratch:
+
+            ```powershell
+            Stop-Service wuauserv, bits, cryptsvc -Force
+            Rename-Item C:\Windows\SoftwareDistribution SoftwareDistribution.old
+            Rename-Item C:\Windows\System32\catroot2 catroot2.old
+            Start-Service cryptsvc, bits, wuauserv
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+            ```
+
+            When the agent still enumerates nothing, install the cumulative update offline through the servicing stack, which bypasses the agent entirely:
+
+            ```powershell
+            DISM /Online /Add-Package /PackagePath:C:\temp\ssu.msu /Quiet /NoRestart
+            DISM /Online /Add-Package /PackagePath:C:\temp\lcu.msu /Quiet /NoRestart
+            Restart-Computer
+            ```
+        - id: script
+          desc: |
+            **Using a PowerShell script**
+
+            Run the following as Administrator to evaluate both halves of the assertion and reset the agent when the contradiction is confirmed:
+
+            ```powershell
+            #Requires -RunAsAdministrator
+            param([int]$MaxSilenceDays = 45)
+
+            $newest = Get-CimInstance Win32_QuickFixEngineering |
+                Where-Object InstalledOn |
+                Sort-Object InstalledOn -Descending |
+                Select-Object -First 1
+
+            $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+            Write-Output ("Build {0}.{1}; newest hotfix {2} on {3}" -f `
+                $cv.CurrentBuildNumber, $cv.UBR, $newest.HotFixID, $newest.InstalledOn)
+
+            $patchedRecently = $newest -and $newest.InstalledOn -gt (Get-Date).AddDays(-$MaxSilenceDays)
+
+            $available = 0
+            try {
+                $searcher = (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher()
+                $available = $searcher.Search('IsInstalled=0').Updates.Count
+            } catch {
+                Write-Warning ("Catalog search failed: {0} [0x{1:X8}]" -f $_.Exception.Message, $_.Exception.HResult)
+            }
+            Write-Output "Agent reports $available available update(s)."
+
+            if ($patchedRecently -or $available -gt 0) {
+                Write-Output 'Host is either patching or has work queued. No action needed.'
+                return
+            }
+
+            Write-Warning 'Host has installed nothing recently and sees nothing available. Resetting the agent datastore.'
+            Stop-Service wuauserv, bits, cryptsvc -Force
+            $stamp = Get-Date -Format yyyyMMddHHmmss
+            Rename-Item "$env:SystemRoot\SoftwareDistribution" "SoftwareDistribution.old-$stamp" -ErrorAction SilentlyContinue
+            Rename-Item "$env:SystemRoot\System32\catroot2" "catroot2.old-$stamp" -ErrorAction SilentlyContinue
+            Start-Service cryptsvc, bits, wuauserv
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+
+            Start-Sleep -Seconds 60
+            $after = 0
+            try {
+                $after = (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher().Search('IsInstalled=0').Updates.Count
+            } catch { }
+            Write-Output "After reset the agent reports $after available update(s)."
+            if ($after -eq 0) {
+                Write-Error 'Agent still enumerates nothing. Install the cumulative update offline with DISM and repair the agent separately.'
+                exit 1
+            }
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            ```yaml
+            ---
+            - name: Verify the update agent can enumerate its catalog
+              hosts: windows
+              tasks:
+                - name: Ask the agent what is available
+                  ansible.windows.win_updates:
+                    state: searched
+                  register: search_result
+
+                - name: Read the current build revision
+                  ansible.windows.win_shell: |
+                    $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+                    '{0}.{1}' -f $cv.CurrentBuildNumber, $cv.UBR
+                  register: build_revision
+                  changed_when: false
+
+                - name: Report a host that sees no updates
+                  ansible.builtin.debug:
+                    msg: >-
+                      Build {{ build_revision.stdout | trim }} reports
+                      {{ search_result.found_update_count | default(0) }} available updates.
+                      Compare against a known-current peer before treating zero as healthy.
+
+                - name: Reset the agent datastore when the catalog comes back empty
+                  ansible.windows.win_shell: |
+                    Stop-Service wuauserv, bits, cryptsvc -Force
+                    $stamp = Get-Date -Format yyyyMMddHHmmss
+                    Rename-Item "$env:SystemRoot\SoftwareDistribution" "SoftwareDistribution.old-$stamp" -ErrorAction SilentlyContinue
+                    Rename-Item "$env:SystemRoot\System32\catroot2" "catroot2.old-$stamp" -ErrorAction SilentlyContinue
+                    Start-Service cryptsvc, bits, wuauserv
+                    (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+                  when: search_result.found_update_count | default(0) == 0
+
+                - name: Re-search after the reset
+                  ansible.windows.win_updates:
+                    state: searched
+                  when: search_result.found_update_count | default(0) == 0
+            ```
+
+  - uid: windows-update-readiness-no-detection-error
+    title: Ensure the Windows Update Agent reports no detection error
+    impact: 80
+    mql: |
+      windows.update.config.lastDetectionError == '' || windows.update.config.lastDetectionError == null
+    docs:
+      desc: |
+        This check verifies the Windows Update Agent recorded no error on its most recent detection attempt. The agent stores the HRESULT of the last failure, and that code names the actual problem, which the Settings UI reduces to generic text.
+
+        Common values and what they mean:
+
+        - `0x80244022` - the catalog source returned HTTP 503; a WSUS server is down or overloaded.
+        - `0x8024401C` - request timeout against the configured update source.
+        - `0x80072EE2` / `0x80072EFD` - the host cannot reach the update endpoints; proxy, firewall, or DNS.
+        - `0x80244010` - the agent exceeded the maximum number of detection round trips against WSUS.
+        - `0x8024402C` - proxy or WSUS name resolution failure.
+        - `0x80070005` - access denied, typically permissions on the datastore or catalog directories.
+
+        A recorded error means the agent is running and trying, which narrows the investigation to connectivity and configuration rather than the agent itself.
+
+        **Why this matters**
+
+        - **Names the failure:** the HRESULT identifies the subsystem at fault instead of a generic message.
+        - **Separates cause from symptom:** an error here means the agent works but its source or network path does not.
+        - **Catches source-side outages:** a WSUS server failing to serve its clients shows up as the same code across many hosts.
+
+        **Risk mitigation**
+
+        - **Speeds remediation:** the code points at proxy, DNS, WSUS, or permissions directly.
+        - **Detects fleet-wide breakage:** an identical code across hosts indicates shared infrastructure, not per-host damage.
+      audit: |
+        Run the following in an elevated PowerShell session:
+
+        ```powershell
+        Get-WinEvent -LogName 'Microsoft-Windows-WindowsUpdateClient/Operational' -MaxEvents 30 |
+          Where-Object LevelDisplayName -in 'Error', 'Warning' |
+          Format-List TimeCreated, Id, LevelDisplayName, Message
+        ```
+
+        A passing result shows no recent detection failures. A failing result shows error events naming an HRESULT.
+
+        Reproduce the error interactively to see the code the agent returns now:
+
+        ```powershell
+        try {
+            (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher().Search('IsInstalled=0')
+        } catch {
+            '0x{0:X8}' -f $_.Exception.HResult
+        }
+        ```
+
+        Confirm the endpoints the agent needs are reachable:
+
+        ```powershell
+        netsh winhttp show proxy
+        Test-NetConnection -ComputerName windowsupdate.microsoft.com -Port 443
+        ```
+      remediation:
+        - id: gui
+          desc: |
+            **Using the Settings app and Event Viewer**
+
+            1. Open **Event Viewer** and navigate to **Applications and Services Logs** > **Microsoft** > **Windows** > **WindowsUpdateClient** > **Operational**.
+            2. Locate the most recent error and note its HRESULT.
+            3. For `0x8024*` codes, verify the update source: **Settings** > **Windows Update** > **Advanced options** > **Delivery Optimization**, and confirm with your WSUS administrator that the server is serving clients.
+            4. For `0x80072*` codes, resolve network reachability to the update endpoints, then run **Settings** > **Windows Update** > **Check for updates** again.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Clear the WinHTTP proxy if it is stale, then retry detection:
+
+            ```powershell
+            netsh winhttp show proxy
+            netsh winhttp reset proxy
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+            ```
+
+            For WSUS-sourced errors, re-register the client and force a fresh report:
+
+            ```powershell
+            Stop-Service wuauserv -Force
+            Remove-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate' -Name SusClientId, SusClientIdValidation -ErrorAction SilentlyContinue
+            Start-Service wuauserv
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+            ```
+        - id: script
+          desc: |
+            **Using a PowerShell script**
+
+            ```powershell
+            #Requires -RunAsAdministrator
+
+            $code = $null
+            try {
+                (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher().Search('IsInstalled=0') | Out-Null
+                Write-Output 'Detection succeeded; no error to remediate.'
+                return
+            } catch {
+                $code = '0x{0:X8}' -f $_.Exception.HResult
+                Write-Output "Detection failed with $code"
+            }
+
+            switch -Wildcard ($code) {
+                '0x80072*' {
+                    Write-Output 'Network reachability problem. Clearing the WinHTTP proxy.'
+                    netsh winhttp reset proxy
+                }
+                '0x8024*' {
+                    Write-Output 'Update source problem. Re-registering the client against its source.'
+                    Stop-Service wuauserv -Force
+                    Remove-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate' `
+                        -Name SusClientId, SusClientIdValidation -ErrorAction SilentlyContinue
+                    Start-Service wuauserv
+                }
+                default { Write-Output 'Unrecognized code; inspect the WindowsUpdateClient/Operational log.' }
+            }
+
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            ```yaml
+            ---
+            - name: Clear Windows Update detection errors
+              hosts: windows
+              tasks:
+                - name: Reset the WinHTTP proxy configuration
+                  ansible.windows.win_shell: netsh winhttp reset proxy
+
+                - name: Restart the update service to clear cached failure state
+                  ansible.windows.win_service:
+                    name: wuauserv
+                    state: restarted
+
+                - name: Re-run detection and surface any remaining failure
+                  ansible.windows.win_updates:
+                    state: searched
+                  register: search_result
+                  failed_when: search_result.failed_update_count | default(0) > 0
+            ```
+
+  - uid: windows-update-readiness-recent-install
+    title: Ensure the host installed updates recently
+    impact: 85
+    props:
+      - uid: windowsUpdateReadinessMaxInstallAgeDays
+        title: Maximum number of days since the host last successfully installed a Windows update
+        mql: |
+          return 45
+    mql: |
+      windows.hotfixes.where(installedOn != null && time.now - installedOn < props.windowsUpdateReadinessMaxInstallAgeDays * time.day).length > 0
+    docs:
+      desc: |
+        This check verifies the host has successfully installed a Windows update within the configured window. The default of 45 days spans a full monthly release cycle plus a deployment grace period, so a host patching on the normal Patch Tuesday cadence passes comfortably while one that has missed a cycle fails.
+
+        This is the outcome check. Detection can succeed, downloads can complete, and installation can still fail or roll back every month. Tracking the last successful install measures whether patching is actually happening rather than whether the machinery appears configured.
+
+        It is also the check that catches the slow failures. A host that stops patching rarely announces it; the interval between successful installs simply grows, and without a threshold nobody notices until the gap is measured in quarters.
+
+        **Why this matters**
+
+        - **Measures outcomes, not configuration:** a correctly configured host that never completes an install is still unpatched.
+        - **Detects silent rollback:** updates that revert on reboot leave no successful install behind.
+        - **Bounds the exposure window explicitly:** the threshold makes "how far behind is acceptable" a stated decision.
+
+        **Risk mitigation**
+
+        - **Caps time-to-patch:** hosts cannot drift indefinitely without failing a check.
+        - **Prioritizes remediation:** the age of the last install ranks which hosts to fix first.
+      audit: |
+        Run the following in an elevated PowerShell session. This reads the installed-update inventory from WMI, which does not depend on the update agent:
+
+        ```powershell
+        Get-CimInstance Win32_QuickFixEngineering |
+          Sort-Object InstalledOn -Descending |
+          Select-Object -First 10 HotFixID, InstalledOn
+        ```
+
+        A passing result shows at least one update installed within the configured window.
+
+        Confirm the build revision matches your expected patch level:
+
+        ```powershell
+        $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+        '{0}.{1}' -f $cv.CurrentBuildNumber, $cv.UBR
+        ```
+
+        The agent's own timestamps are worth comparing but should be treated as advisory. They are frequently empty even on hosts that patch normally, so an empty value here is not by itself a finding:
+
+        ```powershell
+        (New-Object -ComObject Microsoft.Update.AutoUpdate).Results |
+          Select-Object LastSearchSuccessDate, LastInstallationSuccessDate
+        ```
+
+        A disagreement between the WMI inventory and the build revision is itself a finding: update history reporting success while the revision stays put means updates staged but never committed.
+      remediation:
+        - id: gui
+          desc: |
+            **Using the Settings app**
+
+            1. Open **Settings** > **Windows Update**.
+            2. Click **Check for updates**, then install everything offered.
+            3. Reboot when prompted, and repeat until no further updates are offered. Cumulative updates frequently require several rounds, because a servicing stack update must land before the next cumulative update becomes applicable.
+            4. Confirm progress under **Update history**.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Install all applicable updates and reboot:
+
+            ```powershell
+            Install-Module PSWindowsUpdate -Force
+            Get-WindowsUpdate -Install -AcceptAll -AutoReboot
+            ```
+
+            When the update agent is unusable, install packages offline through the servicing stack instead. Download the servicing stack update and the cumulative update for the host's build from the Microsoft Update Catalog, then apply the servicing stack update first:
+
+            ```powershell
+            DISM /Online /Add-Package /PackagePath:C:\temp\ssu.msu /Quiet /NoRestart
+            DISM /Online /Add-Package /PackagePath:C:\temp\lcu.msu /Quiet /NoRestart
+            Restart-Computer
+            ```
+
+            This path runs through TrustedInstaller rather than `wuauserv`, so it works on a host whose update agent is broken.
+        - id: script
+          desc: |
+            **Using a PowerShell script**
+
+            ```powershell
+            #Requires -RunAsAdministrator
+
+            $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+            Write-Output ("Current build: {0}.{1}" -f $cv.CurrentBuildNumber, $cv.UBR)
+
+            $results = (New-Object -ComObject Microsoft.Update.AutoUpdate).Results
+            Write-Output "Last successful install: $($results.LastInstallationSuccessDate)"
+
+            if (-not (Get-Module -ListAvailable PSWindowsUpdate)) {
+                Install-Module PSWindowsUpdate -Force -Scope AllUsers
+            }
+            Import-Module PSWindowsUpdate
+
+            $pending = Get-WindowsUpdate
+            if (-not $pending) {
+                Write-Warning 'The agent reports nothing available. If the build revision above is behind, the agent cannot enumerate the catalog: install the cumulative update offline with DISM instead.'
+                exit 1
+            }
+
+            Get-WindowsUpdate -Install -AcceptAll -IgnoreReboot
+            Write-Output 'Reboot, then re-run until no further updates are offered.'
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            ```yaml
+            ---
+            - name: Bring Windows hosts up to date
+              hosts: windows
+              tasks:
+                - name: Install security and critical updates
+                  ansible.windows.win_updates:
+                    category_names:
+                      - SecurityUpdates
+                      - CriticalUpdates
+                      - UpdateRollups
+                    reboot: true
+                    reboot_timeout: 3600
+                  register: update_result
+
+                - name: Re-run until no updates remain applicable
+                  ansible.windows.win_updates:
+                    category_names:
+                      - SecurityUpdates
+                      - CriticalUpdates
+                      - UpdateRollups
+                    reboot: true
+                  when: update_result.installed_update_count | default(0) > 0
+            ```
+
+  # ---------------------------------------------------------------- policy and configuration
+  - uid: windows-update-readiness-automatic-updates-enabled
+    title: Ensure automatic updates are not turned off by policy
+    impact: 80
+    mql: |
+      windows.update.policy.noAutoUpdate != true
+    docs:
+      desc: |
+        This check verifies that Group Policy has not turned off automatic updates. The `NoAutoUpdate` value under `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU` disables the agent's scheduled detection and installation cycle entirely.
+
+        The check treats "not configured" as passing. An unconfigured host follows the Windows default and patches normally, so only an explicit disable fails.
+
+        Patch-management products legitimately set this value to take ownership of the schedule, which is a supported pattern; the risk is that it leaves no safety net. When the managing product stops targeting a host, loses its agent, or has its policy misapplied, the host does not fall back to Windows Update. It simply stops patching, and the disabled automatic-update policy is why nothing notices.
+
+        **Why this matters**
+
+        - **Identifies hosts with no autonomous fallback:** patching depends entirely on external tooling continuing to work.
+        - **Explains fleet-wide stalls:** a management product that silently drops hosts leaves them frozen at their last patch level.
+        - **Separates intent from accident:** a value inherited from a retired baseline is indistinguishable from a deliberate one without review.
+
+        **Risk mitigation**
+
+        - **Restores a default path to patching:** hosts continue to receive updates when management tooling fails.
+        - **Prompts ownership review:** every host with this set should have a named product responsible for patching it.
+      audit: |
+        Run the following in an elevated PowerShell session:
+
+        ```powershell
+        Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' -ErrorAction SilentlyContinue |
+          Select-Object NoAutoUpdate, AUOptions, ScheduledInstallDay, ScheduledInstallTime
+        ```
+
+        A passing result shows either no `AU` key at all, or `NoAutoUpdate` set to `0`. A failing result shows `NoAutoUpdate` set to `1`.
+
+        Confirm which policy is applying the setting:
+
+        ```powershell
+        gpresult /h C:\temp\gpresult.html
+        ```
+
+        Open the report and look under **Computer Configuration** > **Administrative Templates** > **Windows Components** > **Windows Update**.
+      remediation:
+        - id: gui
+          desc: |
+            **Using the Group Policy Editor**
+
+            For a domain-managed host, correct the setting in the Group Policy Object that applies it rather than locally. For a standalone host:
+
+            1. Press `Win+R`, type `gpedit.msc`, and press Enter.
+            2. Navigate to **Computer Configuration** > **Administrative Templates** > **Windows Components** > **Windows Update** > **Manage end user experience**.
+            3. Open **Configure Automatic Updates**.
+            4. Select **Enabled**, then choose an option such as **4 - Auto download and schedule the install**. Selecting **Disabled** here is what sets `NoAutoUpdate` to `1`.
+            5. Click **OK** and run `gpupdate /force`.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Enable automatic updates and set a daily install schedule:
+
+            ```powershell
+            $au = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
+            New-Item $au -Force
+            New-ItemProperty $au NoAutoUpdate -Value 0 -PropertyType DWord -Force
+            New-ItemProperty $au AUOptions -Value 4 -PropertyType DWord -Force
+            New-ItemProperty $au ScheduledInstallDay -Value 0 -PropertyType DWord -Force
+            gpupdate /force
+            ```
+
+            If a patch-management product intentionally owns the schedule, leave the value in place and record the exception, but confirm the product is still targeting this host.
+        - id: script
+          desc: |
+            **Using a PowerShell script**
+
+            ```powershell
+            #Requires -RunAsAdministrator
+            $au = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
+
+            $current = (Get-ItemProperty -Path $au -Name NoAutoUpdate -ErrorAction SilentlyContinue).NoAutoUpdate
+            if ($null -eq $current) {
+                Write-Output 'NoAutoUpdate is not configured; the host follows the Windows default.'
+                return
+            }
+            if ($current -eq 0) {
+                Write-Output 'Automatic updates are already enabled by policy.'
+                return
+            }
+
+            Write-Warning 'Automatic updates are disabled by policy. Confirm no patch-management product owns this host before changing it.'
+            New-Item -Path $au -Force | Out-Null
+            New-ItemProperty -Path $au -Name NoAutoUpdate -Value 0 -PropertyType DWord -Force | Out-Null
+            New-ItemProperty -Path $au -Name AUOptions -Value 4 -PropertyType DWord -Force | Out-Null
+            gpupdate /force
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            ```yaml
+            ---
+            - name: Ensure automatic updates are enabled by policy
+              hosts: windows
+              tasks:
+                - name: Enable automatic updates
+                  ansible.windows.win_regedit:
+                    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU
+                    name: NoAutoUpdate
+                    data: 0
+                    type: dword
+
+                - name: Auto download and schedule installation
+                  ansible.windows.win_regedit:
+                    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU
+                    name: AUOptions
+                    data: 4
+                    type: dword
+
+                - name: Refresh group policy
+                  ansible.windows.win_shell: gpupdate /force
+            ```
+
+  - uid: windows-update-readiness-updates-not-paused
+    title: Ensure Windows updates are not paused
+    impact: 75
+    mql: |
+      powershell("$p = (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\WindowsUpdate\\UX\\Settings' -Name PauseUpdatesExpiryTime -ErrorAction SilentlyContinue).PauseUpdatesExpiryTime; if (-not $p) { 'True' } elseif ([datetime]::Parse($p, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind) -lt (Get-Date)) { 'True' } else { 'False' }").stdout.trim == 'True'
+    docs:
+      desc: |
+        This check verifies that updates are not currently paused. Windows records a pause as an expiry timestamp in `PauseUpdatesExpiryTime`; while that timestamp is in the future, the agent takes no action. The check passes when no pause is recorded or when the recorded pause has already expired, so a leftover timestamp from a past maintenance window does not produce a false finding.
+
+        Pauses are meant to be short. They are set to hold a host stable through a change freeze, a release validation, or an incident, and they are supposed to be lifted afterwards. In practice they are frequently forgotten, and a paused host reports no pending updates while it sits unpatched.
+
+        A pause is also indistinguishable from a healthy host in most reporting. The agent is fine, the service is running, detection may even succeed. Nothing installs, and no error is recorded anywhere.
+
+        **Why this matters**
+
+        - **Finds forgotten freezes:** a pause set for a one-week validation can survive for months.
+        - **Explains a silent host:** paused updates produce no errors and no pending-update list.
+        - **Ignores expired pauses:** only an active pause is treated as a finding.
+
+        **Risk mitigation**
+
+        - **Restores the patch cadence:** lifting the pause lets the host pick up accumulated updates.
+        - **Bounds deliberate freezes:** reviewing pauses keeps them as short-lived exceptions.
+      audit: |
+        Run the following in an elevated PowerShell session:
+
+        ```powershell
+        Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings' -ErrorAction SilentlyContinue |
+          Select-Object PauseUpdatesExpiryTime, PauseFeatureUpdatesStartTime, PauseQualityUpdatesStartTime
+        ```
+
+        A passing result shows no `PauseUpdatesExpiryTime`, or a value already in the past. A failing result shows a timestamp in the future.
+
+        The Settings app shows the same state:
+
+        1. Open **Settings** > **Windows Update**.
+        2. A paused host displays **Resume updates** with the date updates will resume.
+      remediation:
+        - id: gui
+          desc: |
+            **Using the Settings app**
+
+            1. Open **Settings** > **Windows Update**.
+            2. If the page shows **Resume updates**, click it.
+            3. Click **Check for updates** and install everything offered.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Clear the pause state and trigger a detection cycle:
+
+            ```powershell
+            $ux = 'HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings'
+            Remove-ItemProperty $ux -Name PauseUpdatesExpiryTime -ErrorAction SilentlyContinue
+            Remove-ItemProperty $ux -Name PauseFeatureUpdatesStartTime, PauseFeatureUpdatesEndTime -ErrorAction SilentlyContinue
+            Remove-ItemProperty $ux -Name PauseQualityUpdatesStartTime, PauseQualityUpdatesEndTime -ErrorAction SilentlyContinue
+            Restart-Service wuauserv
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+            ```
+
+            If a policy is re-applying the pause, clear it there too:
+
+            ```powershell
+            Remove-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate' -Name PauseQualityUpdatesStartTime, PauseFeatureUpdatesStartTime -ErrorAction SilentlyContinue
+            gpupdate /force
+            ```
+        - id: script
+          desc: |
+            **Using a PowerShell script**
+
+            ```powershell
+            #Requires -RunAsAdministrator
+            $ux = 'HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings'
+
+            $expiry = (Get-ItemProperty -Path $ux -Name PauseUpdatesExpiryTime -ErrorAction SilentlyContinue).PauseUpdatesExpiryTime
+            if (-not $expiry) {
+                Write-Output 'Updates are not paused.'
+                return
+            }
+
+            Write-Output "Pause recorded with expiry $expiry"
+            $names = @(
+                'PauseUpdatesExpiryTime'
+                'PauseFeatureUpdatesStartTime', 'PauseFeatureUpdatesEndTime'
+                'PauseQualityUpdatesStartTime', 'PauseQualityUpdatesEndTime'
+            )
+            foreach ($n in $names) {
+                Remove-ItemProperty -Path $ux -Name $n -ErrorAction SilentlyContinue
+            }
+
+            Restart-Service wuauserv
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+            Write-Output 'Pause cleared and detection triggered.'
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            ```yaml
+            ---
+            - name: Ensure Windows updates are not paused
+              hosts: windows
+              tasks:
+                - name: Remove pause markers
+                  ansible.windows.win_regedit:
+                    path: HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings
+                    name: "{{ item }}"
+                    state: absent
+                  loop:
+                    - PauseUpdatesExpiryTime
+                    - PauseFeatureUpdatesStartTime
+                    - PauseFeatureUpdatesEndTime
+                    - PauseQualityUpdatesStartTime
+                    - PauseQualityUpdatesEndTime
+
+                - name: Restart the update service to pick up the change
+                  ansible.windows.win_service:
+                    name: wuauserv
+                    state: restarted
+            ```
+
+  - uid: windows-update-readiness-bounded-quality-deferral
+    title: Ensure quality update deferral does not exceed the allowed window
+    impact: 65
+    props:
+      - uid: windowsUpdateReadinessMaxQualityDeferralDays
+        title: Maximum number of days quality updates may be deferred by Windows Update for Business policy
+        mql: |
+          return 14
+    mql: |
+      windows.update.policy.deferQualityUpdatesPeriodInDays == null || windows.update.policy.deferQualityUpdatesPeriodInDays <= props.windowsUpdateReadinessMaxQualityDeferralDays
+    docs:
+      desc: |
+        This check verifies that Windows Update for Business quality-update deferral stays within an acceptable window. Quality updates carry the monthly security fixes, and the deferral period delays them after release. A host with an unconfigured deferral passes, since it takes updates as they are published.
+
+        Short deferrals are a reasonable safety measure: a few days lets a broad release problem surface before it reaches your fleet. Long deferrals invert the tradeoff. A 30-day deferral means every host runs known-vulnerable for a month after a fix ships, and a deferral longer than the release cycle means a host can skip a month's fixes entirely as one deferral window overlaps the next release.
+
+        Deferral is also easy to over-tune and forget. It is often raised during a problematic release and never lowered, leaving a permanent delay nobody chose deliberately.
+
+        **Why this matters**
+
+        - **Bounds known exposure:** deferral is a decision to run unpatched for a fixed period, so the period should be deliberate.
+        - **Prevents skipped cycles:** a deferral longer than the monthly cadence can drop fixes rather than delay them.
+        - **Surfaces stale tuning:** temporary increases tend to become permanent.
+
+        **Risk mitigation**
+
+        - **Shortens time-to-patch:** capping the deferral caps the window in which a published exploit finds an unpatched host.
+        - **Keeps rings intentional:** deferral values stay a reviewed part of the deployment strategy.
+      audit: |
+        Run the following in an elevated PowerShell session:
+
+        ```powershell
+        Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate' -ErrorAction SilentlyContinue |
+          Select-Object DeferQualityUpdates, DeferQualityUpdatesPeriodInDays,
+                        DeferFeatureUpdates, DeferFeatureUpdatesPeriodInDays
+        ```
+
+        A passing result shows no deferral configured, or `DeferQualityUpdatesPeriodInDays` at or below your threshold. A failing result shows a larger value.
+
+        Identify the policy responsible:
+
+        ```powershell
+        gpresult /h C:\temp\gpresult.html
+        ```
+
+        For Intune-managed hosts, review the **Windows Update rings** configuration in the Microsoft Intune admin center under **Devices** > **Windows** > **Update rings for Windows 10 and later**.
+      remediation:
+        - id: gui
+          desc: |
+            **Using the Group Policy Editor**
+
+            1. Press `Win+R`, type `gpedit.msc`, and press Enter.
+            2. Navigate to **Computer Configuration** > **Administrative Templates** > **Windows Components** > **Windows Update** > **Manage updates offered from Windows Update**.
+            3. Open **Select when Quality Updates are received**.
+            4. Either set **Disabled** to take updates as published, or set **Enabled** and reduce the deferral period to your threshold or lower.
+            5. Click **OK** and run `gpupdate /force`.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Reduce the deferral to a bounded window:
+
+            ```powershell
+            $wu = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
+            New-ItemProperty $wu DeferQualityUpdatesPeriodInDays -Value 7 -PropertyType DWord -Force
+            gpupdate /force
+            ```
+
+            Or remove deferral entirely so quality updates apply as published:
+
+            ```powershell
+            Remove-ItemProperty $wu -Name DeferQualityUpdates, DeferQualityUpdatesPeriodInDays -ErrorAction SilentlyContinue
+            gpupdate /force
+            ```
+        - id: script
+          desc: |
+            **Using a PowerShell script**
+
+            ```powershell
+            #Requires -RunAsAdministrator
+            param([int]$MaxDeferralDays = 14)
+
+            $wu = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
+            $days = (Get-ItemProperty -Path $wu -Name DeferQualityUpdatesPeriodInDays -ErrorAction SilentlyContinue).DeferQualityUpdatesPeriodInDays
+
+            if ($null -eq $days) {
+                Write-Output 'No quality-update deferral configured; updates apply as published.'
+                return
+            }
+
+            if ($days -le $MaxDeferralDays) {
+                Write-Output "Deferral of $days day(s) is within the $MaxDeferralDays day limit."
+                return
+            }
+
+            Write-Output "Reducing quality-update deferral from $days to $MaxDeferralDays day(s)."
+            New-ItemProperty -Path $wu -Name DeferQualityUpdatesPeriodInDays `
+                -Value $MaxDeferralDays -PropertyType DWord -Force | Out-Null
+            gpupdate /force
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            ```yaml
+            ---
+            - name: Bound quality update deferral
+              hosts: windows
+              vars:
+                max_quality_deferral_days: 7
+              tasks:
+                - name: Cap the quality update deferral period
+                  ansible.windows.win_regedit:
+                    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate
+                    name: DeferQualityUpdatesPeriodInDays
+                    data: "{{ max_quality_deferral_days }}"
+                    type: dword
+
+                - name: Refresh group policy
+                  ansible.windows.win_shell: gpupdate /force
+            ```
+
+  - uid: windows-update-readiness-catalog-source-configured
+    title: Ensure an update catalog source is configured
+    impact: 80
+    mql: |
+      windows.update.config.catalogSource != null
+      windows.update.config.catalogSource != ''
+      windows.update.config.catalogSource != 'disabled'
+    docs:
+      desc: |
+        This check verifies the Windows Update Agent has a catalog source to query. The source is where the agent asks which updates apply: public Windows Update, Microsoft Update, a WSUS server, or Windows Update for Business. Without one, detection has nothing to contact and the host reports no applicable updates.
+
+        A source reported as `disabled` or empty is a configuration state, not a fault, which makes it easy to overlook. The agent starts, the service runs, and no error is logged. The host is simply pointed at nothing, and the resulting empty update list is indistinguishable from being fully patched.
+
+        This most often follows a decommissioned WSUS server, a partially removed management agent, or a hardening baseline that disabled the source without providing a replacement.
+
+        **Why this matters**
+
+        - **Detects a host pointed at nothing:** the agent works but has nowhere to look.
+        - **Catches orphaned configuration:** a retired WSUS server leaves clients configured for a source that no longer exists.
+        - **Produces no error to alert on:** an unconfigured source is silent, unlike an unreachable one.
+
+        **Risk mitigation**
+
+        - **Restores the supply of updates:** the host can enumerate and download applicable packages again.
+        - **Confirms migrations completed:** hosts left behind during a WSUS or Intune migration surface here.
+      audit: |
+        Run the following in an elevated PowerShell session:
+
+        ```powershell
+        Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate' -ErrorAction SilentlyContinue |
+          Select-Object WUServer, WUStatusServer, DoNotConnectToWindowsUpdateInternetLocations
+        Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' -ErrorAction SilentlyContinue |
+          Select-Object UseWUServer
+        ```
+
+        A passing result shows either `UseWUServer` set to `1` with a populated `WUServer`, or no WSUS configuration at all so the host uses Windows Update directly.
+
+        Confirm the agent can reach whichever source is configured:
+
+        ```powershell
+        (New-Object -ComObject Microsoft.Update.ServiceManager).Services |
+          Select-Object Name, IsDefaultAUService, ServiceUrl
+        ```
+
+        A failing result lists no default service, or a service pointing at a host that no longer resolves.
+      remediation:
+        - id: gui
+          desc: |
+            **Using the Group Policy Editor**
+
+            1. Press `Win+R`, type `gpedit.msc`, and press Enter.
+            2. Navigate to **Computer Configuration** > **Administrative Templates** > **Windows Components** > **Windows Update** > **Manage updates offered from a Windows Server Update Service**.
+            3. Open **Specify intranet Microsoft update service location**.
+            4. To use WSUS, select **Enabled** and enter the server URL in both fields. To use public Windows Update instead, select **Not Configured** or **Disabled**.
+            5. Click **OK** and run `gpupdate /force`.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Point the host at public Windows Update by removing the stale WSUS configuration:
+
+            ```powershell
+            $wu = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
+            Remove-ItemProperty $wu -Name WUServer, WUStatusServer -ErrorAction SilentlyContinue
+            Remove-ItemProperty "$wu\AU" -Name UseWUServer -ErrorAction SilentlyContinue
+            Restart-Service wuauserv
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+            ```
+
+            Or point it at a working WSUS server:
+
+            ```powershell
+            New-ItemProperty $wu WUServer -Value 'http://wsus.example.com:8530' -PropertyType String -Force
+            New-ItemProperty $wu WUStatusServer -Value 'http://wsus.example.com:8530' -PropertyType String -Force
+            New-ItemProperty "$wu\AU" UseWUServer -Value 1 -PropertyType DWord -Force
+            Remove-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate' -Name SusClientId, SusClientIdValidation -ErrorAction SilentlyContinue
+            Restart-Service wuauserv
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+            ```
+        - id: script
+          desc: |
+            **Using a PowerShell script**
+
+            ```powershell
+            #Requires -RunAsAdministrator
+            param([string]$WsusUrl)
+
+            $wu = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
+
+            if ($WsusUrl) {
+                Write-Output "Pointing the agent at $WsusUrl"
+                New-Item -Path $wu -Force | Out-Null
+                New-ItemProperty -Path $wu -Name WUServer -Value $WsusUrl -PropertyType String -Force | Out-Null
+                New-ItemProperty -Path $wu -Name WUStatusServer -Value $WsusUrl -PropertyType String -Force | Out-Null
+                New-Item -Path "$wu\AU" -Force | Out-Null
+                New-ItemProperty -Path "$wu\AU" -Name UseWUServer -Value 1 -PropertyType DWord -Force | Out-Null
+            } else {
+                Write-Output 'Removing WSUS configuration so the agent uses public Windows Update.'
+                Remove-ItemProperty -Path $wu -Name WUServer, WUStatusServer -ErrorAction SilentlyContinue
+                Remove-ItemProperty -Path "$wu\AU" -Name UseWUServer -ErrorAction SilentlyContinue
+            }
+
+            Restart-Service wuauserv
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+
+            (New-Object -ComObject Microsoft.Update.ServiceManager).Services |
+                Select-Object Name, IsDefaultAUService, ServiceUrl
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            ```yaml
+            ---
+            - name: Ensure a Windows Update catalog source is configured
+              hosts: windows
+              vars:
+                wsus_url: ''
+              tasks:
+                - name: Configure the WSUS source
+                  ansible.windows.win_regedit:
+                    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate
+                    name: "{{ item }}"
+                    data: "{{ wsus_url }}"
+                    type: string
+                  loop:
+                    - WUServer
+                    - WUStatusServer
+                  when: wsus_url | length > 0
+
+                - name: Remove stale WSUS configuration to fall back to Windows Update
+                  ansible.windows.win_regedit:
+                    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate
+                    name: "{{ item }}"
+                    state: absent
+                  loop:
+                    - WUServer
+                    - WUStatusServer
+                  when: wsus_url | length == 0
+
+                - name: Restart the update service
+                  ansible.windows.win_service:
+                    name: wuauserv
+                    state: restarted
+            ```
+
+  - uid: windows-update-readiness-wsus-url-present
+    title: Ensure a WSUS server URL is set when the host is directed to WSUS
+    impact: 80
+    mql: |
+      windows.update.config.useWUServer != true || windows.update.config.wsusServerUrl != null && windows.update.config.wsusServerUrl != ''
+    docs:
+      desc: |
+        This check verifies internal consistency in the WSUS configuration. When `UseWUServer` is set, the agent is told to use an intranet update service and will not fall back to public Windows Update. If the corresponding `WUServer` URL is missing or empty, the agent has been redirected to a server that was never specified, so detection has no endpoint to contact.
+
+        The check passes for any host not directed to WSUS, since a host using public Windows Update needs no server URL.
+
+        This half-configured state arises when a WSUS deployment is partially removed, when policies are split across GPOs and one is unlinked, or when a management product sets the redirect without the address. It is a silent failure: the agent does not report a missing configuration, it simply finds nothing.
+
+        **Why this matters**
+
+        - **Catches a self-contradictory configuration:** the redirect and the destination live in separate values and can drift apart.
+        - **Blocks the fallback path:** `UseWUServer` prevents the host from reaching public Windows Update on its own.
+        - **Detects incomplete migrations:** hosts left mid-move between WSUS and Windows Update for Business surface here.
+
+        **Risk mitigation**
+
+        - **Restores detection:** the agent gains a reachable endpoint, or falls back to Windows Update once the redirect is removed.
+        - **Validates decommissioning:** retiring a WSUS server requires clearing this value on every client.
+      audit: |
+        Run the following in an elevated PowerShell session:
+
+        ```powershell
+        $wu = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
+        Get-ItemProperty $wu -ErrorAction SilentlyContinue | Select-Object WUServer, WUStatusServer
+        Get-ItemProperty "$wu\AU" -ErrorAction SilentlyContinue | Select-Object UseWUServer
+        ```
+
+        A passing result shows `UseWUServer` absent or `0`, or `UseWUServer` set to `1` together with a populated `WUServer`. A failing result shows `UseWUServer` set to `1` with `WUServer` missing or empty.
+
+        When a URL is configured, confirm the server actually answers:
+
+        ```powershell
+        $url = (Get-ItemProperty $wu).WUServer
+        Invoke-WebRequest -Uri "$url/ClientWebService/client.asmx" -UseBasicParsing |
+          Select-Object StatusCode
+        ```
+
+        A healthy WSUS server returns `200`.
+      remediation:
+        - id: gui
+          desc: |
+            **Using the Group Policy Editor**
+
+            1. Press `Win+R`, type `gpedit.msc`, and press Enter.
+            2. Navigate to **Computer Configuration** > **Administrative Templates** > **Windows Components** > **Windows Update** > **Manage updates offered from a Windows Server Update Service**.
+            3. Open **Specify intranet Microsoft update service location**.
+            4. If WSUS should be used, select **Enabled** and supply the server URL in both the update service and statistics server fields.
+            5. If WSUS is being retired, select **Disabled** so the host falls back to public Windows Update.
+            6. Click **OK** and run `gpupdate /force`.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Supply the missing URL:
+
+            ```powershell
+            $wu = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
+            New-ItemProperty $wu WUServer -Value 'http://wsus.example.com:8530' -PropertyType String -Force
+            New-ItemProperty $wu WUStatusServer -Value 'http://wsus.example.com:8530' -PropertyType String -Force
+            Remove-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate' -Name SusClientId, SusClientIdValidation -ErrorAction SilentlyContinue
+            Restart-Service wuauserv
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+            ```
+
+            Or clear the redirect so the host uses public Windows Update:
+
+            ```powershell
+            Remove-ItemProperty "$wu\AU" -Name UseWUServer -ErrorAction SilentlyContinue
+            Restart-Service wuauserv
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+            ```
+        - id: script
+          desc: |
+            **Using a PowerShell script**
+
+            ```powershell
+            #Requires -RunAsAdministrator
+            param([string]$WsusUrl)
+
+            $wu = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
+            $useWsus = (Get-ItemProperty -Path "$wu\AU" -Name UseWUServer -ErrorAction SilentlyContinue).UseWUServer
+            $server  = (Get-ItemProperty -Path $wu -Name WUServer -ErrorAction SilentlyContinue).WUServer
+
+            if ($useWsus -ne 1) {
+                Write-Output 'Host is not directed to WSUS; nothing to reconcile.'
+                return
+            }
+            if ($server) {
+                Write-Output "WSUS configuration is consistent: $server"
+                return
+            }
+
+            if ($WsusUrl) {
+                Write-Output "UseWUServer is set with no server. Setting $WsusUrl"
+                New-ItemProperty -Path $wu -Name WUServer -Value $WsusUrl -PropertyType String -Force | Out-Null
+                New-ItemProperty -Path $wu -Name WUStatusServer -Value $WsusUrl -PropertyType String -Force | Out-Null
+            } else {
+                Write-Output 'UseWUServer is set with no server and no replacement supplied. Clearing the redirect.'
+                Remove-ItemProperty -Path "$wu\AU" -Name UseWUServer -ErrorAction SilentlyContinue
+            }
+
+            Restart-Service wuauserv
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            ```yaml
+            ---
+            - name: Reconcile the WSUS redirect with its server URL
+              hosts: windows
+              vars:
+                wsus_url: 'http://wsus.example.com:8530'
+              tasks:
+                - name: Read the WSUS redirect flag
+                  ansible.windows.win_reg_stat:
+                    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU
+                    name: UseWUServer
+                  register: use_wsus
+
+                - name: Set the WSUS server URL when the host is redirected
+                  ansible.windows.win_regedit:
+                    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate
+                    name: "{{ item }}"
+                    data: "{{ wsus_url }}"
+                    type: string
+                  loop:
+                    - WUServer
+                    - WUStatusServer
+                  when: use_wsus.exists and use_wsus.value == 1
+
+                - name: Restart the update service
+                  ansible.windows.win_service:
+                    name: wuauserv
+                    state: restarted
+                  when: use_wsus.exists and use_wsus.value == 1
+            ```
+
+  # ---------------------------------------------------------------- servicing stack capacity
+  - uid: windows-update-readiness-no-pending-reboot
+    title: Ensure no pending reboot is blocking Windows servicing
+    impact: 70
+    mql: |
+      windows.update.config.rebootPending == false
+    docs:
+      desc: |
+        This check verifies no reboot is pending from a previous servicing operation. Windows applies cumulative and servicing stack updates in two phases: files are staged, then committed during restart. Until that restart happens the component store holds an incomplete transaction, and the next update either refuses to install or queues behind it.
+
+        A pending reboot is therefore not a cosmetic finding. It is a hard block on further servicing, and it compounds: each subsequent monthly release finds the same pending transaction and declines, so a host can accumulate months of missed updates from a single deferred restart.
+
+        Servers are the common case, because restarts require change windows and get postponed. The host reports updates as installed, its build revision does not advance, and the discrepancy goes unnoticed until something audits the actual build.
+
+        **Why this matters**
+
+        - **Removes a hard block:** further servicing cannot proceed while a transaction is uncommitted.
+        - **Stops compounding drift:** one deferred restart can cost several update cycles.
+        - **Explains installed-but-not-applied updates:** update history shows success while the build revision stays put.
+
+        **Risk mitigation**
+
+        - **Completes staged fixes:** security updates already downloaded take effect rather than sitting inert.
+        - **Protects component store integrity:** committing promptly reduces the chance of a corrupt store.
+      audit: |
+        Run the following in an elevated PowerShell session:
+
+        ```powershell
+        Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending'
+        Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
+        (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue).PendingFileRenameOperations.Count
+        ```
+
+        A passing result returns `False` for both paths and no pending file rename operations. A failing result returns `True` for either.
+
+        Compare the running build against the update history to see whether staged updates have actually taken effect:
+
+        ```powershell
+        $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+        '{0}.{1}' -f $cv.CurrentBuildNumber, $cv.UBR
+        Get-CimInstance Win32_QuickFixEngineering | Sort-Object InstalledOn -Descending | Select-Object -First 5
+        ```
+      remediation:
+        - id: gui
+          desc: |
+            **Using the Settings app**
+
+            1. Open **Settings** > **Windows Update**.
+            2. If the page shows **Restart now** or **Restart required**, schedule or take the restart.
+            3. After the host returns, click **Check for updates** and install anything newly applicable. Updates that were blocked by the pending transaction typically become available immediately.
+            4. Repeat until no further updates are offered.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Confirm the pending state, then restart:
+
+            ```powershell
+            Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending'
+            Restart-Computer -Force
+            ```
+
+            After the restart, verify the transaction committed and pick up newly applicable updates:
+
+            ```powershell
+            Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending'
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+            ```
+
+            If the flag survives a restart, the component store transaction is stuck and needs repair:
+
+            ```powershell
+            DISM /Online /Cleanup-Image /RestoreHealth
+            sfc /scannow
+            ```
+        - id: script
+          desc: |
+            **Using a PowerShell script**
+
+            ```powershell
+            #Requires -RunAsAdministrator
+            param([switch]$Force)
+
+            $indicators = @{
+                'CBS RebootPending'  = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending'
+                'WU RebootRequired'  = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
+            }
+
+            $pending = $false
+            foreach ($name in $indicators.Keys) {
+                if (Test-Path $indicators[$name]) {
+                    Write-Output "$name is set."
+                    $pending = $true
+                }
+            }
+
+            if (-not $pending) {
+                Write-Output 'No pending reboot; servicing is not blocked.'
+                return
+            }
+
+            $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+            Write-Output ("Current build {0}.{1}. A restart is required to commit staged updates." -f $cv.CurrentBuildNumber, $cv.UBR)
+
+            if ($Force) {
+                Restart-Computer -Force
+            } else {
+                Write-Output 'Re-run with -Force during a change window, or schedule the restart.'
+            }
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            ```yaml
+            ---
+            - name: Clear pending reboots blocking Windows servicing
+              hosts: windows
+              tasks:
+                - name: Check for a pending reboot
+                  ansible.windows.win_reg_stat:
+                    path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending
+                  register: cbs_pending
+
+                - name: Restart to commit the staged transaction
+                  ansible.windows.win_reboot:
+                    reboot_timeout: 3600
+                  when: cbs_pending.exists
+
+                - name: Install updates unblocked by the restart
+                  ansible.windows.win_updates:
+                    category_names:
+                      - SecurityUpdates
+                      - CriticalUpdates
+                    reboot: true
+                  when: cbs_pending.exists
+            ```
+
+  - uid: windows-update-readiness-datastore-present
+    title: Ensure the Windows Update datastore directories are present
+    impact: 75
+    mql: |
+      file('C:\Windows\SoftwareDistribution').exists
+      file('C:\Windows\System32\catroot2').exists
+      file('C:\Windows\Logs\CBS').exists
+    docs:
+      desc: |
+        This check verifies the working directories the update stack requires. `SoftwareDistribution` holds the agent's detection database and downloaded payloads, `catroot2` holds the cryptographic catalog database used to validate package signatures, and `Logs\CBS` receives the servicing engine's transaction log.
+
+        Renaming or deleting `SoftwareDistribution` and `catroot2` is the standard Windows Update reset, and the services recreate them on next start. The failure mode is a reset left half-finished: the directories are renamed but the services are never restarted, or a script removes them and a permissions problem prevents recreation. The agent then cannot store detection results or validate signatures.
+
+        A missing `catroot2` is the more subtle of the two. Detection can still succeed while every package is rejected as untrusted, which surfaces as repeated download or install failures rather than an obvious error.
+
+        **Why this matters**
+
+        - **Confirms resets completed:** a renamed directory with no service restart leaves the agent with nowhere to work.
+        - **Preserves signature validation:** without the catalog database, valid packages are rejected.
+        - **Keeps servicing diagnosable:** the CBS log is the only detailed record of what the servicing engine did.
+
+        **Risk mitigation**
+
+        - **Restores detection and download:** the agent regains its database and payload cache.
+        - **Prevents silent install failures:** signature validation works, so packages are accepted.
+      audit: |
+        Run the following in an elevated PowerShell session:
+
+        ```powershell
+        'C:\Windows\SoftwareDistribution', 'C:\Windows\System32\catroot2', 'C:\Windows\Logs\CBS' |
+          ForEach-Object { [pscustomobject]@{ Path = $_; Exists = (Test-Path $_) } }
+        ```
+
+        A passing result shows `Exists` of `True` for all three.
+
+        Look for leftovers from an interrupted reset:
+
+        ```powershell
+        Get-ChildItem C:\Windows -Filter 'SoftwareDistribution*'
+        Get-ChildItem C:\Windows\System32 -Filter 'catroot2*'
+        ```
+
+        Directories named `SoftwareDistribution.old` or similar, with no current directory beside them, indicate a reset that never completed.
+      remediation:
+        - id: gui
+          desc: |
+            **Using File Explorer and the Services console**
+
+            1. Press `Win+R`, type `services.msc`, and press Enter.
+            2. Stop **Windows Update**, **Background Intelligent Transfer Service**, and **Cryptographic Services**.
+            3. In File Explorer, confirm whether `C:\Windows\SoftwareDistribution` and `C:\Windows\System32\catroot2` exist. Leave any `.old` copies in place for now.
+            4. Return to the Services console and start **Cryptographic Services**, then **Background Intelligent Transfer Service**, then **Windows Update**. Windows recreates both directories on start.
+            5. Confirm both directories now exist, then delete the `.old` copies to reclaim space.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Restarting the services recreates the directories:
+
+            ```powershell
+            Stop-Service wuauserv, bits, cryptsvc -Force
+            Start-Service cryptsvc, bits, wuauserv
+            Test-Path C:\Windows\SoftwareDistribution, C:\Windows\System32\catroot2
+            ```
+
+            If they are still missing, create them and let the services repopulate:
+
+            ```powershell
+            New-Item -ItemType Directory -Path C:\Windows\SoftwareDistribution -Force
+            New-Item -ItemType Directory -Path C:\Windows\System32\catroot2 -Force
+            Restart-Service cryptsvc, bits, wuauserv
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+            ```
+        - id: script
+          desc: |
+            **Using a PowerShell script**
+
+            ```powershell
+            #Requires -RunAsAdministrator
+
+            $required = @(
+                'C:\Windows\SoftwareDistribution'
+                'C:\Windows\System32\catroot2'
+                'C:\Windows\Logs\CBS'
+            )
+
+            $missing = $required | Where-Object { -not (Test-Path $_) }
+            if (-not $missing) {
+                Write-Output 'All update datastore directories are present.'
+                return
+            }
+
+            Write-Output "Missing: $($missing -join ', ')"
+            Stop-Service wuauserv, bits, cryptsvc -Force -ErrorAction SilentlyContinue
+
+            foreach ($path in $missing) {
+                New-Item -ItemType Directory -Path $path -Force | Out-Null
+                Write-Output "Created $path"
+            }
+
+            Start-Service cryptsvc, bits, wuauserv
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+
+            $required | ForEach-Object { Write-Output ("{0} exists: {1}" -f $_, (Test-Path $_)) }
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            ```yaml
+            ---
+            - name: Ensure Windows Update datastore directories exist
+              hosts: windows
+              tasks:
+                - name: Stop the update services
+                  ansible.windows.win_service:
+                    name: "{{ item }}"
+                    state: stopped
+                  loop: [wuauserv, bits, cryptsvc]
+
+                - name: Create the datastore directories
+                  ansible.windows.win_file:
+                    path: "{{ item }}"
+                    state: directory
+                  loop:
+                    - C:\Windows\SoftwareDistribution
+                    - C:\Windows\System32\catroot2
+                    - C:\Windows\Logs\CBS
+
+                - name: Start the update services
+                  ansible.windows.win_service:
+                    name: "{{ item }}"
+                    state: started
+                  loop: [cryptsvc, bits, wuauserv]
+            ```
+
+  - uid: windows-update-readiness-component-store-healthy
+    title: Ensure the Windows component store reports no corruption
+    impact: 75
+    mql: |
+      powershell("if ((Repair-WindowsImage -Online -CheckHealth).ImageHealthState -eq 'Healthy') { 'True' } else { 'False' }").stdout.trim == 'True'
+    docs:
+      desc: |
+        This check verifies the component store (WinSxS) reports no detected corruption. The store holds every servicing component on the host, and the servicing engine refuses to apply cumulative updates on top of a store it knows is damaged. The check reads the health flag that previous servicing operations set, which is fast; it does not perform a full scan.
+
+        Corruption is where the hardest update failures live. An update downloads, begins installing, fails partway, and reverts on restart, leaving the host at its previous build with a successful-looking history entry. Repeating the install repeats the failure, because the blocker is the store rather than the package.
+
+        Interrupted updates, storage errors, running out of space mid-servicing, and forced restarts during a commit are the usual causes.
+
+        **Why this matters**
+
+        - **Explains updates that install and revert:** a corrupt store fails the commit phase, not the download.
+        - **Detects a blocker retries cannot clear:** reinstalling the same package fails identically until the store is repaired.
+        - **Cheap to evaluate:** reading the health flag avoids the cost of a full corruption scan.
+
+        **Risk mitigation**
+
+        - **Unblocks cumulative updates:** repairing the store lets subsequent updates apply.
+        - **Prevents deeper damage:** repairing early avoids the point where only an in-place upgrade recovers the host.
+      audit: |
+        Run the following in an elevated PowerShell session. `CheckHealth` reads the recorded flag and returns immediately:
+
+        ```powershell
+        Repair-WindowsImage -Online -CheckHealth | Select-Object ImageHealthState
+        ```
+
+        A passing result reports `Healthy`. A failing result reports `Repairable` or `NonRepairable`.
+
+        When the flag is not `Healthy`, run the full scan to confirm and characterize the damage. This takes several minutes:
+
+        ```powershell
+        DISM /Online /Cleanup-Image /ScanHealth
+        ```
+
+        Review what the servicing engine recorded most recently:
+
+        ```powershell
+        Get-Content C:\Windows\Logs\CBS\CBS.log -Tail 200 |
+          Select-String -Pattern '(?i)(error|corrupt|failed)'
+        ```
+      remediation:
+        - id: gui
+          desc: |
+            **Using an elevated terminal**
+
+            Component store repair has no graphical interface; it runs from an elevated console.
+
+            1. Right-click **Start** and choose **Terminal (Admin)** or **Windows PowerShell (Admin)**.
+            2. Run `DISM /Online /Cleanup-Image /RestoreHealth` and wait for it to finish. It may appear to stall around 20 percent; this is expected.
+            3. Run `sfc /scannow`.
+            4. Restart the host.
+            5. Open **Settings** > **Windows Update** and click **Check for updates** to retry the previously failing update.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Repair the store from Windows Update as the source, then verify protected system files:
+
+            ```powershell
+            DISM /Online /Cleanup-Image /RestoreHealth
+            sfc /scannow
+            Repair-WindowsImage -Online -CheckHealth | Select-Object ImageHealthState
+            ```
+
+            If the host cannot reach Windows Update, supply a source image from installation media matching the host's build:
+
+            ```powershell
+            DISM /Online /Cleanup-Image /RestoreHealth /Source:D:\sources\install.wim:1 /LimitAccess
+            ```
+        - id: script
+          desc: |
+            **Using a PowerShell script**
+
+            ```powershell
+            #Requires -RunAsAdministrator
+            param([string]$SourceWim)
+
+            $state = (Repair-WindowsImage -Online -CheckHealth).ImageHealthState
+            Write-Output "Component store health: $state"
+
+            if ($state -eq 'Healthy') { return }
+
+            if ($state -eq 'NonRepairable') {
+                Write-Warning 'Store reports non-repairable damage. Plan an in-place upgrade or rebuild.'
+            }
+
+            Write-Output 'Attempting repair. This can take 10 to 30 minutes.'
+            if ($SourceWim) {
+                DISM /Online /Cleanup-Image /RestoreHealth /Source:$SourceWim /LimitAccess
+            } else {
+                Repair-WindowsImage -Online -RestoreHealth
+            }
+
+            sfc /scannow
+
+            $after = (Repair-WindowsImage -Online -CheckHealth).ImageHealthState
+            Write-Output "Component store health after repair: $after"
+            if ($after -ne 'Healthy') {
+                Write-Error 'Repair did not restore the store. Review C:\Windows\Logs\CBS\CBS.log.'
+                exit 1
+            }
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            ```yaml
+            ---
+            - name: Repair the Windows component store
+              hosts: windows
+              tasks:
+                - name: Read the recorded component store health flag
+                  ansible.windows.win_shell: |
+                    (Repair-WindowsImage -Online -CheckHealth).ImageHealthState
+                  register: store_health
+                  changed_when: false
+
+                - name: Restore the component store when damage is recorded
+                  ansible.windows.win_shell: DISM /Online /Cleanup-Image /RestoreHealth
+                  when: "'Healthy' not in store_health.stdout"
+                  timeout: 3600
+
+                - name: Verify protected system files
+                  ansible.windows.win_shell: sfc /scannow
+                  when: "'Healthy' not in store_health.stdout"
+                  timeout: 3600
+
+                - name: Restart to complete the repair
+                  ansible.windows.win_reboot:
+                  when: "'Healthy' not in store_health.stdout"
+            ```
+
+  - uid: windows-update-readiness-free-disk-space
+    title: Ensure the system drive has enough free space for updates
+    impact: 70
+    props:
+      - uid: windowsUpdateReadinessMinFreeDiskGB
+        title: Minimum free space in GB required on the system drive to stage and commit a cumulative update
+        mql: |
+          return 10
+    mql: |
+      parse.json(content: powershell("@{ FreeGB = [math]::Floor((Get-PSDrive -Name $env:SystemDrive.Substring(0,1)).Free / 1GB) } | ConvertTo-Json").stdout).params.FreeGB >= props.windowsUpdateReadinessMinFreeDiskGB
+    docs:
+      desc: |
+        This check verifies the system drive has enough free space to stage and commit an update. Cumulative updates expand well beyond their download size: the payload is downloaded, staged into the component store, and the previous component versions are retained so the update can be rolled back. The default threshold of 10 GB accommodates a cumulative update plus a servicing stack update with room for the rollback copy.
+
+        Running out of space mid-servicing is worse than never starting. The commit fails partway, leaving an incomplete transaction that sets the pending-reboot flag and can corrupt the component store, so a capacity problem becomes a servicing problem that outlives the disk cleanup.
+
+        Long-lived servers are the usual victims, and often the update stack is its own worst enemy: `SoftwareDistribution` accumulates payloads and superseded components pile up in WinSxS until the drive that once had ample room no longer does.
+
+        **Why this matters**
+
+        - **Prevents failure during commit:** exhausting space mid-transaction is what corrupts the store.
+        - **Accounts for real space needs:** staging plus rollback retention greatly exceeds the download size.
+        - **Catches self-inflicted exhaustion:** the update cache and superseded components are frequently the largest consumers.
+
+        **Risk mitigation**
+
+        - **Keeps updates atomic:** sufficient headroom lets an update either complete or roll back cleanly.
+        - **Avoids compounding failures:** prevents a capacity issue from becoming component store corruption.
+      audit: |
+        Run the following in an elevated PowerShell session:
+
+        ```powershell
+        Get-PSDrive -Name $env:SystemDrive.Substring(0,1) |
+          Select-Object Name, @{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}}, @{n='UsedGB';e={[math]::Round($_.Used/1GB,1)}}
+        ```
+
+        A passing result shows `FreeGB` at or above your threshold.
+
+        Identify what is consuming the space, starting with the update stack's own caches:
+
+        ```powershell
+        Get-ChildItem C:\Windows\SoftwareDistribution\Download -Recurse -ErrorAction SilentlyContinue |
+          Measure-Object -Property Length -Sum |
+          Select-Object @{n='DownloadCacheGB';e={[math]::Round($_.Sum/1GB,2)}}
+
+        DISM /Online /Cleanup-Image /AnalyzeComponentStore
+        ```
+
+        The component store analysis reports the actual size of WinSxS and whether cleanup is recommended.
+      remediation:
+        - id: gui
+          desc: |
+            **Using Disk Cleanup**
+
+            1. Press `Win+R`, type `cleanmgr`, and press Enter.
+            2. Select the system drive and click **OK**.
+            3. Click **Clean up system files** and select the system drive again.
+            4. Check **Windows Update Cleanup**, **Delivery Optimization Files**, and **Temporary files**, then click **OK**.
+            5. Confirm free space with **This PC** in File Explorer, and expand the volume if cleanup is not sufficient.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Reclaim superseded components from the component store. This is usually the largest single win and is safe, though it removes the ability to uninstall previously installed updates:
+
+            ```powershell
+            DISM /Online /Cleanup-Image /AnalyzeComponentStore
+            DISM /Online /Cleanup-Image /StartComponentCleanup /ResetBase
+            ```
+
+            Clear the update download cache:
+
+            ```powershell
+            Stop-Service wuauserv, bits -Force
+            Remove-Item C:\Windows\SoftwareDistribution\Download\* -Recurse -Force -ErrorAction SilentlyContinue
+            Start-Service bits, wuauserv
+            ```
+        - id: script
+          desc: |
+            **Using a PowerShell script**
+
+            ```powershell
+            #Requires -RunAsAdministrator
+            param([int]$MinFreeGB = 10)
+
+            $letter = $env:SystemDrive.Substring(0, 1)
+            function Get-FreeGB { [math]::Floor((Get-PSDrive -Name $letter).Free / 1GB) }
+
+            Write-Output "Free space before cleanup: $(Get-FreeGB) GB (threshold $MinFreeGB GB)"
+            if ((Get-FreeGB) -ge $MinFreeGB) { return }
+
+            Write-Output 'Clearing the Windows Update download cache.'
+            Stop-Service wuauserv, bits -Force -ErrorAction SilentlyContinue
+            Remove-Item "$env:SystemRoot\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue
+            Start-Service bits, wuauserv
+
+            Write-Output 'Removing superseded components from the component store.'
+            DISM /Online /Cleanup-Image /StartComponentCleanup /ResetBase
+
+            $free = Get-FreeGB
+            Write-Output "Free space after cleanup: $free GB"
+            if ($free -lt $MinFreeGB) {
+                Write-Error "Still below $MinFreeGB GB. Expand the volume or relocate data before updating."
+                exit 1
+            }
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            ```yaml
+            ---
+            - name: Reclaim system drive space for Windows updates
+              hosts: windows
+              vars:
+                min_free_gb: 10
+              tasks:
+                - name: Measure free space on the system drive
+                  ansible.windows.win_shell: |
+                    [math]::Floor((Get-PSDrive -Name $env:SystemDrive.Substring(0,1)).Free / 1GB)
+                  register: free_gb
+                  changed_when: false
+
+                - name: Clear the Windows Update download cache
+                  ansible.windows.win_shell: |
+                    Stop-Service wuauserv, bits -Force
+                    Remove-Item "$env:SystemRoot\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue
+                    Start-Service bits, wuauserv
+                  when: free_gb.stdout | trim | int < min_free_gb
+
+                - name: Remove superseded components from the component store
+                  ansible.windows.win_shell: DISM /Online /Cleanup-Image /StartComponentCleanup /ResetBase
+                  when: free_gb.stdout | trim | int < min_free_gb
+                  timeout: 3600
+            ```

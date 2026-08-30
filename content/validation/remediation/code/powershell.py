@@ -89,17 +89,27 @@ EXTERNAL_MODULES = {
     r"ComputerRestorePoint|ItemPropertyValue)": "Windows-only modules",
 }
 
-# Provider-supplied *dynamic* parameters. These are contributed by a PowerShell
-# provider rather than declared on the cmdlet, so `Get-Command` cannot see them
-# anywhere the provider is absent — `Set-ItemProperty -Type` is real on Windows
-# (the Registry provider adds it) and invisible on Linux and macOS, which is
-# where this validator runs. Without this list the CI runner reports a valid
-# Windows snippet as broken.
+# Parameters that exist on Windows but are invisible to `Get-Command` on the
+# Linux and macOS hosts this validator runs on. Without this list the CI runner
+# reports a valid Windows snippet as broken. Two causes, same remedy:
+#
+# Provider-supplied *dynamic* parameters, contributed by a PowerShell provider
+# rather than declared on the cmdlet, so they vanish wherever the provider is
+# absent — `Set-ItemProperty -Type` is real on Windows because the Registry
+# provider adds it.
+#
+# Parameters compiled out of a cmdlet on non-Windows builds. `New-Object` still
+# advertises its `Com` parameter set off-Windows, but `-ComObject` itself is gone
+# — and COM is the only way to reach the Windows Update Agent, which exposes no
+# cmdlet. `Restart-Computer` keeps only the common parameters off-Windows, losing
+# `-Force` along with `-ComputerName` and the rest of its Windows surface.
 DYNAMIC_PARAMETERS = {
     "set-itemproperty": {"type"},
     "get-itemproperty": {"type"},
     "new-itemproperty": {"type"},
     "get-childitem": {"type"},
+    "new-object": {"comobject"},
+    "restart-computer": {"force"},
 }
 
 # Parameters are only checked for commands from modules that ship with
@@ -124,7 +134,7 @@ BUILTIN_MODULES = {
 # Verb-Noun nor Get-Command applies.
 NATIVE_EXECUTABLES = {
     "auditpol", "secedit", "gpupdate", "gpresult", "winget", "mbr2gpt", "reg",
-    "netsh", "sc", "wmic", "bcdedit", "dism", "wevtutil", "icacls", "cipher",
+    "netsh", "sc", "wmic", "bcdedit", "dism", "sfc", "wevtutil", "icacls", "cipher",
     "takeown", "cmd", "powershell", "pwsh", "net", "certutil", "fsutil",
     "diskpart", "schtasks", "shutdown", "slmgr", "manage-bde", "nltest",
     "klist", "whoami", "where", "findstr", "tasklist", "taskkill",
