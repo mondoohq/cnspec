@@ -36486,22 +36486,11 @@ queries:
             }
             ```
 
-            For the legacy `google_notebooks_instance` resource:
-
-            ```hcl
-            resource "google_notebooks_instance" "default" {
-              name         = "notebook-private"
-              location     = "us-central1-a"
-              machine_type = "e2-medium"
-
-              vm_image {
-                project      = "deeplearning-platform-release"
-                image_family = "tf-latest-cpu"
-              }
-
-              no_public_ip = true
-            }
-            ```
+            The google provider removed `google_notebooks_instance` in 8.0, so a
+            configuration still declaring a legacy Notebooks instance has to move to
+            `google_workbench_instance` before it can be planned at all. The check itself
+            still judges both resource types, because a state file written by an earlier
+            provider version can carry either.
         - id: console
           desc: |
             To disable the public IP on a Vertex AI Workbench instance using the Google Cloud Console:
@@ -43994,7 +43983,7 @@ queries:
         values['network_spec'] != empty &&
         values['network_spec'].all(_['network'] != null && _['network'] != "")
       )
-  # No Terraform variants for the runtime resource: google_workbench_instance gen-2 stores its service account in a nested gce_setup.service_accounts block; the Terraform coverage below targets the legacy google_notebooks_instance whose flat service_account argument matches the runtime notebooksService.instances resource this check evaluates.
+  # The Terraform variants judge both Workbench resources: google_workbench_instance carries its service account in a nested gce_setup.service_accounts block, while the legacy google_notebooks_instance uses a flat service_account argument. The google provider removed the legacy resource in 8.0, so only the Workbench form can still be written, but plan and state documents from earlier provider versions carry either.
   - uid: mondoo-gcp-security-workbench-instance-no-default-service-account
     title: Ensure Vertex AI Workbench instances use a non-default service account
     impact: 70
@@ -44045,7 +44034,7 @@ queries:
 
         A purpose-built service account restricts that reach to the APIs and buckets the notebook workflow genuinely needs, which bounds the damage from compromised notebook code. It also makes the audit trail readable: actions taken by a per-workload account identify the workflow that took them, where actions by the shared default account identify nothing.
 
-        The service account is chosen when the instance is created and cannot be changed on a running instance, so remediation means creating a replacement with `gcloud workbench instances create --service-account-email`, or `service_account` on a `google_notebooks_instance` resource in Terraform, then migrating the work and deleting the original.
+        The service account is chosen when the instance is created and cannot be changed on a running instance, so remediation means creating a replacement with `gcloud workbench instances create --service-account-email`, or a `google_workbench_instance` resource carrying a `service_accounts` block in Terraform, then migrating the work and deleting the original.
       audit: |
         ### Audit via Console
 
@@ -44085,22 +44074,25 @@ queries:
             ```
         - id: terraform
           desc: |
-            To assign a dedicated service account to a legacy Notebooks instance in Terraform, set `service_account` on the `google_notebooks_instance` resource:
+            To assign a dedicated service account to a Workbench instance in Terraform, set `email` on a `service_accounts` block inside `gce_setup`:
 
             ```hcl
-            resource "google_notebooks_instance" "example" {
-              name         = "example-instance"
-              location     = "us-central1-a"
-              machine_type = "e2-medium"
+            resource "google_workbench_instance" "example" {
+              name     = "example-instance"
+              location = "us-central1-a"
 
-              vm_image {
-                project      = "deeplearning-platform-release"
-                image_family = "tf-latest-cpu"
+              gce_setup {
+                machine_type = "e2-medium"
+
+                service_accounts {
+                  email = google_service_account.notebook.email
+                }
               }
-
-              service_account = google_service_account.notebook.email
             }
             ```
+
+            The service account is fixed at creation, so an existing instance has to be
+            replaced rather than edited in place.
     refs:
       - url: https://cloud.google.com/vertex-ai/docs/workbench/instances/manage-identity
         title: Manage identity and access for Vertex AI Workbench instances
@@ -44111,22 +44103,55 @@ queries:
         serviceAccount != empty && serviceAccount.contains("-compute@developer.gserviceaccount.com") == false
       )
   - uid: mondoo-gcp-security-workbench-instance-no-default-service-account-terraform-hcl
-    filters: asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_notebooks_instance')
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_workbench_instance' || nameLabel == 'google_notebooks_instance')
     mql: |
+      terraform.resources('google_workbench_instance').all(
+        blocks.where(type == 'gce_setup') != empty &&
+        blocks.where(type == 'gce_setup').all(
+          blocks.where(type == 'service_accounts') != empty &&
+          blocks.where(type == 'service_accounts').all(
+            arguments['email'] != null && arguments['email'] != "" &&
+            arguments['email'].contains("-compute@developer.gserviceaccount.com") == false
+          )
+        )
+      )
       terraform.resources('google_notebooks_instance').all(
         arguments['service_account'] != null && arguments['service_account'] != "" &&
         arguments['service_account'].contains("-compute@developer.gserviceaccount.com") == false
       )
   - uid: mondoo-gcp-security-workbench-instance-no-default-service-account-terraform-plan
-    filters: asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_notebooks_instance')
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_workbench_instance' || type == 'google_notebooks_instance')
     mql: |
+      terraform.plan.resourceChanges.where(type == 'google_workbench_instance').all(
+        change.after['gce_setup'] != empty &&
+        change.after['gce_setup'].all(
+          _['service_accounts'] != empty &&
+          _['service_accounts'].all(
+            _['email'] != null && _['email'] != "" &&
+            _['email'].contains("-compute@developer.gserviceaccount.com") == false
+          )
+        )
+      )
       terraform.plan.resourceChanges.where(type == 'google_notebooks_instance').all(
         change.after['service_account'] != null && change.after['service_account'] != "" &&
         change.after['service_account'].contains("-compute@developer.gserviceaccount.com") == false
       )
   - uid: mondoo-gcp-security-workbench-instance-no-default-service-account-terraform-state
-    filters: asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_notebooks_instance')
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_workbench_instance' || type == 'google_notebooks_instance')
     mql: |
+      terraform.state.resources.where(type == 'google_workbench_instance').all(
+        values['gce_setup'] != empty &&
+        values['gce_setup'].all(
+          _['service_accounts'] != empty &&
+          _['service_accounts'].all(
+            _['email'] != null && _['email'] != "" &&
+            _['email'].contains("-compute@developer.gserviceaccount.com") == false
+          )
+        )
+      )
       terraform.state.resources.where(type == 'google_notebooks_instance').all(
         values['service_account'] != null && values['service_account'] != "" &&
         values['service_account'].contains("-compute@developer.gserviceaccount.com") == false
