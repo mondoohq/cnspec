@@ -1122,8 +1122,29 @@ def main():
             workers = int(args[i + 1])
             i += 1
         elif args[i] == "--shard" and i + 1 < len(args):
-            index_str, _, total_str = args[i + 1].partition("/")
-            shard = (int(index_str), int(total_str or 1))
+            # A malformed or out-of-range shard has to be loud. Every failure
+            # mode here ends with the script validating nothing and exiting 0,
+            # which reads as a green run that checked the whole corpus.
+            spec = args[i + 1]
+            index_str, _, total_str = spec.partition("/")
+            try:
+                shard = (int(index_str), int(total_str or 1))
+            except ValueError:
+                print(
+                    f"Error: --shard wants I/N with whole numbers, got {spec!r}",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+            shard_index, shard_total = shard
+            if shard_total < 1 or not 0 <= shard_index < shard_total:
+                print(
+                    f"Error: --shard index must be within [0, {shard_total}), "
+                    f"got {shard_index}/{shard_total}. Out of range, no block "
+                    f"matches and the run would pass without validating "
+                    f"anything.",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
             i += 1
         else:
             positional.append(args[i])
