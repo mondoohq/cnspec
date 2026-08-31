@@ -824,7 +824,15 @@ def validate_block(
         # tflint has already seen the snippet as written. terraform validate
         # gets a copy with dangling references neutralized, in its own
         # directory so the tflint run is not affected by the substitution.
-        if terraform_available():
+        #
+        # The mirror only carries PROVIDER_MAP, and init reads it through
+        # -plugin-dir, which never reaches the network. A snippet that needs a
+        # provider outside the map -- a community provider a resource is only
+        # available from, say -- can therefore never be initialized, and the
+        # schema pass would report that as a fault in the snippet. Such a
+        # snippet keeps its tflint coverage and skips the schema check, which
+        # is the same deal every provider had before PROVIDER_MAP existed.
+        if terraform_available() and all(p in PROVIDER_MAP for p in providers):
             tf_dir = tmp_path / "tfvalidate"
             tf_dir.mkdir()
             (tf_dir / "main.tf").write_text(
