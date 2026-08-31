@@ -183,9 +183,38 @@ jobs:
       - name: Validate remediation commands
         run: python3 content/validation/remediation/commands/validate.py --github-actions
 
-  validate-terraform:
+  # The fan-out lives in one place: SHARD_TOTAL below. The matrix indices and
+  # the I/N the validator is called with are both derived from it, so adding a
+  # shard is a one-number change. Splitting them across a literal list and a
+  # literal denominator lets the two drift, and a denominator larger than the
+  # number of jobs silently leaves snippets unvalidated.
+  plan-terraform-shards:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SHARD_TOTAL: 6
+    outputs:
+      indices: ${{ steps.plan.outputs.indices }}
+      total: ${{ steps.plan.outputs.total }}
+    steps:
+      - id: plan
+        run: |
+          echo "total=$SHARD_TOTAL" >> "$GITHUB_OUTPUT"
+          echo "indices=$(jq -nc --argjson n "$SHARD_TOTAL" '[range($n)]')" >> "$GITHUB_OUTPUT"
+
+  validate-terraform:
+    needs: plan-terraform-shards
+    runs-on: ubuntu-latest
+    # A shard validates ~260 snippets. Each one costs a `terraform init` plus a
+    # `terraform validate` against the provider schema, roughly 12 seconds of
+    # wall time, and the script runs 8 of them at a time: about 7 minutes of
+    # work per shard. Twenty minutes leaves room for the provider mirror and a
+    # slow runner without letting a stuck shard hold the run open.
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan-terraform-shards.outputs.indices) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -221,7 +250,7 @@ jobs:
           # would break every diagnostic it is here to collect.
           terraform_wrapper: false
 
-      - name: Validate terraform remediation blocks
+      - name: Validate terraform remediation blocks (shard ${{ matrix.shard }})
         env:
           # `tflint --init` downloads ruleset plugins from GitHub releases.
           # Without an authenticated token it uses the 60-request/hour
@@ -229,7 +258,13 @@ jobs:
           # plugin init and fails the google/azurerm rulesets. The token
           # raises the limit to 5000/hour.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 content/validation/remediation/code/terraform.py --github-actions
+        # Both values come from plan-terraform-shards, which produces them
+        # from integers, so no untrusted input reaches the shell. The validator
+        # rejects an index outside [0, total) rather than validating nothing.
+        run: |
+          python3 content/validation/remediation/code/terraform.py \
+            --github-actions \
+            --shard ${{ matrix.shard }}/${{ needs.plan-terraform-shards.outputs.total }}
 
   validate-cloudformation:
     runs-on: ubuntu-latest

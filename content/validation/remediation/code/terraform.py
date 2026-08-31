@@ -824,7 +824,15 @@ def validate_block(
         # tflint has already seen the snippet as written. terraform validate
         # gets a copy with dangling references neutralized, in its own
         # directory so the tflint run is not affected by the substitution.
-        if terraform_available():
+        #
+        # The mirror only carries PROVIDER_MAP, and init reads it through
+        # -plugin-dir, which never reaches the network. A snippet that needs a
+        # provider outside the map -- a community provider a resource is only
+        # available from, say -- can therefore never be initialized, and the
+        # schema pass would report that as a fault in the snippet. Such a
+        # snippet keeps its tflint coverage and skips the schema check, which
+        # is the same deal every provider had before PROVIDER_MAP existed.
+        if terraform_available() and all(p in PROVIDER_MAP for p in providers):
             tf_dir = tmp_path / "tfvalidate"
             tf_dir.mkdir()
             (tf_dir / "main.tf").write_text(
@@ -989,15 +997,33 @@ def build_provider_mirror(
 
 
 def validate_policy_file(
-    filepath: Path, plugin_cache: Path, workers: int
+    filepath: Path, plugin_cache: Path, workers: int,
+    shard: tuple[int, int] = (0, 1), seen: list[int] | None = None,
 ) -> tuple[int, int]:
-    """Validate all terraform blocks in a policy file."""
+    """Validate all terraform blocks in a policy file.
+
+    `shard` is (index, total). Blocks are handed out round-robin against a
+    counter that runs across every target file, so each shard gets an even
+    slice no matter how the blocks are distributed over the files. Every shard
+    walks the same targets in the same order, which makes the split identical
+    in each job without them having to agree on anything at run time.
+    """
     if not filepath.exists():
         print(f"Warning: Policy file not found: {filepath}", file=sys.stderr)
         return 0, 0
 
     content = filepath.read_text()
     blocks = extract_hcl_blocks(content, filepath)
+
+    shard_index, shard_total = shard
+    if shard_total > 1:
+        counter = seen if seen is not None else [0]
+        selected = []
+        for b in blocks:
+            if counter[0] % shard_total == shard_index:
+                selected.append(b)
+            counter[0] += 1
+        blocks = selected
 
     if not blocks:
         return 0, 0
@@ -1093,6 +1119,7 @@ def main():
     github_actions = False
     workers = 8
     target = "all"
+    shard = (0, 1)
 
     positional = []
     i = 0
@@ -1101,6 +1128,31 @@ def main():
             github_actions = True
         elif args[i] == "--workers" and i + 1 < len(args):
             workers = int(args[i + 1])
+            i += 1
+        elif args[i] == "--shard" and i + 1 < len(args):
+            # A malformed or out-of-range shard has to be loud. Every failure
+            # mode here ends with the script validating nothing and exiting 0,
+            # which reads as a green run that checked the whole corpus.
+            spec = args[i + 1]
+            index_str, _, total_str = spec.partition("/")
+            try:
+                shard = (int(index_str), int(total_str or 1))
+            except ValueError:
+                print(
+                    f"Error: --shard wants I/N with whole numbers, got {spec!r}",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+            shard_index, shard_total = shard
+            if shard_total < 1 or not 0 <= shard_index < shard_total:
+                print(
+                    f"Error: --shard index must be within [0, {shard_total}), "
+                    f"got {shard_index}/{shard_total}. Out of range, no block "
+                    f"matches and the run would pass without validating "
+                    f"anything.",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
             i += 1
         else:
             positional.append(args[i])
@@ -1114,7 +1166,7 @@ def main():
         print(
             f"Unknown target: {target}\n"
             f"Usage: {sys.argv[0]} [{'|'.join(valid_targets)}] "
-            f"[--github-actions] [--workers N]",
+            f"[--github-actions] [--workers N] [--shard I/N]",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -1137,9 +1189,14 @@ def main():
             TARGETS.keys() if target == "all" else [target]
         )
 
+        # One counter for the whole run: the round-robin split has to continue
+        # across file boundaries, or a shard would re-take block 0 of every file.
+        seen = [0]
         for t in targets_to_run:
             for filepath in TARGETS[t]:
-                p, f = validate_policy_file(filepath, plugin_cache, workers)
+                p, f = validate_policy_file(
+                    filepath, plugin_cache, workers, shard, seen
+                )
                 total_pass += p
                 total_fail += f
 
