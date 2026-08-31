@@ -32,9 +32,10 @@ jobs:
           # Determine which version should be released based on event type
           VERSION: ${{ (github.event_name == 'workflow_dispatch' && inputs.version) || github.event.client_payload.version }}
         run: |
-          # Semantic Versioning regex (with optional 'v' prefix)
-          if [[ ! "$VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Error: Version is not a valid semantic version."
+          # Semantic Versioning regex (with optional 'v' prefix, optional
+          # pre-release identifier like -rc.1, -pre.2, -alpha, -beta).
+          if [[ ! "$VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Error: Version is not a valid semantic version: $VERSION"
             exit 1
           fi
           echo "Version: $VERSION"
@@ -104,6 +105,7 @@ jobs:
       - name: Bump mql
         env:
           MQL_VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           # Take the module path from the branch we are bumping: support
           # branches import go.mondoo.com/mql/v{major}, while main tracks
@@ -114,7 +116,25 @@ jobs:
             echo "Could not find an mql import in go.mod"
             exit 1
           fi
-          go get "${MQL_MODULE}@${MQL_VERSION}"
+          # Two cases:
+          #  - mql module path is versioned (e.g. go.mondoo.com/mql/v13):
+          #    go accepts a v13.x.y semver reference directly.
+          #  - mql module path is unversioned (e.g. go.mondoo.com/mql):
+          #    Go rejects v2+ semver references ("major version must be
+          #    compatible: should be v0 or v1"). Resolve the tag to a
+          #    commit SHA and use a pseudo-version instead. This matches
+          #    what cnspec/main is already doing today.
+          if [[ "${MQL_MODULE}" =~ /v[0-9]+$ ]]; then
+            REF="${MQL_VERSION}"
+          else
+            REF=$(gh api "/repos/mondoohq/mql/git/refs/tags/${MQL_VERSION}" --jq '.object.sha')
+            if [ -z "${REF}" ]; then
+              echo "Could not resolve ${MQL_VERSION} to a commit SHA on mondoohq/mql"
+              exit 1
+            fi
+            echo "Resolved ${MQL_VERSION} -> ${REF} (unversioned mql module path)"
+          fi
+          go get "${MQL_MODULE}@${REF}"
           go mod tidy
           echo "${MQL_VERSION}" > VERSION
 
