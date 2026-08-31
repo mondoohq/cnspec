@@ -1,0 +1,81 @@
+name: Auto-tag after mql bump
+
+# Fires when a "🧹 Bump mql to <version>" PR from cnquery-update.yml
+# merges into main (or a v{major} support branch). Extracts the version
+# from the bump branch name and tags the base branch with the same
+# version, which kicks off goreleaser.yml just like a manual tag push.
+#
+# Skipped when:
+#  - the PR was closed without merging;
+#  - the merged branch doesn't match `version/mql_update_v*`;
+#  - a tag with the same name already exists (idempotent — safe to
+#    reuse the branch, safe to re-run).
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main, v13]
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    if: >-
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'version/mql_update_')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract version from bump branch
+        id: version
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          # version/mql_update_v14.0.0-rc.1  ->  v14.0.0-rc.1
+          VERSION="${HEAD_REF#version/mql_update_}"
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Bump branch '${HEAD_REF}' did not yield a valid semver: '${VERSION}'"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      # Use the mergebot app token so the tag push triggers goreleaser.yml.
+      # GITHUB_TOKEN-authored pushes don't fire further workflow_run/push
+      # events, so we'd tag but goreleaser would never build it.
+      - name: Generate mergebot token
+        id: token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.MONDOO_MERGEBOT_APP_ID }}
+          private-key: ${{ secrets.MONDOO_MERGEBOT_APP_PRIVATE_KEY }}
+          owner: mondoohq
+          repositories: cnspec
+
+      - name: Checkout base branch (post-merge)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          fetch-depth: 0
+          token: ${{ steps.token.outputs.token }}
+
+      - name: Skip if tag exists
+        id: check
+        env:
+          TAG: ${{ steps.version.outputs.version }}
+        run: |
+          if git rev-parse --verify --quiet "refs/tags/${TAG}" >/dev/null; then
+            echo "::notice::Tag ${TAG} already exists — skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Tag and push
+        if: ${{ steps.check.outputs.skip != 'true' }}
+        env:
+          TAG: ${{ steps.version.outputs.version }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git config user.email "tools@mondoo.com"
+          git config user.name "Mondoo Tools"
+          git tag -m "cnspec ${TAG}" "${TAG}"
+          echo "::notice::Tagging ${BASE} as ${TAG}"
+          git push origin "${TAG}"
