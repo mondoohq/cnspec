@@ -343,6 +343,7 @@ WORKFLOW_TOOLS = [
     ("ansible-lint", "ANSIBLE_LINT_VERSION", lambda: latest_pypi("ansible-lint")),
     ("cookstyle", "COOKSTYLE_VERSION", lambda: latest_rubygem("cookstyle")),
     ("tflint", "TFLINT_VERSION", lambda: latest_github_release("terraform-linters/tflint")),
+    ("terraform", "TERRAFORM_VERSION", lambda: latest_github_release("hashicorp/terraform")),
 ]
 
 # Tools downloaded as a release artifact and verified against a checksum.
