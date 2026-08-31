@@ -24,7 +24,7 @@ resource "azurerm_monitor_diagnostic_setting" "example" {
   target_resource_id         = azurerm_storage_account.example.id
   log_analytics_workspace_id = azurerm_log_analytics_workspace.example.id
 
-  metric {
+  enabled_metric {
     category = "AllMetrics"
   }
 }

@@ -20,7 +20,7 @@ resource "azurerm_monitor_diagnostic_setting" "example" {
     category = "ServiceLog"
   }
 
-  metric {
+  enabled_metric {
     category = "AllMetrics"
   }
 }

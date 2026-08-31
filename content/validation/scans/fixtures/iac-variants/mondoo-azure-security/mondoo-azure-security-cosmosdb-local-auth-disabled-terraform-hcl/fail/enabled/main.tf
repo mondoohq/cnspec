@@ -5,7 +5,7 @@ resource "azurerm_cosmosdb_account" "example" {
   offer_type          = "Standard"
   kind                = "GlobalDocumentDB"
 
-  local_authentication_disabled = false
+  local_authentication_enabled = true
 
   consistency_policy {
     consistency_level = "Session"

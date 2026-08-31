@@ -10,8 +10,8 @@ resource "azurerm_kubernetes_cluster" "example" {
     vm_size    = "Standard_D2s_v3"
   }
 
-  azure_key_vault_kms {
-    enabled  = true
+  key_management_service {
+    enabled          = true
     key_vault_key_id = azurerm_key_vault_key.example.id
   }
 
