@@ -124,6 +124,12 @@ policies:
           - uid: mondoo-aws-security-iam-instance-role-no-admin-access
           - uid: mondoo-aws-security-iam-role-trust-policy-no-public-principals
           - uid: mondoo-aws-security-iam-role-cross-account-trust-scoped
+          - uid: mondoo-aws-security-iam-root-not-recently-used
+          - uid: mondoo-aws-security-iam-user-no-unused-initial-access-key
+          - uid: mondoo-aws-security-iam-user-no-long-lived-service-credentials
+          - uid: mondoo-aws-security-iam-user-hardware-mfa
+          - uid: mondoo-aws-security-iam-admin-access-requires-mfa
+          - uid: mondoo-aws-security-iam-securityaudit-role-exists
       - title: AWS Lambda Function
         checks:
           - uid: mondoo-aws-security-lambda-concurrency-check
@@ -49315,35 +49321,15 @@ queries:
   - uid: mondoo-aws-security-iam-unused-credentials-disabled-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.iam.credentialReport.where(
-        passwordEnabled == true &&
-        properties['user'] != "<root_account>" &&
-        passwordLastUsed == null
-      ).length == 0
-      aws.iam.credentialReport.where(
-        passwordEnabled == true &&
-        properties['user'] != "<root_account>" &&
-        passwordLastUsed != null &&
-        time.now - passwordLastUsed > props.mondooAWSSecurityCredentialInactivityThreshold * time.day
-      ).length == 0
-      aws.iam.credentialReport.where(
-        accessKey1Active == true &&
-        accessKey1LastUsedDate == null
-      ).length == 0
-      aws.iam.credentialReport.where(
-        accessKey1Active == true &&
-        accessKey1LastUsedDate != null &&
-        time.now - accessKey1LastUsedDate > props.mondooAWSSecurityCredentialInactivityThreshold * time.day
-      ).length == 0
-      aws.iam.credentialReport.where(
-        accessKey2Active == true &&
-        accessKey2LastUsedDate == null
-      ).length == 0
-      aws.iam.credentialReport.where(
-        accessKey2Active == true &&
-        accessKey2LastUsedDate != null &&
-        time.now - accessKey2LastUsedDate > props.mondooAWSSecurityCredentialInactivityThreshold * time.day
-      ).length == 0
+      aws.iam.credentialReport.where(passwordEnabled == true && isRoot == false).all(
+        passwordInactiveDays <= props.mondooAWSSecurityCredentialInactivityThreshold
+      )
+      aws.iam.credentialReport.where(accessKey1Active == true).all(
+        accessKey1InactiveDays <= props.mondooAWSSecurityCredentialInactivityThreshold
+      )
+      aws.iam.credentialReport.where(accessKey2Active == true).all(
+        accessKey2InactiveDays <= props.mondooAWSSecurityCredentialInactivityThreshold
+      )
   - uid: mondoo-aws-security-iam-instance-role-no-admin-access
     title: Ensure EC2 instance roles do not grant administrator access
     impact: 85
@@ -88689,3 +88675,248 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html
         title: Stop harmful content with Amazon Bedrock Guardrails
+  - uid: mondoo-aws-security-iam-root-not-recently-used
+    title: Ensure the AWS account root user is not used for day-to-day operations
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    props:
+      - uid: mondooAWSSecurityRootInactivityThreshold
+        title: Define the number of days of root inactivity that the account is expected to maintain
+        mql: "1"
+    variants:
+      - uid: mondoo-aws-security-iam-root-not-recently-used-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check verifies that the AWS account root user has not signed in to the console or used an access key within the configured window. The root user holds unrestricted, unrevocable permissions and is exempt from service control policies, so routine use of it removes every guardrail the account otherwise has. Day-to-day work belongs to IAM roles and federated identities; the root user should only be used for the small set of tasks that genuinely require it.
+
+        The check reads the account's credential report and treats a root credential that was never used (`N/A` or `no_information` in the report) as compliant.
+      audit: |
+        Download the credential report with `aws iam generate-credential-report` followed by `aws iam get-credential-report --query Content --output text | base64 -d`, then review the `<root_account>` row. A passing account shows `password_last_used`, `access_key_1_last_used_date`, and `access_key_2_last_used_date` either as `N/A`/`no_information` or older than the configured window.
+      remediation: |
+        Stop using the root user for operations. Create IAM roles or IAM Identity Center permission sets for administrative work, store the root credentials offline, enable MFA on the root user, and alarm on root sign-in with a CloudWatch metric filter on `userIdentity.type = "Root"`.
+  - uid: mondoo-aws-security-iam-root-not-recently-used-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.iam.credentialReport.where(isRoot).all(properties['password_last_used'] == /^(N\/A|no_information)$/ || time.now - passwordLastUsed > props.mondooAWSSecurityRootInactivityThreshold * time.day)
+      aws.iam.credentialReport.where(isRoot).all(properties['access_key_1_last_used_date'] == "N/A" || time.now - accessKey1LastUsedDate > props.mondooAWSSecurityRootInactivityThreshold * time.day)
+      aws.iam.credentialReport.where(isRoot).all(properties['access_key_2_last_used_date'] == "N/A" || time.now - accessKey2LastUsedDate > props.mondooAWSSecurityRootInactivityThreshold * time.day)
+  - uid: mondoo-aws-security-iam-user-no-unused-initial-access-key
+    title: Ensure IAM users have no active access keys that were never used
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-5-18
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    variants:
+      - uid: mondoo-aws-security-iam-user-no-unused-initial-access-key-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check verifies that every active IAM access key has been used at least once. Keys that were created but never used are usually left over from a provisioning step that handed out credentials nobody needed, and they widen the credential surface without serving any workload. They are also the credentials least likely to be noticed when they leak, because no usage pattern exists to compare against.
+
+        The check reads the credential report and flags an active key whose last-used date is reported as `N/A`.
+      audit: |
+        Review the credential report rows for `access_key_1_active` / `access_key_1_last_used_date` (and the `_2_` equivalents). A passing account has a last-used date for every active key.
+      remediation: |
+        Deactivate or delete unused keys with `aws iam update-access-key --access-key-id <id> --status Inactive --user-name <user>` or `aws iam delete-access-key`. Where a workload needs AWS access, prefer an IAM role over a long-lived key.
+  - uid: mondoo-aws-security-iam-user-no-unused-initial-access-key-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.iam.credentialReport.where(accessKey1Active == true).all(properties['access_key_1_last_used_date'] != "N/A")
+      aws.iam.credentialReport.where(accessKey2Active == true).all(properties['access_key_2_last_used_date'] != "N/A")
+  - uid: mondoo-aws-security-iam-user-no-long-lived-service-credentials
+    title: Ensure IAM user access keys are only used for IAM and STS calls
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-5-18
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    variants:
+      - uid: mondoo-aws-security-iam-user-no-long-lived-service-credentials-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check verifies that IAM user access keys are not used to call AWS services directly. A key whose last use was against a service such as S3, EC2, or Lambda indicates a workload or person authenticating with long-lived credentials instead of assuming a role, which is the pattern that turns a single leaked key into standing access. Keys last used against `iam` or `sts` are the accepted exception: that is the role-assumption path.
+
+        The check reads the credential report's `access_key_N_last_used_service` field and treats a never-used key (`N/A`) as compliant here, because `iam-user-no-unused-initial-access-key` covers that case.
+      audit: |
+        Review the `access_key_1_last_used_service` and `access_key_2_last_used_service` columns of the credential report. A passing account shows only `N/A`, `iam`, or `sts`.
+      remediation: |
+        Replace the key with a role: for workloads inside AWS attach an instance profile, task role, or IRSA role; for humans and CI use IAM Identity Center or OIDC federation with `sts:AssumeRoleWithWebIdentity`. Deactivate the key once the caller has migrated.
+  - uid: mondoo-aws-security-iam-user-no-long-lived-service-credentials-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.iam.credentialReport.where(accessKey1Active == true).all(properties['access_key_1_last_used_service'] == /^(N\/A|iam|sts)$/)
+      aws.iam.credentialReport.where(accessKey2Active == true).all(properties['access_key_2_last_used_service'] == /^(N\/A|iam|sts)$/)
+  - uid: mondoo-aws-security-iam-user-hardware-mfa
+    title: Ensure IAM users with console access use a hardware MFA device
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-j
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-4-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    variants:
+      - uid: mondoo-aws-security-iam-user-hardware-mfa-aws
+        tags:
+          mondoo.com/filter-title: AWS IAM User
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check verifies that IAM users who can sign in to the console have a hardware MFA device rather than a virtual (software) authenticator. Virtual MFA seeds live on a general-purpose device that can be compromised, cloned, or restored from a backup along with its secrets; a hardware key keeps the secret in a device that cannot export it and that must be physically present.
+
+        A virtual MFA device is identified by a serial number in ARN form (`arn:aws:iam::<account>:mfa/<user>`), while a hardware device reports the manufacturer's serial number. A user with no MFA device at all fails; `mfa-enabled-for-iam-console-access` covers that case as well.
+      audit: |
+        For each user with a login profile, run `aws iam list-mfa-devices --user-name <user>` and review `SerialNumber`. A passing user shows at least one serial number that is not an ARN.
+      remediation: |
+        Register a FIDO security key or a hardware TOTP token for the user under **Security credentials** in the IAM console, or with `aws iam enable-mfa-device`, then remove the virtual device with `aws iam deactivate-mfa-device`.
+  - uid: mondoo-aws-security-iam-user-hardware-mfa-aws
+    filters: |
+      asset.platform == "aws-iam-user" &&
+      aws.iam.user.loginProfile != empty
+    mql: aws.iam.user.mfaDevices.any(_['SerialNumber'] != /^arn:/)
+  - uid: mondoo-aws-security-iam-admin-access-requires-mfa
+    title: Ensure IAM users with administrator access have MFA enabled
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-j
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-4-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    variants:
+      - uid: mondoo-aws-security-iam-admin-access-requires-mfa-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check verifies that every IAM user with the `AdministratorAccess` managed policy attached has multi-factor authentication enabled. An administrator without MFA is a single stolen password or leaked key away from full control of the account, which is why MFA on privileged identities is the one control that most compliance frameworks state without exception.
+
+        The check correlates the credential report's `mfa_active` field with the policies attached to each user.
+      audit: |
+        List users with `aws iam list-users`, check attached policies with `aws iam list-attached-user-policies --user-name <user>`, and compare against the `mfa_active` column of the credential report.
+      remediation: |
+        Enable MFA for the affected users (`aws iam enable-mfa-device`), or better, remove the standing `AdministratorAccess` attachment and grant administrative permissions through a role that requires MFA to assume, using a trust policy condition on `aws:MultiFactorAuthPresent`.
+  - uid: mondoo-aws-security-iam-admin-access-requires-mfa-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.iam.credentialReport.where(isRoot == false && user != empty).where(
+        user.attachedPolicies.any(name == "AdministratorAccess")
+      ).all(mfaActive == true)
+  - uid: mondoo-aws-security-iam-securityaudit-role-exists
+    title: Ensure a role with the SecurityAudit managed policy exists
+    impact: 30
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-aws-security-iam-securityaudit-role-exists-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-iam-securityaudit-role-exists-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-iam-securityaudit-role-exists-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-iam-securityaudit-role-exists-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that at least one IAM role carries the AWS managed `SecurityAudit` policy. The policy grants the read-only access a security review needs across services, so having a dedicated role for it lets auditors and security tooling work without anyone handing out broader permissions or sharing an administrator identity.
+      audit: |
+        Run `aws iam list-roles` and, for each role, `aws iam list-attached-role-policies --role-name <role>`, looking for `arn:aws:iam::aws:policy/SecurityAudit`.
+      remediation: |
+        Create a role for security review and attach the policy: `aws iam attach-role-policy --role-name <role> --policy-arn arn:aws:iam::aws:policy/SecurityAudit`. Scope the trust policy to the auditors' identity provider or account and require MFA to assume it.
+  - uid: mondoo-aws-security-iam-securityaudit-role-exists-aws
+    filters: asset.platform == "aws"
+    mql: aws.iam.roles.any(attachedPolicies.any(arn == "arn:aws:iam::aws:policy/SecurityAudit"))
+  - uid: mondoo-aws-security-iam-securityaudit-role-exists-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_role_policy_attachment")
+    mql: terraform.resources("aws_iam_role_policy_attachment").any(arguments['policy_arn'] == "arn:aws:iam::aws:policy/SecurityAudit")
+  - uid: mondoo-aws-security-iam-securityaudit-role-exists-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_role_policy_attachment")
+    mql: terraform.plan.resourceChanges.where(type == "aws_iam_role_policy_attachment").any(change.after.policy_arn == "arn:aws:iam::aws:policy/SecurityAudit")
+  - uid: mondoo-aws-security-iam-securityaudit-role-exists-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_iam_role_policy_attachment")
+    mql: terraform.state.resources.where(type == "aws_iam_role_policy_attachment").any(values.policy_arn == "arn:aws:iam::aws:policy/SecurityAudit")
