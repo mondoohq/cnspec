@@ -3560,7 +3560,7 @@ queries:
         values["restrict_pushes"].all(_["blocks_creations"] == true)
       )
   - uid: mondoo-github-repository-security-environment-prevent-self-review
-    title: Ensure environment protection rules prevent self-review
+    title: Ensure protected environments require reviewers and prevent self-review
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
@@ -3596,9 +3596,9 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that deployment environments requiring reviewer approval do not let the person who triggered a deployment approve it themselves.
+        This check verifies that every deployment environment carrying protection rules requires reviewer approval, and that the approval cannot be given by the person who triggered the deployment.
 
-        Deployment environments live under Repository Settings, Environments, and an environment that lists Required reviewers offers Prevent self-review beneath it, which stops the person who triggered a deployment from approving their own run. The check looks at every environment that has at least one protection rule, and for each required reviewers rule it requires prevent self-review to be turned on. The Terraform version of this check reads `prevent_self_review` on a `github_repository_environment` resource and requires the same value.
+        Deployment environments live under Repository Settings, Environments, and an environment that lists Required reviewers offers Prevent self-review beneath it, which stops the person who triggered a deployment from approving their own run. The check looks at every environment that carries at least one protection rule and asks two things of it: that a required reviewers rule is present at all, and that prevent self-review is turned on for that rule. The automatically created `github-pages` environment is out of scope, because GitHub adds it with a branch policy when Pages is switched on rather than an operator choosing to gate a deployment behind approval. The Terraform version of this check reads a `github_repository_environment` resource and requires both a `reviewers` block and `prevent_self_review` set to true.
 
         **Why this matters**
 
@@ -3608,26 +3608,32 @@ queries:
 
         Preventing self-review also keeps the approval meaningful for ordinary changes, since a reviewer reading someone else's diff catches the mistakes the author already looked past.
 
-        The scope is narrow in one respect worth stating: environments with no protection rules at all are outside this check, and an environment whose rules do not include required reviewers passes it. Confirm separately that your production environments actually carry a required reviewers rule, otherwise there is no approval to protect.
+        One boundary is worth stating. An environment with no protection rules at all stays outside this check, because there is no gate to weaken and no reviewer list to subvert. An environment that does carry protection rules but has no required reviewers rule among them fails, since an unreviewed deployment gate is the condition this check exists to catch, and reporting it as a pass would be positive evidence of an approval step that is not there.
       audit: |
         ### Audit via Console
 
         1. Navigate to the repository on GitHub.
         2. Go to **Settings** > **Environments**.
-        3. For each environment with a "Required reviewers" rule, review the **Prevent self-review** setting.
+        3. For each environment that lists any protection rule, other than the automatically created `github-pages` environment, confirm that **Required reviewers** is one of them and review the **Prevent self-review** setting beneath it.
 
-        If every environment that requires reviewers has **Prevent self-review** enabled, the check passes. If any such environment allows self-review, the check fails.
+        If every such environment requires reviewers and has **Prevent self-review** enabled, the check passes. If any of them has no reviewer requirement, or allows self-review, the check fails.
 
         ### Audit via CLI
 
-        1. For each environment, query the self-review setting:
+        1. List every environment that carries protection rules and print the self-review setting of its required reviewers rule:
 
            ```bash
-           gh api /repos/OWNER/REPO/environments/ENVIRONMENT_NAME \
-             --jq '.protection_rules[] | select(.type=="required_reviewers") | .prevent_self_review'
+           gh api /repos/OWNER/REPO/environments \
+             --jq '.environments[]
+                   | select(.name != "github-pages")
+                   | select((.protection_rules | length) > 0)
+                   | {name,
+                      self_review: [.protection_rules[]
+                                    | select(.type == "required_reviewers")
+                                    | .prevent_self_review]}'
            ```
 
-        If every environment with required reviewers returns `true`, the check passes. If any returns `false`, the check fails.
+        If every environment listed returns a `self_review` value of `[true]`, the check passes. If any returns `[false]`, or an empty list because it has no reviewer requirement, the check fails.
       remediation:
         - id: github
           desc: |
@@ -3681,21 +3687,36 @@ queries:
         title: Managing environments for deployment
   - uid: mondoo-github-repository-security-environment-prevent-self-review-github
     filters: asset.platform == "github-repo"
+    # `.all()` is true over an empty list, so asserting prevent-self-review over the
+    # required_reviewers rules alone passes an environment that has protection rules but
+    # no reviewer requirement at all. The first statement is what refuses that: `.any()`
+    # is false over an empty list, so the rule has to exist before the second statement
+    # judges it. `github-pages` is excluded because GitHub creates it with a branch
+    # policy whenever Pages is enabled, so requiring approval on it reports a finding
+    # nobody chose to configure.
     mql: |
       github.repository.environments
+        .where( name != "github-pages" )
+        .where( protectionRules.length > 0 )
+        .all( protectionRules.any( type == "required_reviewers" ) )
+      github.repository.environments
+        .where( name != "github-pages" )
         .where( protectionRules.length > 0 )
         .all( protectionRules.where( type == "required_reviewers" ).all( preventSelfReview == true ) )
   - uid: mondoo-github-repository-security-environment-prevent-self-review-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_repository_environment")
     mql: |
+      terraform.resources("github_repository_environment").all(blocks.where(type == "reviewers") != empty)
       terraform.resources("github_repository_environment").all(arguments["prevent_self_review"] == true)
   - uid: mondoo-github-repository-security-environment-prevent-self-review-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_repository_environment")
     mql: |
+      terraform.plan.resourceChanges.where(type == "github_repository_environment").all(change.after.reviewers != empty)
       terraform.plan.resourceChanges.where(type == "github_repository_environment").all(change.after.prevent_self_review == true)
   - uid: mondoo-github-repository-security-environment-prevent-self-review-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_repository_environment")
     mql: |
+      terraform.state.resources.where(type == "github_repository_environment").all(values.reviewers != empty)
       terraform.state.resources.where(type == "github_repository_environment").all(values.prevent_self_review == true)
   - uid: mondoo-github-organization-security-advanced-security-new-repos
     title: Ensure advanced security is enabled for new repositories
