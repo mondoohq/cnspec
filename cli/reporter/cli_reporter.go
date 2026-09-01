@@ -28,7 +28,6 @@ import (
 type mqlCode string
 
 const (
-	vulnReportV8    mqlCode = "platform.vulnerabilityReport"
 	vulnReportV9    mqlCode = "asset.vulnerabilityReport"
 	kernelInstalled mqlCode = "kernel.installed"
 )
@@ -45,19 +44,7 @@ func getVulnReport[T any](results map[string]*T) (*T, error) {
 		log.Debug().Err(err).Msg("could not determine vulnerability report checksum")
 		return nil, errors.New("no vulnerabilities for this provider")
 	}
-	if value, ok := results[vulnChecksum]; ok {
-		return value, nil
-	}
-
-	// FIXME: DEPRECATED, remove in v11.0 vv
-	vulnChecksum, err = defaultChecksum(vulnReportV8, schema)
-	if err != nil {
-		log.Debug().Err(err).Msg("could not determine vulnerability report checksum")
-		return nil, errors.New("no vulnerabilities for this provider")
-	}
-	value := results[vulnChecksum]
-	return value, nil
-	// ^^
+	return results[vulnChecksum], nil
 }
 
 func defaultChecksum(code mqlCode, schema resources.ResourcesSchema) (string, error) {
