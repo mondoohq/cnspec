@@ -822,6 +822,7 @@ policies:
           - uid: mondoo-aws-security-organizations-tag-policies-attached
           - uid: mondoo-aws-security-organizations-scp-restrict-regions
           - uid: mondoo-aws-security-organizations-delegated-admins-active
+          - uid: mondoo-aws-security-organizations-centralized-root-access
     scoring_system: highest impact
 queries:
   - uid: mondoo-aws-security-eks-cluster-cmks-in-kms
@@ -89241,3 +89242,57 @@ queries:
         From the management account, run `aws organizations list-delegated-administrators` and review each entry's status and owning team.
       remediation: |
         Remove stale delegations with `aws organizations deregister-delegated-administrator --account-id <id> --service-principal <service>` from the management account.
+  - uid: mondoo-aws-security-organizations-centralized-root-access
+    title: Ensure centralized root access is enabled for the organization
+    impact: 80
+    variants:
+      - uid: mondoo-aws-security-organizations-centralized-root-access-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-organizations-centralized-root-access-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-organizations-centralized-root-access-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-organizations-centralized-root-access-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that the organization has enabled centralized root credentials management. With the feature on, the management account can remove root passwords and root access keys from member accounts, so no long-lived root credential has to exist in each one, eliminating the very credentials that the root MFA, root access key, and root usage checks exist to police. The complementary RootSessions feature additionally allows short-lived, scoped root actions in member accounts without standing credentials.
+
+        The check evaluates on the organization's management account or an IAM delegated administrator, where `iam:ListOrganizationsFeatures` is readable; member accounts cannot answer for the organization.
+      audit: |
+        From the management account, run `aws iam list-organizations-features`. A passing organization lists `RootCredentialsManagement` under EnabledFeatures.
+      remediation: |
+        From the management account: enable trusted access for IAM with `aws organizations enable-aws-service-access --service-principal iam.amazonaws.com`, then enable the feature with `aws iam enable-organizations-root-credentials-management`. Consider also `aws iam enable-organizations-root-sessions` and removing existing member-account root credentials afterwards.
+  - uid: mondoo-aws-security-organizations-centralized-root-access-aws
+    filters: |
+      asset.platform == "aws" &&
+      aws.account.organization != empty &&
+      aws.organization.masterAccountId == aws.account.id
+    mql: |
+      aws.organization.enabledRootFeatures.contains("RootCredentialsManagement")
+  - uid: mondoo-aws-security-organizations-centralized-root-access-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_organizations_features")
+    mql: |
+      terraform.resources("aws_iam_organizations_features").all(
+        arguments["enabled_features"].contains("RootCredentialsManagement")
+      )
+  - uid: mondoo-aws-security-organizations-centralized-root-access-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_organizations_features")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_iam_organizations_features").all(
+        change.after.enabled_features.contains("RootCredentialsManagement")
+      )
+  - uid: mondoo-aws-security-organizations-centralized-root-access-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_iam_organizations_features")
+    mql: |
+      terraform.state.resources.where(type == "aws_iam_organizations_features").all(
+        values.enabled_features.contains("RootCredentialsManagement")
+      )
