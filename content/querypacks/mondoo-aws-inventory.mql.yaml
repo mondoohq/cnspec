@@ -4,7 +4,7 @@
 packs:
   - uid: mondoo-asset-inventory-aws
     name: AWS Asset Inventory Pack
-    version: 1.3.0
+    version: 1.4.0
     license: BUSL-1.1
     require:
       - provider: aws
@@ -39,6 +39,7 @@ packs:
           - uid: mondoo-asset-inventory-aws-iam-groups
           - uid: mondoo-asset-inventory-aws-iam-roles
           - uid: mondoo-asset-inventory-aws-iam-policies
+          - uid: mondoo-asset-inventory-aws-iam-role-permissions
       - uid: mondoo-asset-inventory-aws-vpc-group
         title: AWS VPC
         filters: asset.runtime == "aws"
@@ -50,9 +51,11 @@ packs:
         filters: asset.runtime == "aws"
         queries:
           - uid: mondoo-asset-inventory-aws-ec2-security-groups
+          - uid: mondoo-asset-inventory-aws-ec2-security-group-rules
           - uid: mondoo-asset-inventory-aws-ec2-volumes
           - uid: mondoo-asset-inventory-aws-ec2-retrieve-all-data
           - uid: mondoo-asset-inventory-aws-ec2-instances-exposure
+          - uid: mondoo-asset-inventory-aws-ec2-instance-profiles
           - uid: mondoo-asset-inventory-aws-eips
       - uid: mondoo-asset-inventory-aws-elb-group
         title: Elastic Load Balancing
@@ -65,6 +68,7 @@ packs:
         queries:
           - uid: mondoo-asset-inventory-aws-rds-dbclusters-all-data
           - uid: mondoo-asset-inventory-aws-rds-dbinstances-all-data
+          - uid: mondoo-asset-inventory-aws-rds-dbinstances-network
           - uid: mondoo-asset-inventory-aws-rds-dbcluster-maintenance
           - uid: mondoo-asset-inventory-aws-rds-dbcluster-recommendations
           - uid: mondoo-asset-inventory-aws-rds-dbinstance-maintenance
@@ -74,11 +78,13 @@ packs:
         filters: asset.runtime == "aws"
         queries:
           - uid: mondoo-asset-inventory-aws-s3-retrieve-all-data
+          - uid: mondoo-asset-inventory-aws-s3-bucket-access
       - uid: mondoo-asset-inventory-aws-eks-group
         title: Amazon EKS Cluster
         filters: asset.runtime == "aws"
         queries:
           - uid: mondoo-asset-inventory-aws-eks-clusters
+          - uid: mondoo-asset-inventory-aws-eks-cluster-access
       - uid: mondoo-asset-inventory-aws-lambda-group
         title: AWS Lambda Function
         filters: asset.runtime == "aws"
@@ -234,6 +240,54 @@ queries:
         Lists IAM policies currently attached to a user, group, or role.
     mql: aws.iam.policies.where( attachmentCount > 0 )
 
+  - uid: mondoo-asset-inventory-aws-iam-role-permissions
+    title: IAM roles with attached policy permissions
+    docs:
+      desc: |
+        Lists every customer-managed IAM role with the statements of its
+        attached and inline policies, its trust posture, and the EC2 instances
+        that assume it through an instance profile.
+
+        This is the permissions half of an attack path. Exposure inventories say
+        which workloads the internet can reach; this query says what those
+        workloads may do once compromised. Wildcard flags are computed per
+        policy so a reviewer can separate a genuinely over-broad role from an
+        AWS managed service policy that legitimately uses `*` resources.
+
+        Join `usedByInstances` to the EC2 instance exposure query to reach
+        instance roles, and join the ARN to the Kubernetes inventory pack's
+        service account annotations or to the EKS Pod Identity associations to
+        reach pod roles.
+
+        Scoped to the AWS account scan, with no `-single` variant, because
+        roles are not discovered as standalone assets.
+    variants:
+      - uid: mondoo-asset-inventory-aws-iam-role-permissions-all
+  - uid: mondoo-asset-inventory-aws-iam-role-permissions-all
+    filters: asset.platform == "aws"
+    mql: |
+      aws.iam.roles.where(isServiceLinked == false) {
+        arn
+        name
+        path
+        lastUsedAt
+        assumableByPublic
+        assumableByExternalAccounts
+        permissionsBoundary { arn }
+        usedByInstances { instanceId }
+        attachedPolicies {
+          arn
+          name
+          hasWildcardAllow
+          statements { effect actions resources hasWildcardAction hasWildcardResource }
+        }
+        inlinePolicyDetails {
+          name
+          hasWildcardAllow
+          statements { effect actions resources hasWildcardAction hasWildcardResource }
+        }
+      }
+
   - uid: mondoo-asset-inventory-aws-ec2-security-groups
     title: EC2 Security Groups
     docs:
@@ -250,6 +304,68 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup
+
+  - uid: mondoo-asset-inventory-aws-ec2-security-group-rules
+    title: Security group ingress rules and attachments
+    docs:
+      desc: |
+        Lists every security group with its ingress rules, resolved to
+        protocol, port range, and source, and with the EC2 instances that
+        carry the group.
+
+        The plain security group inventory above names the groups; this query
+        adds the rules, which is what network reachability analysis needs. Each
+        rule reports whether its source includes the public internet, and
+        cross-group rules name the peer group and account so east-west paths,
+        such as a load balancer group admitting traffic into a database group,
+        stay traceable.
+
+        Join `instances` to the EC2 instance exposure query and the group ID to
+        the load balancer and RDS network queries to see which resources a rule
+        actually opens.
+    variants:
+      - uid: mondoo-asset-inventory-aws-ec2-security-group-rules-all
+      - uid: mondoo-asset-inventory-aws-ec2-security-group-rules-single
+  - uid: mondoo-asset-inventory-aws-ec2-security-group-rules-all
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ec2.securityGroups {
+        id
+        name
+        region
+        vpc { id }
+        isUnused
+        instances { instanceId }
+        ipPermissions {
+          ipProtocol
+          fromPort
+          toPort
+          ipRanges
+          ipv6Ranges
+          includesPublicSource
+          peers { groupId accountId }
+        }
+      }
+  - uid: mondoo-asset-inventory-aws-ec2-security-group-rules-single
+    filters: asset.platform == "aws-security-group"
+    mql: |
+      aws.ec2.securitygroup {
+        id
+        name
+        region
+        vpc { id }
+        isUnused
+        instances { instanceId }
+        ipPermissions {
+          ipProtocol
+          fromPort
+          toPort
+          ipRanges
+          ipv6Ranges
+          includesPublicSource
+          peers { groupId accountId }
+        }
+      }
 
   - uid: mondoo-asset-inventory-aws-ec2-volumes
     title: EBS volumes
@@ -320,6 +436,37 @@ queries:
           networkAclAllowsIngress
           openIngressRules { ipProtocol fromPort toPort ipRanges ipv6Ranges }
           internetFacingLoadBalancers { arn name dnsName }
+        }
+      }
+
+  - uid: mondoo-asset-inventory-aws-ec2-instance-profiles
+    title: EC2 instance IAM profiles
+    docs:
+      desc: |
+        Maps every non-terminated EC2 instance to the IAM instance profile it
+        runs under and the roles that profile carries.
+
+        An instance's credentials are the roles of its instance profile, so this
+        is the link between a host, including a Kubernetes node, and the AWS
+        permissions anything running on that host can exercise. Join the role
+        ARN to the `IAM roles with attached policy permissions` query for the
+        statements, and the instance ID to the EC2 instance exposure query and
+        the Kubernetes inventory pack's node provider IDs for the exposure side.
+
+        Scoped to the AWS account scan, with no `-single` variant, matching the
+        instance exposure query above.
+    variants:
+      - uid: mondoo-asset-inventory-aws-ec2-instance-profiles-all
+  - uid: mondoo-asset-inventory-aws-ec2-instance-profiles-all
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ec2.instances.where(state != "terminated") {
+        instanceId
+        region
+        iamInstanceProfile {
+          arn
+          instanceProfileName
+          iamRoles { arn name }
         }
       }
 
@@ -420,6 +567,74 @@ queries:
     filters: asset.platform == "aws-rds-dbinstance"
     mql: |
       aws.rds.dbinstance
+
+  - uid: mondoo-asset-inventory-aws-rds-dbinstances-network
+    title: RDS instance network placement and exposure
+    docs:
+      desc: |
+        Reports where each RDS instance sits on the network and who can reach
+        it: endpoint and port, public accessibility, security groups, subnets
+        with their VPC, the internet-exposure analysis, IAM authentication, and
+        storage encryption, plus the instance tags.
+
+        The configuration inventory above identifies the instance; this query
+        is what a data-store reachability review needs. The security group IDs
+        join to the `Security group ingress rules and attachments` query, so a
+        rule that admits an application security group into the database group
+        connects an internet-exposed workload to the database it can reach.
+        Tags carry the ownership and environment metadata used for business
+        priority.
+    variants:
+      - uid: mondoo-asset-inventory-aws-rds-dbinstances-network-all
+      - uid: mondoo-asset-inventory-aws-rds-dbinstances-network-single
+  - uid: mondoo-asset-inventory-aws-rds-dbinstances-network-all
+    filters: asset.platform == "aws"
+    mql: |
+      aws.rds.instances {
+        id
+        arn
+        region
+        engine
+        endpoint
+        port
+        publiclyAccessible
+        iamDatabaseAuthentication
+        storageEncrypted
+        dbClusterIdentifier
+        securityGroups { id name }
+        subnets { id isPublic }
+        exposure {
+          internetReachable
+          publiclyAccessible
+          securityGroupAllowsIngress
+          openIngressRules { ipProtocol fromPort toPort ipRanges ipv6Ranges }
+        }
+        tags
+      }
+  - uid: mondoo-asset-inventory-aws-rds-dbinstances-network-single
+    filters: asset.platform == "aws-rds-dbinstance"
+    mql: |
+      aws.rds.dbinstance {
+        id
+        arn
+        region
+        engine
+        endpoint
+        port
+        publiclyAccessible
+        iamDatabaseAuthentication
+        storageEncrypted
+        dbClusterIdentifier
+        securityGroups { id name }
+        subnets { id isPublic }
+        exposure {
+          internetReachable
+          publiclyAccessible
+          securityGroupAllowsIngress
+          openIngressRules { ipProtocol fromPort toPort ipRanges ipv6Ranges }
+        }
+        tags
+      }
 
   - uid: mondoo-asset-inventory-aws-rds-dbcluster-maintenance
     title: RDS database cluster pending maintenance
@@ -554,6 +769,59 @@ queries:
     mql: |
       aws.s3.bucket
 
+  - uid: mondoo-asset-inventory-aws-s3-bucket-access
+    title: S3 bucket access configuration
+    docs:
+      desc: |
+        Reports how each S3 bucket can be accessed: the public flag, the four
+        Block Public Access settings, encryption at rest, whether the bucket
+        policy enforces TLS, the bucket policy statements with their principals,
+        and the bucket tags.
+
+        The bucket list above identifies the buckets; this query adds the
+        access posture and the principals a policy grants, so a bucket that a
+        wildcard or foreign-account principal can read is visible next to the
+        buckets an exposed workload's role may access. Buckets without a policy
+        return no statements. Tags carry the ownership and environment metadata
+        used for business priority.
+    variants:
+      - uid: mondoo-asset-inventory-aws-s3-bucket-access-all
+      - uid: mondoo-asset-inventory-aws-s3-bucket-access-single
+  - uid: mondoo-asset-inventory-aws-s3-bucket-access-all
+    filters: asset.platform == "aws"
+    mql: |
+      aws.s3.buckets {
+        name
+        arn
+        location
+        public
+        enforceSslOnly
+        encrypted
+        blockPublicAcls
+        blockPublicPolicy
+        ignorePublicAcls
+        restrictPublicBuckets
+        policyStatements { effect actions resources principals hasPublicPrincipal }
+        tags
+      }
+  - uid: mondoo-asset-inventory-aws-s3-bucket-access-single
+    filters: asset.platform == "aws-s3-bucket"
+    mql: |
+      aws.s3.bucket {
+        name
+        arn
+        location
+        public
+        enforceSslOnly
+        encrypted
+        blockPublicAcls
+        blockPublicPolicy
+        ignorePublicAcls
+        restrictPublicBuckets
+        policyStatements { effect actions resources principals hasPublicPrincipal }
+        tags
+      }
+
   - uid: mondoo-asset-inventory-aws-eks-clusters
     title: EKS clusters
     docs:
@@ -565,6 +833,49 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.eks.clusters
+
+  - uid: mondoo-asset-inventory-aws-eks-cluster-access
+    title: EKS cluster endpoint access and pod identity
+    docs:
+      desc: |
+        Reports how each EKS control plane can be reached and which IAM roles
+        its workloads obtain through EKS Pod Identity: public and private
+        endpoint access, the public access CIDR allowlist, the authentication
+        mode, the cluster role, the cluster security groups and VPC, and every
+        pod identity association with its namespace, service account, and role.
+
+        A public endpoint open to `0.0.0.0/0` makes the Kubernetes API part of
+        the internet attack surface even when every workload sits behind a
+        private load balancer. The pod identity associations are the second
+        route, next to IAM roles for service accounts, by which a pod acquires
+        AWS permissions; join namespace and service account to the Kubernetes
+        inventory pack's pod owner and service account queries, and the role
+        ARN to the `IAM roles with attached policy permissions` query.
+
+        Scoped to the AWS account scan, with no `-single` variant, matching the
+        cluster inventory above.
+    variants:
+      - uid: mondoo-asset-inventory-aws-eks-cluster-access-all
+  - uid: mondoo-asset-inventory-aws-eks-cluster-access-all
+    filters: asset.platform == "aws"
+    mql: |
+      aws.eks.clusters {
+        name
+        arn
+        region
+        endpointPublicAccess
+        endpointPrivateAccess
+        publicAccessCidrs
+        authenticationMode
+        iamRole { arn }
+        vpc { id }
+        clusterSecurityGroups { id }
+        podIdentityAssociations {
+          namespace
+          serviceAccount
+          iamRole { arn name }
+        }
+      }
 
   - uid: mondoo-asset-inventory-aws-lambda
     title: Lambda functions
