@@ -63,6 +63,10 @@ func (d *deprecateOverlay) AllDependencies() map[string]*resources.ProviderInfo 
 	return d.inner.AllDependencies()
 }
 
+func (d *deprecateOverlay) AllProviderVersions() map[string]string {
+	return d.inner.AllProviderVersions()
+}
+
 func newConf(s resources.ResourcesSchema) mqlc.CompilerConfig {
 	features := mql.DefaultFeatures
 	features = append(features, byte(mql.FailIfNoEntryPoints))

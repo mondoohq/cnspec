@@ -602,7 +602,11 @@ func (c *scanConfig) loadPolicies(ctx context.Context) error {
 			return err
 		}
 
-		// ensure all required providers are installed before we try to compile the bundle
+		// Ensure the resource schemas of all providers the bundle requires are
+		// installed before we compile it below. Every requirement is pulled,
+		// not just the ones the asset filters need, because compilation drops
+		// the queries it cannot resolve. Binaries are installed per asset
+		// during the scan, once its applicable policies are known.
 		if bundle.HasRequirements() {
 			autoUpdate := true
 			if viper.IsSet("auto-update") {
