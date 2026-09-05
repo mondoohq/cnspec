@@ -22,4 +22,4 @@ The skill automatically activates when working on MQL-related tasks. You can als
 
 ## Installation
 
-See [skills/README.md](../README.md) for installation instructions across Claude Code, Codex, Gemini CLI, and Cursor.
+See [skills/README.md](https://github.com/mondoohq/cnspec/blob/main/skills/README.md) for installation instructions across Claude Code, Codex, Gemini CLI, and Cursor.
