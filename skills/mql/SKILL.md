@@ -164,7 +164,7 @@ If the Mondoo MCP server is available, you can use these tools instead of the CL
 
 `cnspec policy lint` proves a policy **compiles**. It does not prove a check reaches the verdict you claim, that an IaC variant ever matches an asset, or that a remediation snippet is well-formed and actually fixes the thing it documents. Those live in a separate suite.
 
-When you are authoring or editing policies **inside the cnspec repository**, every one of those checks lives in `content/validation/`, and [`content/validation/README.md`](../../content/validation/README.md) is the reference for all of it. Authoring rules are in [`content/CLAUDE.md`](../../content/CLAUDE.md).
+When you are authoring or editing policies **inside the cnspec repository**, every one of those checks lives in `content/validation/`, and [`content/validation/README.md`](https://github.com/mondoohq/cnspec/blob/main/content/validation/README.md) is the reference for all of it. Authoring rules are in [`content/CLAUDE.md`](https://github.com/mondoohq/cnspec/blob/main/content/CLAUDE.md).
 
 ```bash
 make test/content              # lint + bundle scans + compliance mappings

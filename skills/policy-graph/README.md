@@ -24,4 +24,4 @@ Provides structured navigation of `.mql.yaml` policy bundles that replaces manua
 
 ## Installation
 
-See [skills/README.md](../README.md) for installation instructions across Claude Code, Codex, Gemini CLI, and Cursor.
+See [skills/README.md](https://github.com/mondoohq/cnspec/blob/main/skills/README.md) for installation instructions across Claude Code, Codex, Gemini CLI, and Cursor.
