@@ -81,7 +81,7 @@ PROVIDER_MAP = {
     "azapi": ("azure/azapi", "~> 2.0"),
     "google": ("hashicorp/google", "~> 8.0"),
     "google-beta": ("hashicorp/google-beta", "~> 8.0"),
-    "oci": ("oracle/oci", "~> 8.0"),
+    "oci": ("oracle/oci", "~> 9.0"),
     "github": ("integrations/github", "~> 6.0"),
     "gitlab": ("gitlabhq/gitlab", "~> 19.0"),
     "okta": ("okta/okta", "~> 7.0"),
