@@ -32,13 +32,19 @@ jobs:
           # Determine which version should be released based on event type
           VERSION: ${{ (github.event_name == 'workflow_dispatch' && inputs.version) || github.event.client_payload.version }}
         run: |
-          # Semantic Versioning regex (with optional 'v' prefix)
-          if [[ ! "$VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          # Semantic Versioning regex (with optional 'v' prefix). The capture
+          # group matters: what lands in $GITHUB_OUTPUT below is re-emitted
+          # from BASH_REMATCH, not from $VERSION, so only the matched semver
+          # can ever reach a workflow environment file. Validating and then
+          # echoing the raw value would leave the output one regex bug away
+          # from an attacker-controlled newline injecting extra step outputs.
+          if [[ ! "$VERSION" =~ ^(v?[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
             echo "Error: Version is not a valid semantic version."
             exit 1
           fi
-          echo "Version: $VERSION"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          MQL_VERSION="${BASH_REMATCH[1]}"
+          echo "Version: $MQL_VERSION"
+          echo "version=$MQL_VERSION" >> "$GITHUB_OUTPUT"
       # Sparse-checkout the scripts dir before we know the target branch, so
       # we can run determine-mql-bump-base.sh to figure out where to open the
       # bump PR. The full checkout of the target branch happens further down.
@@ -94,7 +100,7 @@ jobs:
           ref: ${{ steps.base.outputs.base }}
 
       - name: Import environment variables from file
-        run: cat ".github/env" >> $GITHUB_ENV
+        run: cat ".github/env" >> "$GITHUB_ENV"
       - name: Install Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -125,8 +131,8 @@ jobs:
         run: |
           BRANCH_NAME="version/mql_update_${MQL_VERSION}"
           COMMIT_MSG="🧹 Bump mql to ${MQL_VERSION}"
-          echo "COMMIT_TITLE=${COMMIT_MSG}" >> $GITHUB_OUTPUT
-          echo "BRANCH_NAME=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+          echo "COMMIT_TITLE=${COMMIT_MSG}" >> "$GITHUB_OUTPUT"
+          echo "BRANCH_NAME=${BRANCH_NAME}" >> "$GITHUB_OUTPUT"
 
       # Dry-run: print what the PR WOULD have looked like, and stop.
       # Everything above (base decision, go get, VERSION write) still runs
