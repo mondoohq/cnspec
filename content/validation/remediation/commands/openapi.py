@@ -53,10 +53,10 @@ from common import (
 
 # None of these upstream repos ship releases — `main`/`master` is the only
 # branch and it moves — so each raw URL pins a known-good commit SHA.
-CLOUDFLARE_OPENAPI_SHA = "28bfb054e5fa106464e9fbbf0ffbf362bc85234d"
+CLOUDFLARE_OPENAPI_SHA = "f2df0ca75c0fec9047e91a34c20dd666c2dcd1ba"
 SLACK_OPENAPI_SHA = "bc08db49625630e3585bf2f1322128ea04f2a7f3"
 GRAFANA_OPENAPI_SHA = "dbcfc2c152c80947649f8725eba3a73d51b84c69"
-MONGODBATLAS_OPENAPI_SHA = "aab18ce413f150472a3410872cdacd65e1e43bc2"
+MONGODBATLAS_OPENAPI_SHA = "cc6b97d0a3a518eece4544f1007677449f9ac2b6"
 
 
 def _spec_cache_path(name: str, pin: str) -> Path:
