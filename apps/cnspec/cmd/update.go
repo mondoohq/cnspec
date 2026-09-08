@@ -19,6 +19,12 @@ func init() {
 	rootCmd.AddCommand(updateCmd)
 }
 
+// envUpdateReexec marks the process that selfupdate exec'd into after installing
+// a new binary. It is set just before the update and inherited across the exec,
+// which is what lets the successor tell "I am the result of an update" apart
+// from "someone switched engine updates off".
+const envUpdateReexec = "MONDOO_CNSPEC_UPDATE_REEXEC"
+
 // updateCmd represents the update command
 var updateCmd = &cobra.Command{
 	Hidden: true,
@@ -43,6 +49,13 @@ waiting for the next refresh interval.`,
 func runUpdate() error {
 	currentVersion := cnspec.GetVersion()
 
+	// This process is the one selfupdate exec'd into after installing the new
+	// binary, so the update already happened and this version is its result.
+	if os.Getenv(envUpdateReexec) != "" {
+		log.Info().Msgf("cnspec updated to %s", currentVersion)
+		return nil
+	}
+
 	// selfupdate skips these cases and returns (false, nil), which would be
 	// indistinguishable from "already up to date". The user asked for an update
 	// explicitly, so say why nothing is going to happen instead.
@@ -59,16 +72,15 @@ func runUpdate() error {
 	config.InitViperConfig()
 	releaseURL := cnspec.ReleaseURL(config.GetUpdatesURL())
 
-	// selfupdate re-executes the new binary with the current os.Args. Left alone
-	// that would re-run `update` in the new process, which then finds engine
-	// updates switched off (ExecUpdatedBinary sets that to break update loops)
-	// and would report the wrong reason for doing nothing. Point the successor
-	// at `version` instead, so a completed update ends by printing what is now
-	// installed. On Unix the exec never returns, so restoring os.Args only
-	// matters on the paths that do.
-	origArgs := os.Args
-	os.Args = []string{origArgs[0], "version"}
-	defer func() { os.Args = origArgs }()
+	// selfupdate re-executes the new binary with the current arguments, so the
+	// successor runs `update` again. It inherits MONDOO_AUTO_UPDATE_ENGINE=false
+	// (ExecUpdatedBinary sets that to break update loops), which would otherwise
+	// make it report that updates are disabled immediately after a successful
+	// update. Mark the environment so the successor recognizes itself instead.
+	// syscall.Exec passes os.Environ() through, so the marker survives the
+	// hand-off; the defer covers the paths where no exec happens.
+	os.Setenv(envUpdateReexec, "1")
+	defer os.Unsetenv(envUpdateReexec)
 
 	updated, err := selfupdate.CheckAndUpdate(selfupdate.Config{
 		Enabled: true,
@@ -97,6 +109,13 @@ func runUpdate() error {
 
 // autoUpdateDisabledVia reports which environment variable switches off the
 // binary update, or "" when none does.
+//
+// Deliberately only the environment variables, not the `auto_update` config
+// setting, the AutoUpdateEngine feature flag or the --auto-update flag that
+// shouldTrySelfUpdate in main also consults. Those govern whether cnspec updates
+// itself *without being asked*; running `cnspec update` is the asking, so they
+// do not apply. The environment variables are the hard off switch, and one of
+// them is how a managed install pins a version, so they still hold here.
 func autoUpdateDisabledVia() string {
 	for _, env := range []string{selfupdate.EnvAutoUpdate, selfupdate.EnvAutoUpdateEngine} {
 		if val := os.Getenv(env); val == "false" || val == "0" {
