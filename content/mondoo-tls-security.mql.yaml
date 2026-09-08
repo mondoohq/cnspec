@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-tls-security
     name: Mondoo TLS/SSL Security
-    version: 1.8.0
+    version: 1.9.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -28,6 +28,29 @@ policies:
 
         Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
     groups:
+      # This group's filter is deterministic on purpose. Every other group here
+      # selects on `tls.params != empty`, which opens a TLS connection to decide
+      # whether the group applies — and when that connection cannot be made, the
+      # expression errors rather than returning empty. A filter that errors is
+      # not a filter that is false: the resolver drops the checks behind it from
+      # the resolved policy, so a host with nothing listening on the scanned port
+      # came back with zero checks and a clean score, which is the worst possible
+      # answer from a TLS policy. `asset.platform == 'host'` cannot fail, so this
+      # one check always runs and reports the unreachable endpoint as the finding
+      # it is. The detail groups keep their connection filter, so a host that
+      # legitimately serves no TLS still gets one row here rather than a wall of
+      # failures for ciphers and certificates that were never negotiated.
+      #
+      # That leaves the partial case open: when the host answers but the
+      # handshake behind a detail group's filter fails transiently, that group
+      # still disappears without a trace, and this check passes. Closing that
+      # means teaching the resolver to tell a filter that errored from one that
+      # was false, rather than dropping both.
+      - title: TLS/SSL endpoint
+        filters: |
+          asset.platform == 'host'
+        checks:
+          - uid: mondoo-tls-security-endpoint-negotiates-tls
       - title: Secure TLS/SSL connection
         filters: |
           asset.platform == 'host' && tls.params != empty
@@ -61,6 +84,29 @@ policies:
           - uid: mondoo-tls-security-cert-ocsp-configured
     scoring_system: highest impact
 queries:
+  - uid: mondoo-tls-security-endpoint-negotiates-tls
+    title: Ensure the host negotiates a TLS connection
+    impact: 70
+    mql: tls.params != empty
+    docs:
+      desc: |
+        This check verifies that the scanned host completes a TLS handshake on the scanned port, which is the precondition for every other check in this policy.
+
+        A failure means no TLS session could be established at all: nothing is listening on the port, the port is filtered, the service speaks a non-TLS protocol on it, or the handshake was rejected outright. Confirm which by connecting directly — `openssl s_client -connect <host>:443` reports whether the port answers and, if it does, what it answered with. If the host is not intended to serve TLS on the scanned port, scan the port that does (`cnspec scan host <host>:<port>`) rather than suppressing the check, and if it is not intended to serve TLS at all, this policy is not the one to point at it.
+
+        **Why this matters**
+
+        This check exists because its absence scored the wrong answer. The other groups in this policy select assets with `tls.params != empty`, an expression that opens a TLS connection; when that connection cannot be made the expression errors, and a check whose filter errors is dropped from the resolved policy rather than failed. A host with no TLS listener therefore reported zero checks and a passing score — indistinguishable, in the report, from a host whose TLS is configured correctly.
+
+        Unencrypted transport is also the condition every one of those checks is meant to prevent. A service reached over plaintext exposes credentials, session tokens, and payloads to anyone on the path, and offers no way for a client to detect tampering — which is a stronger finding than any individual cipher or certificate weakness this policy reports, not a reason to stay silent.
+      audit: |
+        Run `openssl s_client -connect <HOST>:443 -servername <HOST> </dev/null` and confirm that a certificate chain and a negotiated protocol version are returned.
+      remediation: |
+        Serve TLS on the scanned port, or scan the port where TLS is served.
+
+        - Confirm the service is listening: `ss -lntp | grep ':443'` on the host.
+        - Confirm no firewall drops the port: `sudo iptables -L -n | grep 443`, or the equivalent cloud security-group rule.
+        - If TLS terminates elsewhere (a load balancer, a reverse proxy, a CDN), scan that endpoint instead — it is where the TLS configuration this policy assesses actually lives.
   - uid: mondoo-tls-security-cert-domain-name-match
     title: Certificate's domain name must match
     impact: 90
