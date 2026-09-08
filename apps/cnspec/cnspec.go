@@ -37,10 +37,7 @@ func main() {
 
 	// Check for self-update before anything else
 	if shouldTrySelfUpdate() {
-		releaseURL := "https://releases.mondoo.com/cnspec/latest.json"
-		if updatesURL := config.GetUpdatesURL(); updatesURL != "" {
-			releaseURL = updatesURL + "/cnspec/latest.json"
-		}
+		releaseURL := cnspec.ReleaseURL(config.GetUpdatesURL())
 		cfg := selfupdate.Config{
 			Enabled:         true,
 			RefreshInterval: selfupdate.DefaultRefreshInterval,

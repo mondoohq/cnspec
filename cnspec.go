@@ -5,6 +5,7 @@ package cnspec
 
 import (
 	"regexp"
+	"strings"
 )
 
 // Version is set via ldflags
@@ -32,6 +33,23 @@ var Date string
 
 <patch> ::= <numeric identifier>
 */
+
+// defaultReleaseHost is where release artifacts and their manifests are served
+// from. It is the same host the install scripts at install.mondoo.com download
+// from, and the same default the provider registry and mql's own self-update
+// use. On-premise installs override it through the `updates_url` config.
+const defaultReleaseHost = "https://releases.mondoo.com"
+
+// ReleaseURL returns the release manifest the binary self-update reads, honoring
+// an `updates_url` override when one is configured. It lives here so the
+// implicit update in main and the explicit `cnspec update` command cannot drift
+// onto different releases.
+func ReleaseURL(updatesURL string) string {
+	if updatesURL == "" {
+		updatesURL = defaultReleaseHost
+	}
+	return strings.TrimSuffix(updatesURL, "/") + "/cnspec/latest.json"
+}
 
 // GetVersion returns the version of the build
 // valid semver version including build version (e.g. 4.10.0+4900), where 4900 is a forward rolling int

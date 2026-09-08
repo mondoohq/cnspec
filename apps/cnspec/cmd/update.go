@@ -19,11 +19,6 @@ func init() {
 	rootCmd.AddCommand(updateCmd)
 }
 
-// defaultReleaseURL is where cnspec looks for the latest release manifest. It
-// matches the URL the implicit auto-update in main uses, so an explicit update
-// and a background one resolve the same release.
-const defaultReleaseURL = "https://releases.mondoo.com/cnspec/latest.json"
-
 // updateCmd represents the update command
 var updateCmd = &cobra.Command{
 	Hidden: true,
@@ -61,11 +56,8 @@ func runUpdate() error {
 		return errors.Errorf("updates are disabled via %s, unset it to update", disabledVia)
 	}
 
-	releaseURL := defaultReleaseURL
 	config.InitViperConfig()
-	if updatesURL := config.GetUpdatesURL(); updatesURL != "" {
-		releaseURL = updatesURL + "/cnspec/latest.json"
-	}
+	releaseURL := cnspec.ReleaseURL(config.GetUpdatesURL())
 
 	// selfupdate re-executes the new binary with the current os.Args. Left alone
 	// that would re-run `update` in the new process, which then finds engine
