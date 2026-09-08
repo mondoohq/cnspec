@@ -124,6 +124,13 @@ func shouldTrySelfUpdate() bool {
 		switch os.Args[1] {
 		case "version", "help", "--help", "-h", "--version":
 			return false
+		case "update":
+			// `cnspec update` runs the same self-update itself, and without the
+			// refresh interval that paces this one. Letting both run means the
+			// implicit check can consume the update before the command sees it,
+			// so the command the user actually invoked reports "already the
+			// latest version" for work it did not do.
+			return false
 		}
 	}
 

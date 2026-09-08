@@ -4,142 +4,112 @@
 package cmd
 
 import (
-	"fmt"
-	"io"
-	"net/http"
 	"os"
-	"os/exec"
-	"runtime"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
+	"go.mondoo.com/cnspec"
 	"go.mondoo.com/mql/cli/config"
+	"go.mondoo.com/mql/cli/selfupdate"
 )
 
 func init() {
 	rootCmd.AddCommand(updateCmd)
 }
 
-const (
-	unixUpdateScript    = "https://install.mondoo.com/sh"
-	windowsUpdateScript = "https://install.mondoo.com/ps1"
-)
+// defaultReleaseURL is where cnspec looks for the latest release manifest. It
+// matches the URL the implicit auto-update in main uses, so an explicit update
+// and a background one resolve the same release.
+const defaultReleaseURL = "https://releases.mondoo.com/cnspec/latest.json"
 
 // updateCmd represents the update command
 var updateCmd = &cobra.Command{
 	Hidden: true,
 	Use:    "update",
 	Short:  "Update cnspec to the latest version",
-	Long: `This command detects the platform and runs either https://install.mondoo.com/sh
-	or https://install.mondoo.com/ps1 to update to the latest package`,
+	Long: `Update the cnspec binary to the latest release.
+
+This downloads the release for this platform, verifies it, and re-executes the
+new binary. It is the same mechanism cnspec uses to update itself in the
+background; running this command performs the check immediately instead of
+waiting for the next refresh interval.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// we need silence usage here, otherwise we get the usage printed in case of error
 		// see https://github.com/spf13/cobra/issues/340
 		cmd.SilenceUsage = true
 		cmd.SilenceErrors = true
 
-		opts, optsErr := config.Read()
-		if optsErr != nil {
-			return errors.New("could not load configuration")
-		}
-
-		hc, err := opts.GetHttpClient()
-		if err != nil {
-			return errors.New("could not create http client")
-		}
-
-		return runUpdate(hc)
+		return runUpdate()
 	},
 }
 
-func runUnixUpdate(hc *http.Client) error {
-	log.Info().Str("script", unixUpdateScript).Msg("detected linux-based platform, download update script")
-	scriptData, err := download(hc, unixUpdateScript)
+func runUpdate() error {
+	currentVersion := cnspec.GetVersion()
+
+	// selfupdate skips these cases and returns (false, nil), which would be
+	// indistinguishable from "already up to date". The user asked for an update
+	// explicitly, so say why nothing is going to happen instead.
+	// "unstable" is what a build without version ldflags reports, and selfupdate
+	// only screens for the "-rolling" suffix - an unstable build reaches the
+	// version comparison and fails there with a semver parse error instead.
+	if currentVersion == "unstable" || strings.HasSuffix(currentVersion, "-rolling") {
+		return errors.Errorf("cannot update a development build (version %s), install a release build instead", currentVersion)
+	}
+	if disabledVia := autoUpdateDisabledVia(); disabledVia != "" {
+		return errors.Errorf("updates are disabled via %s, unset it to update", disabledVia)
+	}
+
+	releaseURL := defaultReleaseURL
+	config.InitViperConfig()
+	if updatesURL := config.GetUpdatesURL(); updatesURL != "" {
+		releaseURL = updatesURL + "/cnspec/latest.json"
+	}
+
+	// selfupdate re-executes the new binary with the current os.Args. Left alone
+	// that would re-run `update` in the new process, which then finds engine
+	// updates switched off (ExecUpdatedBinary sets that to break update loops)
+	// and would report the wrong reason for doing nothing. Point the successor
+	// at `version` instead, so a completed update ends by printing what is now
+	// installed. On Unix the exec never returns, so restoring os.Args only
+	// matters on the paths that do.
+	origArgs := os.Args
+	os.Args = []string{origArgs[0], "version"}
+	defer func() { os.Args = origArgs }()
+
+	updated, err := selfupdate.CheckAndUpdate(selfupdate.Config{
+		Enabled: true,
+		// An explicit update must not be throttled by the refresh interval that
+		// paces the background check, otherwise running this command inside that
+		// window silently does nothing.
+		RefreshInterval: 0,
+		ReleaseURL:      releaseURL,
+		BinaryName:      "cnspec",
+		CurrentVersion:  currentVersion,
+	})
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to update cnspec")
 	}
 
-	// check if bash is available
-	_, err = exec.LookPath("bash")
-	if err != nil {
-		return errors.New("bash is not available, cannot run update script")
+	// On Unix the process has already been replaced by the new binary, so
+	// reaching here with updated==true means the Windows path spawned it.
+	if updated {
+		log.Info().Msg("cnspec was updated")
+		return nil
 	}
 
-	file, err := os.CreateTemp("", "mondoo")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-
-	_, err = file.Write(scriptData)
-	if err != nil {
-		return errors.Wrap(err, "could not write downloaded script")
-	}
-
-	log.Info().Str("script", file.Name()).Msg("script downloaded successfully")
-
-	log.Info().Msg("run update script")
-	cmd := exec.Command("bash", file.Name())
-	return runCmd(cmd)
-}
-
-func runWindowsUpdate(hc *http.Client) error {
-	log.Info().Str("script", windowsUpdateScript).Msg("detected windows platform, download update script")
-	scriptData, err := download(hc, windowsUpdateScript)
-	if err != nil {
-		return err
-	}
-
-	file, err := os.CreateTemp("", "mondoo*.ps1")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-
-	_, err = file.Write(scriptData)
-	if err != nil {
-		return errors.Wrap(err, "could not write downloaded script")
-	}
-	// we need to close the file, otherwise Powershell cannot read it
-	err = file.Close()
-	if err != nil {
-		return errors.Wrap(err, "could not close downloaded script")
-	}
-
-	log.Info().Msg("run update script")
-	cmd := exec.Command("powershell", "-c", "Import-module '"+file.Name()+"';Install-Mondoo;")
-	return runCmd(cmd)
-}
-
-func runUpdate(hc *http.Client) error {
-	switch runtime.GOOS {
-	case "windows":
-		return runWindowsUpdate(hc)
-	case "darwin":
-		return runUnixUpdate(hc)
-	case "linux":
-		return runUnixUpdate(hc)
-	default:
-		return fmt.Errorf("platform %s is not supported for automatic update", runtime.GOOS)
-	}
-}
-
-func runCmd(cmd *exec.Cmd) error {
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	err := cmd.Run()
-	if err != nil {
-		return errors.Wrap(err, "update script failed")
-	}
+	log.Info().Msgf("cnspec %s is already the latest version", currentVersion)
 	return nil
 }
 
-func download(client *http.Client, url string) ([]byte, error) {
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, err
+// autoUpdateDisabledVia reports which environment variable switches off the
+// binary update, or "" when none does.
+func autoUpdateDisabledVia() string {
+	for _, env := range []string{selfupdate.EnvAutoUpdate, selfupdate.EnvAutoUpdateEngine} {
+		if val := os.Getenv(env); val == "false" || val == "0" {
+			return env
+		}
 	}
-	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	return ""
 }
