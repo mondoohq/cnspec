@@ -10,9 +10,9 @@ import (
 )
 
 func TestReleaseURL(t *testing.T) {
-	// The default host, an override, and an override with a trailing slash must
-	// all produce exactly one separator before the manifest path.
-	assert.Equal(t, "https://releases.mondoo.com/cnspec/latest.json", ReleaseURL(""))
-	assert.Equal(t, "https://mirror.example.com/cnspec/latest.json", ReleaseURL("https://mirror.example.com"))
-	assert.Equal(t, "https://mirror.example.com/cnspec/latest.json", ReleaseURL("https://mirror.example.com/"))
+	// One shape, whether or not updates_url is set: the install service's
+	// manifest path. Trailing slashes must not produce a double separator.
+	assert.Equal(t, "https://install.mondoo.com/package/cnspec/latest.json", ReleaseURL(""))
+	assert.Equal(t, "https://install.example.com/package/cnspec/latest.json", ReleaseURL("https://install.example.com"))
+	assert.Equal(t, "https://install.example.com/package/cnspec/latest.json", ReleaseURL("https://install.example.com/"))
 }

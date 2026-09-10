@@ -34,21 +34,19 @@ var Date string
 <patch> ::= <numeric identifier>
 */
 
-// defaultReleaseHost is where release artifacts and their manifests are served
-// from. It is the same host the install scripts at install.mondoo.com download
-// from, and the same default the provider registry and mql's own self-update
-// use. On-premise installs override it through the `updates_url` config.
-const defaultReleaseHost = "https://releases.mondoo.com"
+// defaultUpdatesURL is the install service cnspec resolves updates through when
+// nothing is configured. `updates_url` points at the same kind of service, which
+// is also where providers resolve from, at `updates_url + "/providers"`.
+const defaultUpdatesURL = "https://install.mondoo.com"
 
-// ReleaseURL returns the release manifest the binary self-update reads, honoring
-// an `updates_url` override when one is configured. It lives here so the
-// implicit update in main and the explicit `cnspec update` command cannot drift
-// onto different releases.
+// ReleaseURL returns the release manifest the binary self-update reads. It lives
+// here so the implicit update in main and the explicit `cnspec update` command
+// cannot drift onto different releases.
 func ReleaseURL(updatesURL string) string {
 	if updatesURL == "" {
-		updatesURL = defaultReleaseHost
+		updatesURL = defaultUpdatesURL
 	}
-	return strings.TrimSuffix(updatesURL, "/") + "/cnspec/latest.json"
+	return strings.TrimSuffix(updatesURL, "/") + "/package/cnspec/latest.json"
 }
 
 // GetVersion returns the version of the build
