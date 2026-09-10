@@ -4,8 +4,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-cnspec is an open-source, cloud-native security and policy project that assesses infrastructure security and compliance. It finds vulnerabilities and misconfigurations across cloud environments, Kubernetes, containers, servers, SaaS products, and more.
-
 **cnspec is built on top of mql** (`go.mondoo.com/mql`). mql provides the MQL query engine, provider system, and resource framework; cnspec adds policy evaluation, scoring, compliance frameworks, and security assessments.
 
 ## Where things live
@@ -48,11 +46,6 @@ make test/go             # Go tests only
 make test/go/plain       # With coverage
 make test/lint           # Linter
 make benchmark/go        # Benchmarks
-
-# Single test
-go test -v ./policy -run TestSpecificTest
-go test -v ./policy/...
-go test -race ./...
 ```
 
 ### Content validation
@@ -112,19 +105,8 @@ A check often needs a provider field that does not exist yet. `make prep/repos` 
 
 ### Dependency management
 
-- **Forbidden packages**: do not use `github.com/pkg/errors` (use `github.com/cockroachdb/errors`) or `github.com/mitchellh/mapstructure` (use `github.com/go-viper/mapstructure/v2`).
+- **Forbidden packages**: do not use `github.com/pkg/errors` (use `github.com/cockroachdb/errors`, wrapping with `errors.Wrap`) or `github.com/mitchellh/mapstructure` (use `github.com/go-viper/mapstructure/v2`).
 - When proto files reference mql types, ensure the mql repo is present via `make prep/repos`.
-
-### Error handling
-
-Use `github.com/cockroachdb/errors`:
-
-```go
-import "github.com/cockroachdb/errors"
-
-return errors.Wrap(err, "failed to load policy")
-return errors.New("invalid policy structure")
-```
 
 ### Generated code
 
@@ -183,8 +165,6 @@ So two **bare boolean fields** joined with `&&` pass when neither resolved. This
 ## Resources
 
 - [cnspec Documentation](https://mondoo.com/docs/cnspec)
-- [MQL Documentation](https://mondoo.com/docs/mql) · [Built-in Functions](https://mondoo.com/docs/mql/functions) · [Resources by Provider](https://mondoo.com/docs/mql/resources)
-- [MQL operator precedence](https://github.com/mondoohq/mql/blob/main/mqlc/parser/operators.go#L11) — reference for operator precedence during policy reviews
 - [Policy Authoring Guide](https://mondoo.com/docs/cnspec/write-policies/write-intro)
-- [mql Repository](https://github.com/mondoohq/mql)
-- [Full Mondoo Docs (LLM-friendly text)](https://mondoo.com/docs/llms-full.txt)
+
+The MQL references (resource lists, built-in functions, operator precedence, `llms-full.txt`) are linked inline in "Verify before you claim" above.
