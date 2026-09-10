@@ -1,89 +1,87 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Notes for Claude Code working in this repo. Terse on purpose.
 
 ## Overview
 
-**cnspec is built on top of mql** (`go.mondoo.com/mql`). mql provides the MQL query engine, provider system, and resource framework; cnspec adds policy evaluation, scoring, compliance frameworks, and security assessments.
+cnspec is built on mql (`go.mondoo.com/mql`). mql gives us the MQL query engine, the provider system, and the resource framework. cnspec adds policy evaluation, scoring, compliance frameworks, and security assessments.
 
 ## Where things live
 
-- **`apps/cnspec/cmd/`** — CLI entry point and commands (scan, shell, bundle, etc.).
-- **`policy/`** — policy engine core (resolution, execution, scoring). See `policy/CLAUDE.md` for engine internals, scanning flow, and protobuf/gRPC patterns.
-- **`content/`** — default security policies (`*.mql.yaml`) and, under `querypacks/`, data-collection bundles that do not score. `content/CLAUDE.md` holds the authoring rules (variants, compliance tags, MQL semantics); `content/README.md` is the user-facing catalog.
-- **`content/validation/`** — every test and validator that runs against those policies, plus its fixtures. `content/validation/README.md` is the definitive reference for content validation.
-- **`cli/`** — terminal-facing components, and the output formats still coupled to the CLI (compact, SARIF, JUnit, JSON, CSV). `cli/reporter` also owns `PrintConfig`, the format registry and the output handlers for every format.
-- **`reports/`** — the report standards, none of which is terminal-facing. `reports/ocsf` is the OCSF schema and **imports no cnspec package**, deliberately, so it stays extractable as `go.mondoo.com/ocsf` (see `docs/adr/0005-ocsf-type-generation.md`); cnspec's mapping onto it lives in `reports/ocsf/convert`. `reports/hdf` is OHDF, and `reports/reportdoc` is what every format reads a check's documentation and outcome from.
-- **`internal/bundle/`, `internal/datalakes/`, `internal/lsp/`** — bundle loading, storage, LSP support.
-- **`examples/`, `test/`, `docs/`** — examples, integration tests, docs.
+- `apps/cnspec/cmd/` — CLI entry point and commands (scan, shell, bundle, ...).
+- `policy/` — policy engine: resolution, execution, scoring. Engine internals, scanning flow, and protobuf/gRPC patterns are in `policy/CLAUDE.md`.
+- `content/` — the shipped security policies (`*.mql.yaml`). `querypacks/` holds data-collection bundles that don't score. Authoring rules: `content/CLAUDE.md`. User-facing catalog: `content/README.md`.
+- `content/validation/` — every test and validator that runs against those policies, plus fixtures. Reference: `content/validation/README.md`.
+- `cli/` — terminal components, plus the output formats still coupled to the CLI (compact, SARIF, JUnit, JSON, CSV). `cli/reporter` also owns `PrintConfig`, the format registry, and every format's output handler.
+- `reports/` — report standards, none terminal-facing. `reports/ocsf` is the OCSF schema and imports no cnspec package on purpose, so it stays extractable as `go.mondoo.com/ocsf` (`docs/adr/0005-ocsf-type-generation.md`); the cnspec mapping onto it is in `reports/ocsf/convert`. `reports/hdf` is OHDF. `reports/reportdoc` is where every format reads a check's docs and outcome.
+- `internal/bundle/`, `internal/datalakes/`, `internal/lsp/` — bundle loading, storage, LSP.
+- `examples/`, `test/`, `docs/`.
 
-## Essential commands
+## Commands
 
-### Build & install
+### Build
 
 ```bash
-make cnspec/build              # Build the cnspec binary
-make cnspec/install            # Install to $GOBIN
-make cnspec/build/linux        # Cross-compile (also: /linux/arm, /windows)
+make cnspec/build              # build the binary
+make cnspec/install            # install to $GOBIN
+make cnspec/build/linux        # cross-compile (also /linux/arm, /windows)
 ```
 
-### Code generation
+### Codegen
 
-Run after modifying `.proto` files, policy bundle structures, or reporter configurations.
+Run after changing `.proto` files, policy bundle structures, or reporter configs.
 
 ```bash
-make prep                # Install required tools (first time only)
-make prep/repos          # Clone/verify mql dependency (required for proto compilation)
-make prep/repos/update   # Update mql dependency
-make cnspec/generate     # Regenerate all generated code (proto, policy, reporter)
+make prep                # install tools (first time only)
+make prep/repos          # clone/verify mql (needed for proto compilation)
+make prep/repos/update   # update mql
+make cnspec/generate     # regenerate proto, policy, reporter code
 ```
 
-### Testing
+### Tests
 
 ```bash
-make test                # Run all tests
-make test/go             # Go tests only
-make test/go/plain       # With coverage
-make test/lint           # Linter
-make benchmark/go        # Benchmarks
+make test                # everything
+make test/go             # Go only
+make test/go/plain       # with coverage
+make test/lint           # linter
+make benchmark/go        # benchmarks
 ```
 
 ### Content validation
 
-Everything that checks the policies in `content/` lives in `content/validation/`, and
-**[`content/validation/README.md`](content/validation/README.md) is the definitive
-reference** for it: what each check proves, when CI runs it, and how to run it manually.
+Lives in `content/validation/`. What each check proves, when CI runs it, how to run it manually: [`content/validation/README.md`](content/validation/README.md).
 
 ```bash
 make test/content        # lint + bundle scans + compliance mappings
 make test/content/lint   # cnspec policy lint over content/ and content/querypacks
-make test/content/iac    # the IaC fixture suites (slow; run when you touch a variant)
+make test/content/iac    # IaC fixture suites (slow; run when you touch a variant)
 ```
 
-Most of those validators are **allowlist-driven**, so a new policy is covered only once it is registered with them. Adding a `*.mql.yaml` without wiring it into the variant suites and the remediation validators ships the whole bundle unexamined with every gate green — see [Adding a policy: what to register](content/validation/README.md#adding-a-policy-what-to-register).
+Most validators are allowlist-driven: a new policy is covered only once it's registered with them. Add a `*.mql.yaml` without wiring it into the variant suites and the remediation validators and the whole bundle ships unexamined, every gate green. See [Adding a policy: what to register](content/validation/README.md#adding-a-policy-what-to-register).
 
-### Scanning & policy linting
+### Scanning and linting
 
 ```bash
-cnspec scan local                      # Local system
-cnspec scan docker image ubuntu:22.04  # Docker
-cnspec scan aws                        # AWS (uses local AWS CLI config)
+cnspec scan local                      # local system
+cnspec scan docker image ubuntu:22.04  # docker
+cnspec scan aws                        # AWS (local AWS CLI config)
 cnspec scan k8s                        # Kubernetes
 cnspec scan ssh user@host              # SSH
 
-cnspec policy lint ./content                                    # Lint all policies
-cnspec policy lint ./content/mondoo-linux-security.mql.yaml     # Lint one policy
+cnspec policy lint ./content                                    # all policies
+cnspec policy lint ./content/mondoo-linux-security.mql.yaml     # one policy
 ```
 
 ## Working in this repo
 
-### Commits and pull requests
+### Commits and PRs
 
-Commit titles are `<emoji> <scope>: <lowercase description>`, and the emoji is part of the convention rather than decoration. Across the last 200 commits on `main`: **✨** new capability or coverage (57), **🧹** cleanup, refactor, or maintenance (47), **🐛** bug fix (40), **👷** CI and automation (8), **📝** documentation (3). The scope is the area, not the file — `validation`, `content`, `ci`, or a provider name such as `aws` or `alibaba`.
+Titles are `<emoji> <scope>: <lowercase description>`. The emoji is part of the convention, not decoration. Counts over the last 200 commits on `main`: ✨ new capability or coverage (57), 🧹 cleanup/refactor/maintenance (47), 🐛 bug fix (40), 👷 CI and automation (8), 📝 docs (3). Scope is the area, not the file: `validation`, `content`, `ci`, or a provider name like `aws` or `alibaba`.
 
-### Stacked pull requests
+### Stacked PRs
 
-Squash-merging a base branch does **not** retarget the PRs stacked on it. The squash lands a new SHA on `main` and leaves the original branch commit orphaned but alive, so GitHub keeps the stacked PR pointed at a dead branch and will happily merge into it. The PR then reports `MERGED` while none of its work is on `main`.
+Squash-merging a base branch does not retarget the PRs stacked on it. The squash lands a new SHA on `main` and leaves the original branch commit orphaned but alive, so GitHub keeps the stacked PR pointed at a dead branch and will merge into it. The PR then reports `MERGED` with none of its work on `main`.
 
 After a base branch merges, check every PR stacked on it:
 
@@ -91,80 +89,82 @@ After a base branch merges, check every PR stacked on it:
 git merge-base --is-ancestor <pr-merge-commit> origin/main && echo on-main || echo ORPHANED
 ```
 
-To recover, branch from `origin/main` and `git cherry-pick <pr-merge-commit>` — a squash commit has a single parent, so it applies cleanly — then confirm `git diff <pr-merge-commit> HEAD` is empty before opening the replacement. Also diff the recovered tree against the merged one: a base branch amended after its own squash merge strands those fixes too.
+Recover it: branch from `origin/main`, `git cherry-pick <pr-merge-commit>` (a squash commit has one parent, so it applies cleanly), confirm `git diff <pr-merge-commit> HEAD` is empty, open the replacement. Also diff the recovered tree against the merged one, since a base branch amended after its own squash merge strands those fixes too.
 
 ### Worktrees
 
-Feature work happens in worktrees, and many branches are already checked out in one. `git checkout <branch>` fails when it is, so operate on the branch in place with `git -C <worktree>` (find it with `git worktree list`) rather than trying to check it out again.
+Feature work happens in worktrees, and many branches are already checked out in one, which makes `git checkout <branch>` fail. Find the worktree with `git worktree list` and work on the branch in place with `git -C <worktree>`.
 
 ### Local mql development
 
-A check often needs a provider field that does not exist yet. `make prep/repos` clones mql into `./mql`, and `go.mod` carries a commented `replace go.mondoo.com/mql => ../mql` for building against a sibling checkout. After changing a provider's `.lr` schema, regenerate and rebuild that provider, then copy it into `~/.config/mondoo/providers/<name>/` — that installed copy, not the source, is what `cnspec policy lint` resolves against.
+A check often needs a provider field that doesn't exist yet. `make prep/repos` clones mql into `./mql`; `go.mod` has a commented `replace go.mondoo.com/mql => ../mql` for building against a sibling checkout. After changing a provider's `.lr` schema: regenerate, rebuild that provider, copy it into `~/.config/mondoo/providers/<name>/`. That installed copy, not the source, is what `cnspec policy lint` resolves against.
 
 ## Development rules
 
-### Dependency management
+### Dependencies
 
-- **Forbidden packages**: do not use `github.com/pkg/errors` (use `github.com/cockroachdb/errors`, wrapping with `errors.Wrap`) or `github.com/mitchellh/mapstructure` (use `github.com/go-viper/mapstructure/v2`).
-- When proto files reference mql types, ensure the mql repo is present via `make prep/repos`.
+- Banned: `github.com/pkg/errors` (use `github.com/cockroachdb/errors` and `errors.Wrap`) and `github.com/mitchellh/mapstructure` (use `github.com/go-viper/mapstructure/v2`).
+- Proto files referencing mql types need the mql repo present: `make prep/repos`.
 
 ### Generated code
 
-Never edit these files manually. Regenerate with `make cnspec/generate`:
+Never hand-edit. Regenerate with `make cnspec/generate`:
 
-- `*.pb.go` — Generated from proto files.
-- `*.ranger.go` — Generated ranger-rpc code.
-- `*.vtproto.pb.go` — Optimized vtproto marshaling.
-- `*_gen.go` — Generated via `go generate`.
+- `*.pb.go` — from proto files
+- `*.ranger.go` — ranger-rpc
+- `*.vtproto.pb.go` — vtproto marshaling
+- `*_gen.go` — `go generate`
 
-## Reviewing pull requests (for bots & automated reviewers)
+## Reviewing PRs (bots and automated reviewers)
 
-This section is for any automated reviewer (mondoo-code-review, Claude, etc.) commenting on PRs in this repo. **Most false positives come from guessing how MQL behaves instead of verifying it.** Before asserting that a query is wrong, that a field doesn't exist, or that precedence/grouping is off, confirm it against the references below. If you cannot verify a claim, frame it as a question ("Does `x` exist on this resource?"), not a defect.
+For automated reviewers (mondoo-code-review, Claude) commenting on PRs here. Most false positives come from guessing how MQL behaves instead of verifying it. Before claiming a query is wrong, a field is missing, or precedence is off, check the references below. Can't verify it? Ask a question ("Does `x` exist on this resource?") instead of filing a defect.
 
-### Verify before you claim
+### Verify first
 
-- **Resource & field existence** — Do not assume a resource or field is missing. Check what the provider actually exposes:
-  - [Resources by Provider](https://mondoo.com/docs/mql/resources) — canonical list of resources and their fields, grouped by provider (aws-pack, azure-pack, gcp-pack, core-pack, …).
-  - [Built-in Functions](https://mondoo.com/docs/mql/functions) — `parse.json`, `parse.date`, `regex`, list ops (`all`, `any`, `where`, `contains`, `none`, `map`), etc.
-  - [Full Mondoo Docs (LLM-friendly text)](https://mondoo.com/docs/llms-full.txt) — single raw-text dump of all docs; grep it when you need to confirm a field or function quickly.
-  - Locally, the *installed* provider schema is authoritative for what lint resolves against: `~/.config/mondoo/providers/<name>/<name>.resources.json`. The source of truth in code is `providers/<name>/resources/<name>.lr` in the [mql repo](https://github.com/mondoohq/mql).
-  - To check a real query end to end: `cnquery run <provider> -c '<mql>'` (no TTY needed) or `cnspec policy lint ./content/<file>.mql.yaml`. **Run the query before claiming it returns the wrong thing.**
-- **Operator precedence** — MQL precedence is fixed; consult [`mqlc/parser/operators.go`](https://github.com/mondoohq/mql/blob/main/mqlc/parser/operators.go#L11) before flagging precedence. Notably `&&` binds tighter than `||`, so `a || b && c` already parses as `a || (b && c)` — that is usually intentional, not a bug.
+Resource and field existence — don't assume something is missing, check what the provider exposes:
 
-### Do not flag these — they are correct MQL
+- [Resources by Provider](https://mondoo.com/docs/mql/resources) — resources and fields, grouped by provider (aws-pack, azure-pack, gcp-pack, core-pack, ...).
+- [Built-in Functions](https://mondoo.com/docs/mql/functions) — `parse.json`, `parse.date`, `regex`, list ops (`all`, `any`, `where`, `contains`, `none`, `map`).
+- [llms-full.txt](https://mondoo.com/docs/llms-full.txt) — raw dump of all docs; grep it to confirm a field or function fast.
+- Locally, the *installed* schema is what lint resolves against: `~/.config/mondoo/providers/<name>/<name>.resources.json`. Source of truth in code: `providers/<name>/resources/<name>.lr` in the [mql repo](https://github.com/mondoohq/mql).
+- End to end: `cnquery run <provider> -c '<mql>'` (no TTY needed) or `cnspec policy lint ./content/<file>.mql.yaml`. Run the query before claiming it returns the wrong thing.
 
-Each is verified against the compiler and explained in full in [`content/CLAUDE.md`](content/CLAUDE.md). The one-liners here exist so a reviewer that never opens that file still does not raise the false positive.
+Operator precedence is fixed; see [`mqlc/parser/operators.go`](https://github.com/mondoohq/mql/blob/main/mqlc/parser/operators.go#L11). `&&` binds tighter than `||`, so `a || b && c` already parses as `a || (b && c)`. That's usually intentional.
 
-| Pattern | Why it is not a bug |
+### Don't flag these, they're correct MQL
+
+All verified against the compiler and explained in full in [`content/CLAUDE.md`](content/CLAUDE.md). Repeated here so a reviewer that never opens that file still doesn't file the false positive.
+
+| Pattern | Why it's not a bug |
 |---|---|
-| `a == 1 \|\| b > 0 && b <= 5`, unparenthesized | MQL has no parenthesized grouping anywhere; `(` is rejected as an operand. `&&` binds tighter than `\|\|`, so the grouping already is what the author meant. Never suggest adding parens "for clarity". |
-| `guard \|\| guard \|\| D && E` described as "skipped", "short-circuited past", or "silently passes" | This is the **guard chain**, the dominant shape in `content/`. Short-circuiting decides what is *evaluated*, never the *verdict*: if `D` is false, `D && E` is false, the disjunction is false, and the check **fails**. Before filing, build the truth table and name the row where the current form passes and a parenthesized form fails. There is no such row — this is the most-filed false positive on this repo. |
-| A literal flagged on character count from the diff (ARN colons, a missing path segment) | Rendered diffs distort spacing; do not count characters in one. Resolve the literal against its oracle and quote the output (`aws iam get-policy`, `cfn-lint`, the provider schema). AWS-managed policy ARNs have an empty account field, so `arn:aws:iam::aws:policy/…` with two colons is canonical. |
-| `blocks.where(type == 'x').all(y)` where `values['x'].all(y)` looks simpler | Not equivalent. `.all()` passes vacuously on an empty list and fails outright on `null`, and an absent key is `null`. The rewrite flips the absent-block verdict. |
-| `field != empty` rather than `field != ""` | `null != ""` is true, so `!= ""` is not a non-empty test. `!= empty` is the null-safe form. |
-| A predicate in `mql:` that "could" live in `filters:` | `filters:` is asset selection. Moving a predicate there drops assets from scoring rather than failing them. |
-| Several lines in one `mql:` block | Newline is an implicit AND. A later line is not ignoring an earlier one. |
-| A `-terraform-hcl` variant stricter than its `-plan`/`-state` sibling | Usually deliberate: HCL sees author intent, plan/state see resolved values. Do not recommend unifying them by copying one body into another. |
-| A `compliance/*` tag unlike a neighbouring check's | Neighbours map different control objectives. Verify against the framework text before flagging *or* endorsing. |
+| `a == 1 \|\| b > 0 && b <= 5`, unparenthesized | MQL has no parenthesized grouping at all; `(` is rejected as an operand. `&&` binds tighter than `\|\|`, so the grouping is already what the author meant. Never suggest parens "for clarity". |
+| `guard \|\| guard \|\| D && E` called "skipped", "short-circuited past", or "silently passes" | This is the guard chain, the dominant shape in `content/`. Short-circuiting decides what is *evaluated*, never the *verdict*: if `D` is false, `D && E` is false, the disjunction is false, the check fails. Build the truth table and name the row where the current form passes and a parenthesized form fails. There isn't one. Most-filed false positive on this repo. |
+| A literal flagged on character count from the diff (ARN colons, missing path segment) | Rendered diffs distort spacing; don't count characters in one. Resolve the literal against its oracle and quote the output (`aws iam get-policy`, `cfn-lint`, the provider schema). AWS-managed policy ARNs have an empty account field, so `arn:aws:iam::aws:policy/...` with two colons is canonical. |
+| `blocks.where(type == 'x').all(y)` where `values['x'].all(y)` looks simpler | Not equivalent. `.all()` passes vacuously on an empty list and fails on `null`, and an absent key is `null`. The rewrite flips the absent-block verdict. |
+| `field != empty` rather than `field != ""` | `null != ""` is true, so `!= ""` isn't a non-empty test. `!= empty` is the null-safe form. |
+| A predicate in `mql:` that "could" live in `filters:` | `filters:` is asset selection. Moving a predicate there drops assets from scoring instead of failing them. |
+| Several lines in one `mql:` block | Newline is an implicit AND. A later line isn't ignoring an earlier one. |
+| A `-terraform-hcl` variant stricter than its `-plan`/`-state` sibling | Usually deliberate: HCL sees author intent, plan/state see resolved values. Don't unify them by copying one body into another. |
+| A `compliance/*` tag unlike a neighbouring check's | Neighbours map different control objectives. Check the framework text before flagging *or* endorsing. |
 
-### Two that are real bugs, and are easy to miss
+### Two real bugs that are easy to miss
 
-**`null && null` is `true`** — and it is the only null combination that is. Verified:
+`null && null` is `true`, and it's the only null combination that is:
 
 ```
-m["absent"] && m["also_absent"]   → [ok] true
-m["absent"] && true               → [failed]
-m["absent"] && false              → [failed]
-m["absent"] || false              → [failed]
+m["absent"] && m["also_absent"]   -> [ok] true
+m["absent"] && true               -> [failed]
+m["absent"] && false              -> [failed]
+m["absent"] || false              -> [failed]
 ```
 
-So two **bare boolean fields** joined with `&&` pass when neither resolved. This does **not** extend to comparisons: `null == "x"` is `false`, not null, so `field_a == "x" && field_b == "y"` fails when both are absent. Flag the bare-field form; leave the comparison form alone. The comparison form has its own asymmetry — `field != "insecure"` passes when the field is absent — which `content/CLAUDE.md` covers.
+Two bare boolean fields joined with `&&` therefore pass when neither resolved. Doesn't extend to comparisons: `null == "x"` is `false`, not null, so `field_a == "x" && field_b == "y"` fails when both are absent. Flag the bare-field form, leave the comparison form alone. The comparison form has its own asymmetry (`field != "insecure"` passes when the field is absent), covered in `content/CLAUDE.md`.
 
-**A dotted path that is also a resource name is not a field read.** The compiler extends the resource path greedily, so `azure.subscription.aksService.cluster.autoUpgradeProfile.upgradeChannel` builds a bare `…cluster.autoUpgradeProfile` resource whose accessor never runs; every field reads `null` and the check answers confidently wrong. Suspect it when the value is a sub-object and the full path appears as a resource in `cnspec providers resources <provider> --json`; confirm by running the query and looking for `provider returned no data and no error for a field … id=` with an **empty** `id=`. Not Azure-specific — Cloudflare, GCP, AWS, vSphere and Arista all have resources shaped this way. `content/CLAUDE.md` has the full treatment and the fix.
+A dotted path that is also a resource name is not a field read. The compiler extends the resource path greedily, so `azure.subscription.aksService.cluster.autoUpgradeProfile.upgradeChannel` builds a bare `...cluster.autoUpgradeProfile` resource whose accessor never runs; every field reads `null` and the check answers confidently wrong. Suspect it when the value is a sub-object and the full path appears as a resource in `cnspec providers resources <provider> --json`. Confirm by running the query and looking for `provider returned no data and no error for a field ... id=` with an empty `id=`. Not Azure-specific: Cloudflare, GCP, AWS, vSphere, and Arista all have resources shaped this way. Full treatment and fix in `content/CLAUDE.md`.
 
-## Resources
+## Links
 
-- [cnspec Documentation](https://mondoo.com/docs/cnspec)
-- [Policy Authoring Guide](https://mondoo.com/docs/cnspec/write-policies/write-intro)
+- [cnspec docs](https://mondoo.com/docs/cnspec)
+- [Policy authoring guide](https://mondoo.com/docs/cnspec/write-policies/write-intro)
 
-The MQL references (resource lists, built-in functions, operator precedence, `llms-full.txt`) are linked inline in "Verify before you claim" above.
+MQL references (resource lists, functions, precedence, `llms-full.txt`) are linked in "Verify first" above.
