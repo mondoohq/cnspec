@@ -39,7 +39,6 @@ The parts whose behavior is not obvious from reading a policy file:
 - **Containers are not patched.** Images are rebuilt and redeployed. Remediation prose for container checks says so, rather than describing an in-place package upgrade that would be lost on the next deploy.
 - **No inline linter suppressions in remediation snippets.** A shipped snippet is example code an operator will paste. If shellcheck, cfn-lint, or PSScriptAnalyzer flags it, fix the snippet or add the rule to the validator's exclude list — never `# shellcheck disable=...` inside the fence.
 - **Spelling exceptions go in `typos.toml`** under `[default.extend-words]`, which is case-insensitive, so one lowercase entry covers every casing. There is no `expect.txt`. If the flagged word is a deliberate misspelling in an example, reword the example instead of allowlisting it.
-- Check `title` fields must be 75 characters or fewer.
 - Check `title` must match the action enforced by the `mql` query and described in `desc`. If the title says "Ensure X is enabled" the query must assert X is enabled and the description must explain X — don't let titles drift from what the check actually does (e.g., a title about "encryption at rest" paired with a query that inspects TLS settings).
 - Every check's `docs:` block must include all three sections: `desc:`, `audit:`, and `remediation:`. None of these are optional — `desc` explains *what and why*, `audit` explains *how to verify manually*, and `remediation` explains *how to fix*.
 - `audit:` instructions must use the **vendor's own tooling** — the cloud console or the vendor CLI (`aws`, `az`, `gcloud`, `oci`, `doctl`, `kubectl`, `gh`, …). **Never** reference Mondoo tools (`cnspec`, `mql`, the Mondoo console) in audit steps. Prefer the vendor CLI for an automated path; fall back to console click-through when no CLI exists. The point of `audit:` is to give an auditor a vendor-native way to reproduce the finding without trusting Mondoo's output.
@@ -190,7 +189,7 @@ Confirm the current list rather than trusting this one, since it moves as framew
 grep -rho "compliance/[a-z0-9-]*:" content/*.mql.yaml | sort | uniq -c | sort -rn
 ```
 
-The frameworks in the standard set appear on nearly every tagged check; the subject-scoped ones appear on a few dozen to a few hundred. **A policy missing one of the standard fourteen entirely is drift, not a decision** — `mondoo-postgresql-security.mql.yaml` carries thirteen and no `owasp-top-10-2025` across all 29 of its checks, which is what an undocumented convention looks like after one policy is written without it.
+The frameworks in the standard set appear on nearly every tagged check; the subject-scoped ones appear on a few dozen to a few hundred. **A policy missing one of the standard fourteen entirely is drift, not a decision.** The fourteen currently report an identical count, so a framework whose count falls out of line with the other thirteen is the signal to go looking for the policy that skipped it.
 
 **The control uid is not derived from the framework key.** Several frameworks name their controls with a prefix that does not match the key you tag them under, so a constructed uid compiles and maps to nothing:
 
@@ -431,12 +430,12 @@ Not Azure-specific: Cloudflare (`cloudflare.zone.settings.*`), GCP (`gcp.project
 
 ## Validation and testing
 
-**[`validation/README.md`](validation/README.md) is the definitive reference** for every check that runs against this directory: what each one proves, when CI runs it, and how to run it yourself. What follows is the short version.
+**[`validation/README.md`](validation/README.md) is the definitive reference** for every check that runs against this directory: what each one proves, when CI runs it, how to scope a run down to a single check, and what a new policy or check has to be registered with. This file owns the authoring rules; that one owns the gates.
 
 ```bash
 make test/content              # lint + bundle scans + compliance mappings
 make test/content/lint         # cnspec policy lint (run this first, and fix it first)
-make test/content/iac          # every IaC fixture suite — slow; scope it instead, see below
+make test/content/iac          # every IaC fixture suite — slow; scope it, see the README
 make test/content/remediation  # the remediation code-block linters
 make test/content/commands     # the remediation CLI and API validators
 ```
@@ -448,55 +447,12 @@ cnspec policy lint content/mondoo-aws-security.mql.yaml
 cnspec scan local -f content/your-policy.mql.yaml
 ```
 
-**Do not run the whole IaC suite to test one check.** Subtests are named `<policy>/<check-uid>/<pass|fail>/<scenario>`, so a `-run` pattern with a **trailing slash** scopes it to a single check in a couple of seconds:
+Two consequences of how those gates are wired are worth carrying into authoring, because both are invisible while they are wrong:
 
-```bash
-go test -tags iac_variants ./content/validation/scans \
-  -run 'TestTerraformVariants/mondoo-aws-security/mondoo-aws-security-s3-bucket-encryption-terraform-hcl/'
-```
-
-The trailing slash is what makes it work; without it the pattern matches the suite name and runs everything under it.
-
-Five things gate a content change, and each fails differently:
-
-| What | Target | Fails when |
-|---|---|---|
-| Lint | `make test/content/lint` | a check does not compile against the provider schema |
-| IaC fixtures | `make test/content/iac/<type>` | a check reaches the wrong verdict, or is silently **skipped** |
-| Fixture coverage | `make test/content/iac/coverage` | a variant ships without pass+fail fixtures |
-| Closed loop | `make test/content/iac/remediation` | the documented fix does not make the check pass |
-| Remediation lint | `make test/content/remediation`, `make test/content/commands` | a snippet is malformed, or names a CLI flag or API endpoint that does not exist |
-
-Three traps worth knowing before you hit them:
-
-- **A validator only sees the policies in its `TARGETS`.** When a policy gains its first `terraform`/`ansible`/`chef` remediation, add it to that validator's `TARGETS` in the same change — otherwise it ships unlinted and CI stays green. Terraform needs a `PROVIDER_MAP` entry too. (`bash.py` and `powershell.py` are the exceptions: both glob every policy, deliberately, so a shell or PowerShell fence is linted wherever it appears.)
-- **A skipped check is a fixture bug, not a pass.** A variant whose filter never matches anything looks identical to one that passes, in every report, forever.
-- **A stale `KNOWN_BUG.md` marker fails the build.** Adding a check means deleting its markers in the same change.
+- **A skipped check is a fixture bug, not a pass.** A variant whose filter never matches anything is indistinguishable from one that passes, in every report, forever. A group filter is evaluated before the check's own filter, so a policy with variants leaves its groups unfiltered — see [Group filters and variants do not mix](validation/README.md#group-filters-and-variants-do-not-mix).
+- **A new policy is visited by nothing until it is registered.** Most validators are allowlist-driven, so an unregistered `*.mql.yaml` ships with its variants untested and its remediation unverified, with every gate green. Wire it up in the same change that adds it: [Adding a policy: what to register](validation/README.md#adding-a-policy-what-to-register).
+- **A stale `KNOWN_BUG.md` marker fails the build.** Fixing a check means deleting its markers in the same change.
 
 **Never hand-edit** the checked-in CLI grammars and OpenAPI specs in `validation/data/`; re-run the relevant script in `validation/upstream/dump/` instead.
-
-### A new policy is not covered until it is registered
-
-A new *check* inherits the coverage its policy already has. A new *policy* inherits nothing. Every validator above is allowlist-driven except `bash.py`, `powershell.py` and the compliance suites, so a brand-new `*.mql.yaml` is not reported as unvalidated; it is simply never visited. The bundle merges with its variants untested, its HCL unlinted and its CLI commands unverified, and every gate stays green.
-
-This is not hypothetical. The four SaaS policies added in PR #3338 were invisible to the remediation validators. Registering them with `terraform.py` in a follow-up commit failed **8 of their 11** HCL snippets against the real provider schemas, and hand-checking their CLI snippets found an entire invented `hcp vault` / `hcp consul` command surface and two `neonctl` flags that do not exist.
-
-Wire the policy up in the **same change** that adds it. [`validation/README.md`](validation/README.md#adding-a-policy-what-to-register) is the definitive list, with what breaks in each case; in short, the policy has to be named in:
-
-- `content/README.md`, the user-facing catalog, always.
-- `tfVariantPolicies` in `validation/scans/iac_variants_test.go`, if it has any IaC variant, plus that file's `extraProviders` if its runtime variant needs a provider beyond the base six.
-- `TARGETS` in each `validation/remediation/code/<language>.py` whose method it ships, and `PROVIDER_MAP` as well for Terraform. Not `bash.py` or `powershell.py` — those two glob every policy already.
-- a registry under `validation/remediation/commands/`, if it ships `id: cli` / `id: api` blocks or `audit:` steps that invoke a CLI or REST call.
-- `typos.toml`, if the vendor's terminology trips the spell checker.
-
-Adding a policy for a platform with **no** non-interactive surface is a legitimate outcome, not a reason to skip a row. Record it as a comment on the check explaining what the vendor does not expose, so the next pass does not re-derive it, and still register the policy with the validators it *can* use so anything added later is checked from the start.
-
-### Groups in a policy with variants carry no platform filter
-
-This one is an authoring decision, not a registration step, and it is invisible until the fixtures exist.
-
-A group filter is evaluated **before** the check's own filter, so a group carrying `filters: asset.platform == "<api-platform>"` means a Terraform asset never reaches the variant underneath it. Every fixture then reports as *skipped* rather than pass or fail, which is the outcome this whole suite exists to catch.
-
-A policy with variants therefore leaves its groups unfiltered and lets each variant's own `filters:` select its asset, the way `mondoo-tailscale-security` and `mondoo-snowflake-security` do. Convert the groups in the same change that adds the first variant.
 
 Reference links for MQL resources, built-in functions, and the authoring guide are in the repository-root [`CLAUDE.md`](../CLAUDE.md), which loads alongside this file.
