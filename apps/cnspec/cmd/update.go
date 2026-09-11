@@ -70,7 +70,8 @@ func runUpdate() error {
 	}
 
 	config.InitViperConfig()
-	releaseURL := cnspec.ReleaseURL(config.GetUpdatesURL())
+	channel := config.GetUpdateChannel()
+	releaseURL := cnspec.ReleaseURL(config.GetUpdatesURL(), channel)
 
 	// selfupdate re-executes the new binary with the current arguments, so the
 	// successor runs `update` again. It inherits MONDOO_AUTO_UPDATE_ENGINE=false
@@ -100,6 +101,15 @@ func runUpdate() error {
 	// reaching here with updated==true means the Windows path spawned it.
 	if updated {
 		log.Info().Msg("cnspec was updated")
+		return nil
+	}
+
+	// Name the channel when it is not the default. On preview "already the
+	// latest version" is true of that track only, and a user who set the channel
+	// to get a release candidate needs to be able to tell the difference between
+	// "there is nothing newer" and "the channel never took effect".
+	if channel != config.ChannelStable {
+		log.Info().Msgf("cnspec %s is already the latest version on the %s channel", currentVersion, channel)
 		return nil
 	}
 

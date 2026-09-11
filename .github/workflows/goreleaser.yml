@@ -42,6 +42,8 @@ jobs:
   goreleaser:
     outputs:
       skip-publish: ${{ steps.skip-publish.outputs.skip-publish }}
+      channel: ${{ steps.channel.outputs.channel }}
+      promote-latest: ${{ steps.channel.outputs.promote-latest }}
     permissions:
       # Add "contents" to write release
       contents: "write"
@@ -66,11 +68,84 @@ jobs:
       - name: Import environment variables from file
         run: cat ".github/env" >> $GITHUB_ENV
 
-      - name: Skip Publish for non-release tags
-        id: skip-publish
-        if: contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'pre') || contains(github.ref, 'rc') || inputs.skip-publish == true
+      # A tag's release channel is derived from its semver pre-release segment,
+      # never declared: `14.0.0-rc.2` is preview, `13.38.1` is stable, and build
+      # metadata (`8.4.0+41`) is not a pre-release so it stays stable. This
+      # replaces a substring test for alpha/beta/pre/rc that disagreed with the
+      # equivalent lists in the publishing tools. See minstaller ADR 0003.
+      #
+      # A pre-release is published, just not promoted: it gets a GitHub release
+      # flagged as a pre-release, it reaches the release bucket, and it appears
+      # in the preview channel. What it must not do is become `latest`, or be
+      # packaged for apt/yum/msi/pkg/chocolatey.
+      - name: Determine release channel
+        id: channel
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
-          echo "Skipping publish for non-release tags"
+          if [ "$REF_TYPE" != "tag" ]; then
+            # Snapshot runs off a branch never publish, so there is no channel
+            # to derive and no tag to validate.
+            echo "not a tag ($REF_NAME), treating as stable and non-promoting"
+            echo "channel=stable" >> $GITHUB_OUTPUT
+            echo "promote-latest=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Build metadata is everything after a `+`, and SemVer 10 says it MUST
+          # be ignored when determining precedence. So `v14.0.0+rc.1` does not
+          # mean "release candidate": it compares EQUAL to `14.0.0`, outranks
+          # every real `14.0.0-rc.N`, derives the stable channel, and ships to
+          # every user on their next update check. A pre-release is introduced
+          # with `-`, never `+`.
+          #
+          # This is worth failing on rather than warning about, because
+          # everything downstream would accept it happily.
+          #
+          # The boundaries on both sides keep the marker list from firing on
+          # real words that merely contain one of them. Verified:
+          #   rejects: +rc.1 +alpha3 +pre-2 +preview +edge.7 +test +next.1
+          #   allows:  +3508 +build.7 +attestation +contest +greatest +latest
+          #            +protest +nextcloud +edgecase
+          META="${REF_NAME#*+}"
+          if [ "$META" != "$REF_NAME" ]; then
+            if printf '%s' "$META" | grep -Eiq '(^|[.-])(pre|rc|alpha|beta|dev|canary|nightly|snapshot|preview|edge|test|next)([.-]|[0-9]|$)'; then
+              echo "::error::tag $REF_NAME puts a pre-release marker in build metadata. Build metadata is ignored for precedence, so this tag means the FINAL ${REF_NAME%%+*} and would publish to the stable channel. Use a hyphen: ${REF_NAME%%+*}-${META}"
+              exit 1
+            fi
+            echo "::warning::tag $REF_NAME carries build metadata (+${META}), which is ignored when comparing versions"
+          fi
+
+          CORE="${REF_NAME#v}"
+          CORE="${CORE%%+*}"
+          if ! printf '%s' "$CORE" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::tag $REF_NAME is not a semver version, so its release channel cannot be derived"
+            exit 1
+          fi
+
+          case "$CORE" in
+            *-*) CHANNEL=preview ;;
+            *)   CHANNEL=stable ;;
+          esac
+
+          PROMOTE=false
+          if [ "$CHANNEL" = "stable" ]; then
+            PROMOTE=true
+          fi
+
+          echo "$REF_NAME -> channel=$CHANNEL promote-latest=$PROMOTE"
+          echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
+          echo "promote-latest=$PROMOTE" >> $GITHUB_OUTPUT
+
+      # skip-publish is now only the manual dry-run switch. It used to also mean
+      # "this is a pre-release", which is what stopped pre-releases from ever
+      # reaching the release bucket: the dispatch below was gated on it.
+      - name: Skip publish (manual dry run)
+        id: skip-publish
+        if: inputs.skip-publish == true
+        run: |
+          echo "Skipping publish: requested by workflow input"
           echo "skip-publish=true" >> $GITHUB_OUTPUT
           echo "skip-publish=true" >> $GITHUB_ENV
 
@@ -140,7 +215,7 @@ jobs:
       # created a discussion on the issue here https://github.com/orgs/goreleaser/discussions/5943
 
       - name: Run GoReleaser and promote latest
-        if: ${{ inputs.skip-publish != true && steps.skip-publish.outputs.skip-publish != 'true' }}
+        if: ${{ inputs.skip-publish != true && steps.channel.outputs.promote-latest == 'true' }}
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
@@ -166,7 +241,7 @@ jobs:
           MAKE_LATEST: ${{ inputs.make-latest == false && 'false' || 'true' }}
 
       - name: Run GoReleaser without promoting 'latest'
-        if: ${{ inputs.skip-publish == true || steps.skip-publish.outputs.skip-publish == 'true' }}
+        if: ${{ inputs.skip-publish == true || steps.channel.outputs.promote-latest != 'true' }}
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
@@ -208,6 +283,10 @@ jobs:
 
   trigger-installer-release:
     name: Trigger Installer Release
+    # Runs for every channel. Gating this on "is a pre-release" is what kept
+    # pre-releases out of the release bucket entirely and made the publish a
+    # manual runbook step. installer decides what a preview release is allowed
+    # to trigger; packaging stays stable-only there.
     if: ${{ inputs.skip-publish != true && needs.goreleaser.outputs.skip-publish != 'true' }}
     runs-on: ubuntu-latest
     needs: goreleaser
@@ -240,24 +319,32 @@ jobs:
             mondoohq/installer
             mondoohq/cnspec
 
-      - name: Check if pre-release
-        id: is_prerelease
-        run: echo "is_pre=${IS_PRE}" >> $GITHUB_OUTPUT
-        env:
-          IS_PRE: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-pre') || contains(github.ref_name, '-rc') }}
-
       - name: Trigger installer release
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ steps.generate-token.outputs.token }}
           repository: "mondoohq/installer"
           event-type: trigger-release
+          # channel is an assertion, not an instruction: installer derives the
+          # same answer from the version itself, so an older installer that does
+          # not read this field still behaves correctly. skip-publish keeps its
+          # old meaning for consumers that read it.
+          #
+          # format() keeps skip-publish a JSON *string*, as it has always been.
+          # It used to come from a step output, which is always a string, so
+          # toJSON produced "true"; comparing the channel directly yields a
+          # boolean, and toJSON would emit an unquoted true. The one consumer
+          # normalizes in bash and handles both, but this is a cross-repo wire
+          # contract and its type should not change as a side effect of
+          # refactoring how the value is computed.
           client-payload: >-
-            {"version": ${{ toJSON(github.ref_name) }}, "skip-publish": ${{ toJSON(steps.is_prerelease.outputs.is_pre) }}}
+            {"version": ${{ toJSON(github.ref_name) }}, "channel": ${{ toJSON(needs.goreleaser.outputs.channel) }}, "skip-publish": ${{ toJSON(format('{0}', needs.goreleaser.outputs.channel != 'stable')) }}}
 
   mondoo-operator-cnspec:
     name: Trigger Mondoo Operator cnspec image release
-    if: ${{ inputs.skip-publish != true && needs.goreleaser.outputs.skip-publish != 'true' }}
+    # Stable only: the operator ships cnspec to customer clusters, which is not
+    # somewhere a release candidate belongs.
+    if: ${{ inputs.skip-publish != true && needs.goreleaser.outputs.skip-publish != 'true' && needs.goreleaser.outputs.channel == 'stable' }}
     runs-on: ubuntu-latest
     needs: goreleaser
     steps:

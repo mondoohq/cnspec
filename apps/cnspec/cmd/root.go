@@ -158,11 +158,20 @@ func init() {
 	_ = viper.BindPFlag("log-level", rootCmd.PersistentFlags().Lookup("log-level"))
 	_ = viper.BindPFlag("logging-config", rootCmd.PersistentFlags().Lookup("logging-config"))
 	_ = viper.BindPFlag("api_proxy", rootCmd.PersistentFlags().Lookup("api-proxy"))
+	// Bound under both spellings. Readers here are split between "auto-update"
+	// (bundle.go, policy.go, scan.go) and "auto_update" (serve.go,
+	// serve_api.go, and config.GetAutoUpdate), and viper's key delimiter is
+	// disabled so neither normalizes to the other. Binding one meant
+	// --auto-update=false was invisible to half of them.
 	_ = viper.BindPFlag("auto-update", rootCmd.PersistentFlags().Lookup("auto-update"))
+	_ = viper.BindPFlag("auto_update", rootCmd.PersistentFlags().Lookup("auto-update"))
 	_ = viper.BindPFlag("strict", rootCmd.PersistentFlags().Lookup("strict"))
 	_ = viper.BindEnv("features")
 	_ = viper.BindEnv("strict")
-	_ = viper.BindEnv("providers_url")
+	// updates_url, not providers_url: the latter was removed in v14, so this
+	// bound an env var nothing reads and left MONDOO_UPDATES_URL unbound.
+	_ = viper.BindEnv("updates_url")
+	_ = viper.BindEnv(config.KeyUpdateChannel)
 
 	config.Init(rootCmd)
 

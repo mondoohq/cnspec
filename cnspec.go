@@ -4,8 +4,11 @@
 package cnspec
 
 import (
+	neturl "net/url"
 	"regexp"
 	"strings"
+
+	"go.mondoo.com/mql/cli/config"
 )
 
 // Version is set via ldflags
@@ -42,11 +45,31 @@ const defaultUpdatesURL = "https://install.mondoo.com"
 // ReleaseURL returns the release manifest the binary self-update reads. It lives
 // here so the implicit update in main and the explicit `cnspec update` command
 // cannot drift onto different releases.
-func ReleaseURL(updatesURL string) string {
+//
+// The channel travels as a query parameter rather than a different document
+// name. The install service's routes are named after the package, not after the
+// manifest -- there is no /package/cnspec/preview.json -- and an unmatched path
+// there is answered with the landing page as a cacheable 200, so a path-shaped
+// channel would hand the updater HTML with a success status. An empty or stable
+// channel produces exactly the URL this returned before, so nothing changes for
+// a client that never sets one.
+func ReleaseURL(updatesURL string, channel string) string {
 	if updatesURL == "" {
 		updatesURL = defaultUpdatesURL
 	}
-	return strings.TrimSuffix(updatesURL, "/") + "/package/cnspec/latest.json"
+
+	manifest := strings.TrimSuffix(updatesURL, "/") + "/package/cnspec/latest.json"
+	if channel == "" || channel == config.ChannelStable {
+		return manifest
+	}
+
+	// Encoded rather than concatenated. Every caller today passes a value
+	// GetUpdateChannel has already normalized to one of two constants, but this
+	// is exported: a caller that passes something else should get a valid URL
+	// with one odd parameter, not a second `?` or an injected one.
+	query := neturl.Values{}
+	query.Set("channel", channel)
+	return manifest + "?" + query.Encode()
 }
 
 // GetVersion returns the version of the build
