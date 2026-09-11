@@ -28,6 +28,11 @@ import (
 func main() {
 	defer health.ReportPanic("cnspec", cnspec.Version, cnspec.Build)
 
+	// Before anything resolves a channel. With update_channel unset, a
+	// pre-release build follows the pre-release track rather than pulling
+	// stable providers built against a different schema.
+	config.SetRunningVersion(cnspec.GetVersion())
+
 	// Check if running as 'cnquery' and show deprecation warning
 	checkDeprecatedBinaryName()
 
