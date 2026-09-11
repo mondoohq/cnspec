@@ -11,9 +11,9 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/mql/cli/config"
 	"go.mondoo.com/mql/logger"
 	"go.mondoo.com/mql/mrn"
-	"go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
 )
@@ -366,9 +366,14 @@ func (s *LocalServices) DefaultPolicies(ctx context.Context, req *DefaultPolicie
 		registryEndpoint = defaultRegistryUrl
 	}
 
-	// Note, this does not use the proxy config override from the mondoo.yml since we only get here when
-	// it is used without upstream config
-	client, err := NewPolicyHubClient(registryEndpoint, ranger.DefaultHttpClient())
+	// There is no upstream config on this path, but the registry is still
+	// reached through whatever proxy the CLI resolves: api_proxy, the
+	// environment, or the operating system's settings.
+	httpClient, err := config.NewHttpClient()
+	if err != nil {
+		return nil, err
+	}
+	client, err := NewPolicyHubClient(registryEndpoint, httpClient)
 	if err != nil {
 		return nil, err
 	}

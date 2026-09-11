@@ -46,6 +46,7 @@ import (
 	"go.mondoo.com/cnspec"
 	"go.mondoo.com/cnspec/internal/scandump"
 	"go.mondoo.com/mql"
+	"go.mondoo.com/mql/cli/config"
 	"go.mondoo.com/mql/logger"
 	"go.mondoo.com/mql/providers"
 )
@@ -264,6 +265,13 @@ type Manifest struct {
 	Hostname   string            `json:"hostname,omitempty"`
 	Args       []string          `json:"args,omitempty"`
 	Env        map[string]string `json:"env"`
+	// Proxy is the proxy that platform traffic goes through as this process
+	// resolved it, credentials redacted, and ProxySource where it came from
+	// (api_proxy, environment, system). Both are empty for a direct
+	// connection. On a proxied Windows machine this is the first thing to
+	// look at when the platform is unreachable.
+	Proxy       string `json:"proxy,omitempty"`
+	ProxySource string `json:"proxy_source,omitempty"`
 }
 
 func (b *Bundle) writeManifest() error {
@@ -280,6 +288,7 @@ func (b *Bundle) writeManifest() error {
 		Args:       b.Args,
 		Env:        collectRelevantEnv(),
 	}
+	m.Proxy, m.ProxySource = effectiveProxy()
 
 	raw, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
@@ -294,7 +303,24 @@ func (b *Bundle) writeManifest() error {
 var loggedEnvVars = []string{
 	"DEBUG", "TRACE", "MONDOO_CONFIG_PATH", "MONDOO_CONFIG_HOME",
 	"MONDOO_HOME", "MONDOO_AUTO_UPDATE", "NO_COLOR", "HTTP_PROXY",
-	"HTTPS_PROXY", "NO_PROXY", "MEM_DEBUG",
+	"HTTPS_PROXY", "NO_PROXY", "MONDOO_API_PROXY", "MONDOO_SYSTEM_PROXY",
+	"MEM_DEBUG",
+}
+
+// effectiveProxy reports the proxy platform traffic goes through and its
+// source, or empty strings for a direct connection or when the configuration
+// cannot be read. It never fails the bundle: the proxy is context for the
+// bundle, not its subject.
+func effectiveProxy() (proxy, source string) {
+	opts, err := config.Read()
+	if err != nil {
+		return "", ""
+	}
+	p, src, err := opts.EffectiveProxy(opts.UpstreamApiEndpoint())
+	if err != nil || p == nil {
+		return "", ""
+	}
+	return p.Redacted(), string(src)
 }
 
 func collectRelevantEnv() map[string]string {

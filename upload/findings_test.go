@@ -103,11 +103,15 @@ func TestDoUpload(t *testing.T) {
 
 func TestResolverHTTPClient(t *testing.T) {
 	// nil falls back to a non-nil default client.
-	assert.NotNil(t, resolverHTTPClient(nil))
+	c, err := resolverHTTPClient(nil)
+	require.NoError(t, err)
+	assert.NotNil(t, c)
 
 	// a supplied client is used as-is.
 	custom := &http.Client{}
-	assert.Same(t, custom, resolverHTTPClient(custom))
+	c, err = resolverHTTPClient(custom)
+	require.NoError(t, err)
+	assert.Same(t, custom, c)
 }
 
 func TestPutHTTPClient(t *testing.T) {
