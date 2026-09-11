@@ -17,6 +17,7 @@ import (
 
 func init() {
 	rootCmd.AddCommand(updateCmd)
+	updateCmd.Flags().String("channel", "", "Release channel to update from: stable or preview (default: the configured update_channel, or the channel this build belongs to)")
 }
 
 // envUpdateReexec marks the process that selfupdate exec'd into after installing
@@ -35,18 +36,55 @@ var updateCmd = &cobra.Command{
 This downloads the release for this platform, verifies it, and re-executes the
 new binary. It is the same mechanism cnspec uses to update itself in the
 background; running this command performs the check immediately instead of
-waiting for the next refresh interval.`,
+waiting for the next refresh interval.
+
+--channel updates from a different release channel for this one command,
+without changing any configuration. On a stable install that is how you move to
+a release candidate without putting the machine on the pre-release track
+permanently.
+
+It cannot move you backwards: cnspec only ever updates to a higher version, so
+--channel stable on a pre-release build reports that there is nothing newer
+rather than rolling back. Reinstall to return to the stable line.
+
+Examples:
+  cnspec update                     # the configured channel
+  cnspec update --channel preview   # one-off, from the pre-release track`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// we need silence usage here, otherwise we get the usage printed in case of error
 		// see https://github.com/spf13/cobra/issues/340
 		cmd.SilenceUsage = true
 		cmd.SilenceErrors = true
 
-		return runUpdate()
+		return runUpdate(cmd)
 	},
 }
 
-func runUpdate() error {
+// resolveUpdateChannel returns the channel this run should update from: the
+// --channel flag if given, otherwise whatever the configuration and the running
+// build resolve to.
+//
+// An unknown value is an error rather than the fallback it gets in config. In a
+// config file the value may be sitting somewhere nobody is looking at, so
+// following the build is the safer reading; typed on the command line it is
+// worth saying so. Same reasoning as `providers update --channel`.
+func resolveUpdateChannel(cmd *cobra.Command) (string, error) {
+	flag, _ := cmd.Flags().GetString("channel")
+	if flag == "" {
+		return config.GetUpdateChannel(), nil
+	}
+
+	channel := strings.ToLower(strings.TrimSpace(flag))
+	switch channel {
+	case config.ChannelStable, config.ChannelPreview:
+		return channel, nil
+	default:
+		return "", errors.Errorf("unknown channel %q, expected %s or %s",
+			flag, config.ChannelStable, config.ChannelPreview)
+	}
+}
+
+func runUpdate(cmd *cobra.Command) error {
 	currentVersion := cnspec.GetVersion()
 
 	// This process is the one selfupdate exec'd into after installing the new
@@ -70,7 +108,11 @@ func runUpdate() error {
 	}
 
 	config.InitViperConfig()
-	channel := config.GetUpdateChannel()
+
+	channel, err := resolveUpdateChannel(cmd)
+	if err != nil {
+		return err
+	}
 	releaseURL := cnspec.ReleaseURL(config.GetUpdatesURL(), channel)
 
 	// selfupdate re-executes the new binary with the current arguments, so the
@@ -104,6 +146,14 @@ func runUpdate() error {
 		return nil
 	}
 
+	// Asking a pre-release build for stable finds nothing, because cnspec only
+	// ever updates to a higher version. Silence there reads like the channel was
+	// ignored, when in fact it was honoured and there is no way down.
+	if channel == config.ChannelStable && isPrereleaseVersion(currentVersion) {
+		log.Info().Msgf("cnspec %s is a pre-release; the stable channel has nothing newer, and cnspec does not downgrade. Reinstall to return to the stable line.", currentVersion)
+		return nil
+	}
+
 	// Name the channel when it is not the default. On preview "already the
 	// latest version" is true of that track only, and a user who set the channel
 	// to get a release candidate needs to be able to tell the difference between
@@ -115,6 +165,16 @@ func runUpdate() error {
 
 	log.Info().Msgf("cnspec %s is already the latest version", currentVersion)
 	return nil
+}
+
+// isPrereleaseVersion reports whether a version carries a semver pre-release
+// segment. Build metadata is stripped first: it is not a pre-release under
+// SemVer 10. Mirrors the check in cli/config, deliberately as a string split
+// rather than a parse, so "unstable" and -rolling builds answer cleanly.
+func isPrereleaseVersion(version string) bool {
+	core, _, _ := strings.Cut(version, "+")
+	_, prerelease, found := strings.Cut(strings.TrimPrefix(core, "v"), "-")
+	return found && prerelease != ""
 }
 
 // autoUpdateDisabledVia reports which environment variable switches off the
