@@ -75,12 +75,19 @@ jobs:
             TAG="${BASE}-${BUILD}"
           fi
 
+          # A malformed version becomes a bucket directory name and a channel
+          # pointer, so check the shape here rather than discovering it there.
+          if ! printf '%s' "${TAG#v}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::derived tag '$TAG' is not a semver version"
+            exit 1
+          fi
+
           echo "make version: $VERSION -> tag: $TAG"
           git tag "$TAG"
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           # The bucket layout drops the leading v, matching every other product
           # directory on releases.mondoo.com.
-          echo "version=${TAG#v}" >> $GITHUB_OUTPUT
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
@@ -112,6 +119,10 @@ jobs:
           set -euo pipefail
           # Fail loudly rather than publishing a version directory with no
           # artifacts in it, which the indexer would then point a channel at.
+          if [ ! -d dist ]; then
+            echo "::error::goreleaser produced no dist/ directory"
+            exit 1
+          fi
           shopt -s nullglob
           archives=(dist/*.tar.gz)
           checksums=(dist/*_SHA256SUMS)
