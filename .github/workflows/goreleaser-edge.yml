@@ -77,7 +77,11 @@ jobs:
 
           # A malformed version becomes a bucket directory name and a channel
           # pointer, so check the shape here rather than discovering it there.
-          if ! printf '%s' "${TAG#v}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+          # The hyphen inside the class matters: a pre-release identifier may
+          # contain one (1.0.0-alpha-1 is valid semver), and rejecting those
+          # would fail the build for a perfectly legal base tag. Build metadata
+          # is still rejected, because it must have been folded in by now.
+          if ! printf '%s' "${TAG#v}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
             echo "::error::derived tag '$TAG' is not a semver version"
             exit 1
           fi
@@ -139,13 +143,16 @@ jobs:
           # `gsutil -m` can exit 0 with individual transfers having failed, and
           # a half-uploaded directory is worse than none: the indexer would
           # point the edge channel at it and clients would 404 on the missing
-          # platforms. Count what actually landed.
-          uploaded=$(gsutil ls "gs://${BUCKET}/edge/cnspec/${VERSION}/" | grep -c '[^/]$' || true)
-          if [ "$uploaded" -ne "$expected" ]; then
-            echo "::error::uploaded ${uploaded} objects, expected ${expected}"
+          # platforms. Compare names rather than counting, so the check says
+          # which artifact is missing instead of only that one is.
+          want="$(printf '%s\n' "${archives[@]}" "${checksums[@]}" | sed 's#.*/##' | sort)"
+          got="$(gsutil ls "gs://${BUCKET}/edge/cnspec/${VERSION}/" | sed 's#.*/##' | sed '/^$/d' | sort)"
+          if [ "$want" != "$got" ]; then
+            echo "::error::uploaded objects do not match what was built"
+            diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") || true
             exit 1
           fi
-          echo "verified ${uploaded} objects"
+          echo "verified ${expected} objects"
 
       # Indexing and pruning live in the installer repo: they need releasr, and
       # this repository is public.
