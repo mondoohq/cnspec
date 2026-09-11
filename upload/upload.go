@@ -47,11 +47,10 @@ func (c *countingReader) Read(p []byte) (int, error) {
 
 // UploadFile uploads a file to a pre-signed URL via HTTP PUT.
 //
-// The request honors the Mondoo CLI's api_proxy setting in addition to the
-// standard HTTPS_PROXY/HTTP_PROXY env vars: config.GetAPIProxy() resolves
-// MONDOO_API_PROXY, viper's api_proxy (mondoo.yml / --api-proxy), and finally
-// HTTPS_PROXY. When no proxy is configured, the default transport's
-// http.ProxyFromEnvironment is used (which also honors NO_PROXY).
+// The request goes through the same proxy the rest of the CLI's platform
+// traffic does: api_proxy (mondoo.yml, --api-proxy, MONDOO_API_PROXY) first,
+// then HTTPS_PROXY/HTTP_PROXY with NO_PROXY, then the operating system's proxy
+// settings on Windows. See config.ProxyFunc for the precedence.
 //
 // It sets the provided headers and Content-Type to application/octet-stream.
 // The caller is responsible for checking the response status code and closing
@@ -101,30 +100,23 @@ func UploadFile(ctx context.Context, url string, headers map[string]string, file
 	return Result{Response: resp, BytesSent: counter.n.Load(), Duration: time.Since(start)}, err
 }
 
-// newHTTPClient builds the HTTP client used by UploadFile. When api_proxy is
-// configured (via mondoo.yml, MONDOO_API_PROXY, --api-proxy, or HTTPS_PROXY)
-// the transport is set to route through that proxy URL; otherwise we return
-// a plain client whose default transport already honors HTTP(S)_PROXY/NO_PROXY
-// via http.ProxyFromEnvironment.
+// newHTTPClient builds the HTTP client used by UploadFile, with the CLI's
+// proxy selection (config.ProxyFunc) installed on a clone of the default
+// transport so TLS settings, timeouts and connection-pool tuning are
+// inherited. The assertion is guarded: callers (or tests) may have replaced
+// http.DefaultTransport with a non-*http.Transport wrapper, in which case a
+// fresh transport is used rather than panicking.
 func newHTTPClient() (*http.Client, error) {
-	proxy, err := config.GetAPIProxy()
+	proxy, err := config.ProxyFunc()
 	if err != nil {
 		return nil, err
 	}
-	if proxy == nil {
-		return &http.Client{}, nil
-	}
-	// Clone the default transport when possible so we inherit TLS settings,
-	// timeouts, and connection-pool tuning. Guard the assertion: callers (or
-	// tests) may have replaced http.DefaultTransport with a non-*http.Transport
-	// wrapper, in which case we fall back to a fresh transport rather than
-	// panicking.
 	var tr *http.Transport
 	if base, ok := http.DefaultTransport.(*http.Transport); ok {
 		tr = base.Clone()
 	} else {
 		tr = &http.Transport{}
 	}
-	tr.Proxy = http.ProxyURL(proxy)
+	tr.Proxy = proxy
 	return &http.Client{Transport: tr}, nil
 }

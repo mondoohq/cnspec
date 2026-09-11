@@ -18,7 +18,6 @@ import (
 	cliconfig "go.mondoo.com/mql/cli/config"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
-	ranger "go.mondoo.com/ranger-rpc"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -76,7 +75,11 @@ func UploadFindings(ctx context.Context, opts Opts, docs []*fex.FindingDocument,
 		return fmt.Errorf("create auth plugin: %w", err)
 	}
 
-	resolver, err := policy.NewPolicyResolverClient(creds.ApiEndpoint, resolverHTTPClient(opts.HTTPClient), plugin)
+	resolverClient, err := resolverHTTPClient(opts.HTTPClient)
+	if err != nil {
+		return fmt.Errorf("resolve proxy: %w", err)
+	}
+	resolver, err := policy.NewPolicyResolverClient(creds.ApiEndpoint, resolverClient, plugin)
 	if err != nil {
 		return fmt.Errorf("create policy resolver client: %w", err)
 	}
@@ -107,12 +110,13 @@ func UploadFindings(ctx context.Context, opts Opts, docs []*fex.FindingDocument,
 }
 
 // resolverHTTPClient returns the client used for the resolver RPCs: the
-// caller-supplied client when set, otherwise ranger's default.
-func resolverHTTPClient(c *http.Client) *http.Client {
+// caller-supplied client when set, otherwise one with the CLI's proxy
+// selection (api_proxy, environment, operating system).
+func resolverHTTPClient(c *http.Client) (*http.Client, error) {
 	if c != nil {
-		return c
+		return c, nil
 	}
-	return ranger.DefaultHttpClient()
+	return cliconfig.NewHttpClient()
 }
 
 // putHTTPClient returns the client used for the signed-URL PUT, bounded by
@@ -230,7 +234,11 @@ func ValidateCredentials(ctx context.Context, creds *upstream.ServiceAccountCred
 		return err
 	}
 
-	client, err := upstream.NewAgentManagerClient(creds.ApiEndpoint, ranger.DefaultHttpClient(), plugin)
+	httpClient, err := cliconfig.NewHttpClient()
+	if err != nil {
+		return err
+	}
+	client, err := upstream.NewAgentManagerClient(creds.ApiEndpoint, httpClient, plugin)
 	if err != nil {
 		return err
 	}

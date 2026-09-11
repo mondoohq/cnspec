@@ -1590,12 +1590,11 @@ func (s *localAssetScanner) UpdateFilters(filters *policy.Mqueries, timeout time
 
 func sendErrorToMondooPlatform(serviceAccount *upstream.ServiceAccountCredentials, event *health.SendErrorReq) {
 	// 3. send error to mondoo platform
-	proxy, err := config.GetAPIProxy()
+	httpClient, err := config.NewHttpClient()
 	if err != nil {
 		log.Error().Err(err).Msg("failed to parse proxy setting")
 		return
 	}
-	httpClient := ranger.NewHttpClient(ranger.WithProxy(proxy))
 
 	plugins := []ranger.ClientPlugin{}
 	certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)

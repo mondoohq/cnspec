@@ -7,11 +7,11 @@ import (
 	"context"
 	"fmt"
 
+	cliconfig "go.mondoo.com/mql/cli/config"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/sbomscan"
 	"go.mondoo.com/mql/sbom"
-	ranger "go.mondoo.com/ranger-rpc"
 )
 
 // sbomScanner is the slice of the ExtendedVulnMgmt client that ScanSBOM needs; a
@@ -33,7 +33,11 @@ func ScanSBOM(ctx context.Context, opts Opts, bom *sbom.Sbom) ([]*fex.Vulnerabil
 	if err != nil {
 		return nil, fmt.Errorf("create auth plugin: %w", err)
 	}
-	scanner, err := sbomscan.NewExtendedVulnMgmtClient(creds.ApiEndpoint, ranger.DefaultHttpClient(), plugin)
+	httpClient, err := cliconfig.NewHttpClient()
+	if err != nil {
+		return nil, fmt.Errorf("resolve proxy: %w", err)
+	}
+	scanner, err := sbomscan.NewExtendedVulnMgmtClient(creds.ApiEndpoint, httpClient, plugin)
 	if err != nil {
 		return nil, fmt.Errorf("create vuln scan client: %w", err)
 	}

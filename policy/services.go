@@ -12,6 +12,7 @@ import (
 	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/mqlc"
 	"go.mondoo.com/mql/providers-sdk/v1/resources"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream"
 	"go.mondoo.com/ranger-rpc"
 	"golang.org/x/sync/semaphore"
 )
@@ -67,7 +68,9 @@ func NewLocalServices(datalake DataLake, runtime llx.Runtime) *LocalServices {
 // NewRemoteServices initializes a services struct with a remote endpoint
 func NewRemoteServices(addr string, auth []ranger.ClientPlugin, httpClient *http.Client) (*Services, error) {
 	if httpClient == nil {
-		httpClient = ranger.DefaultHttpClient()
+		// environment and operating system proxy settings, like every other
+		// platform client without an explicit api_proxy
+		httpClient = upstream.DefaultHttpClient()
 	}
 
 	// restrict parallel upstream connections to two connections
