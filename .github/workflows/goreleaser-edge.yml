@@ -21,11 +21,15 @@ jobs:
     permissions:
       # Add "contents" to write release
       contents: "write"
-      # Add "id-token" for google-github-actions/auth
-      id-token: "write"
 
     runs-on:
       group: arc-runners
+    # The GCP credentials are environment secrets scoped to prod, and the
+    # workload identity binding is scoped with them. goreleaser.yml and
+    # providers.yaml both declare this; without it the upload fails with
+    # `iam.serviceAccounts.getAccessToken denied`, which reads like a broken
+    # IAM grant rather than a missing environment.
+    environment: prod
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -46,10 +50,60 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+      # `make version` yields v14.0.0-rc.2+3508: the base tag plus a commit
+      # count as semver build metadata. A git tag can hold a `+`, but a Docker
+      # tag cannot, so it has to be folded into the version proper.
+      #
+      # How it is folded decides whether edge builds can be ordered at all.
+      # Folding to `-3508` makes the pre-release segment `rc.2-3508`, whose
+      # second identifier contains a hyphen and is therefore *alphanumeric*,
+      # so semver compares it as text: 359 sorts above 3510, and 9999 above
+      # 10000. Folding to `.3508` makes it its own purely numeric identifier,
+      # which semver compares numerically. Verified against the same
+      # hashicorp/go-version comparison the release indexer uses.
+      #
+      # A base tag with no pre-release segment (v14.0.0) has nowhere to append,
+      # so the counter becomes the pre-release itself.
       - name: Locally tag the current commit
+        id: version
         run: |
-          VERSION=$(make version)
-          git tag ${VERSION/\+/-}
+          VERSION="$(make version)"
+          BASE="${VERSION%%+*}"
+          BUILD="${VERSION#*+}"
+
+          if [ "$BUILD" = "$VERSION" ]; then
+            # No `+<counter>`. VERSION is defined in the Makefile as the latest
+            # tag plus `git rev-list --count HEAD`, so this cannot happen on a
+            # healthy checkout — and if it does, every commit on the same base
+            # tag would publish to one directory, each overwriting the last and
+            # leaving the edge pointer naming a build nobody can identify.
+            # Fail rather than quietly collapse the history.
+            echo "::error::make version returned '$VERSION' with no build counter; refusing to publish an edge build that cannot be told apart from the next one"
+            exit 1
+          elif [ "${BASE#*-}" != "$BASE" ]; then
+            TAG="${BASE}.${BUILD}"
+          else
+            TAG="${BASE}-${BUILD}"
+          fi
+
+          # A malformed version becomes a bucket directory name and a channel
+          # pointer, so check the shape here rather than discovering it there.
+          # Dot-separated identifiers, each non-empty, each allowed to contain
+          # a hyphen: 1.0.0-alpha-1 is valid semver and must not fail the
+          # build, while 14.0.0-rc.. and 14.0.0-rc. are not and must. Build
+          # metadata is still rejected, because it must have been folded in by
+          # this point.
+          if ! printf '%s' "${TAG#v}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'; then
+            echo "::error::derived tag '$TAG' is not a semver version"
+            exit 1
+          fi
+
+          echo "make version: $VERSION -> tag: $TAG"
+          git tag "$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # The bucket layout drops the leading v, matching every other product
+          # directory on releases.mondoo.com.
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
@@ -59,3 +113,83 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NFPM_DEFAULT_RPM_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      # Edge produced container images and nothing else, so `?channel=edge` on
+      # the install service resolved a bucket path that has never existed for
+      # cnspec. These are the same archives goreleaser already built for the
+      # images; they were simply discarded.
+      # A service account key, not workload identity federation. The WIF
+      # binding cannot be impersonated from a branch push -- goreleaser.yml
+      # uses it and runs only on tags, while mql's providers.yaml writes this
+      # same bucket from a push to a branch and uses this key to do it.
+      # Getting that backwards fails with `iam.serviceAccounts.getAccessToken
+      # denied`, which reads like a broken grant rather than the wrong
+      # credential. Confirmed on mondoohq/mql#10763.
+      - name: "Authenticate to Google Cloud"
+        uses: "google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093" # v3.0.0
+        with:
+          credentials_json: ${{ secrets.GCP_RELEASE_SERVICE_ACCOUNT }}
+
+      - name: "Set up Cloud SDK"
+        uses: "google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db" # v3.0.1
+
+      - name: Upload edge binaries
+        env:
+          BUCKET: releases-us.mondoo.io
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Fail loudly rather than publishing a version directory with no
+          # artifacts in it, which the indexer would then point a channel at.
+          if [ ! -d dist ]; then
+            echo "::error::goreleaser produced no dist/ directory"
+            exit 1
+          fi
+          shopt -s nullglob
+          archives=(dist/*.tar.gz)
+          checksums=(dist/*_SHA256SUMS)
+          if [ ${#archives[@]} -eq 0 ] || [ ${#checksums[@]} -eq 0 ]; then
+            echo "::error::goreleaser produced no archives or no checksum file"
+            exit 1
+          fi
+
+          expected=$(( ${#archives[@]} + ${#checksums[@]} ))
+          echo "uploading ${expected} objects to edge/cnspec/${VERSION}/"
+          gsutil -m cp "${archives[@]}" "${checksums[@]}" \
+            "gs://${BUCKET}/edge/cnspec/${VERSION}/"
+
+          # `gsutil -m` can exit 0 with individual transfers having failed, and
+          # a half-uploaded directory is worse than none: the indexer would
+          # point the edge channel at it and clients would 404 on the missing
+          # platforms. Compare names rather than counting, so the check says
+          # which artifact is missing instead of only that one is.
+          want="$(printf '%s\n' "${archives[@]}" "${checksums[@]}" | sed 's#.*/##' | sort)"
+          got="$(gsutil ls "gs://${BUCKET}/edge/cnspec/${VERSION}/" | sed 's#.*/##' | sed '/^$/d' | sort)"
+          if [ "$want" != "$got" ]; then
+            echo "::error::uploaded objects do not match what was built"
+            diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") || true
+            exit 1
+          fi
+          echo "verified ${expected} objects"
+
+      # Indexing and pruning live in the installer repo: they need releasr, and
+      # this repository is public.
+      - name: Generate token
+        id: generate-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.MONDOO_MERGEBOT_APP_ID }}
+          private-key: ${{ secrets.MONDOO_MERGEBOT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: installer
+
+      - name: Trigger edge index
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
+        with:
+          token: ${{ steps.generate-token.outputs.token }}
+          repository: "mondoohq/installer"
+          event-type: edge-published
+          # Single-quoted scalar: toJSON already emits a correctly escaped JSON
+          # string, and this keeps YAML out of the question entirely.
+          client-payload: '{"product": "cnspec", "version": ${{ toJSON(steps.version.outputs.version) }}}'
+
