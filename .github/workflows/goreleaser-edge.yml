@@ -131,9 +131,21 @@ jobs:
             exit 1
           fi
 
-          echo "uploading ${#archives[@]} archives to edge/cnspec/${VERSION}/"
+          expected=$(( ${#archives[@]} + ${#checksums[@]} ))
+          echo "uploading ${expected} objects to edge/cnspec/${VERSION}/"
           gsutil -m cp "${archives[@]}" "${checksums[@]}" \
             "gs://${BUCKET}/edge/cnspec/${VERSION}/"
+
+          # `gsutil -m` can exit 0 with individual transfers having failed, and
+          # a half-uploaded directory is worse than none: the indexer would
+          # point the edge channel at it and clients would 404 on the missing
+          # platforms. Count what actually landed.
+          uploaded=$(gsutil ls "gs://${BUCKET}/edge/cnspec/${VERSION}/" | grep -c '[^/]$' || true)
+          if [ "$uploaded" -ne "$expected" ]; then
+            echo "::error::uploaded ${uploaded} objects, expected ${expected}"
+            exit 1
+          fi
+          echo "verified ${uploaded} objects"
 
       # Indexing and pruning live in the installer repo: they need releasr, and
       # this repository is public.
