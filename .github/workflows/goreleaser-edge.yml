@@ -46,10 +46,41 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+      # `make version` yields v14.0.0-rc.2+3508: the base tag plus a commit
+      # count as semver build metadata. A git tag can hold a `+`, but a Docker
+      # tag cannot, so it has to be folded into the version proper.
+      #
+      # How it is folded decides whether edge builds can be ordered at all.
+      # Folding to `-3508` makes the pre-release segment `rc.2-3508`, whose
+      # second identifier contains a hyphen and is therefore *alphanumeric*,
+      # so semver compares it as text: 359 sorts above 3510, and 9999 above
+      # 10000. Folding to `.3508` makes it its own purely numeric identifier,
+      # which semver compares numerically. Verified against the same
+      # hashicorp/go-version comparison the release indexer uses.
+      #
+      # A base tag with no pre-release segment (v14.0.0) has nowhere to append,
+      # so the counter becomes the pre-release itself.
       - name: Locally tag the current commit
+        id: version
         run: |
-          VERSION=$(make version)
-          git tag ${VERSION/\+/-}
+          VERSION="$(make version)"
+          BASE="${VERSION%%+*}"
+          BUILD="${VERSION#*+}"
+
+          if [ "$BUILD" = "$VERSION" ]; then
+            TAG="$VERSION"
+          elif [ "${BASE#*-}" != "$BASE" ]; then
+            TAG="${BASE}.${BUILD}"
+          else
+            TAG="${BASE}-${BUILD}"
+          fi
+
+          echo "make version: $VERSION -> tag: $TAG"
+          git tag "$TAG"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          # The bucket layout drops the leading v, matching every other product
+          # directory on releases.mondoo.com.
+          echo "version=${TAG#v}" >> $GITHUB_OUTPUT
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
@@ -59,3 +90,56 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NFPM_DEFAULT_RPM_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      # Edge produced container images and nothing else, so `?channel=edge` on
+      # the install service resolved a bucket path that has never existed for
+      # cnspec. These are the same archives goreleaser already built for the
+      # images; they were simply discarded.
+      - name: "Authenticate to Google Cloud"
+        uses: "google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093" # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIP }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: "Set up Cloud SDK"
+        uses: "google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db" # v3.0.1
+
+      - name: Upload edge binaries
+        env:
+          BUCKET: releases-us.mondoo.io
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Fail loudly rather than publishing a version directory with no
+          # artifacts in it, which the indexer would then point a channel at.
+          shopt -s nullglob
+          archives=(dist/*.tar.gz)
+          checksums=(dist/*_SHA256SUMS)
+          if [ ${#archives[@]} -eq 0 ] || [ ${#checksums[@]} -eq 0 ]; then
+            echo "::error::goreleaser produced no archives or no checksum file"
+            exit 1
+          fi
+
+          echo "uploading ${#archives[@]} archives to edge/cnspec/${VERSION}/"
+          gsutil -m cp "${archives[@]}" "${checksums[@]}" \
+            "gs://${BUCKET}/edge/cnspec/${VERSION}/"
+
+      # Indexing and pruning live in the installer repo: they need releasr, and
+      # this repository is public.
+      - name: Generate token
+        id: generate-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.MONDOO_MERGEBOT_APP_ID }}
+          private-key: ${{ secrets.MONDOO_MERGEBOT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: installer
+
+      - name: Trigger edge index
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
+        with:
+          token: ${{ steps.generate-token.outputs.token }}
+          repository: "mondoohq/installer"
+          event-type: edge-published
+          client-payload: >-
+            {"product": "cnspec", "version": ${{ toJSON(steps.version.outputs.version) }}}
