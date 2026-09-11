@@ -37,3 +37,17 @@ func TestReleaseURLChannel(t *testing.T) {
 		"https://install.example.com/package/cnspec/latest.json?channel=preview",
 		ReleaseURL("https://install.example.com/", config.ChannelPreview))
 }
+
+// TestReleaseURLEncodesTheChannel pins that the channel goes through query
+// encoding. Every caller passes a normalized constant today, but ReleaseURL is
+// exported: an odd value should produce a valid URL with one odd parameter, not
+// a second `?` or an injected one.
+func TestReleaseURLEncodesTheChannel(t *testing.T) {
+	assert.Equal(t,
+		"https://install.mondoo.com/package/cnspec/latest.json?channel=a%26b%3Dc",
+		ReleaseURL("", "a&b=c"))
+
+	assert.Equal(t,
+		"https://install.mondoo.com/package/cnspec/latest.json?channel=a+b",
+		ReleaseURL("", "a b"))
+}

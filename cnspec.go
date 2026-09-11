@@ -4,6 +4,7 @@
 package cnspec
 
 import (
+	neturl "net/url"
 	"regexp"
 	"strings"
 
@@ -57,11 +58,18 @@ func ReleaseURL(updatesURL string, channel string) string {
 		updatesURL = defaultUpdatesURL
 	}
 
-	url := strings.TrimSuffix(updatesURL, "/") + "/package/cnspec/latest.json"
-	if channel != "" && channel != config.ChannelStable {
-		url += "?channel=" + channel
+	manifest := strings.TrimSuffix(updatesURL, "/") + "/package/cnspec/latest.json"
+	if channel == "" || channel == config.ChannelStable {
+		return manifest
 	}
-	return url
+
+	// Encoded rather than concatenated. Every caller today passes a value
+	// GetUpdateChannel has already normalized to one of two constants, but this
+	// is exported: a caller that passes something else should get a valid URL
+	// with one odd parameter, not a second `?` or an injected one.
+	query := neturl.Values{}
+	query.Set("channel", channel)
+	return manifest + "?" + query.Encode()
 }
 
 // GetVersion returns the version of the build
