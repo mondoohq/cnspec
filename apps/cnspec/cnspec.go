@@ -37,7 +37,7 @@ func main() {
 
 	// Check for self-update before anything else
 	if shouldTrySelfUpdate() {
-		releaseURL := cnspec.ReleaseURL(config.GetUpdatesURL())
+		releaseURL := cnspec.ReleaseURL(config.GetUpdatesURL(), config.GetUpdateChannel())
 		cfg := selfupdate.Config{
 			Enabled:         true,
 			RefreshInterval: selfupdate.DefaultRefreshInterval,
