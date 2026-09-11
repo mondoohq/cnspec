@@ -93,6 +93,24 @@ jobs:
             exit 0
           fi
 
+          # Build metadata is everything after a `+`, and SemVer 10 says it MUST
+          # be ignored when determining precedence. So `v14.0.0+rc.1` does not
+          # mean "release candidate": it compares EQUAL to `14.0.0`, outranks
+          # every real `14.0.0-rc.N`, derives the stable channel, and ships to
+          # every user on their next update check. A pre-release is introduced
+          # with `-`, never `+`.
+          #
+          # This is worth failing on rather than warning about, because
+          # everything downstream would accept it happily.
+          META="${REF_NAME#*+}"
+          if [ "$META" != "$REF_NAME" ]; then
+            if printf '%s' "$META" | grep -Eiq '(^|[.-])(pre|rc|alpha|beta|dev|canary|nightly|snapshot)([.-]|[0-9]|$)'; then
+              echo "::error::tag $REF_NAME puts a pre-release marker in build metadata. Build metadata is ignored for precedence, so this tag means the FINAL ${REF_NAME%%+*} and would publish to the stable channel. Use a hyphen: ${REF_NAME%%+*}-${META}"
+              exit 1
+            fi
+            echo "::warning::tag $REF_NAME carries build metadata (+${META}), which is ignored when comparing versions"
+          fi
+
           CORE="${REF_NAME#v}"
           CORE="${CORE%%+*}"
           if ! printf '%s' "$CORE" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
