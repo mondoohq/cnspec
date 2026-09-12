@@ -34,6 +34,8 @@ on:
 
 env:
   REGISTRY: docker.io
+  # C07QZDJFF89 == #release-coordination
+  SLACK_BOT_CHANNEL_ID: "C07QZDJFF89"
 
 permissions:
   contents: read
@@ -367,3 +369,107 @@ jobs:
           event-type: update
           client-payload: >-
             {"version": ${{ toJSON(github.ref_name) }}}
+
+  # Reports the release outcome to #release-coordination.
+  #
+  # Nothing depends on this job, and it never gates the release: a Slack outage,
+  # a rotated token or a renamed channel must not turn a good release red. It
+  # runs on failure too, because a release that did not happen is the case most
+  # worth announcing.
+  notify:
+    name: Report the release to Slack
+    if: ${{ always() && github.ref_type == 'tag' }}
+    needs: [goreleaser, trigger-installer-release, mondoo-operator-cnspec]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compose the message
+        id: meta
+        env:
+          CHANNEL: ${{ needs.goreleaser.outputs.channel }}
+          BUILD: ${{ needs.goreleaser.result }}
+          DISPATCH: ${{ needs.trigger-installer-release.result }}
+          OPERATOR: ${{ needs.mondoo-operator-cnspec.result }}
+        run: |
+          set -euo pipefail
+
+          # Skipped is not failed: on a pre-release the operator image trigger
+          # is skipped by design, and reporting that red would train everyone to
+          # ignore the colour.
+          ok=true
+          for result in "$BUILD" "$DISPATCH" "$OPERATOR"; do
+            case "$result" in
+              success|skipped) ;;
+              *) ok=false ;;
+            esac
+          done
+
+          if [ "$ok" = "true" ]; then
+            echo 'header=:rocket: cnspec ${{ github.ref_name }} released' >> "$GITHUB_OUTPUT"
+            echo "colour=good" >> "$GITHUB_OUTPUT"
+            echo "mention=" >> "$GITHUB_OUTPUT"
+          else
+            echo 'header=:x: cnspec ${{ github.ref_name }} failed to release' >> "$GITHUB_OUTPUT"
+            echo "colour=danger" >> "$GITHUB_OUTPUT"
+            echo "mention=<!here> " >> "$GITHUB_OUTPUT"
+          fi
+
+          case "$CHANNEL" in
+            preview) echo "channel_line=:test_tube: *preview* — install with \`--channel preview\`, not promoted to latest" >> "$GITHUB_OUTPUT" ;;
+            *)       echo "channel_line=:package: *stable* — this is what a default install gets" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+          status() {
+            case "$2" in
+              success) echo "*$1:*\n:white_check_mark: Done" ;;
+              skipped) echo "*$1:*\n:double_vertical_bar: Skipped" ;;
+              "")      echo "*$1:*\n:grey_question: Not run" ;;
+              *)       echo "*$1:*\n:x: $2" ;;
+            esac
+          }
+          {
+            echo "build_status=$(status Build "$BUILD")"
+            echo "dispatch_status=$(status 'Publish trigger' "$DISPATCH")"
+            echo "operator_status=$(status 'Operator image' "$OPERATOR")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post to Slack
+        continue-on-error: true
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            channel: "${{ env.SLACK_BOT_CHANNEL_ID }}"
+            text: "${{ steps.meta.outputs.mention }}${{ steps.meta.outputs.header }}"
+            blocks:
+              - type: "header"
+                text:
+                  type: "plain_text"
+                  text: "${{ steps.meta.outputs.header }}"
+                  emoji: true
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "${{ steps.meta.outputs.channel_line }}"
+              - type: "section"
+                fields:
+                  - type: "mrkdwn"
+                    text: "*Repository:*\n`${{ github.repository }}`"
+                  - type: "mrkdwn"
+                    text: "*Version:*\n`${{ github.ref_name }}`"
+                  - type: "mrkdwn"
+                    text: "*Triggered by:*\n${{ github.actor }}"
+                  - type: "mrkdwn"
+                    text: "*Workflow run:*\n<https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|Open run>"
+              - type: "section"
+                fields:
+                  - type: "mrkdwn"
+                    text: "${{ steps.meta.outputs.build_status }}"
+                  - type: "mrkdwn"
+                    text: "${{ steps.meta.outputs.dispatch_status }}"
+                  - type: "mrkdwn"
+                    text: "${{ steps.meta.outputs.operator_status }}"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "*Release notes:*\n<https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}|${{ github.ref_name }}>"
