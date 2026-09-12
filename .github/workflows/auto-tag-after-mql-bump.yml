@@ -33,11 +33,17 @@ jobs:
         run: |
           # version/mql_update_v14.0.0-rc.1  ->  v14.0.0-rc.1
           VERSION="${HEAD_REF#version/mql_update_}"
-          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+          # `v?`, matching cnquery-update.yml, which is what builds this branch
+          # name. Requiring the prefix here while the producer treats it as
+          # optional would let a bump PR open, pass review and merge, and only
+          # then fail -- after the fact, with the version already in VERSION.
+          if [[ ! "$VERSION" =~ ^(v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]]; then
             echo "::error::Bump branch '${HEAD_REF}' did not yield a valid semver: '${VERSION}'"
             exit 1
           fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          # Normalise: every cnspec tag is v-prefixed, and goreleaser's version
+          # derivation expects it.
+          echo "version=v${BASH_REMATCH[1]#v}" >> "$GITHUB_OUTPUT"
 
       # Use the mergebot app token so the tag push triggers goreleaser.yml.
       # GITHUB_TOKEN-authored pushes don't fire further workflow_run/push
@@ -51,10 +57,16 @@ jobs:
           owner: mondoohq
           repositories: cnspec
 
-      - name: Checkout base branch (post-merge)
+      # merge_commit_sha, not base.ref. base.ref resolves to wherever the branch
+      # points when this job runs, which is after a token mint and a full clone
+      # -- anything merged in that window would be swept into the release
+      # silently: the tag exists, goreleaser builds, and the release just
+      # carries work nobody meant to ship. merge_commit_sha is the commit this
+      # PR actually produced on the base branch.
+      - name: Checkout the merge commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.ref }}
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
           token: ${{ steps.token.outputs.token }}
 
@@ -73,9 +85,15 @@ jobs:
         env:
           TAG: ${{ steps.version.outputs.version }}
           BASE: ${{ github.event.pull_request.base.ref }}
+          SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
           git config user.email "tools@mondoo.com"
           git config user.name "Mondoo Tools"
-          git tag -m "cnspec ${TAG}" "${TAG}"
-          echo "::notice::Tagging ${BASE} as ${TAG}"
+          # Lightweight, like every cnspec tag to date. `-m` implies `-a`, and an
+          # annotated tag's ref resolves to a tag object rather than a commit --
+          # which quietly breaks anything reading `.object.sha` to get the commit
+          # (the bug fixed on the mql side in #3603). No reason to change the
+          # shape of this repo's tags as a side effect of automating them.
+          git tag "${TAG}"
+          echo "::notice::Tagging ${SHA} (merged into ${BASE}) as ${TAG}"
           git push origin "${TAG}"
