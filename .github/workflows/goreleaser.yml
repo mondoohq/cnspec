@@ -396,6 +396,25 @@ jobs:
         run: |
           set -euo pipefail
 
+          # The tag reaches Slack through two different parsers, and it is not
+          # validated anywhere upstream -- git allows `"`, `&`, `<` and `>` in a
+          # ref name. `ref_safe` is escaped for both: backslash and quote so the
+          # value cannot terminate the double-quoted YAML scalar it is pasted
+          # into (that one fails the whole step, not just the rendering), then
+          # the three characters Slack reads as markup. `ref_url` is for the
+          # link target, where percent-encoding rather than escaping is correct.
+          ref_safe=$REF_NAME
+          ref_safe=${ref_safe//\\/\\\\}
+          ref_safe=${ref_safe//\"/\\\"}
+          ref_safe=${ref_safe//&/&amp;}
+          ref_safe=${ref_safe//</&lt;}
+          ref_safe=${ref_safe//>/&gt;}
+          ref_url=$(jq -rn --arg v "$REF_NAME" '$v|@uri')
+          {
+            echo "version=$ref_safe"
+            echo "version_url=$ref_url"
+          } >> "$GITHUB_OUTPUT"
+
           # Skipped is not failed: on a pre-release the operator image trigger
           # is skipped by design, and reporting that red would train everyone to
           # ignore the colour.
@@ -408,11 +427,11 @@ jobs:
           done
 
           if [ "$ok" = "true" ]; then
-            echo "header=:rocket: cnspec $REF_NAME released" >> "$GITHUB_OUTPUT"
+            echo "header=:rocket: cnspec $ref_safe released" >> "$GITHUB_OUTPUT"
             echo "colour=good" >> "$GITHUB_OUTPUT"
             echo "mention=" >> "$GITHUB_OUTPUT"
           else
-            echo "header=:x: cnspec $REF_NAME failed to release" >> "$GITHUB_OUTPUT"
+            echo "header=:x: cnspec $ref_safe failed to release" >> "$GITHUB_OUTPUT"
             echo "colour=danger" >> "$GITHUB_OUTPUT"
             echo "mention=<!here> " >> "$GITHUB_OUTPUT"
           fi
@@ -464,7 +483,7 @@ jobs:
                   - type: "mrkdwn"
                     text: "*Repository:*\n`${{ github.repository }}`"
                   - type: "mrkdwn"
-                    text: "*Version:*\n`${{ github.ref_name }}`"
+                    text: "*Version:*\n`${{ steps.meta.outputs.version }}`"
                   - type: "mrkdwn"
                     text: "*Triggered by:*\n${{ github.actor }}"
                   - type: "mrkdwn"
@@ -480,4 +499,4 @@ jobs:
               - type: "section"
                 text:
                   type: "mrkdwn"
-                  text: "*Release notes:*\n<https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}|${{ github.ref_name }}>"
+                  text: "*Release notes:*\n<https://github.com/${{ github.repository }}/releases/tag/${{ steps.meta.outputs.version_url }}|${{ steps.meta.outputs.version }}>"
