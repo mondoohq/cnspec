@@ -216,7 +216,7 @@ queries:
             3. Navigate to:
                 `Computer Configuration > Policies > Windows Settings > Security Settings > Local Policies > User Rights Assignment`
             4. In the right pane, find and double-click **Debug programs**.
-            5. Remove all users and groups from the list so that it is empty.
+            5. Select **Define these policy settings** and remove all users and groups so that the list is empty. A setting left undefined keeps the Windows default, which grants this right to Administrators.
             6. Click **OK** to save your changes.
             7. Close the Group Policy Management Editor.
             8. Run `gpupdate /force` on the target computers or wait for the next policy refresh cycle for the changes to take effect.
@@ -363,11 +363,18 @@ queries:
                 - Set "Value type" to `REG_DWORD`.
                 - Set "Value data" to `1`.
             7. Select "OK" to save the configuration.
+            8. Restart the target computers. LSASS starts as a protected process only at boot, so the registry value does not protect credentials until the restart.
+
+            **Warning:**
+
+            On devices with UEFI Secure Boot, the value `1` also stores the setting in a UEFI variable. Changing the registry value afterwards does not turn LSA protection off, which then requires the Local Security Authority Protected Process Opt-out tool. Confirm that every LSA plug-in and driver in use, such as smart card drivers and password filters, is Microsoft-signed before you deploy this, because unsigned ones stop loading.
         - id: powershell
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To enable LSA protection using PowerShell, run the following commands and then restart the computer. LSASS starts as a protected process only at boot, so the value has no effect until the restart.
+
+            On devices with UEFI Secure Boot, the value `1` also stores the setting in a UEFI variable that a later registry change cannot undo. Confirm that every LSA plug-in and driver in use is Microsoft-signed first, because unsigned ones stop loading.
 
             ```powershell
             $RegistryPath = 'HKLM:\System\CurrentControlSet\Control\Lsa'
@@ -386,7 +393,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to enable LSA protection:
+            Use this Ansible playbook to enable LSA protection, then restart the hosts. LSASS starts as a protected process only at boot, so the value has no effect until the restart. On devices with UEFI Secure Boot, the value `1` also stores the setting in a UEFI variable that a later registry change cannot undo, so confirm that every LSA plug-in and driver in use is Microsoft-signed first:
 
             ```yaml
             ---
@@ -404,7 +411,7 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            This setting takes effect after the next restart. Use this Chef Infra recipe code to set the `RunAsPPL` registry value that backs this policy to `1`:
+            This setting takes effect after the next restart. On devices with UEFI Secure Boot, the value `1` also stores the setting in a UEFI variable that a later registry change cannot undo, so confirm that every LSA plug-in and driver in use is Microsoft-signed first. Use this Chef Infra recipe code to set the `RunAsPPL` registry value that backs this policy to `1`:
 
             ```ruby
             registry_key 'HKLM\System\CurrentControlSet\Control\Lsa' do
@@ -626,7 +633,7 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To establish the recommended configuration via PowerShell, run the following commands. The Group Policy template stores `Retention` as a string, so these commands write it as `REG_SZ` with the value `0`, which makes the log overwrite its oldest events as needed instead of stopping when it is full:
 
             ```powershell
             $RegistryPath = 'HKLM:\Software\Policies\Microsoft\Windows\EventLog\Application'
@@ -639,11 +646,13 @@ queries:
             }
 
             # Now set the value
-            New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType DWORD -Force
+            New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType String -Force
             ```
         - id: ansible
           desc: |
             **Using Ansible**
+
+            The Group Policy template stores `Retention` as a string, so this task writes the string `0`, which makes the log overwrite its oldest events as needed instead of stopping when it is full.
 
             ```yaml
             - name: Control Application Event Log behavior at max size
@@ -654,20 +663,20 @@ queries:
                     path: HKLM:\Software\Policies\Microsoft\Windows\EventLog\Application
                     name: Retention
                     data: "0"
-                    type: dword
+                    type: string
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to set the `Retention` registry value that backs this policy to `0`:
+            Use this Chef Infra recipe code to set the `Retention` registry value that backs this policy to the string `0`. The Group Policy template stores `Retention` as a string, and `0` makes the log overwrite its oldest events as needed instead of stopping when it is full:
 
             ```ruby
             registry_key 'HKLM\Software\Policies\Microsoft\Windows\EventLog\Application' do
               values [{
                 name: 'Retention',
-                type: :dword,
-                data: 0,
+                type: :string,
+                data: '0',
               }]
               recursive true
               action :create
@@ -1010,10 +1019,10 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To establish the recommended configuration via PowerShell, run the following command. It enables failure auditing and leaves the existing success setting unchanged:
 
             ```powershell
-            Auditpol /set /subcategory:"{0CCE9217-69AE-11D9-BED3-505054503030}" /success:disable /failure:enable
+            Auditpol /set /subcategory:"{0CCE9217-69AE-11D9-BED3-505054503030}" /failure:enable
             ```
         - id: ansible
           desc: |
@@ -1029,7 +1038,7 @@ queries:
                   ansible.windows.win_command:
                     cmd: >-
                       Auditpol /set /subcategory:"{0CCE9217-69AE-11D9-BED3-505054503030}"
-                      /success:disable /failure:enable
+                      /failure:enable
             ```
         - id: chef
           desc: |
@@ -1235,10 +1244,10 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To establish the recommended configuration via PowerShell, run the following command. It enables success auditing and leaves the existing failure setting unchanged:
 
             ```powershell
-            Auditpol /set /subcategory:"{0CCE922F-69AE-11D9-BED3-505054503030}" /success:enable /failure:disable
+            Auditpol /set /subcategory:"{0CCE922F-69AE-11D9-BED3-505054503030}" /success:enable
             ```
         - id: ansible
           desc: |
@@ -1254,7 +1263,7 @@ queries:
                   ansible.windows.win_command:
                     cmd: >-
                       Auditpol /set /subcategory:"{0CCE922F-69AE-11D9-BED3-505054503030}"
-                      /success:enable /failure:disable
+                      /success:enable
             ```
         - id: chef
           desc: |
@@ -1347,10 +1356,10 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To establish the recommended configuration via PowerShell, run the following command. It enables success auditing and leaves the existing failure setting unchanged:
 
             ```powershell
-            Auditpol /set /subcategory:"{0CCE9230-69AE-11D9-BED3-505054503030}" /success:enable /failure:disable
+            Auditpol /set /subcategory:"{0CCE9230-69AE-11D9-BED3-505054503030}" /success:enable
             ```
         - id: ansible
           desc: |
@@ -1366,7 +1375,7 @@ queries:
                   ansible.windows.win_command:
                     cmd: >-
                       Auditpol /set /subcategory:"{0CCE9230-69AE-11D9-BED3-505054503030}"
-                      /success:enable /failure:disable
+                      /success:enable
             ```
         - id: chef
           desc: |
@@ -1459,10 +1468,10 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To establish the recommended configuration via PowerShell, run the following command. It enables success auditing and leaves the existing failure setting unchanged:
 
             ```powershell
-            Auditpol /set /subcategory:"{0CCE9231-69AE-11D9-BED3-505054503030}" /success:enable /failure:disable
+            Auditpol /set /subcategory:"{0CCE9231-69AE-11D9-BED3-505054503030}" /success:enable
             ```
         - id: ansible
           desc: |
@@ -1478,7 +1487,7 @@ queries:
                   ansible.windows.win_command:
                     cmd: >-
                       Auditpol /set /subcategory:"{0CCE9231-69AE-11D9-BED3-505054503030}"
-                      /success:enable /failure:disable
+                      /success:enable
             ```
         - id: chef
           desc: |
@@ -1684,10 +1693,10 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To establish the recommended configuration via PowerShell, run the following command. It enables failure auditing and leaves the existing success setting unchanged:
 
             ```powershell
-            Auditpol /set /subcategory:"{0CCE9244-69AE-11D9-BED3-505054503030}" /success:disable /failure:enable
+            Auditpol /set /subcategory:"{0CCE9244-69AE-11D9-BED3-505054503030}" /failure:enable
             ```
         - id: ansible
           desc: |
@@ -1703,7 +1712,7 @@ queries:
                   ansible.windows.win_command:
                     cmd: >-
                       Auditpol /set /subcategory:"{0CCE9244-69AE-11D9-BED3-505054503030}"
-                      /success:disable /failure:enable
+                      /failure:enable
             ```
         - id: chef
           desc: |
@@ -2031,10 +2040,10 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To establish the recommended configuration via PowerShell, run the following command. It enables success auditing and leaves the existing failure setting unchanged:
 
             ```powershell
-            Auditpol /set /subcategory:"{0CCE9249-69AE-11D9-BED3-505054503030}" /success:enable /failure:disable
+            Auditpol /set /subcategory:"{0CCE9249-69AE-11D9-BED3-505054503030}" /success:enable
             ```
         - id: ansible
           desc: |
@@ -2050,7 +2059,7 @@ queries:
                   ansible.windows.win_command:
                     cmd: >-
                       Auditpol /set /subcategory:"{0CCE9249-69AE-11D9-BED3-505054503030}"
-                      /success:enable /failure:disable
+                      /success:enable
             ```
         - id: chef
           desc: |
@@ -2260,10 +2269,10 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To establish the recommended configuration via PowerShell, run the following command. It enables success auditing and leaves the existing failure setting unchanged:
 
             ```powershell
-            Auditpol /set /subcategory:"{0CCE9216-69AE-11D9-BED3-505054503030}" /success:enable /failure:disable
+            Auditpol /set /subcategory:"{0CCE9216-69AE-11D9-BED3-505054503030}" /success:enable
             ```
         - id: ansible
           desc: |
@@ -2279,7 +2288,7 @@ queries:
                   ansible.windows.win_command:
                     cmd: >-
                       Auditpol /set /subcategory:"{0CCE9216-69AE-11D9-BED3-505054503030}"
-                      /success:enable /failure:disable
+                      /success:enable
             ```
         - id: chef
           desc: |
@@ -2834,10 +2843,10 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To establish the recommended configuration via PowerShell, run the following command. It enables failure auditing and leaves the existing success setting unchanged:
 
             ```powershell
-            Auditpol /set /subcategory:"{0CCE9234-69AE-11D9-BED3-505054503030}" /success:disable /failure:enable
+            Auditpol /set /subcategory:"{0CCE9234-69AE-11D9-BED3-505054503030}" /failure:enable
             ```
         - id: ansible
           desc: |
@@ -2853,7 +2862,7 @@ queries:
                   ansible.windows.win_command:
                     cmd: >-
                       Auditpol /set /subcategory:"{0CCE9234-69AE-11D9-BED3-505054503030}"
-                      /success:disable /failure:enable
+                      /failure:enable
             ```
         - id: chef
           desc: |
@@ -3063,10 +3072,10 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To establish the recommended configuration via PowerShell, run the following command. It enables success auditing and leaves the existing failure setting unchanged:
 
             ```powershell
-            Auditpol /set /subcategory:"{0CCE9248-69AE-11D9-BED3-505054503030}" /success:enable /failure:disable
+            Auditpol /set /subcategory:"{0CCE9248-69AE-11D9-BED3-505054503030}" /success:enable
             ```
         - id: ansible
           desc: |
@@ -3082,7 +3091,7 @@ queries:
                   ansible.windows.win_command:
                     cmd: >-
                       Auditpol /set /subcategory:"{0CCE9248-69AE-11D9-BED3-505054503030}"
-                      /success:enable /failure:disable
+                      /success:enable
             ```
         - id: chef
           desc: |
@@ -3177,10 +3186,10 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To establish the recommended configuration via PowerShell, run the following command. It enables success auditing and leaves the existing failure setting unchanged:
 
             ```powershell
-            Auditpol /set /subcategory:"{0CCE922B-69AE-11D9-BED3-505054503030}" /success:enable /failure:disable
+            Auditpol /set /subcategory:"{0CCE922B-69AE-11D9-BED3-505054503030}" /success:enable
             ```
         - id: ansible
           desc: |
@@ -3196,7 +3205,7 @@ queries:
                   ansible.windows.win_command:
                     cmd: >-
                       Auditpol /set /subcategory:"{0CCE922B-69AE-11D9-BED3-505054503030}"
-                      /success:enable /failure:disable
+                      /success:enable
             ```
         - id: chef
           desc: |
@@ -3406,10 +3415,10 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To establish the recommended configuration via PowerShell, run the following command. It enables success auditing and leaves the existing failure setting unchanged:
 
             ```powershell
-            Auditpol /set /subcategory:"{0CCE9237-69AE-11D9-BED3-505054503030}" /success:enable /failure:disable
+            Auditpol /set /subcategory:"{0CCE9237-69AE-11D9-BED3-505054503030}" /success:enable
             ```
         - id: ansible
           desc: |
@@ -3425,7 +3434,7 @@ queries:
                   ansible.windows.win_command:
                     cmd: >-
                       Auditpol /set /subcategory:"{0CCE9237-69AE-11D9-BED3-505054503030}"
-                      /success:enable /failure:disable
+                      /success:enable
             ```
         - id: chef
           desc: |
@@ -3520,10 +3529,10 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To establish the recommended configuration via PowerShell, run the following command. It enables success auditing and leaves the existing failure setting unchanged:
 
             ```powershell
-            Auditpol /set /subcategory:"{0CCE9210-69AE-11D9-BED3-505054503030}" /success:enable /failure:disable
+            Auditpol /set /subcategory:"{0CCE9210-69AE-11D9-BED3-505054503030}" /success:enable
             ```
         - id: ansible
           desc: |
@@ -3539,7 +3548,7 @@ queries:
                   ansible.windows.win_command:
                     cmd: >-
                       Auditpol /set /subcategory:"{0CCE9210-69AE-11D9-BED3-505054503030}"
-                      /success:enable /failure:disable
+                      /success:enable
             ```
         - id: chef
           desc: |
@@ -3634,10 +3643,10 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To establish the recommended configuration via PowerShell, run the following command. It enables success auditing and leaves the existing failure setting unchanged:
 
             ```powershell
-            Auditpol /set /subcategory:"{0CCE9211-69AE-11D9-BED3-505054503030}" /success:enable /failure:disable
+            Auditpol /set /subcategory:"{0CCE9211-69AE-11D9-BED3-505054503030}" /success:enable
             ```
         - id: ansible
           desc: |
@@ -3653,7 +3662,7 @@ queries:
                   ansible.windows.win_command:
                     cmd: >-
                       Auditpol /set /subcategory:"{0CCE9211-69AE-11D9-BED3-505054503030}"
-                      /success:enable /failure:disable
+                      /success:enable
             ```
         - id: chef
           desc: |
@@ -3985,10 +3994,10 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To establish the recommended configuration via PowerShell, run the following command. It enables success auditing and leaves the existing failure setting unchanged:
 
             ```powershell
-            Auditpol /set /subcategory:"{0CCE921B-69AE-11D9-BED3-505054503030}" /success:enable /failure:disable
+            Auditpol /set /subcategory:"{0CCE921B-69AE-11D9-BED3-505054503030}" /success:enable
             ```
         - id: ansible
           desc: |
@@ -4004,7 +4013,7 @@ queries:
                   ansible.windows.win_command:
                     cmd: >-
                       Auditpol /set /subcategory:"{0CCE921B-69AE-11D9-BED3-505054503030}"
-                      /success:enable /failure:disable
+                      /success:enable
             ```
         - id: chef
           desc: |
@@ -4334,6 +4343,8 @@ queries:
             Computer Configuration\\Policies\\Administrative Templates\\MS Security Guide\\Configure SMB v1 client driver
             ```
 
+            Restart the target computers after the policy applies. The driver start type is read at boot, so SMBv1 client connections remain possible until the restart.
+
             **Note:**
             This Group Policy path does not exist by default. An additional Group Policy template ( `SecGuide.admx/adml` ) is required - it is available from Microsoft at [this link](https://techcommunity.microsoft.com/blog/microsoft-security-baselines/security-baseline-final-for-windows-10-v1903-and-windows-server-v1903/701084)
 
@@ -4344,7 +4355,7 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To disable the SMBv1 client driver using PowerShell, run the following commands and then restart the computer. Setting `Start` to `4` stops `mrxsmb10` from loading at boot, so SMBv1 client connections remain possible until the restart:
 
             ```powershell
             $RegistryPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\mrxsmb10'
@@ -4362,6 +4373,8 @@ queries:
         - id: ansible
           desc: |
             **Using Ansible**
+
+            Setting `Start` to `4` stops the `mrxsmb10` driver from loading at boot, so restart the hosts after this playbook runs:
 
             ```yaml
             - name: Disable SMB v1 client driver
@@ -4468,6 +4481,8 @@ queries:
             Computer Configuration\\Policies\\Administrative Templates\\MS Security Guide\\Configure SMB v1 server
             ```
 
+            Restart the target computers after the policy applies. The server reads the `SMB1` value when it starts, so the SMBv1 listener stays active until the restart.
+
             **Note:**
             This Group Policy path does not exist by default. An additional Group Policy template ( `SecGuide.admx/adml` ) is required - it is available from Microsoft at [this link](https://techcommunity.microsoft.com/blog/microsoft-security-baselines/security-baseline-final-for-windows-10-v1903-and-windows-server-v1903/701084)
 
@@ -4478,7 +4493,7 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To disable the SMBv1 server using PowerShell, run the following commands and then restart the computer. The server reads the `SMB1` value when it starts, so the SMBv1 listener stays active until the restart:
 
             ```powershell
             $RegistryPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
@@ -4497,7 +4512,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to disable SMB v1 server:
+            Use this Ansible playbook to disable the SMB v1 server. The first task sets the `SMB1` value that the server reads at startup. The second task uninstalls the SMB 1.0/CIFS File Sharing Support feature, which removes the SMBv1 client as well as the server, so the host can no longer connect to devices that only speak SMBv1. Both changes take effect after a restart, so restart the host once the playbook finishes:
 
             ```yaml
             ---
@@ -4520,7 +4535,7 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to set the `SMB1` registry value that backs this policy to `0`:
+            This setting takes effect after the next restart. Use this Chef Infra recipe code to set the `SMB1` registry value that backs this policy to `0`:
 
             ```ruby
             registry_key 'HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters' do
@@ -5992,7 +6007,7 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To set the NetBT node type to P-node using PowerShell, run the following commands and then restart the computer, because the change does not take effect until the restart. With P-node, NetBIOS names resolve only through a WINS server, the local cache, or LMHOSTS and HOSTS files, so resolution fails for other names where no WINS server is reachable:
 
             ```powershell
             $RegistryPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\NetBT\Parameters'
@@ -6011,6 +6026,8 @@ queries:
           desc: |
             **Using Ansible**
 
+            The node type change does not take effect until the host restarts, so restart the hosts after this playbook runs. With P-node, NetBIOS names resolve only through a WINS server, the local cache, or LMHOSTS and HOSTS files.
+
             ```yaml
             - name: Configure NetBT NodeType to P-node
               hosts: windows
@@ -6026,7 +6043,7 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to set the `NodeType` registry value that backs this policy to `2`:
+            This setting takes effect after the next restart. Use this Chef Infra recipe code to set the `NodeType` registry value that backs this policy to `2`:
 
             ```ruby
             registry_key 'HKLM\SYSTEM\CurrentControlSet\Services\NetBT\Parameters' do
@@ -6120,7 +6137,7 @@ queries:
 
             **Warning:**
 
-            On a domain member this account policy is enforced by the Default Domain Policy GPO. A local `secedit` change is overwritten the next time Group Policy refreshes, so make this change in the domain GPO for domain-joined systems. The `Out-File` command writes the import file as Unicode, which `secedit` requires; verify the encoding if you adapt the script.
+            On a domain member, any GPO that defines **Network access: Allow anonymous SID/Name translation** overwrites a local `secedit` change the next time Group Policy refreshes, so make the change in that GPO. The `Out-File` command writes the import file as Unicode, which `secedit` requires; verify the encoding if you adapt the script.
 
             ```powershell
             $Temp = [System.Environment]::GetEnvironmentVariable('TEMP','Machine')
@@ -6151,7 +6168,7 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            On a domain member, apply this through the Default Domain Policy GPO instead, because a local change is overwritten when Group Policy refreshes. Use this Chef Infra recipe code to stop anonymous callers translating SIDs into account names:
+            On a domain member, a GPO that defines this security option overwrites a local change when Group Policy refreshes, so make the change in that GPO instead. Use this Chef Infra recipe code to stop anonymous callers translating SIDs into account names:
 
             ```ruby
             windows_security_policy 'LSAAnonymousNameLookup' do
@@ -8571,7 +8588,7 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To enable password complexity requirements using PowerShell, run the following commands. They export the local security policy, set `PasswordComplexity` to `1`, and apply the result. On a domain member, apply this through the Default Domain Policy GPO instead, because a local change is overwritten when Group Policy refreshes, and the `gpupdate /force` step at the end triggers that refresh immediately.
 
             ```powershell
             $Temp = [System.Environment]::GetEnvironmentVariable('TEMP','Machine')
@@ -8588,7 +8605,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use `secedit` to enable password complexity requirements.
+            Use `secedit` to set `PasswordComplexity` to `1`, which enables password complexity requirements. On a domain member, apply this through the Default Domain Policy GPO instead, because a local change is overwritten when Group Policy refreshes, and the final `gpupdate /force` task triggers that refresh immediately.
 
             ```yaml
             - name: Set password complexity requirements
@@ -8971,10 +8988,10 @@ queries:
 
             **Impact:**
 
-            TLS 1.0 will be required to authenticate to the RD Session Host server. If TLS is not supported, the connection fails.
+            TLS is required to authenticate the RD Session Host server, and the connection fails if the client cannot negotiate TLS. The setting is named SSL and some consoles label it TLS 1.0, but the session uses the highest TLS version that both the client and the server have enabled, so TLS 1.0 does not need to stay enabled.
 
             **Note:**
-            By default, this setting will use a self-signed certificate for RDP connections. If your organization has established the use of a Public Key Infrastructure (PKI) for SSL/TLS encryption, then we recommend that you also configure the _Server authentication certificate template_setting to instruct RDP to use a certificate from your PKI instead of a self-signed one. Note that the certificate template used for this purpose must have “Client Authentication” configured as an Intended Purpose. Note also that a valid, non-expired certificate using the specified template must already be installed on the workstation for it to work.
+            By default, this setting will use a self-signed certificate for RDP connections. If your organization has established the use of a Public Key Infrastructure (PKI) for SSL/TLS encryption, then we recommend that you also configure the _Server authentication certificate template_ setting to instruct RDP to use a certificate from your PKI instead of a self-signed one. Note that the certificate template used for this purpose must have “Server Authentication” configured as an Intended Purpose. Note also that a valid, non-expired certificate using the specified template must already be installed on the workstation for it to work.
 
             **Note #2:**
             Some third party two-factor authentication solutions, such as RSA Authentication Agent, can be negatively affected by this setting, as the SSL/TLS security layer will expect the user's Windows password upon initial connection attempt (before the RDP logon screen), and once successfully authenticated, pass the credential along to that Windows session on the RDP host (to complete the login). If a two-factor agent is present and expecting a different credential at the RDP logon screen, this initial connection may result in a failed logon attempt, and also effectively cause a “double logon” requirement for each and every new RDP session.
@@ -9257,7 +9274,7 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To establish the recommended configuration via PowerShell, run the following commands. The Group Policy template stores `Retention` as a string, so these commands write it as `REG_SZ` with the value `0`, which makes the log overwrite its oldest events as needed instead of stopping when it is full:
 
             ```powershell
             $RegistryPath = 'HKLM:\Software\Policies\Microsoft\Windows\EventLog\Security'
@@ -9270,11 +9287,13 @@ queries:
             }
 
             # Now set the value
-            New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType DWORD -Force
+            New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType String -Force
             ```
         - id: ansible
           desc: |
             **Using Ansible**
+
+            The Group Policy template stores `Retention` as a string, so this task writes the string `0`, which makes the log overwrite its oldest events as needed instead of stopping when it is full.
 
             ```yaml
             - name: Set Security Event Log max size behavior
@@ -9285,20 +9304,20 @@ queries:
                     path: HKLM:\Software\Policies\Microsoft\Windows\EventLog\Security
                     name: Retention
                     data: "0"
-                    type: dword
+                    type: string
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to set the `Retention` registry value that backs this policy to `0`:
+            Use this Chef Infra recipe code to set the `Retention` registry value that backs this policy to the string `0`. The Group Policy template stores `Retention` as a string, and `0` makes the log overwrite its oldest events as needed instead of stopping when it is full:
 
             ```ruby
             registry_key 'HKLM\Software\Policies\Microsoft\Windows\EventLog\Security' do
               values [{
                 name: 'Retention',
-                type: :dword,
-                data: 0,
+                type: :string,
+                data: '0',
               }]
               recursive true
               action :create
@@ -9910,7 +9929,7 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To establish the recommended configuration via PowerShell, run the following commands. The Group Policy template stores `Retention` as a string, so these commands write it as `REG_SZ` with the value `0`, which makes the log overwrite its oldest events as needed instead of stopping when it is full:
 
             ```powershell
             $RegistryPath = 'HKLM:\Software\Policies\Microsoft\Windows\EventLog\Setup'
@@ -9923,11 +9942,13 @@ queries:
             }
 
             # Now set the value
-            New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType DWORD -Force
+            New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType String -Force
             ```
         - id: ansible
           desc: |
             **Using Ansible**
+
+            The Group Policy template stores `Retention` as a string, so this task writes the string `0`, which makes the log overwrite its oldest events as needed instead of stopping when it is full.
 
             ```yaml
             - name: Set Setup Event Log max size behavior
@@ -9938,20 +9959,20 @@ queries:
                     path: HKLM:\Software\Policies\Microsoft\Windows\EventLog\Setup
                     name: Retention
                     data: "0"
-                    type: dword
+                    type: string
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to set the `Retention` registry value that backs this policy to `0`:
+            Use this Chef Infra recipe code to set the `Retention` registry value that backs this policy to the string `0`. The Group Policy template stores `Retention` as a string, and `0` makes the log overwrite its oldest events as needed instead of stopping when it is full:
 
             ```ruby
             registry_key 'HKLM\Software\Policies\Microsoft\Windows\EventLog\Setup' do
               values [{
                 name: 'Retention',
-                type: :dword,
-                data: 0,
+                type: :string,
+                data: '0',
               }]
               recursive true
               action :create
@@ -10166,7 +10187,7 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To disable reversible password encryption using PowerShell, run the following commands. They export the local security policy, set `ClearTextPassword` to `0`, and apply the result. On a domain member, apply this through the Default Domain Policy GPO instead, because a local change is overwritten when Group Policy refreshes, and the `gpupdate /force` step at the end triggers that refresh immediately.
 
             ```powershell
             $Temp = [System.Environment]::GetEnvironmentVariable('TEMP','Machine')
@@ -10183,7 +10204,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use `secedit` to disable storing passwords with reversible encryption.
+            Use `secedit` to set `ClearTextPassword` to `0`, which stops passwords being stored with reversible encryption. On a domain member, apply this through the Default Domain Policy GPO instead, because a local change is overwritten when Group Policy refreshes, and the final `gpupdate /force` task triggers that refresh immediately.
 
             ```yaml
             - name: Set reversible encryption policy
@@ -10310,7 +10331,7 @@ queries:
           desc: |
             **Using PowerShell**
 
-            To establish the recommended configuration via PowerShell, run the following commands:
+            To establish the recommended configuration via PowerShell, run the following commands. The Group Policy template stores `Retention` as a string, so these commands write it as `REG_SZ` with the value `0`, which makes the log overwrite its oldest events as needed instead of stopping when it is full:
 
             ```powershell
             $RegistryPath = 'HKLM:\Software\Policies\Microsoft\Windows\EventLog\System'
@@ -10323,11 +10344,13 @@ queries:
             }
 
             # Now set the value
-            New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType DWORD -Force
+            New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType String -Force
             ```
         - id: ansible
           desc: |
             **Using Ansible**
+
+            The Group Policy template stores `Retention` as a string, so this task writes the string `0`, which makes the log overwrite its oldest events as needed instead of stopping when it is full.
 
             ```yaml
             - name: Set System Event Log max size behavior
@@ -10338,20 +10361,20 @@ queries:
                     path: HKLM:\Software\Policies\Microsoft\Windows\EventLog\System
                     name: Retention
                     data: "0"
-                    type: dword
+                    type: string
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to set the `Retention` registry value that backs this policy to `0`:
+            Use this Chef Infra recipe code to set the `Retention` registry value that backs this policy to the string `0`. The Group Policy template stores `Retention` as a string, and `0` makes the log overwrite its oldest events as needed instead of stopping when it is full:
 
             ```ruby
             registry_key 'HKLM\Software\Policies\Microsoft\Windows\EventLog\System' do
               values [{
                 name: 'Retention',
-                type: :dword,
-                data: 0,
+                type: :string,
+                data: '0',
               }]
               recursive true
               action :create
@@ -10824,7 +10847,7 @@ queries:
             1. Open the Group Policy Editor and go to **Computer Configuration** > **Administrative Templates** > **System** > **Device Guard** > **Turn on Virtualization Based Security**.
             2. Set the policy to **Enabled**.
             3. Set **Select Platform Security Level** to **Secure Boot**.
-            4. Set **Virtualization Based Protection of Code Integrity** to **Enabled with UEFI lock**.
+            4. Set **Virtualization Based Protection of Code Integrity** to **Enabled with UEFI lock**. **Enabled without lock** also passes the check. Choose it if you need to be able to turn Memory Integrity back off remotely or by a later policy change, because with a UEFI lock that requires access to the UEFI firmware menu. Test on a pilot group first, since an incompatible driver can fail to load or stop the system from booting.
             5. Apply the policy and restart the system.
         - id: powershell
           desc: |-
@@ -10832,47 +10855,62 @@ queries:
 
             ```powershell
             $p = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard'
-            New-Item -Path $p -Force | Out-Null
+            if (-not (Test-Path $p)) {
+                New-Item -Path $p -Force | Out-Null
+            }
             New-ItemProperty -Path $p -Name 'EnableVirtualizationBasedSecurity' -Value 1 -PropertyType DWord -Force
             New-ItemProperty -Path $p -Name 'RequirePlatformSecurityFeatures' -Value 1 -PropertyType DWord -Force
             New-ItemProperty -Path $p -Name 'HypervisorEnforcedCodeIntegrity' -Value 1 -PropertyType DWord -Force
             ```
 
+            The key is created only when it is missing, because `New-Item -Force` on an existing registry key replaces it with an empty key and would delete every other Device Guard value already set there, such as `LsaCfgFlags`.
+
             `HypervisorEnforcedCodeIntegrity` takes `1` for enabled with UEFI lock and `2` for enabled without lock. Choose `2` if you need to be able to turn Memory Integrity back off remotely. `RequirePlatformSecurityFeatures` takes `1` for Secure Boot and `3` for Secure Boot with DMA protection; `3` leaves VBS off entirely on hardware without an IOMMU.
         - id: ansible
           desc: |-
-            To enable Memory Integrity with Ansible, set the three Device Guard policy values that the Group Policy setting writes:
+            To enable Memory Integrity using Ansible:
+
+            1. Set the three Device Guard policy values that the Group Policy setting writes. `EnableVirtualizationBasedSecurity` set to `1` turns on Virtualization-Based Security, `RequirePlatformSecurityFeatures` set to `1` requires Secure Boot, and `HypervisorEnforcedCodeIntegrity` set to `1` enables Memory Integrity with UEFI lock. Set `HypervisorEnforcedCodeIntegrity` to `2` instead, which also passes the check, if you need to be able to turn Memory Integrity back off remotely, because with a UEFI lock that requires access to the UEFI firmware menu.
+            2. Let the handler restart the host, which happens only when one of the values changed. Memory Integrity does not start until the system restarts, so plan for the reboot.
 
             ```yaml
-            - name: Enable Virtualization Based Security
-              ansible.windows.win_regedit:
-                path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard
-                name: EnableVirtualizationBasedSecurity
-                data: 1
-                type: dword
-              notify: reboot
+            - name: Enable Memory Integrity
+              hosts: windows
+              tasks:
+                - name: Enable Virtualization Based Security
+                  ansible.windows.win_regedit:
+                    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard
+                    name: EnableVirtualizationBasedSecurity
+                    data: 1
+                    type: dword
+                  notify: Restart to apply Device Guard settings
 
-            - name: Require Secure Boot as the platform security level
-              ansible.windows.win_regedit:
-                path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard
-                name: RequirePlatformSecurityFeatures
-                data: 1
-                type: dword
-              notify: reboot
+                - name: Require Secure Boot as the platform security level
+                  ansible.windows.win_regedit:
+                    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard
+                    name: RequirePlatformSecurityFeatures
+                    data: 1
+                    type: dword
+                  notify: Restart to apply Device Guard settings
 
-            - name: Enable HVCI (Memory Integrity)
-              ansible.windows.win_regedit:
-                path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard
-                name: HypervisorEnforcedCodeIntegrity
-                data: 1
-                type: dword
-              notify: reboot
+                - name: Enable HVCI (Memory Integrity)
+                  ansible.windows.win_regedit:
+                    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard
+                    name: HypervisorEnforcedCodeIntegrity
+                    data: 1
+                    type: dword
+                  notify: Restart to apply Device Guard settings
+
+              handlers:
+                - name: Restart to apply Device Guard settings
+                  ansible.windows.win_reboot:
+                    msg: Restarting to apply Device Guard settings
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            This setting takes effect after the next restart. Use this Chef Infra recipe code to set the Device Guard policy values that back this policy, including the Virtualization-Based Security values Memory Integrity depends on:
+            This setting takes effect after the next restart. Use this Chef Infra recipe code to set the Device Guard policy values that back this policy, including the Virtualization-Based Security values Memory Integrity depends on. `HypervisorEnforcedCodeIntegrity` set to `1` enables Memory Integrity with UEFI lock and `2` enables it without lock; both pass the check, but with a UEFI lock turning Memory Integrity back off requires access to the UEFI firmware menu, which matters if an incompatible driver stops the system from booting:
 
             ```ruby
             registry_key 'HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard' do
@@ -10957,7 +10995,7 @@ queries:
             1. Open the Group Policy Editor and go to **Computer Configuration** > **Administrative Templates** > **System** > **Device Guard** > **Turn on Virtualization Based Security**.
             2. Set the policy to **Enabled**.
             3. Set **Select Platform Security Level** to **Secure Boot**.
-            4. Set **Credential Guard Configuration** to **Enabled with UEFI lock**.
+            4. Set **Credential Guard Configuration** to **Enabled with UEFI lock**. **Enabled without lock** also passes the check. Choose it if you need to be able to turn Credential Guard off remotely, because a UEFI lock is kept in firmware variables and removing it requires someone physically present at the machine.
             5. Apply the policy and restart the system.
         - id: powershell
           desc: |-
@@ -10965,47 +11003,62 @@ queries:
 
             ```powershell
             $p = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard'
-            New-Item -Path $p -Force | Out-Null
+            if (-not (Test-Path $p)) {
+                New-Item -Path $p -Force | Out-Null
+            }
             New-ItemProperty -Path $p -Name 'EnableVirtualizationBasedSecurity' -Value 1 -PropertyType DWord -Force
             New-ItemProperty -Path $p -Name 'RequirePlatformSecurityFeatures' -Value 1 -PropertyType DWord -Force
             New-ItemProperty -Path $p -Name 'LsaCfgFlags' -Value 1 -PropertyType DWord -Force
             ```
 
+            The key is created only when it is missing, because `New-Item -Force` on an existing registry key replaces it with an empty key and would delete every other Device Guard value already set there, such as `HypervisorEnforcedCodeIntegrity`.
+
             `LsaCfgFlags` takes `1` for enabled with UEFI lock and `2` for enabled without lock. Choose `2` if you need to be able to turn Credential Guard back off remotely, because a UEFI lock can only be cleared from the firmware. Enable Credential Guard before the device joins a domain; if it is turned on afterwards, the user and device secrets may already have been exposed.
         - id: ansible
           desc: |-
-            To enable Credential Guard with Ansible, set the three Device Guard policy values that the Group Policy setting writes:
+            To enable Credential Guard using Ansible:
+
+            1. Set the three Device Guard policy values that the Group Policy setting writes. `EnableVirtualizationBasedSecurity` set to `1` turns on Virtualization-Based Security, `RequirePlatformSecurityFeatures` set to `1` requires Secure Boot, and `LsaCfgFlags` set to `1` enables Credential Guard with UEFI lock. Set `LsaCfgFlags` to `2` instead, which also passes the check, if you need to be able to turn Credential Guard back off remotely, because a UEFI lock is kept in firmware variables and removing it requires someone physically present at the machine.
+            2. Let the handler restart the host, which happens only when one of the values changed. Credential Guard does not start until the system restarts, so plan for the reboot.
 
             ```yaml
-            - name: Enable Virtualization Based Security
-              ansible.windows.win_regedit:
-                path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard
-                name: EnableVirtualizationBasedSecurity
-                data: 1
-                type: dword
-              notify: reboot
-
-            - name: Require Secure Boot as the platform security level
-              ansible.windows.win_regedit:
-                path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard
-                name: RequirePlatformSecurityFeatures
-                data: 1
-                type: dword
-              notify: reboot
-
             - name: Enable Credential Guard
-              ansible.windows.win_regedit:
-                path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard
-                name: LsaCfgFlags
-                data: 1
-                type: dword
-              notify: reboot
+              hosts: windows
+              tasks:
+                - name: Enable Virtualization Based Security
+                  ansible.windows.win_regedit:
+                    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard
+                    name: EnableVirtualizationBasedSecurity
+                    data: 1
+                    type: dword
+                  notify: Restart to apply Device Guard settings
+
+                - name: Require Secure Boot as the platform security level
+                  ansible.windows.win_regedit:
+                    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard
+                    name: RequirePlatformSecurityFeatures
+                    data: 1
+                    type: dword
+                  notify: Restart to apply Device Guard settings
+
+                - name: Enable Credential Guard
+                  ansible.windows.win_regedit:
+                    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard
+                    name: LsaCfgFlags
+                    data: 1
+                    type: dword
+                  notify: Restart to apply Device Guard settings
+
+              handlers:
+                - name: Restart to apply Device Guard settings
+                  ansible.windows.win_reboot:
+                    msg: Restarting to apply Device Guard settings
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            This setting takes effect after the next restart. Use this Chef Infra recipe code to set the Device Guard policy values that back this policy, including the Virtualization-Based Security values Credential Guard depends on:
+            This setting takes effect after the next restart. Use this Chef Infra recipe code to set the Device Guard policy values that back this policy, including the Virtualization-Based Security values Credential Guard depends on. `LsaCfgFlags` set to `1` enables Credential Guard with UEFI lock and `2` enables it without lock; both pass the check, but a UEFI lock is kept in firmware variables and removing it requires someone physically present at the machine:
 
             ```ruby
             registry_key 'HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard' do
