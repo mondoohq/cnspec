@@ -34,6 +34,8 @@ on:
 
 env:
   REGISTRY: docker.io
+  # C07QZDJFF89 == #release-coordination
+  SLACK_BOT_CHANNEL_ID: "C07QZDJFF89"
 
 permissions:
   contents: read
@@ -367,3 +369,134 @@ jobs:
           event-type: update
           client-payload: >-
             {"version": ${{ toJSON(github.ref_name) }}}
+
+  # Reports the release outcome to #release-coordination.
+  #
+  # Nothing depends on this job, and it never gates the release: a Slack outage,
+  # a rotated token or a renamed channel must not turn a good release red. It
+  # runs on failure too, because a release that did not happen is the case most
+  # worth announcing.
+  notify:
+    name: Report the release to Slack
+    if: ${{ always() && github.ref_type == 'tag' }}
+    needs: [goreleaser, trigger-installer-release, mondoo-operator-cnspec]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compose the message
+        id: meta
+        env:
+          CHANNEL: ${{ needs.goreleaser.outputs.channel }}
+          BUILD: ${{ needs.goreleaser.result }}
+          DISPATCH: ${{ needs.trigger-installer-release.result }}
+          OPERATOR: ${{ needs.mondoo-operator-cnspec.result }}
+          # Through env rather than `${{ }}` inline: an expression is pasted into
+          # the script before bash parses it, so a tag carrying a quote or `$(…)`
+          # would be read as shell rather than as text.
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # The tag reaches Slack through two different parsers, and it is not
+          # validated anywhere upstream -- git allows `"`, `&`, `<` and `>` in a
+          # ref name. `ref_safe` is escaped for both: backslash and quote so the
+          # value cannot terminate the double-quoted YAML scalar it is pasted
+          # into (that one fails the whole step, not just the rendering), then
+          # the three characters Slack reads as markup. `ref_url` is for the
+          # link target, where percent-encoding rather than escaping is correct.
+          ref_safe=$REF_NAME
+          ref_safe=${ref_safe//\\/\\\\}
+          ref_safe=${ref_safe//\"/\\\"}
+          ref_safe=${ref_safe//&/&amp;}
+          ref_safe=${ref_safe//</&lt;}
+          ref_safe=${ref_safe//>/&gt;}
+          ref_url=$(jq -rn --arg v "$REF_NAME" '$v|@uri')
+          {
+            echo "version=$ref_safe"
+            echo "version_url=$ref_url"
+          } >> "$GITHUB_OUTPUT"
+
+          # Skipped is not failed: on a pre-release the operator image trigger
+          # is skipped by design, and reporting that red would train everyone to
+          # ignore the colour.
+          ok=true
+          for result in "$BUILD" "$DISPATCH" "$OPERATOR"; do
+            case "$result" in
+              success|skipped) ;;
+              *) ok=false ;;
+            esac
+          done
+
+          if [ "$ok" = "true" ]; then
+            echo "header=:rocket: cnspec $ref_safe released" >> "$GITHUB_OUTPUT"
+            echo "colour=good" >> "$GITHUB_OUTPUT"
+            echo "mention=" >> "$GITHUB_OUTPUT"
+          else
+            echo "header=:x: cnspec $ref_safe failed to release" >> "$GITHUB_OUTPUT"
+            echo "colour=danger" >> "$GITHUB_OUTPUT"
+            echo "mention=<!here> " >> "$GITHUB_OUTPUT"
+          fi
+
+          case "$CHANNEL" in
+            preview) echo "channel_line=:test_tube: *preview* — install with \`--channel preview\`, not promoted to latest" >> "$GITHUB_OUTPUT" ;;
+            *)       echo "channel_line=:package: *stable* — this is what a default install gets" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+          # Emits the value only. The label and the newline stay in the Slack payload,
+          # where `\n` inside a double-quoted YAML scalar is a real escape. A `\n` that
+          # arrives by substitution only renders because of when GitHub interpolates,
+          # which is not a property worth depending on.
+          status() {
+            case "$1" in
+              success) echo ":white_check_mark: Done" ;;
+              skipped) echo ":double_vertical_bar: Skipped" ;;
+              "")      echo ":grey_question: Not run" ;;
+              *)       echo ":x: $1" ;;
+            esac
+          }
+          {
+            echo "build_status=$(status "$BUILD")"
+            echo "dispatch_status=$(status "$DISPATCH")"
+            echo "operator_status=$(status "$OPERATOR")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post to Slack
+        continue-on-error: true
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            channel: "${{ env.SLACK_BOT_CHANNEL_ID }}"
+            text: "${{ steps.meta.outputs.mention }}${{ steps.meta.outputs.header }}"
+            blocks:
+              - type: "header"
+                text:
+                  type: "plain_text"
+                  text: "${{ steps.meta.outputs.header }}"
+                  emoji: true
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "${{ steps.meta.outputs.channel_line }}"
+              - type: "section"
+                fields:
+                  - type: "mrkdwn"
+                    text: "*Repository:*\n`${{ github.repository }}`"
+                  - type: "mrkdwn"
+                    text: "*Version:*\n`${{ steps.meta.outputs.version }}`"
+                  - type: "mrkdwn"
+                    text: "*Triggered by:*\n${{ github.actor }}"
+                  - type: "mrkdwn"
+                    text: "*Workflow run:*\n<https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|Open run>"
+              - type: "section"
+                fields:
+                  - type: "mrkdwn"
+                    text: "*Build:*\n${{ steps.meta.outputs.build_status }}"
+                  - type: "mrkdwn"
+                    text: "*Publish trigger:*\n${{ steps.meta.outputs.dispatch_status }}"
+                  - type: "mrkdwn"
+                    text: "*Operator image:*\n${{ steps.meta.outputs.operator_status }}"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "*Release notes:*\n<https://github.com/${{ github.repository }}/releases/tag/${{ steps.meta.outputs.version_url }}|${{ steps.meta.outputs.version }}>"
