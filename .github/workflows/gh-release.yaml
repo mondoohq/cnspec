@@ -43,7 +43,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set release version
-        run: echo "RELEASE_VERSION=$(cat VERSION)" >> $GITHUB_ENV
+        id: version
+        run: |
+          set -euo pipefail
+          RELEASE_VERSION=$(cat VERSION)
+          echo "RELEASE_VERSION=$RELEASE_VERSION" >> $GITHUB_ENV
+
+          # The channel is derived from the semver pre-release segment, never
+          # declared. Everything after a `-` and before any `+` is that segment;
+          # build metadata (`13.38.1+41`) is not a pre-release and stays stable.
+          # cnquery-update.yml writes the mql version straight into VERSION, so
+          # a pre-release bump reaches this workflow on a normal merge -- without
+          # this, it would publish a v14 rc as a full release and hand it the
+          # `releases/latest` pointer that every v13 client reads.
+          core=${RELEASE_VERSION%%+*}
+          if [ "$core" != "${core#*-}" ]; then
+            echo "${RELEASE_VERSION} is a pre-release"
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+            echo "make_latest=false" >> $GITHUB_OUTPUT
+          else
+            echo "${RELEASE_VERSION} is stable"
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+            echo "make_latest=true" >> $GITHUB_OUTPUT
+          fi
       # fetch a token for the mondoo-mergebot app
       - name: Generate token
         id: generate-token
@@ -56,7 +78,8 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_VERSION }}
           generate_release_notes: true
-          make_latest: true
+          prerelease: ${{ steps.version.outputs.prerelease }}
+          make_latest: ${{ steps.version.outputs.make_latest }}
           token: ${{ steps.generate-token.outputs.token }}
       - name: Release file present?
         id: check_release_file
