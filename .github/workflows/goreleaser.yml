@@ -389,6 +389,10 @@ jobs:
           BUILD: ${{ needs.goreleaser.result }}
           DISPATCH: ${{ needs.trigger-installer-release.result }}
           OPERATOR: ${{ needs.mondoo-operator-cnspec.result }}
+          # Through env rather than `${{ }}` inline: an expression is pasted into
+          # the script before bash parses it, so a tag carrying a quote or `$(…)`
+          # would be read as shell rather than as text.
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
 
@@ -404,11 +408,11 @@ jobs:
           done
 
           if [ "$ok" = "true" ]; then
-            echo 'header=:rocket: cnspec ${{ github.ref_name }} released' >> "$GITHUB_OUTPUT"
+            echo "header=:rocket: cnspec $REF_NAME released" >> "$GITHUB_OUTPUT"
             echo "colour=good" >> "$GITHUB_OUTPUT"
             echo "mention=" >> "$GITHUB_OUTPUT"
           else
-            echo 'header=:x: cnspec ${{ github.ref_name }} failed to release' >> "$GITHUB_OUTPUT"
+            echo "header=:x: cnspec $REF_NAME failed to release" >> "$GITHUB_OUTPUT"
             echo "colour=danger" >> "$GITHUB_OUTPUT"
             echo "mention=<!here> " >> "$GITHUB_OUTPUT"
           fi
@@ -418,18 +422,22 @@ jobs:
             *)       echo "channel_line=:package: *stable* — this is what a default install gets" >> "$GITHUB_OUTPUT" ;;
           esac
 
+          # Emits the value only. The label and the newline stay in the Slack payload,
+          # where `\n` inside a double-quoted YAML scalar is a real escape. A `\n` that
+          # arrives by substitution only renders because of when GitHub interpolates,
+          # which is not a property worth depending on.
           status() {
-            case "$2" in
-              success) echo "*$1:*\n:white_check_mark: Done" ;;
-              skipped) echo "*$1:*\n:double_vertical_bar: Skipped" ;;
-              "")      echo "*$1:*\n:grey_question: Not run" ;;
-              *)       echo "*$1:*\n:x: $2" ;;
+            case "$1" in
+              success) echo ":white_check_mark: Done" ;;
+              skipped) echo ":double_vertical_bar: Skipped" ;;
+              "")      echo ":grey_question: Not run" ;;
+              *)       echo ":x: $1" ;;
             esac
           }
           {
-            echo "build_status=$(status Build "$BUILD")"
-            echo "dispatch_status=$(status 'Publish trigger' "$DISPATCH")"
-            echo "operator_status=$(status 'Operator image' "$OPERATOR")"
+            echo "build_status=$(status "$BUILD")"
+            echo "dispatch_status=$(status "$DISPATCH")"
+            echo "operator_status=$(status "$OPERATOR")"
           } >> "$GITHUB_OUTPUT"
 
       - name: Post to Slack
@@ -464,11 +472,11 @@ jobs:
               - type: "section"
                 fields:
                   - type: "mrkdwn"
-                    text: "${{ steps.meta.outputs.build_status }}"
+                    text: "*Build:*\n${{ steps.meta.outputs.build_status }}"
                   - type: "mrkdwn"
-                    text: "${{ steps.meta.outputs.dispatch_status }}"
+                    text: "*Publish trigger:*\n${{ steps.meta.outputs.dispatch_status }}"
                   - type: "mrkdwn"
-                    text: "${{ steps.meta.outputs.operator_status }}"
+                    text: "*Operator image:*\n${{ steps.meta.outputs.operator_status }}"
               - type: "section"
                 text:
                   type: "mrkdwn"
