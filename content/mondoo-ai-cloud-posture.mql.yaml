@@ -1,0 +1,195 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+
+# PROTOTYPE - AI service coverage concept (Wave 2)
+# Cross-cloud AI-posture bundle: AI-specific checks filling gaps NOT already
+# covered by the per-cloud security policies. Seeded with AWS (Bedrock model
+# invocation logging; Personalize CMK - the aws.personalize resource ships with
+# zero checks today). Field references from providers/aws/resources/aws.lr.
+#
+# Prototype scope: runtime (aws) checks only. Terraform variants are deferred
+# and noted per check (Bedrock logging has a Terraform resource and is a
+# follow-up; Personalize dataset groups have no Terraform resource). Add
+# verified compliance/* tags before GA per content/CLAUDE.md.
+
+policies:
+  - uid: mondoo-ai-cloud-posture
+    name: Mondoo AI Cloud Posture
+    version: 0.1.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: aws,ai
+    require:
+      - provider: aws
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Assess AI-specific cloud controls that complement the per-cloud security policies
+    docs:
+      desc: |
+        The Mondoo AI Cloud Posture policy focuses on security controls specific
+        to managed AI/ML services that are not already asserted by the broad
+        per-cloud security policies. The initial release seeds AWS coverage:
+
+        - **Amazon Bedrock model invocation logging** so prompts and completions
+          are captured for audit and abuse investigation.
+        - **Amazon Personalize dataset-group encryption** with a customer-managed
+          key. The `aws.personalize` resource ships without any checks, so this
+          closes a real gap.
+
+        GCP (Vertex AI) and Azure (Azure OpenAI / Cognitive Services) groups
+        extend the same model and are tracked in the coverage roadmap.
+
+        ## Scan
+
+        ```bash
+        cnspec scan aws -f mondoo-ai-cloud-posture.mql.yaml
+        ```
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Amazon Bedrock
+        filters: asset.platform == "aws"
+        checks:
+          - uid: mondoo-ai-cloud-posture-bedrock-invocation-logging
+      - title: Amazon Personalize
+        filters: asset.platform == "aws"
+        checks:
+          - uid: mondoo-ai-cloud-posture-personalize-datasetgroup-cmk
+    scoring_system: highest impact
+
+queries:
+  # No Terraform variants: prototype ships the runtime check only. A Terraform
+  # variant is a follow-up against aws_bedrock_model_invocation_logging_configuration.
+  - uid: mondoo-ai-cloud-posture-bedrock-invocation-logging
+    title: Ensure Bedrock model invocation logging delivers to a destination
+    impact: 70
+    mql: |
+      aws.bedrock.customModels.length == 0 && aws.bedrock.agents.length == 0 && aws.bedrock.knowledgeBases.length == 0 && aws.bedrock.provisionedModelThroughputs.length == 0 || aws.bedrock.modelInvocationLoggingConfigurations.length > 0 && aws.bedrock.modelInvocationLoggingConfigurations.all(s3Config != empty || cloudWatchConfig != empty)
+    docs:
+      desc: |
+        This check ensures Amazon Bedrock model invocation logging is configured
+        and delivers to a destination. Model invocation logging records the
+        prompts sent to and completions returned by Bedrock foundation models.
+        Without it, there is no record of what data left the organization through
+        a model, leaving abuse, data exfiltration, and prompt-injection incidents
+        invisible.
+
+        **Why this matters**
+
+        - **Audit trail:** Logging is the only record of prompt and completion content.
+        - **Incident response:** Investigations depend on retained invocation data.
+
+        **Risk mitigation**
+
+        - **Central delivery:** Shipping logs to CloudWatch or S3 preserves them for review.
+
+        This control applies only to accounts with a persistent Bedrock
+        footprint (custom models, agents, knowledge bases, or provisioned
+        throughput). For those accounts a logging configuration must exist and
+        deliver to CloudWatch Logs or S3. Accounts with no Bedrock footprint are
+        not flagged, so the check does not penalize accounts that do not use
+        Bedrock. Pure on-demand inference leaves no persistent resource, so an
+        on-demand-only account is out of scope for this check.
+      audit: |
+        ### Audit via CLI
+
+        1. Retrieve the model invocation logging configuration:
+
+        ```bash
+        aws bedrock get-model-invocation-logging-configuration
+        ```
+
+        A passing result shows a `loggingConfig` with a `cloudWatchConfig` and/or `s3Config`; a failing result shows no configuration.
+      remediation:
+        - id: console
+          desc: |
+            To enable model invocation logging:
+
+            1. Open the **Amazon Bedrock** console and go to **Settings**.
+            2. Enable **Model invocation logging** and select a CloudWatch log group and/or S3 bucket.
+            3. Enable text (and image/embedding where relevant) data delivery.
+        - id: cli
+          desc: |
+            To enable logging with a CloudWatch destination:
+
+            ```bash
+            aws bedrock put-model-invocation-logging-configuration \
+              --logging-config '{"cloudWatchConfig":{"logGroupName":"/aws/bedrock/modelinvocations","roleArn":"arn:aws:iam::<acct>:role/BedrockLoggingRole"},"textDataDeliveryEnabled":true}'
+            ```
+        - id: terraform
+          desc: |
+            To enable logging with Terraform:
+
+            ```hcl
+            resource "aws_bedrock_model_invocation_logging_configuration" "this" {
+              logging_config {
+                text_data_delivery_enabled = true
+                cloudwatch_config {
+                  log_group_name = "/aws/bedrock/modelinvocations"
+                  role_arn       = aws_iam_role.bedrock_logging.arn
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock/latest/userguide/model-invocation-logging.html
+        title: Amazon Bedrock model invocation logging
+
+  # No Terraform variants: aws_personalize_dataset_group has no Terraform
+  # resource, so no HCL/plan/state variant is possible.
+  - uid: mondoo-ai-cloud-posture-personalize-datasetgroup-cmk
+    title: Ensure Personalize dataset groups use a customer-managed KMS key
+    impact: 80
+    mql: |
+      aws.personalize.datasetGroups.all(kmsKey != empty)
+    docs:
+      desc: |
+        This check ensures Amazon Personalize dataset groups are encrypted with a
+        customer-managed KMS key (CMK). Dataset groups hold the interaction, user,
+        and item data used to train recommendation models. A CMK lets the
+        organization rotate, audit, and revoke access to that data independently
+        of AWS-owned default keys.
+
+        **Why this matters**
+
+        - **Data control:** A CMK can be disabled or revoked to cut access to training data.
+        - **Audit trail:** CloudTrail logs every CMK use for decryption of the data.
+
+        **Risk mitigation**
+
+        - **BYOK alignment:** CMK encryption satisfies bring-your-own-key requirements.
+      audit: |
+        ### Audit via CLI
+
+        1. List dataset groups and inspect each for a KMS key:
+
+        ```bash
+        aws personalize list-dataset-groups
+        aws personalize describe-dataset-group --dataset-group-arn <arn>
+        ```
+
+        A passing result shows a customer-managed `kmsKeyArn` on the dataset group; a failing result shows none.
+      remediation:
+        - id: console
+          desc: |
+            To encrypt a dataset group with a CMK:
+
+            1. In the **Amazon Personalize** console, create the dataset group with a customer-managed KMS key selected.
+            2. Grant the Personalize service role decrypt permission in the key policy.
+        - id: cli
+          desc: |
+            Personalize sets the KMS key at dataset-group creation. Recreate the
+            group with a CMK:
+
+            ```bash
+            aws personalize create-dataset-group \
+              --name my-dataset-group \
+              --kms-key-arn arn:aws:kms:us-east-1:<acct>:key/<key-id> \
+              --role-arn arn:aws:iam::<acct>:role/PersonalizeKmsRole
+            ```
+        # No Terraform remediation: aws_personalize_dataset_group has no Terraform resource.
+    refs:
+      - url: https://docs.aws.amazon.com/personalize/latest/dg/data-protection.html
+        title: Amazon Personalize data protection
