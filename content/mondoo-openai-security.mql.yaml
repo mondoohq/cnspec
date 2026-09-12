@@ -1,0 +1,346 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+
+# PROTOTYPE - AI service coverage concept (Wave 1)
+# Foundation-model SaaS (OpenAI). Provider providers/openai v13.0.11 (@maturity preview).
+# Field references from providers/openai/resources/openai.lr.
+# SaaS admin settings have no Terraform resource, so no IaC variants apply.
+# Compliance tags omitted intentionally on this standalone prototype (no tagged
+# siblings); add verified compliance/* tags before GA per content/CLAUDE.md.
+
+policies:
+  - uid: mondoo-openai-security
+    name: Mondoo OpenAI Security
+    version: 0.1.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: openai,ai
+    require:
+      - provider: openai
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Harden OpenAI organization identity, API keys, data governance, and audit visibility
+    docs:
+      desc: |
+        The Mondoo OpenAI Security policy assesses the security posture of an
+        OpenAI organization through the OpenAI management API: organization
+        membership and least privilege, API key and service-account hygiene, data
+        governance over uploaded files and vector stores, and audit log
+        visibility.
+
+        Several checks require an **admin API key** (organization users, invites,
+        audit logs, project API keys, and service accounts).
+
+        ## Scan an OpenAI organization
+
+        ```bash
+        cnspec scan openai -f mondoo-openai-security.mql.yaml
+        ```
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    props:
+      - uid: mondooOpenaiMaxOrgOwners
+        title: Maximum number of organization owners permitted
+        mql: |
+          return 3
+      - uid: mondooOpenaiMaxApiKeyAgeDays
+        title: Maximum API key age in days before rotation is expected
+        mql: |
+          return 90
+    groups:
+      - title: Identity and Access Management
+        filters: asset.family.contains("openai")
+        checks:
+          - uid: mondoo-openai-security-limit-org-owners
+          - uid: mondoo-openai-security-no-pending-owner-invites
+          - uid: mondoo-openai-security-service-accounts-not-owner
+      - title: Credential Hygiene
+        filters: asset.family.contains("openai")
+        checks:
+          - uid: mondoo-openai-security-no-keys-in-archived-projects
+          - uid: mondoo-openai-security-rotate-project-api-keys
+      - title: Data Governance
+        filters: asset.family.contains("openai")
+        checks:
+          - uid: mondoo-openai-security-vector-stores-expire
+      - title: Audit and Monitoring
+        filters: asset.family.contains("openai")
+        checks:
+          - uid: mondoo-openai-security-audit-logs-available
+    scoring_system: highest impact
+
+queries:
+  - uid: mondoo-openai-security-limit-org-owners
+    title: Ensure the number of organization owners is limited
+    impact: 70
+    props:
+      - uid: mondooOpenaiMaxOrgOwners
+    mql: |
+      openai.users.where(role == "owner").length <= props.mondooOpenaiMaxOrgOwners
+    docs:
+      desc: |
+        This check ensures the OpenAI organization keeps the number of owners
+        small. Owners hold full control over billing, member management, and
+        project configuration, so a large owner set widens the blast radius of
+        any single compromised or careless account.
+
+        **Why this matters**
+
+        - **Least privilege:** Owner is the highest privilege level; few identities should hold it.
+        - **Blast radius:** Each additional owner is another full-takeover path.
+
+        **Risk mitigation**
+
+        - **Accountability:** A small owner set is easier to review and attest.
+      audit: |
+        ### Audit via Console
+
+        1. Open the OpenAI dashboard and go to **Settings > Members**.
+        2. Count the members whose role is **Owner**.
+
+        A passing result shows the owner count at or below the approved threshold; a failing result shows more owners than permitted.
+      remediation:
+        - id: console
+          desc: |
+            To reduce the number of organization owners:
+
+            1. Open **Settings > Members** in the OpenAI dashboard.
+            2. For each owner who does not need full control, change the role to **Reader**.
+    refs:
+      - url: https://platform.openai.com/docs/guides/your-data
+        title: OpenAI platform data controls
+
+  - uid: mondoo-openai-security-no-pending-owner-invites
+    title: Ensure no pending invitations grant owner access
+    impact: 60
+    mql: |
+      openai.invites.where(status == "pending" && role == "owner").length == 0
+    docs:
+      desc: |
+        This check ensures there are no outstanding invitations that would grant
+        the owner role on acceptance. Unclaimed owner invites are an
+        often-forgotten privilege-escalation path, especially when sent to
+        personal or shared mailboxes.
+
+        **Why this matters**
+
+        - **Latent privilege:** A pending owner invite becomes full control the moment it is accepted.
+        - **Weak delivery targets:** Invites to shared inboxes can be accepted by unintended parties.
+
+        **Risk mitigation**
+
+        - **Deferred elevation:** Invite at a low role and elevate only after the member is verified.
+      audit: |
+        ### Audit via Console
+
+        1. Open **Settings > Members** in the OpenAI dashboard.
+        2. Review the **Pending invitations** list for any with the **Owner** role.
+
+        A passing result shows no pending owner invitations; a failing result shows one or more.
+      remediation:
+        - id: console
+          desc: |
+            To remove pending owner invitations:
+
+            1. Open **Settings > Members** in the OpenAI dashboard.
+            2. Revoke each pending invitation with the **Owner** role, or reissue it as **Reader**.
+
+  - uid: mondoo-openai-security-service-accounts-not-owner
+    title: Ensure project service accounts do not hold the owner role
+    impact: 70
+    mql: |
+      openai.projects.all(serviceAccounts.all(role != "owner"))
+    docs:
+      desc: |
+        This check ensures automation service accounts are not granted the
+        project owner role. An owner-level service account lets automated
+        workloads (and anyone holding the key) change project configuration and
+        manage other credentials, violating least privilege.
+
+        **Why this matters**
+
+        - **Non-human privilege:** Machine identities rarely need to manage a project.
+        - **Key exposure:** A leaked owner service-account key is a project takeover.
+
+        **Risk mitigation**
+
+        - **Scoped automation:** The member role is sufficient for typical automation.
+      audit: |
+        ### Audit via Console
+
+        1. Open the OpenAI dashboard and select each project under **Settings > Projects**.
+        2. Open **Service accounts** and review each account's role.
+
+        A passing result shows every service account at the **Member** role; a failing result shows a service account with **Owner**.
+      remediation:
+        - id: console
+          desc: |
+            To downgrade over-privileged service accounts:
+
+            1. Open the affected project's **Service accounts** page.
+            2. Change any service account with the **Owner** role to **Member**.
+
+  - uid: mondoo-openai-security-no-keys-in-archived-projects
+    title: Ensure archived projects do not retain active API keys
+    impact: 80
+    mql: |
+      openai.projects.where(status == "archived").all(apiKeys.length == 0)
+    docs:
+      desc: |
+        This check ensures archived projects contain no API keys. Keys in an
+        archived project remain valid credentials against the OpenAI API but are
+        rarely monitored, making them a common source of long-lived, forgotten
+        access.
+
+        **Why this matters**
+
+        - **Shadow credentials:** Archived projects are assumed inactive, yet their keys still work.
+        - **Low visibility:** Nobody watches an archived project for key misuse.
+
+        **Risk mitigation**
+
+        - **Clean teardown:** Deleting keys before archiving removes the credential entirely.
+      audit: |
+        ### Audit via Console
+
+        1. Open **Settings > Projects** in the OpenAI dashboard and filter to **Archived**.
+        2. For each archived project, open **API keys** and confirm the list is empty.
+
+        A passing result shows no API keys in any archived project; a failing result shows one or more.
+      remediation:
+        - id: console
+          desc: |
+            To remove keys from archived projects:
+
+            1. Open each archived project's **API keys** page.
+            2. Delete every remaining key and rotate any that may have been exposed.
+
+  - uid: mondoo-openai-security-rotate-project-api-keys
+    title: Ensure project API keys are rotated regularly
+    impact: 60
+    props:
+      - uid: mondooOpenaiMaxApiKeyAgeDays
+    mql: |
+      openai.projects.all(
+        apiKeys.all(createdAt > time.now - props.mondooOpenaiMaxApiKeyAgeDays * time.day)
+      )
+    docs:
+      desc: |
+        This check ensures project API keys are not older than the approved
+        rotation window. Long-lived keys extend the window in which a leaked
+        credential can be abused and let stale automations retain access.
+
+        **Why this matters**
+
+        - **Exposure window:** The longer a key lives, the longer a leak stays exploitable.
+        - **Drift:** Old keys accumulate for automations no one owns anymore.
+
+        **Risk mitigation**
+
+        - **Scheduled rotation:** Periodic re-issuance forces review of who still needs access.
+      audit: |
+        ### Audit via Console
+
+        1. Open each project's **API keys** page in the OpenAI dashboard.
+        2. Review the **Created** date of each key against your rotation window.
+
+        A passing result shows every key created within the approved window; a failing result shows a key older than it.
+      remediation:
+        - id: console
+          desc: |
+            To rotate an aging API key:
+
+            1. Create a replacement key in the project's **API keys** page.
+            2. Migrate consumers to the new key, then delete the old key.
+
+  - uid: mondoo-openai-security-vector-stores-expire
+    title: Ensure vector stores have an expiration policy
+    impact: 40
+    mql: |
+      openai.vectorStores.all(expiresAt != empty)
+    docs:
+      desc: |
+        This check ensures every vector store has an expiration policy. Vector
+        stores hold embeddings of uploaded files and can retain sensitive
+        organizational data indefinitely; an expiration policy enforces data
+        minimization by clearing stores that are no longer actively used.
+
+        **Why this matters**
+
+        - **Data minimization:** Embeddings of sensitive documents should not live forever.
+        - **Forgotten data:** Unused stores accumulate silently.
+
+        **Risk mitigation**
+
+        - **Automatic cleanup:** An expiration policy purges idle stores without manual effort.
+      audit: |
+        ### Audit via Console
+
+        1. Open the **Storage > Vector stores** area of the OpenAI dashboard.
+        2. Review each store for a configured expiration policy.
+
+        A passing result shows every store with an expiration policy; a failing result shows a store with none.
+      remediation:
+        - id: console
+          desc: |
+            To set an expiration policy:
+
+            1. Open each vector store in the OpenAI dashboard.
+            2. Configure an **expires after** policy appropriate to its use.
+        - id: api
+          desc: |
+            To set an expiration policy through the API, provide `expires_after`
+            when creating or updating the vector store:
+
+            ```bash
+            curl https://api.openai.com/v1/vector_stores/<id> \
+              -H "Authorization: Bearer $OPENAI_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"expires_after":{"anchor":"last_active_at","days":30}}'
+            ```
+
+  - uid: mondoo-openai-security-audit-logs-available
+    title: Ensure organization audit logs are accessible
+    impact: 50
+    mql: |
+      openai.auditLogs.length > 0
+    docs:
+      desc: |
+        This check ensures the OpenAI organization audit log is reachable. Audit
+        logs record security-relevant activity such as API key creation, role
+        changes, and login events; the audit log API requires an admin API key,
+        so an empty result indicates no privileged monitoring identity is
+        configured or audit activity is not being collected.
+
+        **Why this matters**
+
+        - **Accountability:** Without audit logs there is no record of who changed what.
+        - **Detection:** Incident investigation depends on retained activity.
+
+        **Risk mitigation**
+
+        - **Central ingestion:** Shipping logs to a SIEM preserves them for review.
+      audit: |
+        ### Audit via Console
+
+        1. Open **Settings > Logs** (audit logs) in the OpenAI dashboard.
+        2. Confirm audit events are present and that an admin key exists for retrieval.
+
+        A passing result shows audit events available; a failing result shows none or no admin access.
+      remediation:
+        - id: console
+          desc: |
+            To enable audit visibility:
+
+            1. Create an **admin API key** scoped for security monitoring.
+            2. Confirm audit logs are visible under **Settings > Logs**.
+        - id: api
+          desc: |
+            To ingest audit logs, poll the audit log API with an admin key:
+
+            ```bash
+            curl https://api.openai.com/v1/organization/audit_logs \
+              -H "Authorization: Bearer $OPENAI_ADMIN_KEY"
+            ```
