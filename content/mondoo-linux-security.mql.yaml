@@ -395,45 +395,61 @@ queries:
           desc: |
             **Using the CLI to setup Cron:**
 
-            1. Run this command to initialize the AIDE database:
+            1. Build the AIDE database from the current state of the filesystem and put it where scheduled checks read it. Run this on a system you trust, because every later check reports changes relative to this baseline. The commands differ by distribution because the database file names and the configuration path differ:
+
+                **RHEL/Fedora/Amazon Linux and derivatives**
 
                 ```bash
                 aide --init
-                ```
-
-            2. Copy the newly created database into place so scheduled checks can use it:
-
-                ```bash
                 mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
                 ```
 
-            3. Edit the root crontab:
+                **Debian/Ubuntu and derivatives**
+
+                The Debian `aide` binary has no built-in configuration path, so use the `aideinit` wrapper, which passes `/etc/aide/aide.conf` and copies the new database into place:
+
+                ```bash
+                aideinit -y -f
+                ```
+
+                **SLES and openSUSE**
+
+                ```bash
+                aide --init
+                mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+                ```
+
+            2. Edit the root crontab:
 
                 ```bash
                 crontab -u root -e
                 ```
 
-                Add the following line to the crontab. On Debian and Ubuntu systems the AIDE binary is `/usr/bin/aide`; adjust the path accordingly:
+                Add the line for your distribution. `0 5 * * *` runs the comparison every day at 05:00; any schedule satisfies the check, and a daily run keeps the window in which a change goes unnoticed under a day.
+
+                RHEL/Fedora/Amazon Linux and derivatives:
 
                 ```crontab
                 0 5 * * * /usr/sbin/aide --check
                 ```
 
+                Debian/Ubuntu and derivatives, where the configuration file must be passed explicitly or the scheduled comparison exits with a missing configuration error:
+
+                ```crontab
+                0 5 * * * /usr/bin/aide --config /etc/aide/aide.conf --check
+                ```
+
+                SLES and openSUSE:
+
+                ```crontab
+                0 5 * * * /usr/bin/aide --check
+                ```
+
             **Using the CLI to setup systemd:**
 
-            1. Run this command to initialize the AIDE database:
+            1. Build the AIDE database with the command for your distribution from step 1 of the cron instructions above.
 
-                ```bash
-                aide --init
-                ```
-
-            2. Copy the newly created database into place so scheduled checks can use it:
-
-                ```bash
-                mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
-                ```
-
-            3. Create the systemd service by creating the file `/etc/systemd/system/aidecheck.service` and adding the following lines. On Debian and Ubuntu systems use `/usr/bin/aide` in `ExecStart`:
+            2. Create the systemd service by creating the file `/etc/systemd/system/aidecheck.service` and adding the following lines. Set `ExecStart` to the check command for your distribution: `/usr/sbin/aide --check` on RHEL, Fedora, and Amazon Linux, `/usr/bin/aide --config /etc/aide/aide.conf --check` on Debian and Ubuntu, and `/usr/bin/aide --check` on SLES and openSUSE:
 
                 ```ini
                 [Unit]
@@ -447,7 +463,7 @@ queries:
                 WantedBy=multi-user.target
                 ```
 
-            4. Create the systemd timer by creating or editing the file `/etc/systemd/system/aidecheck.timer` and add the following lines:
+            3. Create the systemd timer by creating or editing the file `/etc/systemd/system/aidecheck.timer` and add the following lines. The unit must be named `aidecheck.timer`, and `OnCalendar=*-*-* 05:00:00` runs the check every day at 05:00:
 
                 ```ini
                 [Unit]
@@ -461,7 +477,7 @@ queries:
                 WantedBy=multi-user.target
                 ```
 
-            5. Configure the service and timer to run:
+            4. Configure the service and timer to run:
 
                 ```bash
                 chown root:root /etc/systemd/system/aidecheck.*
@@ -506,9 +522,15 @@ queries:
             # Initialize AIDE database if not already initialized
             if [ ! -f /var/lib/aide/aide.db.gz ] && [ ! -f /var/lib/aide/aide.db ]; then
               echo "Initializing AIDE database..."
-              aide --init
-              cp /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz 2>/dev/null || true
-              cp /var/lib/aide/aide.db.new /var/lib/aide/aide.db 2>/dev/null || true
+              if command -v aideinit >/dev/null 2>&1; then
+                # Debian and Ubuntu: aide has no built-in configuration path. aideinit passes
+                # /etc/aide/aide.conf and copies the new database into place.
+                aideinit -y -f
+              else
+                aide --init
+                cp /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz 2>/dev/null || true
+                cp /var/lib/aide/aide.db.new /var/lib/aide/aide.db 2>/dev/null || true
+              fi
             fi
 
             # Add cron job for daily check at 5AM if not already present
@@ -517,12 +539,17 @@ queries:
               echo "ERROR: aide not found" >&2
               exit 1
             fi
-            CRON_LINE="0 5 * * * $AIDE_BIN --check"
+            if [ -f /etc/aide/aide.conf ]; then
+              # Debian and Ubuntu need the configuration file passed explicitly.
+              CRON_LINE="0 5 * * * $AIDE_BIN --config /etc/aide/aide.conf --check"
+            else
+              CRON_LINE="0 5 * * * $AIDE_BIN --check"
+            fi
             # `grep -v` exits 1 when it selects nothing, which is what happens when root has
             # no crontab at all. Without the `|| true` that status aborts the subshell under
             # `set -e`, so `crontab -` reads empty input and clears the crontab instead of
             # adding the entry.
-            { crontab -l 2>/dev/null | grep -v -F "aide --check" || true; echo "$CRON_LINE"; } | crontab -
+            { crontab -l 2>/dev/null | grep -v -F -e "aide --check" -e "aide.conf --check" || true; echo "$CRON_LINE"; } | crontab -
 
             echo "AIDE daily check scheduled at 5AM via cron."
             ```
@@ -530,7 +557,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to install AIDE, initialize its database, and run the check using a systemd timer. On Debian and Ubuntu systems change `ExecStart` to `/usr/bin/aide`:
+            Use this Ansible playbook to install AIDE, initialize its database, and run the check using a systemd timer named `aidecheck.timer`. The database and check commands differ by distribution, because Debian and Ubuntu use `aideinit` and need the configuration file passed explicitly, and the database and binary paths differ:
 
             ```yaml
             ---
@@ -538,26 +565,35 @@ queries:
               hosts: all
               become: true
 
+              vars:
+                aide_check_command: >-
+                  {{ '/usr/bin/aide --config /etc/aide/aide.conf --check' if ansible_facts['os_family'] == 'Debian'
+                  else '/usr/bin/aide --check' if ansible_facts['os_family'] == 'Suse'
+                  else '/usr/sbin/aide --check' }}
+
               tasks:
                 - name: Ensure AIDE is installed
                   ansible.builtin.package:
                     name: aide
                     state: present
 
-                - name: Check whether the AIDE database exists
-                  ansible.builtin.stat:
-                    path: /var/lib/aide/aide.db.gz
-                  register: aide_db
-
-                - name: Initialize the AIDE database
-                  ansible.builtin.command: aide --init
-                  when: not aide_db.stat.exists
-
-                - name: Copy the new AIDE database into place
+                - name: Initialize the AIDE database on Debian and Ubuntu
                   ansible.builtin.command:
-                    cmd: mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
+                    cmd: aideinit -y -f
+                    creates: /var/lib/aide/aide.db
+                  when: ansible_facts['os_family'] == 'Debian'
+
+                - name: Initialize the AIDE database on SLES and openSUSE
+                  ansible.builtin.shell:
+                    cmd: aide --init && mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+                    creates: /var/lib/aide/aide.db
+                  when: ansible_facts['os_family'] == 'Suse'
+
+                - name: Initialize the AIDE database on RHEL, Fedora, and Amazon Linux
+                  ansible.builtin.shell:
+                    cmd: aide --init && mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
                     creates: /var/lib/aide/aide.db.gz
-                  when: not aide_db.stat.exists
+                  when: ansible_facts['os_family'] == 'RedHat'
 
                 - name: Create systemd service unit for AIDE check
                   ansible.builtin.copy:
@@ -571,7 +607,7 @@ queries:
 
                       [Service]
                       Type=simple
-                      ExecStart=/usr/sbin/aide --check
+                      ExecStart={{ aide_check_command }}
 
                       [Install]
                       WantedBy=multi-user.target
@@ -612,16 +648,25 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to install AIDE, initialize its database, and run the check from a systemd timer. On Debian and Ubuntu systems change `ExecStart` to `/usr/bin/aide`:
+            Use this Chef Infra recipe code to install AIDE, initialize its database, and run the check from a systemd timer named `aidecheck.timer`. The database and check commands differ by distribution, because Debian and Ubuntu use `aideinit` and need the configuration file passed explicitly, and the database and binary paths differ:
 
             ```ruby
             package 'aide' do
               action :install
             end
 
+            aide_init, aide_db, aide_check =
+              if platform_family?('debian')
+                ['aideinit -y -f', '/var/lib/aide/aide.db', '/usr/bin/aide --config /etc/aide/aide.conf --check']
+              elsif platform_family?('suse')
+                ['aide --init && mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db', '/var/lib/aide/aide.db', '/usr/bin/aide --check']
+              else
+                ['aide --init && mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz', '/var/lib/aide/aide.db.gz', '/usr/sbin/aide --check']
+              end
+
             execute 'initialize the AIDE database' do
-              command 'aide --init && mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz'
-              creates '/var/lib/aide/aide.db.gz'
+              command aide_init
+              creates aide_db
             end
 
             systemd_unit 'aidecheck.service' do
@@ -631,7 +676,7 @@ queries:
 
                 [Service]
                 Type=simple
-                ExecStart=/usr/sbin/aide --check
+                ExecStart=#{aide_check}
 
                 [Install]
                 WantedBy=multi-user.target
@@ -732,7 +777,7 @@ queries:
                 * hard core 0
                 ```
 
-                Set the following parameter in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file. Drop-in files must end in `.conf` to be loaded:
+                Set the following parameter in `/etc/sysctl.d/99-disable-coredump.conf`. Sysctl files are applied in file name order and the value read last wins, and systemd ships `fs.suid_dumpable=2` in `/usr/lib/sysctl.d/50-coredump.conf`, so a drop-in whose name sorts before it is overridden at boot. Drop-in files must end in `.conf` to be loaded:
 
                 ```ini
                 fs.suid_dumpable = 0
@@ -955,21 +1000,23 @@ queries:
           desc: |
             **Using the CLI**
 
-            1. Set the ASLR value to 2:
-
-                Run this command to set the active kernel parameter:
-
-                ```bash
-                sysctl -w kernel.randomize_va_space=2
-                sysctl --system
-                ```
-
-            2. Make the change permanent:
-
-                Edit `/etc/sysctl.conf` or a file in `/etc/sysctl.d/` and add the following line:
+            1. Sysctl files are applied in file name order and the value read last wins, so persist the setting in a file whose name sorts after any other file that sets `kernel.randomize_va_space`. Add the following line to `/etc/sysctl.d/99-aslr.conf`:
 
                 ```ini
                 kernel.randomize_va_space = 2
+                ```
+
+            2. Run these commands to load every persisted sysctl file and confirm the active value is `2`:
+
+                ```bash
+                sysctl --system
+                sysctl kernel.randomize_va_space
+                ```
+
+                If the value is not `2`, find the file that overrides it and remove the conflicting line, then run `sysctl --system` again:
+
+                ```bash
+                grep -rs kernel.randomize_va_space /etc/sysctl.conf /etc/sysctl.d /run/sysctl.d /usr/local/lib/sysctl.d /usr/lib/sysctl.d
                 ```
         - id: bash
           desc: |
@@ -1080,21 +1127,23 @@ queries:
           desc: |
             **Using the CLI**
 
-            1. Set the kptr_restrict value to 2:
-
-                Run this command to set the active kernel parameter:
-
-                ```bash
-                sysctl -w kernel.kptr_restrict=2
-                sysctl --system
-                ```
-
-            2. Make the change permanent:
-
-                Edit `/etc/sysctl.conf` or a file in `/etc/sysctl.d/` and add the following line:
+            1. Sysctl files are applied in file name order and the value read last wins, so persist the setting in a file whose name sorts after any other file that sets `kernel.kptr_restrict`. Ubuntu, for example, ships `kernel.kptr_restrict = 1` in `/etc/sysctl.d/10-kernel-hardening.conf`. Add the following line to `/etc/sysctl.d/99-kptr-restrict.conf`:
 
                 ```ini
                 kernel.kptr_restrict = 2
+                ```
+
+            2. Run these commands to load every persisted sysctl file and confirm the active value is `2`:
+
+                ```bash
+                sysctl --system
+                sysctl kernel.kptr_restrict
+                ```
+
+                If the value is not `2`, find the file that overrides it and remove the conflicting line, then run `sysctl --system` again:
+
+                ```bash
+                grep -rs kernel.kptr_restrict /etc/sysctl.conf /etc/sysctl.d /run/sysctl.d /usr/local/lib/sysctl.d /usr/lib/sysctl.d
                 ```
         - id: bash
           desc: |
@@ -1143,7 +1192,7 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to hide kernel pointers from unprivileged users:
+            Use this Chef Infra recipe code to hide kernel pointers from every user, including privileged ones:
 
             ```ruby
             sysctl 'kernel.kptr_restrict' do
@@ -1208,20 +1257,23 @@ queries:
 
             **Caveat: some low-level applications need to map low memory.** Setting `vm.mmap_min_addr = 65536` blocks mapping the lowest memory addresses, which can break Wine, DOSEMU, and qemu workloads that require it. Confirm that no application on this host depends on low-memory mapping before applying.
 
-            1. Set the mmap_min_addr value to 65536:
-
-                Run this command to set the active kernel parameter:
-
-                ```bash
-                sysctl -w vm.mmap_min_addr=65536
-                sysctl --system
-                ```
-            2. Make the change permanent:
-
-                Edit `/etc/sysctl.conf` or a file in `/etc/sysctl.d/` and add the following line:
+            1. Sysctl files are applied in file name order and the value read last wins, so persist the setting in a file whose name sorts after any other file that sets `vm.mmap_min_addr`. Ubuntu, for example, ships `vm.mmap_min_addr = 32768` in `/etc/sysctl.d/10-zeropage.conf`. Add the following line to `/etc/sysctl.d/99-mmap-min-addr.conf`:
 
                 ```ini
                 vm.mmap_min_addr = 65536
+                ```
+
+            2. Run these commands to load every persisted sysctl file and confirm the active value is `65536`:
+
+                ```bash
+                sysctl --system
+                sysctl vm.mmap_min_addr
+                ```
+
+                If the value is not `65536`, find the file that overrides it and remove the conflicting line, then run `sysctl --system` again:
+
+                ```bash
+                grep -rs vm.mmap_min_addr /etc/sysctl.conf /etc/sysctl.d /run/sysctl.d /usr/local/lib/sysctl.d /usr/lib/sysctl.d
                 ```
         - id: bash
           desc: |
@@ -1333,21 +1385,23 @@ queries:
           desc: |
             **Using the CLI**
 
-            1. Set the dmesg_restrict value to 1:
-
-                Run this command to set the active kernel parameter:
-
-                ```bash
-                sysctl -w kernel.dmesg_restrict=1
-                sysctl --system
-                ```
-
-            2. Make the change permanent:
-
-                Edit `/etc/sysctl.conf` or a file in `/etc/sysctl.d/` and add the following line:
+            1. Sysctl files are applied in file name order and the value read last wins, so persist the setting in a file whose name sorts after any other file that sets `kernel.dmesg_restrict`. Add the following line to `/etc/sysctl.d/99-dmesg-restrict.conf`:
 
                 ```ini
                 kernel.dmesg_restrict = 1
+                ```
+
+            2. Run these commands to load every persisted sysctl file and confirm the active value is `1`:
+
+                ```bash
+                sysctl --system
+                sysctl kernel.dmesg_restrict
+                ```
+
+                If the value is not `1`, find the file that overrides it and remove the conflicting line, then run `sysctl --system` again:
+
+                ```bash
+                grep -rs kernel.dmesg_restrict /etc/sysctl.conf /etc/sysctl.d /run/sysctl.d /usr/local/lib/sysctl.d /usr/lib/sysctl.d
                 ```
         - id: bash
           desc: |
@@ -1458,23 +1512,25 @@ queries:
           desc: |
             **Using the CLI**
 
-            A value of `1` disables unprivileged eBPF but can be toggled back to `0` at runtime. A value of `2` is the stronger setting because it becomes immutable until the next reboot. Use `2` where you do not run eBPF tooling that needs to be reconfigured at runtime; both values satisfy this check.
+            A value of `1` disables unprivileged eBPF and cannot be changed again until the next reboot, which makes it the stronger setting. A value of `2` also disables unprivileged eBPF but lets an administrator re-enable it at runtime by writing `0`. Both values satisfy this check. Use `2` only where tooling must be able to turn unprivileged eBPF back on without a reboot.
 
-            1. Set the unprivileged_bpf_disabled value to 1:
-
-                Run this command to set the active kernel parameter:
-
-                ```bash
-                sysctl -w kernel.unprivileged_bpf_disabled=1
-                sysctl --system
-                ```
-
-            2. Make the change permanent:
-
-                Edit `/etc/sysctl.conf` or a file in `/etc/sysctl.d/` and add the following line:
+            1. Sysctl files are applied in file name order and the value read last wins, so persist the setting in a file whose name sorts after any other file that sets `kernel.unprivileged_bpf_disabled`. Add the following line to `/etc/sysctl.d/99-unprivileged-bpf.conf`:
 
                 ```ini
                 kernel.unprivileged_bpf_disabled = 1
+                ```
+
+            2. Run these commands to load every persisted sysctl file and confirm the active value is `1`:
+
+                ```bash
+                sysctl --system
+                sysctl kernel.unprivileged_bpf_disabled
+                ```
+
+                If the value is not `1`, find the file that overrides it and remove the conflicting line, then run `sysctl --system` again:
+
+                ```bash
+                grep -rs kernel.unprivileged_bpf_disabled /etc/sysctl.conf /etc/sysctl.d /run/sysctl.d /usr/local/lib/sysctl.d /usr/lib/sysctl.d
                 ```
         - id: bash
           desc: |
@@ -1587,20 +1643,23 @@ queries:
 
             **Caveat: this can break debugging and monitoring tools.** A value of `2` (admin-only) or `3` (ptrace disabled) prevents non-privileged use of ptrace, which breaks debuggers such as `gdb` and `strace`, userspace crash handlers, and APM or observability agents that rely on ptrace. Confirm that no required tooling on this host depends on ptrace before applying.
 
-            1. Set the ptrace_scope value to 2:
-
-                Run this command to set the active kernel parameter:
-
-                ```bash
-                sysctl -w kernel.yama.ptrace_scope=2
-                sysctl --system
-                ```
-            2. Make the change permanent:
-
-                Edit `/etc/sysctl.conf` or a file in `/etc/sysctl.d/` and add the following line:
+            1. Sysctl files are applied in file name order and the value read last wins, so persist the setting in a file whose name sorts after any other file that sets `kernel.yama.ptrace_scope`. Ubuntu, for example, ships `kernel.yama.ptrace_scope = 1` in `/etc/sysctl.d/10-ptrace.conf`, and Fedora ships `kernel.yama.ptrace_scope = 0` in `/usr/lib/sysctl.d/10-default-yama-scope.conf`. Add the following line to `/etc/sysctl.d/99-ptrace-scope.conf`:
 
                 ```ini
                 kernel.yama.ptrace_scope = 2
+                ```
+
+            2. Run these commands to load every persisted sysctl file and confirm the active value is `2`:
+
+                ```bash
+                sysctl --system
+                sysctl kernel.yama.ptrace_scope
+                ```
+
+                If the value is not `2`, find the file that overrides it and remove the conflicting line, then run `sysctl --system` again:
+
+                ```bash
+                grep -rs kernel.yama.ptrace_scope /etc/sysctl.conf /etc/sysctl.d /run/sysctl.d /usr/local/lib/sysctl.d /usr/lib/sysctl.d
                 ```
         - id: bash
           desc: |
@@ -2555,8 +2614,10 @@ queries:
 
             ### RHEL/Fedora/Amazon Linux and derivatives
 
+            Remove every installed package whose name starts with `xorg-x11` except the `xorg-x11-fonts` packages, which the check does not flag and other applications may still need. Review the transaction before you confirm it, because it also removes packages that depend on the X server, such as a desktop environment:
+
             ```bash
-            yum remove xorg-x11*
+            yum remove $(rpm -qa --qf '%{NAME}\n' 'xorg-x11*' | grep -v '^xorg-x11-fonts')
             ```
 
             ### Debian/Ubuntu and derivatives
@@ -2569,8 +2630,10 @@ queries:
 
             ### SLES and openSUSE
 
+            Removing only `xorg-x11-server` leaves packages such as `xorg-x11-essentials` and `xorg-x11-server-Xvfb` installed, and the check flags every package whose name starts with `xorg-x11` except the font packages. Remove all of them, and review the transaction before you confirm it:
+
             ```bash
-            zypper remove xorg-x11-server
+            zypper remove $(rpm -qa --qf '%{NAME}\n' 'xorg-x11*' | grep -v '^xorg-x11-fonts')
             ```
         - id: bash
           desc: |
@@ -2582,18 +2645,28 @@ queries:
             #!/bin/bash
             set -e
 
-            if command -v yum >/dev/null 2>&1; then
-              echo "Detected yum-based system. Removing X Window System packages..."
-              yum remove -y xorg-x11*
-            elif command -v dnf >/dev/null 2>&1; then
-              echo "Detected dnf-based system. Removing X Window System packages..."
-              dnf remove -y xorg-x11*
-            elif command -v apt-get >/dev/null 2>&1; then
+            if command -v apt-get >/dev/null 2>&1; then
               echo "Detected apt-based system. Removing X Window System packages..."
               apt-get purge -y '^xserver'
-            elif command -v zypper >/dev/null 2>&1; then
-              echo "Detected zypper-based system. Removing X Window System packages..."
-              zypper remove -y xorg-x11-server
+            elif command -v rpm >/dev/null 2>&1; then
+              # Every installed package whose name starts with xorg-x11, except the font
+              # packages, which the check does not flag.
+              mapfile -t packages < <(rpm -qa --qf '%{NAME}\n' 'xorg-x11*' | grep -v '^xorg-x11-fonts' || true)
+              if [ "${#packages[@]}" -eq 0 ]; then
+                echo "No X Window System packages are installed."
+              elif command -v dnf >/dev/null 2>&1; then
+                echo "Detected dnf-based system. Removing X Window System packages..."
+                dnf remove -y "${packages[@]}"
+              elif command -v yum >/dev/null 2>&1; then
+                echo "Detected yum-based system. Removing X Window System packages..."
+                yum remove -y "${packages[@]}"
+              elif command -v zypper >/dev/null 2>&1; then
+                echo "Detected zypper-based system. Removing X Window System packages..."
+                zypper remove -y "${packages[@]}"
+              else
+                echo "No supported package manager found. Please remove X Window System packages manually."
+                exit 1
+              fi
             else
               echo "No supported package manager found. Please remove X Window System packages manually."
               exit 1
@@ -2603,7 +2676,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to remove the X Windows System packages. The `xserver*` pattern relies on the fnmatch wildcard support that the apt module documents for its `name` parameter:
+            Use this Ansible playbook to remove the X Windows System packages. The `xserver*` pattern relies on the fnmatch wildcard support that the apt module documents for its `name` parameter. On RPM-based systems the playbook removes every installed package whose name starts with `xorg-x11` except the font packages, which the check does not flag:
 
             ```yaml
             ---
@@ -2612,11 +2685,18 @@ queries:
               become: true
 
               tasks:
-                - name: Remove X Window System packages on RHEL/Fedora/Amazon Linux
-                  ansible.builtin.yum:
-                    name: xorg-x11*
+                - name: Gather the list of installed packages
+                  ansible.builtin.package_facts:
+                    manager: auto
+                  when: ansible_os_family in ["RedHat", "Suse"]
+
+                - name: Remove X Window System packages on RHEL/Fedora/Amazon Linux and SLES/openSUSE
+                  ansible.builtin.package:
+                    name: "{{ ansible_facts.packages.keys() | select('match', '^xorg-x11') | reject('match', '^xorg-x11-fonts') | list }}"
                     state: absent
-                  when: ansible_os_family == "RedHat"
+                  when:
+                    - ansible_os_family in ["RedHat", "Suse"]
+                    - ansible_facts.packages.keys() | select('match', '^xorg-x11') | reject('match', '^xorg-x11-fonts') | list | length > 0
 
                 - name: Remove X Window System packages on Debian/Ubuntu
                   ansible.builtin.apt:
@@ -2624,30 +2704,23 @@ queries:
                     state: absent
                     purge: yes
                   when: ansible_os_family == "Debian"
-
-                - name: Remove X Window System packages on SLES/openSUSE
-                  ansible.builtin.zypper:
-                    name: xorg-x11-server
-                    state: absent
-                  when: ansible_os_family == "Suse"
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to remove the X Window System packages. Confirm that no application on the host needs a graphical display before you apply it:
+            Use this Chef Infra recipe code to remove the X Window System packages. On RPM-based systems it removes every installed package whose name starts with `xorg-x11` except the font packages, which the check does not flag. Confirm that no application on the host needs a graphical display before you apply it:
 
             ```ruby
             xorg_packages = if platform_family?('debian')
                               %w(xserver-xorg-core xserver-common)
-                            elsif platform_family?('suse')
-                              %w(xorg-x11-server)
                             else
-                              %w(xorg-x11-server-Xorg xorg-x11-server-common xorg-x11-server-utils)
+                              shell_out("rpm -qa --qf '%{NAME}\\n' 'xorg-x11*'").stdout.split.reject { |name| name.start_with?('xorg-x11-fonts') }
                             end
 
             package xorg_packages do
               action :remove
+              not_if { xorg_packages.empty? }
             end
             ```
     refs:
@@ -5256,6 +5329,8 @@ queries:
           desc: |
             **Using a Bash Script**
 
+            **Caveat: do not disable forwarding on hosts that route traffic.** Routers, NAT gateways, VPN concentrators, Docker hosts that publish container ports, and Kubernetes nodes all need IP forwarding, and disabling it there breaks connectivity. Set a documented exception for this check on those hosts instead.
+
             Use this Bash script to disable IP forwarding.
 
             ```bash
@@ -5290,6 +5365,8 @@ queries:
         - id: ansible
           desc: |
             **Using Ansible**
+
+            **Caveat: do not disable forwarding on hosts that route traffic.** Routers, NAT gateways, VPN concentrators, Docker hosts that publish container ports, and Kubernetes nodes all need IP forwarding, and disabling it there breaks connectivity. Set a documented exception for this check on those hosts instead.
 
             Use this Ansible playbook to set the kernel parameters:
 
@@ -6444,7 +6521,7 @@ queries:
 
             **Warning: strict reverse path filtering can break asymmetric routing.** Setting `rp_filter = 1` (strict mode) drops return traffic that would leave through a different interface than the one it arrived on. On routers, multihomed hosts, VPN gateways, and load-balancer nodes this silently breaks legitimate connectivity. On those hosts use loose mode (`rp_filter = 2`), which still validates that a route to the source exists but does not require the same interface. Loose mode does not satisfy this check, so record it as a documented exception, and verify connectivity after applying any change. Drop-in files must end in `.conf` to be loaded.
 
-            1. Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
+            1. Set the following parameters in `/etc/sysctl.d/99-enable-reverse-path-filtering.conf`. Sysctl files are applied in file name order and the value read last wins, and distributions ship loose mode by default, such as `net.ipv4.conf.all.rp_filter=2` in Ubuntu's `/etc/sysctl.d/10-network-security.conf` and `net.ipv4.conf.default.rp_filter = 2` in Fedora's `/usr/lib/sysctl.d/50-default.conf`, so a drop-in whose name sorts earlier is overridden:
 
                 ```ini
                 net.ipv4.conf.all.rp_filter = 1
@@ -6521,7 +6598,7 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to enable reverse path filtering. Asymmetric routing setups need `2` for loose mode instead of `1`:
+            Use this Chef Infra recipe code to enable reverse path filtering. Asymmetric routing setups need `2` for loose mode instead of `1`, and loose mode does not satisfy this check, so record those hosts as a documented exception:
 
             ```ruby
             sysctl 'net.ipv4.conf.all.rp_filter' do
@@ -6715,6 +6792,8 @@ queries:
           desc: |
             **Using CLI**
 
+            **Caveat: this can remove IPv6 connectivity.** Hosts that get their IPv6 address through SLAAC or learn their IPv6 default route from router advertisements can lose IPv6 connectivity once their interfaces stop accepting advertisements. Configure a static IPv6 address and default route first, or set a documented exception for this check on those hosts.
+
             1. Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
 
                 ```ini
@@ -6733,6 +6812,8 @@ queries:
         - id: bash
           desc: |
             **Using a Bash Script**
+
+            **Caveat: this can remove IPv6 connectivity.** Hosts that get their IPv6 address through SLAAC or learn their IPv6 default route from router advertisements can lose IPv6 connectivity once their interfaces stop accepting advertisements. Configure a static IPv6 address and default route first, or set a documented exception for this check on those hosts.
 
             Use this Bash script to disable IPv6 router advertisements acceptance and persist the settings.
 
@@ -6766,6 +6847,8 @@ queries:
         - id: ansible
           desc: |
             **Using Ansible**
+
+            **Caveat: this can remove IPv6 connectivity.** Hosts that get their IPv6 address through SLAAC or learn their IPv6 default route from router advertisements can lose IPv6 connectivity once their interfaces stop accepting advertisements. Configure a static IPv6 address and default route first, or set a documented exception for this check on those hosts.
 
             Use this Ansible playbook to set the kernel parameters:
 
@@ -7237,7 +7320,7 @@ queries:
           desc: |
             **Using CLI**
 
-            1. Set the following parameter in `/etc/audit/auditd.conf` in accordance with site policy:
+            1. Set the following parameter in `/etc/audit/auditd.conf`. Replace `<MB>` with the size in megabytes at which auditd closes the current log and starts a new one, sized from the audit history your site needs and the space on the partition that holds `/var/log/audit`, for example `500`. Any value greater than `0` satisfies the check, because `0` removes the size limit:
 
                 ```ini
                 max_log_file = <MB>
@@ -7268,9 +7351,9 @@ queries:
 
             MB_SIZE="500"  # Replace 500 with the desired size in megabytes
 
-            if grep -q '^max_log_file' /etc/audit/auditd.conf; then
+            if grep -q '^max_log_file[[:space:]]*=' /etc/audit/auditd.conf; then
               echo "Updating max_log_file to $MB_SIZE in /etc/audit/auditd.conf"
-              sed -i "s/^max_log_file.*/max_log_file = $MB_SIZE/" /etc/audit/auditd.conf
+              sed -i "s/^max_log_file[[:space:]]*=.*/max_log_file = $MB_SIZE/" /etc/audit/auditd.conf
             else
               echo "Adding max_log_file = $MB_SIZE to /etc/audit/auditd.conf"
               echo "max_log_file = $MB_SIZE" >> /etc/audit/auditd.conf
@@ -9184,10 +9267,12 @@ queries:
 
                 **On ARM architectures:**
 
+                64-bit ARM kernels implement only `fchmod`, `fchmodat`, `fchown`, and `fchownat` from the permission and ownership calls, and auditctl stops loading a rules file at the first syscall name it does not recognize, so the 64-bit lines leave out `chmod`, `chown`, and `lchown`:
+
                 ```text
                 -a always,exit -F arch=b64 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
                 -a always,exit -F arch=b32 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
-                -a always,exit -F arch=b64 -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                -a always,exit -F arch=b64 -S fchown -S fchownat -F auid>=1000 -F auid!=4294967295 -k perm_mod
                 -a always,exit -F arch=b32 -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
                 -a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
                 -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
@@ -9229,7 +9314,7 @@ queries:
               cat > "$RULES_FILE" <<EOF
             -a always,exit -F arch=b64 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
             -a always,exit -F arch=b32 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
-            -a always,exit -F arch=b64 -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+            -a always,exit -F arch=b64 -S fchown -S fchownat -F auid>=1000 -F auid!=4294967295 -k perm_mod
             -a always,exit -F arch=b32 -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
             -a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
             -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
@@ -9284,7 +9369,7 @@ queries:
                     access_rules_block: |-
                       -a always,exit -F arch=b64 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
                       -a always,exit -F arch=b32 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
-                      -a always,exit -F arch=b64 -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                      -a always,exit -F arch=b64 -S fchown -S fchownat -F auid>=1000 -F auid!=4294967295 -k perm_mod
                       -a always,exit -F arch=b32 -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
                       -a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
                       -a always,exit -F arch=b64 -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
@@ -9322,7 +9407,7 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to audit permission and ownership changes made by unprivileged users. ARM kernels do not implement the `chmod` and `chown` syscalls, so those are only requested on other architectures:
+            Use this Chef Infra recipe code to audit permission and ownership changes made by unprivileged users. 64-bit ARM kernels do not implement the `chmod`, `chown`, and `lchown` syscalls, and auditctl stops loading the rules at the first one it does not recognize, so those are only requested where the architecture has them:
 
             ```ruby
             execute 'load audit rules' do
@@ -9344,7 +9429,7 @@ queries:
             if arm
               perm_rules << '-a always,exit -F arch=b64 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod'
               perm_rules << '-a always,exit -F arch=b32 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod'
-              perm_rules << '-a always,exit -F arch=b64 -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod'
+              perm_rules << '-a always,exit -F arch=b64 -S fchown -S fchownat -F auid>=1000 -F auid!=4294967295 -k perm_mod'
               perm_rules << '-a always,exit -F arch=b32 -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod'
             end
 
@@ -10069,14 +10154,14 @@ queries:
 
             2. Add the following lines to the configuration file:
 
-                ** On non-ARM architectures:**
+                **On non-ARM architectures:**
 
                 ```text
                 -a always,exit -F arch=b64 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
                 -a always,exit -F arch=b32 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
                 ```
 
-                ** On ARM architectures:**
+                **On ARM architectures:**
 
                 ```text
                 -a always,exit -F arch=b64 -S unlinkat -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
@@ -10618,7 +10703,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            To ensure the audit configuration is immutable, follow these steps:
+            **Warning: once `-e 2` is loaded, the kernel refuses every audit rule change until the host reboots.** Put every other audit rule in place before you load it, and plan a reboot for any rule change after that. To ensure the audit configuration is immutable, follow these steps:
 
             1. Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`.
 
@@ -10649,7 +10734,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To set the audit configuration to immutable mode, you can run the following bash script:
+            To set the audit configuration to immutable mode, you can run the following bash script. Once `-e 2` is loaded, the kernel refuses every audit rule change until the host reboots, so run it only after every other audit rule is in place:
 
             ```bash
             #!/bin/bash
@@ -10669,7 +10754,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to set the audit configuration to immutable mode:
+            Use this Ansible playbook to set the audit configuration to immutable mode. Once `-e 2` is loaded, the kernel refuses every audit rule change until the host reboots, so run it only after every other audit rule is in place:
 
             ```yaml
             ---
@@ -10863,11 +10948,15 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to log sudo activity to a dedicated file. The `sudo` resource validates the generated file with `visudo` before installing it:
+            Use this Chef Infra recipe code to log sudo activity to a dedicated file. The `verify` property runs `visudo` against the new drop-in before it is installed, so a syntax error cannot leave sudo unusable:
 
             ```ruby
-            sudo 'sudo-logging' do
-              defaults ['logfile="/var/log/sudo.log"']
+            file '/etc/sudoers.d/sudo-logging' do
+              content %(Defaults logfile="/var/log/sudo.log"\n)
+              owner 'root'
+              group 'root'
+              mode '0440'
+              verify 'visudo -cf %{path}'
             end
 
             file '/var/log/sudo.log' do
@@ -11184,11 +11273,18 @@ queries:
 
             `$FileCreateMode` sets the permissions rsyslog applies to log files it creates that do not already exist. The target is `0640` so that root can write, the log group can read, and other users have no access. This keeps sensitive log contents from being world-readable while still allowing log-processing tools that run as the log group to read them, which a stricter `0600` would prevent.
 
-            To set the default file permissions for `rsyslog`, edit the `/etc/rsyslog.conf` and `/etc/rsyslog.d/*.conf` files and add or modify the following line:
+            To set the default file permissions for `rsyslog`, add the following line at the top of `/etc/rsyslog.conf`, above every rule line and above the `$IncludeConfig` or `include()` statement. The directive applies only to the rule lines that follow it, so a line appended to the end of the file leaves the mode of every log file unchanged. If the file already contains a `$FileCreateMode` line, move it there and set it to `0640`:
 
             ```ini
             $FileCreateMode 0640
             ```
+
+            A drop-in that sets its own `$FileCreateMode` overrides this value for the rules after it. Find those lines and change each one to `0640`:
+
+            ```bash
+            grep -rn 'FileCreateMode' /etc/rsyslog.d/
+            ```
+
             Restart the `rsyslog` service to apply the changes:
 
             ```bash
@@ -11206,21 +11302,15 @@ queries:
 
             echo "Setting default file permissions for rsyslog..."
 
-            # Update /etc/rsyslog.conf
-            if grep -q '^\$FileCreateMode' /etc/rsyslog.conf; then
-              sed -i 's/^\$FileCreateMode.*/\$FileCreateMode 0640/' /etc/rsyslog.conf
-            else
-              echo '$FileCreateMode 0640' >> /etc/rsyslog.conf
-            fi
+            # $FileCreateMode applies only to the rule lines that follow it, so it has to
+            # sit at the top of /etc/rsyslog.conf rather than be appended to the end.
+            sed -i '/^\$FileCreateMode/d' /etc/rsyslog.conf
+            sed -i '1i $FileCreateMode 0640' /etc/rsyslog.conf
 
-            # Update all /etc/rsyslog.d/*.conf files
+            # Correct any value a drop-in sets for the rules that follow it
             for file in /etc/rsyslog.d/*.conf; do
               [ -e "$file" ] || continue
-              if grep -q '^\$FileCreateMode' "$file"; then
-                sed -i 's/^\$FileCreateMode.*/\$FileCreateMode 0640/' "$file"
-              else
-                echo '$FileCreateMode 0640' >> "$file"
-              fi
+              sed -i 's/^\$FileCreateMode.*/\$FileCreateMode 0640/' "$file"
             done
 
             echo "Restarting rsyslog service..."
@@ -11238,30 +11328,33 @@ queries:
               hosts: all
               become: yes
               tasks:
-                - name: Ensure $FileCreateMode 0640 is set in /etc/rsyslog.conf
+                - name: Remove any $FileCreateMode line below the top of /etc/rsyslog.conf
+                  ansible.builtin.replace:
+                    path: /etc/rsyslog.conf
+                    regexp: '\n\$FileCreateMode.*'
+                    replace: ''
+
+                - name: Ensure $FileCreateMode 0640 is set at the top of /etc/rsyslog.conf
                   ansible.builtin.lineinfile:
                     path: /etc/rsyslog.conf
                     regexp: '^\$FileCreateMode'
                     line: '$FileCreateMode 0640'
                     state: present
-                    insertafter: EOF
+                    insertbefore: BOF
                     create: yes
 
-                - name: Ensure $FileCreateMode 0640 is set in all /etc/rsyslog.d/*.conf files
+                - name: Find the /etc/rsyslog.d/*.conf files
                   ansible.builtin.find:
                     paths: /etc/rsyslog.d
                     patterns: '*.conf'
                     file_type: file
                   register: rsyslog_conf_files
 
-                - name: Set $FileCreateMode 0640 in each rsyslog.d file
-                  ansible.builtin.lineinfile:
+                - name: Correct any $FileCreateMode an rsyslog.d file sets
+                  ansible.builtin.replace:
                     path: "{{ item.path }}"
-                    regexp: '^\$FileCreateMode'
-                    line: '$FileCreateMode 0640'
-                    create: yes
-                    state: present
-                    backup: yes
+                    regexp: '^\$FileCreateMode.*$'
+                    replace: '$FileCreateMode 0640'
                   loop: "{{ rsyslog_conf_files.files }}"
 
                 - name: Restart rsyslog service
@@ -11273,27 +11366,35 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to set the mode rsyslog creates new log files with. The directive is applied to the main configuration file and to every drop-in, because a later drop-in overrides an earlier setting:
+            Use this Chef Infra recipe code to set the mode rsyslog creates new log files with. The directive applies only to the rule lines that follow it, so it goes at the top of the main configuration file, and any value a drop-in sets is corrected so that it cannot override it:
 
             ```ruby
             service 'rsyslog' do
               action :nothing
             end
 
-            (['/etc/rsyslog.conf'] + ::Dir.glob('/etc/rsyslog.d/*.conf')).each do |config|
-              ruby_block "set $FileCreateMode in #{config}" do
+            directive = '$FileCreateMode 0640'
+            mode_line = /^[ \t]*\$FileCreateMode[ \t].*\n?/
+
+            ruby_block 'set $FileCreateMode at the top of /etc/rsyslog.conf' do
+              block do
+                body = ::File.read('/etc/rsyslog.conf')
+                ::File.write('/etc/rsyslog.conf', "#{directive}\n#{body.gsub(mode_line, '')}")
+              end
+              only_if { ::File.exist?('/etc/rsyslog.conf') }
+              not_if do
+                body = ::File.read('/etc/rsyslog.conf')
+                body.start_with?("#{directive}\n") && body.scan(mode_line).one?
+              end
+              notifies :restart, 'service[rsyslog]', :delayed
+            end
+
+            ::Dir.glob('/etc/rsyslog.d/*.conf').each do |config|
+              ruby_block "correct $FileCreateMode in #{config}" do
                 block do
-                  body = ::File.read(config)
-                  directive = '$FileCreateMode 0640'
-                  body = if body.match?(/^\s*\$FileCreateMode\s/)
-                           body.gsub(/^\s*\$FileCreateMode\s.*$/, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(config, body)
+                  ::File.write(config, ::File.read(config).gsub(/^[ \t]*\$FileCreateMode[ \t].*$/, directive))
                 end
-                only_if { ::File.exist?(config) }
-                not_if { ::File.read(config).match?(/^\$FileCreateMode\s+0640\s*$/) }
+                not_if { ::File.read(config).scan(/^[ \t]*\$FileCreateMode[ \t].*$/).all? { |line| line == directive } }
                 notifies :restart, 'service[rsyslog]', :delayed
               end
             end
@@ -11822,7 +11923,7 @@ queries:
 
             3. Configure the creation, deletion, and cleaning of volatile and temporary files:
 
-                Edit or create a file in the `/etc/tmpfiles.d/` directory, for example, `/etc/tmpfiles.d/var.conf`, and add the following lines:
+                Create a file in the `/etc/tmpfiles.d/` directory with a name no package uses, for example `/etc/tmpfiles.d/log-permissions.conf`, and add the following lines. Do not name it `var.conf`: a file in `/etc/tmpfiles.d/` replaces the systemd file of the same name in `/usr/lib/tmpfiles.d/`, which is what creates `/var/log`, `/var/lib`, `/var/spool`, and the `/var/run` symlink at boot:
 
                 ```text
                 f /var/log/alternatives.log 0640 root utmp -
@@ -11872,7 +11973,7 @@ queries:
             fi
 
             echo "Configuring tmpfiles.d to set default permissions for newly created log files..."
-            cat <<EOF > /etc/tmpfiles.d/var.conf
+            cat <<EOF > /etc/tmpfiles.d/log-permissions.conf
             f /var/log/alternatives.log 0640 root utmp -
             f /var/log/apt/history.log 0640 root utmp -
             f /var/log/auth.log 0640 root utmp -
@@ -11932,7 +12033,7 @@ queries:
 
                 - name: Create tmpfiles.d configuration for log file permissions
                   ansible.builtin.copy:
-                    dest: /etc/tmpfiles.d/var.conf
+                    dest: /etc/tmpfiles.d/log-permissions.conf
                     owner: root
                     group: root
                     mode: '0644'
@@ -12003,7 +12104,7 @@ queries:
               end
             end
 
-            file '/etc/tmpfiles.d/var.conf' do
+            file '/etc/tmpfiles.d/log-permissions.conf' do
               content <<~TMPFILES
                 f /var/log/alternatives.log 0640 root utmp -
                 f /var/log/apt/history.log 0640 root utmp -
@@ -12081,7 +12182,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            This check requires that the private host keys have no group or other access, so set the mode to `0600`. Some recent Debian and Ubuntu builds ship the keys as `0640 root:ssh_keys` and read them through the `ssh_keys` group. Mode `0600` removes group read regardless of the group owner, so keep the `ssh_keys` group where it exists to match the platform layout, and fall back to `root` ownership only where no such group is present:
+            This check requires that the private host keys have no group or other access, so set the mode to `0600`. Red Hat family releases before Fedora 38, including Red Hat Enterprise Linux 9 and earlier, ship the keys as `0640 root:ssh_keys` and read them through the `ssh_keys` group. Mode `0600` removes group read regardless of the group owner, so keep the `ssh_keys` group where it exists to match the platform layout, and fall back to `root` ownership only where no such group is present:
 
             ```bash
             if getent group ssh_keys >/dev/null 2>&1; then
@@ -14549,6 +14650,11 @@ queries:
                     state: present
                   register: ssh_ciphers_config_change
 
+                - name: Validate the SSH server configuration before restarting
+                  ansible.builtin.command: sshd -t
+                  changed_when: false
+                  when: ssh_ciphers_config_change.changed
+
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
                   when: ssh_ciphers_config_change.changed
@@ -14672,7 +14778,7 @@ queries:
 
             **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works. Setting a MAC list that your SSH clients do not support is one of the most common causes of a total SSH lockout, so verify the new connection from each client type you rely on.
 
-            To configure SSH to use only strong MAC algorithms, edit the `/etc/ssh/sshd_config` file and add or modify the `MACs` parameter to include a comma-separated list of approved MAC algorithms.
+            To configure SSH to use only strong MAC algorithms, edit the `/etc/ssh/sshd_config` file and add or modify the `MACs` parameter to include a comma-separated list of approved MAC algorithms. Every algorithm in the list must be one of `hmac-sha2-512-etm@openssh.com`, `hmac-sha2-256-etm@openssh.com`, `umac-128-etm@openssh.com`, `hmac-sha2-512`, `hmac-sha2-256`, or `umac-128@openssh.com`. A single algorithm outside that set, such as an MD5-based or `-96` truncated algorithm, fails the check.
 
             Example:
 
@@ -14794,6 +14900,11 @@ queries:
                     create: yes
                     state: present
                   register: ssh_mac_config_change
+
+                - name: Validate the SSH server configuration before restarting
+                  ansible.builtin.command: sshd -t
+                  changed_when: false
+                  when: ssh_mac_config_change.changed
 
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
@@ -14929,10 +15040,13 @@ queries:
 
             To configure SSH to use only approved key exchange algorithms, edit the `/etc/ssh/sshd_config` file and add or modify the `KexAlgorithms` parameter based on your `openssh-server` version.
 
-            First, determine your SSH server version:
+            First, determine the version of the installed `openssh-server` package, which selects the list below:
 
             ```bash
-            cnquery run -c "package('openssh-server').version"
+            # Debian and Ubuntu
+            dpkg-query -W -f='${Version}\n' openssh-server
+            # Red Hat Enterprise Linux, Fedora, and Amazon Linux
+            rpm -q --queryformat '%{VERSION}\n' openssh-server
             ```
 
             Then, based on the version, set the appropriate `KexAlgorithms` value:
@@ -14965,6 +15079,8 @@ queries:
             chmod 600 /etc/ssh/sshd_config.d/00-hardening.conf
             echo 'KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512' >> /etc/ssh/sshd_config.d/00-hardening.conf
             ```
+
+            The example uses the OpenSSH 8.6 or later list. Ubuntu 20.04 and Debian 11 ship OpenSSH 8.2 and 8.4, which do not recognize `sntrup761x25519-sha512@openssh.com`, so substitute the list for your version from above or `sshd -t` rejects the configuration.
 
             Validate the configuration before restarting:
 
@@ -15049,6 +15165,7 @@ queries:
         - id: ansible
           desc: |
             **Using Ansible**
+
             To configure SSH to use only approved key exchange algorithms, use the following Ansible playbook:
 
             ```yaml
@@ -15112,6 +15229,11 @@ queries:
                     create: yes
                     state: present
                   register: kexalgos_config_change
+
+                - name: Validate the SSH server configuration before restarting
+                  ansible.builtin.command: sshd -t
+                  changed_when: false
+                  when: kexalgos_config_change.changed
 
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
@@ -15272,7 +15394,7 @@ queries:
 
             **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
-            To set the SSH idle timeout interval, edit the `/etc/ssh/sshd_config` file and add or modify the `ClientAliveInterval` and `ClientAliveCountMax` parameters.
+            To set the SSH idle timeout interval, edit the `/etc/ssh/sshd_config` file and add or modify the `ClientAliveInterval` and `ClientAliveCountMax` parameters. `ClientAliveInterval` must be between 1 and 300 seconds and `ClientAliveCountMax` must be between 1 and 3. With the example values, `sshd` closes a session after two unanswered keepalives sent 300 seconds apart, about ten minutes after the client stops responding. Any `Match` block that sets either keyword must also use a value in these ranges.
 
             Example:
 
@@ -15412,6 +15534,11 @@ queries:
                     state: present
                   register: ssh_countmax_change
 
+                - name: Validate the SSH server configuration before restarting
+                  ansible.builtin.command: sshd -t
+                  changed_when: false
+                  when: ssh_interval_change.changed or ssh_countmax_change.changed
+
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
                   when: ssh_interval_change.changed or ssh_countmax_change.changed
@@ -15529,7 +15656,7 @@ queries:
 
             **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
-            To set the SSH LoginGraceTime, edit the `/etc/ssh/sshd_config` file and add or modify the `LoginGraceTime` parameter.
+            To set the SSH LoginGraceTime, edit the `/etc/ssh/sshd_config` file and add or modify the `LoginGraceTime` parameter. The value must be between 1 and 60 seconds. A value of `0` removes the limit entirely, and an absent directive leaves the OpenSSH default of 120 seconds in place, so both fail the check.
 
             Example:
 
@@ -15648,13 +15775,22 @@ queries:
                     line: 'LoginGraceTime 60'
                     create: yes
                     state: present
+                  register: ssh_logingracetime_change
+
+                - name: Validate the SSH server configuration before restarting
+                  ansible.builtin.command: sshd -t
+                  changed_when: false
+                  when: ssh_logingracetime_change.changed
+
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
+                  when: ssh_logingracetime_change.changed
 
                 - name: Restart the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
+                  when: ssh_logingracetime_change.changed
             ```
         - id: chef
           desc: |
@@ -15828,7 +15964,8 @@ queries:
         - id: ansible
           desc: |
             **Using Ansible**
-            To limit SSH access using Ansible, use the following playbook:
+
+            **Warning: avoid locking yourself out.** Once `AllowGroups` is set, every account outside the listed groups is denied SSH access, including the account Ansible connects with. Before you run this playbook, set `ssh_allow_groups` to a space-separated list of groups that together contain every account that must keep SSH access, and make sure those groups already exist with their members. To limit SSH access using Ansible, use the following playbook:
 
             ```yaml
             ---
@@ -15847,6 +15984,11 @@ queries:
                     create: yes
                     state: present
                   register: allow_groups_changed
+
+                - name: Validate the SSH server configuration before restarting
+                  ansible.builtin.command: sshd -t
+                  changed_when: false
+                  when: allow_groups_changed.changed
 
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
@@ -15944,12 +16086,18 @@ queries:
 
             **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
-            To set the SSH warning banner, edit the `/etc/ssh/sshd_config` file and add or modify the `Banner` parameter to point to the desired banner file.
+            To set the SSH warning banner, edit the `/etc/ssh/sshd_config` file and set the `Banner` parameter to `/etc/issue.net`. The path must be exactly `/etc/issue.net`, because any other file or `Banner none` fails the check.
 
             Example:
 
             ```bash
             Banner /etc/issue.net
+            ```
+
+            `sshd` sends the contents of that file before authentication, so replace them with your organization's authorized use and monitoring notice. Debian and Ubuntu ship `/etc/issue.net` containing the distribution name and version, which is information to withhold from a remote client, and `sshd` shows no banner at all if the file does not exist:
+
+            ```bash
+            echo 'Authorized use only. Activity on this system is monitored and may be reported.' > /etc/issue.net
             ```
 
             The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
@@ -16064,13 +16212,22 @@ queries:
                     line: 'Banner /etc/issue.net'
                     create: yes
                     state: present
+                  register: ssh_banner_change
+
+                - name: Validate the SSH server configuration before restarting
+                  ansible.builtin.command: sshd -t
+                  changed_when: false
+                  when: ssh_banner_change.changed
+
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
+                  when: ssh_banner_change.changed
 
                 - name: Restart the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
+                  when: ssh_banner_change.changed
             ```
         - id: chef
           desc: |
@@ -16188,22 +16345,25 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To ensure that the `/etc/passwd` file has the correct permissions, you can run the following bash script:
+            To ensure that the `/etc/passwd` file has the correct permissions, you can run the following bash script. It also records the mode in a systemd-tmpfiles entry, which reapplies it at every boot. The entry goes in `/etc/tmpfiles.d/account-files.conf` rather than `/etc/tmpfiles.d/etc.conf`, because a file with that name replaces the `etc.conf` that systemd ships in `/usr/lib/tmpfiles.d/` on Red Hat family distributions.
 
             ```bash
             #!/bin/bash
             set -e
 
+            TMPFILES_CONF=/etc/tmpfiles.d/account-files.conf
+
             echo "Setting ownership and permissions on /etc/passwd"
             chown root:root /etc/passwd
             chmod 0644 /etc/passwd
 
-            if grep -qE '^[[:space:]]*f /etc/passwd' /etc/tmpfiles.d/etc.conf; then
-              echo "Modifying existing /etc/tmpfiles.d/etc.conf entry to maintain permissions"
-              sed -i -E 's|^[[:space:]]*f /etc/passwd.*|f /etc/passwd 0644 root root -|' /etc/tmpfiles.d/etc.conf
+            # The trailing space keeps the pattern from matching the /etc/passwd- entry.
+            if grep -qE '^[[:space:]]*f /etc/passwd ' "$TMPFILES_CONF" 2>/dev/null; then
+              echo "Updating the existing $TMPFILES_CONF entry to maintain permissions"
+              sed -i -E 's|^[[:space:]]*f /etc/passwd .*|f /etc/passwd 0644 root root -|' "$TMPFILES_CONF"
             else
-              echo "Adding entry to /etc/tmpfiles.d/etc.conf to maintain permissions"
-              echo 'f /etc/passwd 0644 root root -' >> /etc/tmpfiles.d/etc.conf
+              echo "Adding an entry to $TMPFILES_CONF to maintain permissions"
+              echo 'f /etc/passwd 0644 root root -' >> "$TMPFILES_CONF"
             fi
             ```
         - id: ansible
@@ -16320,11 +16480,13 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To ensure that the `/etc/shadow` file has the correct permissions, you can run the following bash script:
+            To ensure that the `/etc/shadow` file has the correct permissions, you can run the following bash script. It also records the mode in a systemd-tmpfiles entry, which reapplies it at every boot. The entry goes in `/etc/tmpfiles.d/account-files.conf` rather than `/etc/tmpfiles.d/etc.conf`, because a file with that name replaces the `etc.conf` that systemd ships in `/usr/lib/tmpfiles.d/` on Red Hat family distributions.
 
             ```bash
             #!/bin/bash
             set -e
+
+            TMPFILES_CONF=/etc/tmpfiles.d/account-files.conf
 
             if getent group shadow >/dev/null; then
               GROUP=shadow
@@ -16338,12 +16500,12 @@ queries:
             chown root:"$GROUP" /etc/shadow
             chmod "$MODE" /etc/shadow
 
-            if grep -qE '^[[:space:]]*f /etc/shadow ' /etc/tmpfiles.d/etc.conf 2>/dev/null; then
-              echo "Modifying existing /etc/tmpfiles.d/etc.conf entry to maintain permissions"
-              sed -i -E "s|^[[:space:]]*f /etc/shadow .*|f /etc/shadow $MODE root $GROUP -|" /etc/tmpfiles.d/etc.conf
+            if grep -qE '^[[:space:]]*f /etc/shadow ' "$TMPFILES_CONF" 2>/dev/null; then
+              echo "Updating the existing $TMPFILES_CONF entry to maintain permissions"
+              sed -i -E "s|^[[:space:]]*f /etc/shadow .*|f /etc/shadow $MODE root $GROUP -|" "$TMPFILES_CONF"
             else
-              echo "Adding entry to /etc/tmpfiles.d/etc.conf to maintain permissions"
-              echo "f /etc/shadow $MODE root $GROUP -" >> /etc/tmpfiles.d/etc.conf
+              echo "Adding an entry to $TMPFILES_CONF to maintain permissions"
+              echo "f /etc/shadow $MODE root $GROUP -" >> "$TMPFILES_CONF"
             fi
             ```
         - id: ansible
@@ -16447,16 +16609,26 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To ensure that the `/etc/group` file has the correct permissions, you can run the following bash script:
+            To ensure that the `/etc/group` file has the correct permissions, you can run the following bash script. It also records the mode in a systemd-tmpfiles entry, which reapplies it at every boot. The entry goes in `/etc/tmpfiles.d/account-files.conf` rather than `/etc/tmpfiles.d/etc.conf`, because a file with that name replaces the `etc.conf` that systemd ships in `/usr/lib/tmpfiles.d/` on Red Hat family distributions.
 
             ```bash
             #!/bin/bash
             set -e
 
+            TMPFILES_CONF=/etc/tmpfiles.d/account-files.conf
+
             echo "Setting ownership and permissions on /etc/group"
             chown root:root /etc/group
             chmod 0644 /etc/group
-            echo "f /etc/group 0644 root root -" >> /etc/tmpfiles.d/etc.conf
+
+            # The trailing space keeps the pattern from matching the /etc/group- entry.
+            if grep -qE '^[[:space:]]*f /etc/group ' "$TMPFILES_CONF" 2>/dev/null; then
+              echo "Updating the existing $TMPFILES_CONF entry to maintain permissions"
+              sed -i -E 's|^[[:space:]]*f /etc/group .*|f /etc/group 0644 root root -|' "$TMPFILES_CONF"
+            else
+              echo "Adding an entry to $TMPFILES_CONF to maintain permissions"
+              echo 'f /etc/group 0644 root root -' >> "$TMPFILES_CONF"
+            fi
             ```
         - id: ansible
           desc: |
@@ -16568,11 +16740,13 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To ensure that the `/etc/gshadow` file has the correct permissions, you can run the following bash script:
+            To ensure that the `/etc/gshadow` file has the correct permissions, you can run the following bash script. It also records the mode in a systemd-tmpfiles entry, which reapplies it at every boot. The entry goes in `/etc/tmpfiles.d/account-files.conf` rather than `/etc/tmpfiles.d/etc.conf`, because a file with that name replaces the `etc.conf` that systemd ships in `/usr/lib/tmpfiles.d/` on Red Hat family distributions.
 
             ```bash
             #!/bin/bash
             set -e
+
+            TMPFILES_CONF=/etc/tmpfiles.d/account-files.conf
 
             if getent group shadow >/dev/null; then
               GROUP=shadow
@@ -16586,12 +16760,12 @@ queries:
             chown root:"$GROUP" /etc/gshadow
             chmod "$MODE" /etc/gshadow
 
-            if grep -qE '^[[:space:]]*f /etc/gshadow ' /etc/tmpfiles.d/etc.conf 2>/dev/null; then
-              echo "Modifying existing /etc/tmpfiles.d/etc.conf entry to maintain permissions"
-              sed -i -E "s|^[[:space:]]*f /etc/gshadow .*|f /etc/gshadow $MODE root $GROUP -|" /etc/tmpfiles.d/etc.conf
+            if grep -qE '^[[:space:]]*f /etc/gshadow ' "$TMPFILES_CONF" 2>/dev/null; then
+              echo "Updating the existing $TMPFILES_CONF entry to maintain permissions"
+              sed -i -E "s|^[[:space:]]*f /etc/gshadow .*|f /etc/gshadow $MODE root $GROUP -|" "$TMPFILES_CONF"
             else
-              echo "Adding entry to /etc/tmpfiles.d/etc.conf to maintain permissions"
-              echo "f /etc/gshadow $MODE root $GROUP -" >> /etc/tmpfiles.d/etc.conf
+              echo "Adding an entry to $TMPFILES_CONF to maintain permissions"
+              echo "f /etc/gshadow $MODE root $GROUP -" >> "$TMPFILES_CONF"
             fi
             ```
         - id: ansible
@@ -16696,7 +16870,7 @@ queries:
                 chmod 600 /etc/passwd-
                 ```
 
-            2. To ensure these permissions are not reverted by automated actions, add the following line to `/etc/tmpfiles.d/etc.conf`:
+            2. To reapply these permissions at every boot, add a systemd-tmpfiles entry to `/etc/tmpfiles.d/account-files.conf`. Use a file of your own rather than `/etc/tmpfiles.d/etc.conf`, because a file with that name replaces the `etc.conf` that systemd ships in `/usr/lib/tmpfiles.d/` on Red Hat family distributions. Add this line:
 
                 ```text
                 f /etc/passwd- 0600 root root -
@@ -16705,16 +16879,25 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To ensure that the `/etc/passwd-` file has the correct permissions, you can run the following bash script:
+            To ensure that the `/etc/passwd-` file has the correct permissions, you can run the following bash script. It also records the mode in a systemd-tmpfiles entry, which reapplies it at every boot. The entry goes in `/etc/tmpfiles.d/account-files.conf` rather than `/etc/tmpfiles.d/etc.conf`, because a file with that name replaces the `etc.conf` that systemd ships in `/usr/lib/tmpfiles.d/` on Red Hat family distributions.
 
             ```bash
             #!/bin/bash
             set -e
 
+            TMPFILES_CONF=/etc/tmpfiles.d/account-files.conf
+
             echo "Setting ownership and permissions on /etc/passwd-"
             chown root:root /etc/passwd-
             chmod 0600 /etc/passwd-
-            echo "f /etc/passwd- 0600 root root -" >> /etc/tmpfiles.d/etc.conf
+
+            if grep -qE '^[[:space:]]*f /etc/passwd- ' "$TMPFILES_CONF" 2>/dev/null; then
+              echo "Updating the existing $TMPFILES_CONF entry to maintain permissions"
+              sed -i -E 's|^[[:space:]]*f /etc/passwd- .*|f /etc/passwd- 0600 root root -|' "$TMPFILES_CONF"
+            else
+              echo "Adding an entry to $TMPFILES_CONF to maintain permissions"
+              echo 'f /etc/passwd- 0600 root root -' >> "$TMPFILES_CONF"
+            fi
             ```
         - id: ansible
           desc: |
@@ -16735,10 +16918,11 @@ queries:
                     owner: root
                     group: root
                     mode: '0600'
-                - name: Ensure /etc/passwd- is not reverted
+                - name: Reapply the /etc/passwd- permissions at boot
                   ansible.builtin.lineinfile:
-                    path: /etc/tmpfiles.d/etc.conf
+                    path: /etc/tmpfiles.d/account-files.conf
                     line: 'f /etc/passwd- 0600 root root -'
+                    create: true
                     state: present
             ```
         - id: chef
@@ -16748,7 +16932,7 @@ queries:
             Use this Chef Infra recipe code to set the ownership and permissions on `/etc/passwd-`:
 
             ```ruby
-            tmpfiles_conf = '/etc/tmpfiles.d/etc.conf'
+            tmpfiles_conf = '/etc/tmpfiles.d/account-files.conf'
             tmpfiles_entry = 'f /etc/passwd- 0600 root root -'
 
             file '/etc/passwd-' do
@@ -16844,7 +17028,7 @@ queries:
                 chmod 0000 /etc/shadow-
                 ```
 
-            2. To ensure these permissions are not reverted by automated actions, add a matching line to `/etc/tmpfiles.d/etc.conf`. On Debian-based systems use:
+            2. To reapply these permissions at every boot, add a systemd-tmpfiles entry to `/etc/tmpfiles.d/account-files.conf`. Use a file of your own rather than `/etc/tmpfiles.d/etc.conf`, because a file with that name replaces the `etc.conf` that systemd ships in `/usr/lib/tmpfiles.d/` on Red Hat family distributions. On Debian-based systems use:
 
                 ```text
                 f /etc/shadow- 0640 root shadow -
@@ -16859,11 +17043,13 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To ensure that the `/etc/shadow-` file has the correct permissions, you can run the following bash script:
+            To ensure that the `/etc/shadow-` file has the correct permissions, you can run the following bash script. It also records the mode in a systemd-tmpfiles entry, which reapplies it at every boot. The entry goes in `/etc/tmpfiles.d/account-files.conf` rather than `/etc/tmpfiles.d/etc.conf`, because a file with that name replaces the `etc.conf` that systemd ships in `/usr/lib/tmpfiles.d/` on Red Hat family distributions.
 
             ```bash
             #!/bin/bash
             set -e
+
+            TMPFILES_CONF=/etc/tmpfiles.d/account-files.conf
 
             if getent group shadow >/dev/null; then
               GROUP=shadow
@@ -16876,7 +17062,14 @@ queries:
             echo "Setting ownership and permissions on /etc/shadow-"
             chown root:"$GROUP" /etc/shadow-
             chmod "$MODE" /etc/shadow-
-            echo "f /etc/shadow- $MODE root $GROUP -" >> /etc/tmpfiles.d/etc.conf
+
+            if grep -qE '^[[:space:]]*f /etc/shadow- ' "$TMPFILES_CONF" 2>/dev/null; then
+              echo "Updating the existing $TMPFILES_CONF entry to maintain permissions"
+              sed -i -E "s|^[[:space:]]*f /etc/shadow- .*|f /etc/shadow- $MODE root $GROUP -|" "$TMPFILES_CONF"
+            else
+              echo "Adding an entry to $TMPFILES_CONF to maintain permissions"
+              echo "f /etc/shadow- $MODE root $GROUP -" >> "$TMPFILES_CONF"
+            fi
             ```
         - id: ansible
           desc: |
@@ -16897,9 +17090,9 @@ queries:
                     owner: root
                     group: "{{ 'shadow' if ansible_facts['os_family'] == 'Debian' else 'root' }}"
                     mode: "{{ '0640' if ansible_facts['os_family'] == 'Debian' else '0000' }}"
-                - name: Ensure /etc/shadow- is not reverted
+                - name: Reapply the /etc/shadow- permissions at boot
                   ansible.builtin.lineinfile:
-                    path: /etc/tmpfiles.d/etc.conf
+                    path: /etc/tmpfiles.d/account-files.conf
                     line: "f /etc/shadow- {{ '0640 root shadow' if ansible_facts['os_family'] == 'Debian' else '0000 root root' }} -"
                     create: yes
                     state: present
@@ -16911,7 +17104,7 @@ queries:
             Use this Chef Infra recipe code to set the ownership and permissions on `/etc/shadow-`. systemd-tmpfiles resets these permissions on some distributions, so the tmpfiles entry is corrected alongside the file itself:
 
             ```ruby
-            tmpfiles_conf = '/etc/tmpfiles.d/etc.conf'
+            tmpfiles_conf = '/etc/tmpfiles.d/account-files.conf'
             shadow_group = platform_family?('debian') ? 'shadow' : 'root'
             shadow_mode = platform_family?('debian') ? '0640' : '0000'
             tmpfiles_entry = "f /etc/shadow- #{shadow_mode} root #{shadow_group} -"
@@ -17001,7 +17194,7 @@ queries:
                 chmod 600 /etc/group-
                 ```
 
-            2. To ensure these permissions are not reverted by automated actions, add the following line to `/etc/tmpfiles.d/etc.conf`:
+            2. To reapply these permissions at every boot, add a systemd-tmpfiles entry to `/etc/tmpfiles.d/account-files.conf`. Use a file of your own rather than `/etc/tmpfiles.d/etc.conf`, because a file with that name replaces the `etc.conf` that systemd ships in `/usr/lib/tmpfiles.d/` on Red Hat family distributions. Add this line:
 
                 ```text
                 f /etc/group- 0600 root root -
@@ -17010,22 +17203,24 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To ensure that the `/etc/group-` file has the correct permissions, you can run the following bash script:
+            To ensure that the `/etc/group-` file has the correct permissions, you can run the following bash script. It also records the mode in a systemd-tmpfiles entry, which reapplies it at every boot. The entry goes in `/etc/tmpfiles.d/account-files.conf` rather than `/etc/tmpfiles.d/etc.conf`, because a file with that name replaces the `etc.conf` that systemd ships in `/usr/lib/tmpfiles.d/` on Red Hat family distributions.
 
             ```bash
             #!/bin/bash
             set -e
 
+            TMPFILES_CONF=/etc/tmpfiles.d/account-files.conf
+
             echo "Setting ownership and permissions on /etc/group-"
             chown root:root /etc/group-
             chmod 0600 /etc/group-
 
-            if grep -qE '^[[:space:]]*f /etc/group-' /etc/tmpfiles.d/etc.conf; then
-              echo "Modifying existing /etc/tmpfiles.d/etc.conf to entry to maintain permissions"
-              sed -i -E 's|^[[:space:]]*f /etc/group-.*|f /etc/group- 0600 root root -|' /etc/tmpfiles.d/etc.conf
+            if grep -qE '^[[:space:]]*f /etc/group- ' "$TMPFILES_CONF" 2>/dev/null; then
+              echo "Updating the existing $TMPFILES_CONF entry to maintain permissions"
+              sed -i -E 's|^[[:space:]]*f /etc/group- .*|f /etc/group- 0600 root root -|' "$TMPFILES_CONF"
             else
-              echo "Adding entry to /etc/tmpfiles.d/etc.conf to maintain permissions"
-              echo 'f /etc/group- 0600 root root -' >> /etc/tmpfiles.d/etc.conf
+              echo "Adding an entry to $TMPFILES_CONF to maintain permissions"
+              echo 'f /etc/group- 0600 root root -' >> "$TMPFILES_CONF"
             fi
             ```
         - id: ansible
@@ -17047,10 +17242,11 @@ queries:
                     owner: root
                     group: root
                     mode: '0600'
-                - name: Ensure /etc/group- is not reverted
+                - name: Reapply the /etc/group- permissions at boot
                   ansible.builtin.lineinfile:
-                    path: /etc/tmpfiles.d/etc.conf
+                    path: /etc/tmpfiles.d/account-files.conf
                     line: 'f /etc/group- 0600 root root -'
+                    create: true
                     state: present
             ```
         - id: chef
@@ -17060,7 +17256,7 @@ queries:
             Use this Chef Infra recipe code to set the ownership and permissions on `/etc/group-`:
 
             ```ruby
-            tmpfiles_conf = '/etc/tmpfiles.d/etc.conf'
+            tmpfiles_conf = '/etc/tmpfiles.d/account-files.conf'
             tmpfiles_entry = 'f /etc/group- 0600 root root -'
 
             file '/etc/group-' do
@@ -17147,7 +17343,7 @@ queries:
                 chmod 640 /etc/gshadow-
                 ```
 
-            2. To ensure these permissions are not reverted by automated actions, add the following line to `/etc/tmpfiles.d/etc.conf`:
+            2. To reapply these permissions at every boot, add a systemd-tmpfiles entry to `/etc/tmpfiles.d/account-files.conf`. Use a file of your own rather than `/etc/tmpfiles.d/etc.conf`, because a file with that name replaces the `etc.conf` that systemd ships in `/usr/lib/tmpfiles.d/` on Red Hat family distributions. Add this line:
 
                 ```text
                 f /etc/gshadow- 0640 root root -
@@ -17156,22 +17352,24 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To ensure that the `/etc/gshadow-` file has the correct permissions, you can run the following bash script:
+            To ensure that the `/etc/gshadow-` file has the correct permissions, you can run the following bash script. It also records the mode in a systemd-tmpfiles entry, which reapplies it at every boot. The entry goes in `/etc/tmpfiles.d/account-files.conf` rather than `/etc/tmpfiles.d/etc.conf`, because a file with that name replaces the `etc.conf` that systemd ships in `/usr/lib/tmpfiles.d/` on Red Hat family distributions.
 
             ```bash
             #!/bin/bash
             set -e
 
+            TMPFILES_CONF=/etc/tmpfiles.d/account-files.conf
+
             echo "Setting ownership and permissions on /etc/gshadow-"
             chown root:root /etc/gshadow-
             chmod 0640 /etc/gshadow-
 
-            if grep -qE '^[[:space:]]*f /etc/gshadow-' /etc/tmpfiles.d/etc.conf; then
-              echo "Modifying existing /etc/tmpfiles.d/etc.conf entry to maintain permissions"
-              sed -i -E 's|^[[:space:]]*f /etc/gshadow-.*|f /etc/gshadow- 0640 root root -|' /etc/tmpfiles.d/etc.conf
+            if grep -qE '^[[:space:]]*f /etc/gshadow- ' "$TMPFILES_CONF" 2>/dev/null; then
+              echo "Updating the existing $TMPFILES_CONF entry to maintain permissions"
+              sed -i -E 's|^[[:space:]]*f /etc/gshadow- .*|f /etc/gshadow- 0640 root root -|' "$TMPFILES_CONF"
             else
-              echo "Adding entry to /etc/tmpfiles.d/etc.conf to maintain permissions"
-              echo 'f /etc/gshadow- 0640 root root -' >> /etc/tmpfiles.d/etc.conf
+              echo "Adding an entry to $TMPFILES_CONF to maintain permissions"
+              echo 'f /etc/gshadow- 0640 root root -' >> "$TMPFILES_CONF"
             fi
             ```
         - id: ansible
@@ -17193,10 +17391,11 @@ queries:
                     owner: root
                     group: root
                     mode: '0640'
-                - name: Ensure /etc/gshadow- is not reverted
+                - name: Reapply the /etc/gshadow- permissions at boot
                   ansible.builtin.lineinfile:
-                    path: /etc/tmpfiles.d/etc.conf
+                    path: /etc/tmpfiles.d/account-files.conf
                     line: 'f /etc/gshadow- 0640 root root -'
+                    create: true
                     state: present
             ```
         - id: chef
@@ -17206,7 +17405,7 @@ queries:
             Use this Chef Infra recipe code to set the ownership and permissions on `/etc/gshadow-`:
 
             ```ruby
-            tmpfiles_conf = '/etc/tmpfiles.d/etc.conf'
+            tmpfiles_conf = '/etc/tmpfiles.d/account-files.conf'
             tmpfiles_entry = 'f /etc/gshadow- 0640 root root -'
 
             file '/etc/gshadow-' do
@@ -17277,16 +17476,28 @@ queries:
           desc: |
             **Using the CLI**
 
-            To ensure no duplicate UIDs exist, you can use the following command to list users with duplicate UIDs for manual remediation::
+            To ensure no duplicate UIDs exist, you can use the following command to list users with duplicate UIDs for manual remediation:
 
             ```bash
             awk -F: '{print $3}' /etc/passwd | sort | uniq -d
             ```
 
-            If duplicates are found, you can change the UID of a user using the `usermod` command:
+            For each duplicated UID, list the accounts that share it and decide which one keeps it, replacing `<uid>` with the duplicated value:
+
+            ```bash
+            awk -F: -v uid=<uid> '$3 == uid {print $1}' /etc/passwd
+            ```
+
+            Give every other account a new UID with the `usermod` command. Replace `<user>` with the account to renumber and `<new uid>` with a value that `getent passwd <new uid>` does not return, 1000 or above for a person and below 1000 for a system account. `usermod` refuses to change the UID of an account that has running processes, so log it out and stop its services first:
 
             ```bash
             usermod -u <new uid> <user>
+            ```
+
+            `usermod` changes the owner only of files inside the account's home directory. Files elsewhere keep the old UID and now belong to the account that kept it, so reassign the ones that belong to the renumbered account, replacing `<path>` with each directory it writes to outside its home:
+
+            ```bash
+            find <path> -xdev -uid <old uid> -exec chown -h <new uid> {} +
             ```
         # No Chef Infra remediation: the fix is choosing which account or group to renumber, which is a human decision rather than a converge step.
     refs:
@@ -17344,10 +17555,18 @@ queries:
             awk -F: '{print $1}' /etc/passwd | sort | uniq -d
             ```
 
-            If duplicates are found, you can change the user name of a user using the `usermod` command:
+            If duplicates are found, do not rename either entry with `usermod -l`. It looks the account up by name and always acts on the first matching entry, which is normally the account in use, so it renames the live account and leaves the stale entry behind. Instead, open the account files with their locking editors and delete the stale line for the duplicated name, first from `/etc/passwd` and then from `/etc/shadow`:
 
             ```bash
-            usermod -l <new login-name> <old username>
+            vipw
+            vipw -s
+            ```
+
+            Confirm that the files are consistent and that the remaining entry has the intended UID, home directory, and shell, replacing `<user>` with the duplicated name:
+
+            ```bash
+            pwck -r
+            getent passwd <user>
             ```
         # No Chef Infra remediation: the fix is choosing which account or group to renumber, which is a human decision rather than a converge step.
     refs:
@@ -17405,10 +17624,22 @@ queries:
             awk -F: '{print $3}' /etc/group | sort | uniq -d
             ```
 
-            If duplicates are found, you can change the GID of a group using the `groupmod` command:
+            For each duplicated GID, list the groups that share it and decide which one keeps it, replacing `<gid>` with the duplicated value:
 
             ```bash
-            groupmod -g <new gid> <old groupname>
+            awk -F: -v gid=<gid> '$3 == gid {print $1}' /etc/group
+            ```
+
+            Give every other group a new GID with the `groupmod` command. Replace `<groupname>` with the group to renumber and `<new gid>` with a value that `getent group <new gid>` does not return:
+
+            ```bash
+            groupmod -g <new gid> <groupname>
+            ```
+
+            `groupmod` moves every account whose primary GID was the shared value to the new GID, including accounts whose primary group is the group that kept it. Check `/etc/passwd` for those accounts and set their primary group back with `usermod -g <gid> <user>`. Files are not changed, so they keep the old GID and now belong to the group that kept it. Reassign the ones that belong to the renumbered group, replacing `<path>` with each directory that holds them:
+
+            ```bash
+            find <path> -xdev -gid <old gid> -exec chgrp -h <new gid> {} +
             ```
         # No Chef Infra remediation: the fix is choosing which account or group to renumber, which is a human decision rather than a converge step.
     refs:
@@ -17468,10 +17699,18 @@ queries:
             awk -F: '{print $1}' /etc/group | sort | uniq -d
             ```
 
-            If duplicates are found, you can change the group name of a group using the `groupmod` command:
+            If duplicates are found, do not rename either entry with `groupmod -n`. It looks the group up by name and always acts on the first matching entry, so it renames the group that resolves and leaves the stale entry behind. Instead, open the group files with their locking editors, merge the member lists into one entry for the name, and delete the other line, first in `/etc/group` and then in `/etc/gshadow`:
 
             ```bash
-            groupmod -n <new group name> <old groupname>
+            vigr
+            vigr -s
+            ```
+
+            Confirm that the files are consistent and that the name resolves to the intended GID and members, replacing `<group>` with the duplicated name:
+
+            ```bash
+            grpck -r
+            getent group <group>
             ```
         # No Chef Infra remediation: the fix is choosing which account or group to renumber, which is a human decision rather than a converge step.
     refs:
@@ -17607,13 +17846,13 @@ queries:
 
         Assign an appropriate primary group with `usermod -g <group> <user>`, using a dedicated per-user group where the distribution's convention calls for one.
       audit: |
-        Run this command to find accounts whose primary group does not exist in `/etc/group`:
+        Run this command to find accounts with no primary GID set:
 
         ```bash
-        for g in $(cut -d: -f4 /etc/passwd | sort -u); do getent group "$g" >/dev/null || echo "missing GID $g"; done
+        awk -F: '$4 == "" {print $1}' /etc/passwd
         ```
 
-        A passing result returns no output. A failing result lists primary GIDs with no matching group.
+        A passing result returns no output. A failing result lists accounts whose primary GID field is empty.
       remediation:
         - id: cli
           desc: |
@@ -18305,7 +18544,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            **Warning: confirm the `wheel` group has an administrator before you apply this.** With `pam_wheel.so use_uid` and no `group=` option, PAM allows `su` only for members of the `wheel` group. If that group is empty, no one can `su` to root. Debian and Ubuntu do not populate `wheel` by default because they rely on `sudo`, so add at least one trusted administrative account to `wheel` first and verify it can `su` in a separate session before you close your current one.
+            **Warning: confirm the `wheel` group has an administrator before you apply this.** With `pam_wheel.so use_uid` and no `group=` option, PAM allows `su` only for members of the `wheel` group. If that group is empty, no one can `su` to root. Debian and Ubuntu have no `wheel` group at all, so on those distributions use the `group=sudo` form shown below. Elsewhere, add at least one trusted administrative account to `wheel` first and verify it can `su` in a separate session before you close your current one.
 
             To restrict access to the `su` command, you can edit the `/etc/pam.d/su` file and add the following line:
 
@@ -18313,10 +18552,16 @@ queries:
             echo "auth required pam_wheel.so use_uid" >> /etc/pam.d/su
             ```
 
-            If users need `su` access, add them to the `wheel` group:
+            If users need `su` access, add them to the `wheel` group, replacing `<user>` with each account that must be able to switch to root:
 
             ```bash
             usermod -aG wheel <user>
+            ```
+
+            Debian and Ubuntu have no `wheel` group. When that group does not exist, `pam_wheel` checks the group with GID `0` instead, so only members of the `root` group can use `su`. On those distributions name the administrators group explicitly by adding this line in place of the one above:
+
+            ```text
+            auth required pam_wheel.so use_uid group=sudo
             ```
 
             If you want to lock down the use of the command `su` entirely instead, you need to create an empty group, for example `sugroup`:
@@ -18334,7 +18579,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu do not populate `wheel` by default, so add a trusted administrative account to it first and verify `su` works in a separate session. To restrict access to the `su` command to members of the `wheel` group, run the following bash script:
+            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu have no `wheel` group, and `pam_wheel` then checks the group with GID `0` instead, so on those distributions change the line to `auth required pam_wheel.so use_uid group=sudo`. Elsewhere, add a trusted administrative account to `wheel` first and verify `su` works in a separate session. To restrict access to the `su` command to members of the `wheel` group, run the following bash script:
 
             ```bash
             #!/bin/bash
@@ -18359,7 +18604,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu do not populate `wheel` by default, so add a trusted administrative account to it first and verify `su` works in a separate session. To restrict access to the `su` command, you can use the following Ansible playbook:
+            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu have no `wheel` group, and `pam_wheel` then checks the group with GID `0` instead, so on those distributions change the line to `auth required pam_wheel.so use_uid group=sudo`. Elsewhere, add a trusted administrative account to `wheel` first and verify `su` works in a separate session. To restrict access to the `su` command, you can use the following Ansible playbook:
 
             ```yaml
             ---
@@ -18379,7 +18624,7 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu do not populate `wheel` by default, so add a trusted administrative account to it first and verify `su` works in a separate session. Use this Chef Infra recipe code to restrict the `su` command to the `wheel` group:
+            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu have no `wheel` group, and `pam_wheel` then checks the group with GID `0` instead, so on those distributions change the line to `auth required pam_wheel.so use_uid group=sudo`. Elsewhere, add a trusted administrative account to `wheel` first and verify `su` works in a separate session. Use this Chef Infra recipe code to restrict the `su` command to the `wheel` group:
 
             ```ruby
             pam_su = '/etc/pam.d/su'
@@ -18451,25 +18696,40 @@ queries:
       remediation:
         - id: cli
           desc: |
-            1. Set SELinux to enforcing mode immediately (does not survive reboot):
+            **Using the CLI**
+
+            To put SELinux into enforcing mode using the CLI, first check the current mode with `getenforce`.
+
+            If it reports `Permissive`:
+
+            1. Switch the running system to enforcing mode. This takes effect immediately but does not survive a reboot:
 
                 ```bash
                 setenforce 1
                 ```
 
-            2. To make the change persistent, edit `/etc/selinux/config` and set:
+            2. To keep enforcing mode after a reboot, edit `/etc/selinux/config` and set:
 
                 ```ini
                 SELINUX=enforcing
                 ```
 
-            3. Reboot the system to fully apply the policy:
+            If it reports `Disabled`, `setenforce` fails with `SELinux is disabled`, because the policy can only be loaded at boot. Enabling SELinux directly in enforcing mode on an unlabeled file system can stop services or the whole host from starting, so go through permissive mode first and plan for at least two reboots:
+
+            1. Remove the `selinux=0` kernel argument if it is present, then set `SELINUX=permissive` in `/etc/selinux/config`:
 
                 ```bash
+                grubby --update-kernel ALL --remove-args selinux
+                ```
+
+            2. Schedule a full relabel and reboot. The relabel takes time proportional to the number of files:
+
+                ```bash
+                fixfiles -F onboot
                 reboot
                 ```
 
-            **Note:** Switching from disabled to enforcing requires a system relabel. On the next boot, SELinux will automatically relabel the filesystem, which may take several minutes depending on disk size.
+            3. Review the denials logged while permissive with `ausearch -m AVC -ts boot`, resolve them, then set `SELINUX=enforcing` in `/etc/selinux/config` and run `setenforce 1`.
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -18582,17 +18842,21 @@ queries:
       remediation:
         - id: cli
           desc: |
-            Edit `/etc/selinux/config` and ensure the following line is set:
+            **Using the CLI**
+
+            To set enforcing mode in the persistent configuration using the CLI, edit `/etc/selinux/config` and ensure the following line is set:
 
             ```ini
             SELINUX=enforcing
             ```
 
-            This change takes effect on the next reboot. To also enforce immediately, run:
+            This change takes effect on the next reboot. To also enforce immediately on a host that is currently permissive, run:
 
             ```bash
             setenforce 1
             ```
+
+            **Warning: a host that `getenforce` reports as `Disabled` relabels its whole file system on the next boot.** On that host `setenforce 1` fails, the relabel takes time proportional to the number of files, and unlabeled files can stop services from starting in enforcing mode. Set `SELINUX=permissive` first, reboot, resolve the logged denials, and only then set `SELINUX=enforcing`.
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -18621,6 +18885,10 @@ queries:
             ```
         - id: ansible
           desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set `SELINUX=enforcing` in `/etc/selinux/config`. On a host where SELinux is currently disabled, the module reports `reboot_required`, and the setting takes effect only after that reboot and the file system relabel it triggers:
+
             ```yaml
             ---
             - name: Ensure SELinux config is set to enforcing
@@ -18706,7 +18974,7 @@ queries:
           desc: |
             **Using CLI**
 
-            Add an authorized time source to the chrony configuration for your distribution, then restart the daemon. Red Hat-based systems use `/etc/chrony.conf`; Debian-based systems use `/etc/chrony/chrony.conf`:
+            Add an authorized time source to the chrony configuration for your distribution, then restart the daemon. Red Hat-based systems use `/etc/chrony.conf`; Debian-based systems use `/etc/chrony/chrony.conf`. Any `server` or `pool` line satisfies the check. Replace the public `2.pool.ntp.org` pool in the example with the time servers your organization operates or approves, using `server` for a single host and `pool` for a name that resolves to several. `iburst` makes chrony send its first requests in quick succession so the clock synchronizes within seconds of the restart:
 
             ```bash
             CONF=/etc/chrony.conf
@@ -18854,7 +19122,7 @@ queries:
           desc: |
             **Using CLI**
 
-            Set an authorized NTP server in the timesyncd configuration and restart the service. The `NTP=` setting must be added if the file does not already contain one:
+            Set an authorized NTP server in the timesyncd configuration and restart the service. The `NTP=` setting must be added if the file does not already contain one. Replace the public `2.pool.ntp.org` in the example with the time servers your organization operates or approves, separated by spaces when there is more than one. The restart makes timesyncd load the list, after which `timedatectl show-timesync --all` reports it under `SystemNTPServers` instead of the fallback servers:
 
             ```bash
             CONF=/etc/systemd/timesyncd.conf
@@ -19001,6 +19269,12 @@ queries:
             ```bash
             timedatectl set-ntp true
             systemctl restart systemd-timesyncd
+            ```
+
+            Wait a minute, then confirm that `timedatectl status` reports `System clock synchronized: yes`. If it still reports `no`, the daemon is running but cannot reach a server. Check which server it is trying and whether it gets replies, then make sure an `NTP=` server is configured and that outbound UDP port 123 to it is allowed:
+
+            ```bash
+            timedatectl timesync-status
             ```
         - id: bash
           desc: |
@@ -19244,19 +19518,31 @@ queries:
           desc: |
             **Using CLI**
 
-            Remove the `[trusted=yes]` option from the offending entry and pin the repository to its signing key instead. For a one-line entry, replace the trusted flag with a `signed-by` keyring:
+            To enforce signature verification using the CLI, remove the trusted flag from the offending entry and pin the repository to its signing key instead. In the commands, replace `example.list` or `example.sources` with the file the audit reported, and `example-archive-keyring.gpg` with a name for the repository's key.
 
-            ```bash
-            sed -i 's/\[trusted=yes\]/[signed-by=\/usr\/share\/keyrings\/example-archive-keyring.gpg]/' /etc/apt/sources.list.d/example.list
-            apt-get update
-            ```
+            1. Download the repository's ASCII-armored signing key from the URL its vendor publishes and store it as a binary keyring, replacing `<key-url>` with that URL. If the vendor publishes a binary `.gpg` keyring instead, save it to the same path without `gpg --dearmor`:
 
-            For a deb822 entry in a `.sources` file, remove the `Trusted: yes` line and declare the signing key with a `Signed-By:` field:
+                ```bash
+                curl -fsSL <key-url> | gpg --dearmor -o /usr/share/keyrings/example-archive-keyring.gpg
+                ```
 
-            ```bash
-            sed -i -E '/^\s*Trusted:\s*yes\s*$/Id' /etc/apt/sources.list.d/example.sources
-            apt-get update
-            ```
+            2. For a one-line entry, remove `trusted=yes` and reference the keyring with `signed-by`. The command changes only lines that carry `trusted=yes`, wherever it appears among the bracketed options:
+
+                ```bash
+                sed -i -E '/trusted=yes/{s/[[:space:]]*trusted=yes//; s|\[[[:space:]]*|[signed-by=/usr/share/keyrings/example-archive-keyring.gpg |; s/[[:space:]]+\]/]/;}' /etc/apt/sources.list.d/example.list
+                ```
+
+                For a deb822 entry, replace the `Trusted: yes` line with a `Signed-By:` field. If the stanza already has a `Signed-By:` field, delete the `Trusted: yes` line instead:
+
+                ```bash
+                sed -i -E 's|^[[:space:]]*Trusted:[[:space:]]*yes[[:space:]]*$|Signed-By: /usr/share/keyrings/example-archive-keyring.gpg|I' /etc/apt/sources.list.d/example.sources
+                ```
+
+            3. Refresh the package lists. A `NO_PUBKEY` error means the keyring does not hold the key that signs the repository:
+
+                ```bash
+                apt-get update
+                ```
         - id: bash
           desc: |
             **Using a Bash Script**
