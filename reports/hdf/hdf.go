@@ -21,6 +21,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec"
+	"go.mondoo.com/cnspec/internal/reportfile"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/reports/reportdoc"
 	"go.mondoo.com/mql/cli/printer"
@@ -256,8 +257,13 @@ func ConvertToDir(r *policy.ReportCollection, dir string) ([]string, error) {
 
 // writeHDFFile renders one document to its own file.
 func writeHDFFile(report *hdfReport, path string) error {
-	// os.Create would leave the document 0644; see ConvertToDir for what is in it.
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	// Not os.Create: it would leave the document 0644, and it follows a symlink.
+	// The filename is derived from the asset name, so anyone who can write the
+	// output directory and knows what is being scanned can pre-place a link at it
+	// and have a scan -- frequently running as root -- truncate and overwrite the
+	// link's target with the report. See internal/reportfile and, for what is in
+	// the document, ConvertToDir.
+	f, err := reportfile.Create(path)
 	if err != nil {
 		return err
 	}

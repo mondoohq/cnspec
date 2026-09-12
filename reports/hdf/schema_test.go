@@ -131,6 +131,43 @@ func TestHDFDirWritesPrivateFiles(t *testing.T) {
 	}
 }
 
+// TestHDFDirDoesNotFollowASymlink covers a symlink pre-placed at the path an asset
+// will be written to.
+//
+// Following it truncates whatever it points at, so anyone who can write the output
+// directory can redirect a scan -- frequently running as root -- onto a file of
+// their choosing and have it overwritten with the report. The filename is derived
+// from the asset name, which anyone who knows what is being scanned can predict,
+// so this needs no race.
+func TestHDFDirDoesNotFollowASymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("O_NOFOLLOW has no Windows equivalent; see internal/reportfile")
+	}
+	pinHDFClock(t)
+
+	root := t.TempDir()
+	dir := filepath.Join(root, "out")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+
+	victim := filepath.Join(root, "victim")
+	require.NoError(t, os.WriteFile(victim, []byte("do not overwrite me"), 0o600))
+	require.NoError(t, os.Symlink(victim, filepath.Join(dir, "X1.hdf.json")))
+
+	files, err := ConvertToDir(multiAssetReportCollection(t), dir)
+	require.Error(t, err, "the open has to fail rather than follow the link")
+	assert.Contains(t, err.Error(), "X1")
+
+	content, readErr := os.ReadFile(victim)
+	require.NoError(t, readErr)
+	assert.Equal(t, "do not overwrite me", string(content),
+		"the symlink target must not be truncated and rewritten with the report")
+
+	// The other asset is still written: a link planted at one name must not cost
+	// the report of every asset after it.
+	require.Len(t, files, 1)
+	assert.Equal(t, "web-02.hdf.json", filepath.Base(files[0]))
+}
+
 // TestHDFSingleProfilePerDocument is the invariant behind the file-per-asset split.
 // Heimdall and the SAF CLI resolve a document down to one root profile and tally
 // only that one, so a second, unlinked profile is dropped without an error - the
@@ -289,7 +326,7 @@ func TestHDFDirReportsFailuresWithoutAbandoningTheRest(t *testing.T) {
 	pinHDFClock(t)
 
 	dir := t.TempDir()
-	// Occupy the path the first asset would write to, so os.Create fails on it.
+	// Occupy the path the first asset would write to, so the open fails on it.
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "X1.hdf.json"), 0o755))
 
 	files, err := ConvertToDir(multiAssetReportCollection(t), dir)
