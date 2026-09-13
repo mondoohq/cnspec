@@ -5907,46 +5907,95 @@ queries:
           permissions.other_writeable == false &&
           permissions.other_executable == false
       }
+      file("/boot/loader.conf.local") {
+        exists == false ||
+          user.name == 'root' &&
+          group.name == 'wheel' &&
+          permissions.user_executable == false &&
+          permissions.group_readable == false &&
+          permissions.group_writeable == false &&
+          permissions.group_executable == false &&
+          permissions.other_readable == false &&
+          permissions.other_writeable == false &&
+          permissions.other_executable == false
+      }
+      file("/boot/loader.conf.lua") {
+        exists == false ||
+          user.name == 'root' &&
+          group.name == 'wheel' &&
+          permissions.user_executable == false &&
+          permissions.group_readable == false &&
+          permissions.group_writeable == false &&
+          permissions.group_executable == false &&
+          permissions.other_readable == false &&
+          permissions.other_writeable == false &&
+          permissions.other_executable == false
+      }
+      files.find(from: "/boot/loader.conf.d", type: "file").list.all(
+        user.name == 'root' &&
+        group.name == 'wheel' &&
+        permissions.group_writeable == false &&
+        permissions.other_writeable == false
+      )
     docs:
       refs:
         - url: https://man.freebsd.org/cgi/man.cgi?query=loader.conf&sektion=5
           title: FreeBSD loader.conf(5)
       desc: |
-        This check verifies that `/boot/loader.conf` is owned by `root:wheel` and has mode 0600 or more restrictive. The file is optional, so the check passes when it is absent.
+        This check verifies that `/boot/loader.conf`, `/boot/loader.conf.local`, and `/boot/loader.conf.lua` are owned by `root:wheel` and have mode 0600 or more restrictive, and that no file under `/boot/loader.conf.d/` is group or other writable. All of these paths are optional, so the check passes when they are absent.
 
         **Why this matters**
 
-        The bootloader configuration file controls kernel parameters and module loading at boot time. If readable by unauthorized users, it may expose sensitive configuration such as the loader `password` setting. If writable, an attacker could modify boot parameters to bypass security controls, boot into single-user mode, or load malicious kernel modules.
+        The bootloader configuration controls kernel parameters and module loading at boot time. If readable by unauthorized users, it may expose sensitive configuration such as the loader `password` setting. If writable, an attacker could modify boot parameters to bypass security controls, boot into single-user mode, or load malicious kernel modules.
 
         **Scope**
 
-        loader.conf(5) lists `/boot/defaults/loader.conf` as the default settings that ship with the base system and `/boot/loader.conf` as user defined settings. A system whose loader settings have never been customized has no `/boot/loader.conf` at all and exposes no administrator-defined boot configuration. This check therefore covers `/boot/loader.conf` only:
+        loader.conf(5) documents five user defined configuration locations, not one. The loader reads `/boot/loader.conf` and every `.conf` file under `/boot/loader.conf.d/` on each boot, and reads `/boot/loader.conf.local` last so that it overrides the settings found in the others. `/boot/loader.conf.lua` and `.lua` drop-ins hold the same settings written in Lua. All of them can carry the loader `password` and `bootlock_password` variables, so this check covers all of them, in two tiers:
 
-        - An absent `/boot/loader.conf` passes. There is no file to read and no file whose contents an attacker could change.
+        - `/boot/loader.conf`, `/boot/loader.conf.local`, and `/boot/loader.conf.lua` hold settings that an administrator writes. No package owns these paths, so each one that exists must be `root:wheel` with mode 0600 or more restrictive.
+        - Files under `/boot/loader.conf.d/` must be `root:wheel` and must not be group or other writable. The read bits are deliberately not asserted there. FreeBSD ports install package-managed drop-ins into that directory with world-readable modes, so requiring mode 0600 would fail every host that installs one of those packages. The `net/wifi-firmware-*-kmod` ports ship `compat.linuxkpi` tunables this way. Write access is the part that matters, because an unprivileged user who can edit a drop-in sets kernel tunables and loads modules on the next boot.
+        - An absent file passes, and so does an absent or empty `/boot/loader.conf.d/`. There is nothing to read and nothing whose contents an attacker could change.
         - `/boot/defaults/loader.conf` is out of scope. It ships with the base system, holds no site configuration, and is world readable on every FreeBSD install, so requiring mode 0600 on it would fail every system without protecting anything.
       audit: |
-        To verify the ownership and permissions of `/boot/loader.conf`, run the following command:
+        To verify the ownership and permissions of the administrator-written bootloader configuration files, run the following command:
 
         ```bash
-        ls -l /boot/loader.conf
+        ls -l /boot/loader.conf /boot/loader.conf.local /boot/loader.conf.lua
         ```
 
-        The check passes when the file is owned by `root:wheel` with mode `0600` or more restrictive. It fails when the owner or group is wrong, or when group or other have any access.
+        Every one of these files that exists must be owned by `root:wheel` with mode `0600` or more restrictive. The check fails when the owner or group is wrong, or when group or other have any access. A file that `ls` reports as `No such file or directory` passes, because the system holds no administrator-written settings in it.
 
-        The check also passes when `ls` reports `No such file or directory`. That system keeps its loader settings in `/boot/defaults/loader.conf` alone and has no administrator-defined bootloader configuration to protect.
+        To verify the drop-in directory, run:
+
+        ```bash
+        ls -l /boot/loader.conf.d/
+        ```
+
+        Every file listed must be owned by `root:wheel` and must not be group or other writable. A missing or empty directory passes.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            Set the correct ownership and permissions on an existing `/boot/loader.conf`:
+            1. Restrict every administrator-written bootloader configuration file that exists:
 
-            ```bash
-            chown root:wheel /boot/loader.conf
-            chmod 0600 /boot/loader.conf
-            ```
+                ```bash
+                for f in /boot/loader.conf /boot/loader.conf.local /boot/loader.conf.lua; do
+                  [ -e "$f" ] || continue
+                  chown root:wheel "$f"
+                  chmod 0600 "$f"
+                done
+                ```
 
-            **Do not create `/boot/loader.conf` just to satisfy this check.** An absent file already passes. Creating one adds a boot configuration file the system did not have, and the loader starts reading it.
+            2. Remove group and other write access from the drop-in files:
+
+                ```bash
+                if [ -d /boot/loader.conf.d ]; then
+                  find /boot/loader.conf.d -type f -exec chown root:wheel {} + -exec chmod go-w {} +
+                fi
+                ```
+
+            **Do not create any of these files just to satisfy this check.** An absent file already passes. Creating one adds a boot configuration file the system did not have, and the loader starts reading it.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -5955,16 +6004,23 @@ queries:
             #!/bin/sh
             set -e
 
-            if [ ! -e /boot/loader.conf ]; then
-              echo "/boot/loader.conf does not exist, nothing to secure."
-              exit 0
+            for f in /boot/loader.conf /boot/loader.conf.local /boot/loader.conf.lua; do
+              if [ ! -e "$f" ]; then
+                echo "$f does not exist, nothing to secure."
+                continue
+              fi
+
+              echo "Setting permissions on $f..."
+              chown root:wheel "$f"
+              chmod 0600 "$f"
+            done
+
+            if [ -d /boot/loader.conf.d ]; then
+              echo "Removing group and other write access from /boot/loader.conf.d..."
+              find /boot/loader.conf.d -type f -exec chown root:wheel {} + -exec chmod go-w {} +
             fi
 
-            echo "Setting permissions on /boot/loader.conf..."
-            chown root:wheel /boot/loader.conf
-            chmod 0600 /boot/loader.conf
-
-            echo "Permissions on /boot/loader.conf configured."
+            echo "Bootloader configuration permissions configured."
             ```
         - id: ansible
           desc: |
@@ -5975,37 +6031,75 @@ queries:
 
             ```yaml
             ---
-            - name: Secure /boot/loader.conf permissions
+            - name: Secure bootloader configuration permissions
               hosts: all
               become: true
 
               tasks:
-                - name: Check whether /boot/loader.conf exists
+                - name: Check which bootloader configuration files exist
                   ansible.builtin.stat:
-                    path: /boot/loader.conf
+                    path: "{{ item }}"
+                  loop:
+                    - /boot/loader.conf
+                    - /boot/loader.conf.local
+                    - /boot/loader.conf.lua
                   register: loader_conf
 
-                - name: Secure /boot/loader.conf permissions
+                - name: Secure the administrator-written bootloader configuration files
                   ansible.builtin.file:
-                    path: /boot/loader.conf
+                    path: "{{ item.item }}"
                     state: file
                     owner: root
                     group: wheel
                     mode: '0600'
-                  when: loader_conf.stat.exists
+                  loop: "{{ loader_conf.results }}"
+                  loop_control:
+                    label: "{{ item.item }}"
+                  when: item.stat.exists
+
+                - name: Find the bootloader configuration drop-in files
+                  ansible.builtin.find:
+                    paths: /boot/loader.conf.d
+                    file_type: file
+                  register: loader_conf_d
+
+                - name: Remove group and other write access from the drop-in files
+                  ansible.builtin.file:
+                    path: "{{ item.path }}"
+                    state: file
+                    owner: root
+                    group: wheel
+                    mode: g-w,o-w
+                  loop: "{{ loader_conf_d.files }}"
+                  loop_control:
+                    label: "{{ item.path }}"
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to restrict an existing bootloader configuration to root. The `only_if` guard keeps the `file` resource from creating `/boot/loader.conf` on systems that do not have one:
+            Use this Chef Infra recipe code to restrict the existing bootloader configuration to root. Both `only_if` guards run at converge time. The first keeps the `file` resource from creating a configuration file the system does not have. The second runs the drop-in fix only when a drop-in is actually misowned or writable, and clears just the group and other write bits, so a package-managed drop-in keeps the mode its port installed:
 
             ```ruby
-            file '/boot/loader.conf' do
-              owner 'root'
-              group 'wheel'
-              mode '0600'
-              only_if { ::File.exist?('/boot/loader.conf') }
+            %w(/boot/loader.conf /boot/loader.conf.local /boot/loader.conf.lua).each do |conf|
+              file conf do
+                owner 'root'
+                group 'wheel'
+                mode '0600'
+                only_if { ::File.exist?(conf) }
+              end
+            end
+
+            execute 'restrict bootloader configuration drop-in files' do
+              command 'find /boot/loader.conf.d -type f -exec chown root:wheel {} + -exec chmod go-w {} +'
+              only_if do
+                ::Dir.glob('/boot/loader.conf.d/*').any? do |dropin|
+                  next false unless ::File.file?(dropin)
+
+                  stat = ::File.stat(dropin)
+                  stat.uid != 0 || stat.gid != 0 || !(stat.mode & 0o022).zero?
+                end
+              end
             end
             ```
   - uid: mondoo-freebsd-security-root-is-the-only-uid-0-account
