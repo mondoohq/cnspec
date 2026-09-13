@@ -1,5 +1,5 @@
 data "digitalocean_kubernetes_versions" "supported" {
-  version_prefix = "1.31."
+  version_prefix = "1.35."
 }
 
 resource "digitalocean_kubernetes_cluster" "primary" {

@@ -1,7 +1,11 @@
+data "digitalocean_kubernetes_versions" "eos" {
+  version_prefix = "1.33."
+}
+
 resource "digitalocean_kubernetes_cluster" "primary" {
-  name    = "prod-cluster"
+  name    = "eos-cluster"
   region  = "nyc1"
-  version = "1.34.1-do.0"
+  version = data.digitalocean_kubernetes_versions.eos.latest_version
 
   node_pool {
     name       = "worker-pool"
