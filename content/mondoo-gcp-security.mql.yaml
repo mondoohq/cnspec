@@ -21426,42 +21426,46 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that clusters are continuously assessed for known vulnerabilities and configuration weaknesses by the GKE Security Posture dashboard.
+        This check verifies that clusters are continuously assessed for configuration weaknesses by the GKE Security Posture dashboard.
 
-        Security Posture runs cluster configuration checks and workload vulnerability scanning against running containers. It can be disabled outright, or left in a mode that omits vulnerability scanning, in which case container images go unchecked for known weaknesses between whatever manual scans the team remembers to run. The console exposes both settings on the cluster's Security tab as Security posture and Workload vulnerability scanning, and this check requires the mode to be something other than `DISABLED` and the vulnerability mode to be something other than `VULNERABILITY_DISABLED`. On an existing cluster, `gcloud container clusters update` with `--security-posture=standard` and `--workload-vulnerability-scanning=standard` selects the same basic tier that the API and Terraform call `BASIC`.
+        Kubernetes security posture scanning audits running workloads for configuration concerns and surfaces actionable GKE security bulletins. It is on by default for new clusters running GKE 1.27 or later, but it can be turned off outright, and a cluster that was never configured for it reports no mode at all. This check requires the mode to be `BASIC` or `ENTERPRISE`. A cluster reporting `DISABLED`, and a cluster whose mode the API leaves at the unset `MODE_UNSPECIFIED` value, both fail. On an existing cluster, `gcloud container clusters update` with `--security-posture=standard` selects the same basic tier that the API and Terraform call `BASIC`.
 
         **Why this matters**
 
-        Automated scanning finds known CVEs in running container images without anyone having to initiate it, which closes the gap between a deployment and awareness of what it shipped.
+        Automated auditing finds insecure workload configurations without anyone having to initiate it, which closes the gap between a deployment and awareness of how it was set up. Security Posture flags concerns such as privileged containers, containers running as root, and missing resource limits, and it maps each finding to the GKE hardening guidance that addresses it.
 
-        That awareness buys time. Early detection of an exploitable vulnerability gives the team a window to rebuild and redeploy the affected image before an attacker gets there, and Security Posture goes further than a raw CVE list by surfacing hardening guidance aligned with GKE best practices.
+        That awareness buys time. Early detection of a weak workload configuration gives the team a window to correct the manifest and redeploy before an attacker finds it.
 
-        During an incident, the findings give responders a current view of which vulnerabilities were present at the time, which accelerates triage and containment rather than starting the assessment from scratch.
+        During an incident, the findings give responders a current view of which workloads were misconfigured at the time, which accelerates triage and containment rather than starting the assessment from scratch.
 
-        Continuous vulnerability management is also an explicit requirement in many security frameworks, and a disabled scanner leaves a gap that periodic manual processes rarely fill reliably.
+        Continuous configuration monitoring is also an explicit requirement in many security frameworks, and a disabled scanner leaves a gap that periodic manual reviews rarely fill reliably.
+
+        **Workload vulnerability scanning is not assessed**
+
+        Google has retired both tiers of GKE workload vulnerability scanning. The standard container OS tier shut down on July 31, 2025, and Advanced Vulnerability Insights shut down on June 16, 2026. Scanning is now disabled in clusters that used it and the console no longer offers the setting, so this check does not look at `vulnerabilityMode`. To keep scanning container images for known vulnerabilities, use Artifact Analysis or Security Command Center vulnerability assessment instead.
       audit: |
         ### Audit via Console
 
         1. Go to the **Kubernetes Engine > Clusters** page in the Google Cloud Console.
         2. Select a cluster and navigate to the **Security** tab.
-        3. Review the **Security posture** setting and the **Workload vulnerability scanning** setting.
+        3. Review the **Security posture** setting.
 
-        A passing GKE cluster shows Security posture as **Standard** or **Enterprise** and workload vulnerability scanning as enabled. A failing cluster shows Security posture as **Disabled** or workload vulnerability scanning as disabled.
+        A passing GKE cluster shows Security posture as **Standard** or **Enterprise**. A failing cluster shows **Disabled**, or shows nothing because the setting was never applied.
 
         ### Audit via CLI
 
-        1. List GKE clusters and their security posture configuration:
+        1. List GKE clusters and their security posture mode:
 
         ```bash
         gcloud container clusters list \
-          --format="table(name,location,securityPostureConfig.mode,securityPostureConfig.vulnerabilityMode)"
+          --format="table(name,location,securityPostureConfig.mode)"
         ```
 
-        A passing GKE cluster returns a `MODE` value other than `DISABLED` and a `VULNERABILITY_MODE` value other than `VULNERABILITY_DISABLED`. A failing cluster returns `DISABLED` for either field.
+        A passing GKE cluster returns `BASIC` or `ENTERPRISE` in the `MODE` column. A failing cluster returns `DISABLED`, or leaves the column empty because the API reports no mode.
       remediation:
         - id: terraform
           desc: |
-            To ensure GKE clusters have Security Posture enabled in Terraform, enable Security Posture with vulnerability scanning:
+            To ensure GKE clusters have Security Posture enabled in Terraform, set the security posture mode explicitly:
 
             ```hcl
             resource "google_container_cluster" "example" {
@@ -21469,8 +21473,7 @@ queries:
               location = "us-central1"
 
               security_posture_config {
-                mode               = "BASIC"
-                vulnerability_mode = "VULNERABILITY_BASIC"
+                mode = "BASIC"
               }
             }
             ```
@@ -21483,8 +21486,7 @@ queries:
             3. Select **Edit**.
             4. Under **Security**, find **Security posture**.
             5. Set the mode to **Basic** or **Enterprise**.
-            6. Enable **Workload vulnerability scanning**.
-            7. Select **Save**.
+            6. Select **Save**.
         - id: cli
           desc: |
             To ensure GKE clusters have Security Posture enabled using the Google Cloud CLI, enable Security Posture on an existing cluster:
@@ -21492,21 +21494,21 @@ queries:
             ```bash
             gcloud container clusters update CLUSTER_NAME \
               --location=LOCATION \
-              --security-posture=standard \
-              --workload-vulnerability-scanning=standard
+              --security-posture=standard
             ```
 
-            The gcloud value `standard` selects the same basic tier that the API and Terraform call `BASIC` (`security_posture_config.mode = "BASIC"`). The value names differ between gcloud and the API or Terraform, but they configure the equivalent tier.
+            The gcloud value `standard` selects the same basic tier that the API and Terraform call `BASIC`. The value names differ between gcloud and the API or Terraform, but they configure the equivalent tier.
     refs:
       - url: https://docs.cloud.google.com/kubernetes-engine/docs/concepts/about-security-posture-dashboard
         title: GKE Security Posture overview
       - url: https://docs.cloud.google.com/kubernetes-engine/docs/how-to/protect-workload-configuration
         title: Protect workload configuration
+      - url: https://docs.cloud.google.com/kubernetes-engine/docs/deprecations/vulnerability-scanning-gkee
+        title: Vulnerability scanning removal from GKE
   - uid: mondoo-gcp-security-gke-security-posture-enabled-gcp
     filters: asset.platform == 'gcp-gke-cluster'
     mql: |
-      gcp.project.gkeService.cluster.securityPostureConfig.mode != "DISABLED"
-      gcp.project.gkeService.cluster.securityPostureConfig.vulnerabilityMode != "VULNERABILITY_DISABLED"
+      gcp.project.gkeService.cluster.securityPostureConfig.mode == /^(BASIC|ENTERPRISE)$/
   - uid: mondoo-gcp-security-gke-security-posture-enabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
@@ -21514,8 +21516,7 @@ queries:
       terraform.resources('google_container_cluster').all(
         blocks.where(type == 'security_posture_config') != empty &&
         blocks.where(type == 'security_posture_config').all(
-          arguments.mode != "DISABLED" &&
-          arguments.vulnerability_mode != "VULNERABILITY_DISABLED"
+          arguments.mode == /^(BASIC|ENTERPRISE)$/
         )
       )
   - uid: mondoo-gcp-security-gke-security-posture-enabled-terraform-plan
@@ -21525,8 +21526,7 @@ queries:
       terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
         change.after['security_posture_config'] != empty &&
         change.after['security_posture_config'].any(
-          _['mode'] != "DISABLED" &&
-          _['vulnerability_mode'] != "VULNERABILITY_DISABLED"
+          _['mode'] == /^(BASIC|ENTERPRISE)$/
         )
       )
   - uid: mondoo-gcp-security-gke-security-posture-enabled-terraform-state
@@ -21536,8 +21536,7 @@ queries:
       terraform.state.resources.where(type == 'google_container_cluster').all(
         values['security_posture_config'] != empty &&
         values['security_posture_config'].any(
-          _['mode'] != "DISABLED" &&
-          _['vulnerability_mode'] != "VULNERABILITY_DISABLED"
+          _['mode'] == /^(BASIC|ENTERPRISE)$/
         )
       )
   - uid: mondoo-gcp-security-vpn-tunnels-use-ikev2

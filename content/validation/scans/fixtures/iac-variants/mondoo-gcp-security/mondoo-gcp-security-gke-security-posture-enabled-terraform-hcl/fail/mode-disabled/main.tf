@@ -6,7 +6,6 @@ resource "google_container_cluster" "primary" {
   initial_node_count = 1
 
   security_posture_config {
-    mode               = "DISABLED"
-    vulnerability_mode = "VULNERABILITY_BASIC"
+    mode = "DISABLED"
   }
 }
