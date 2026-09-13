@@ -11,6 +11,9 @@ resource "okta_policy_mfa_default" "example" {
   okta_email = {
     enroll = "NOT_ALLOWED"
   }
+  okta_call = {
+    enroll = "NOT_ALLOWED"
+  }
   phone_number = {
     enroll = "NOT_ALLOWED"
   }
