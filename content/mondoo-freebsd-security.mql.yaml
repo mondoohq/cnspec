@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-freebsd-security
     name: Mondoo FreeBSD Security
-    version: 1.2.4
+    version: 1.2.5
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -421,11 +421,25 @@ queries:
           desc: |
             **Using the CLI**
 
-            Disable crash dump device:
+            The `dumpdev` variable in `/etc/rc.conf` names the device the kernel writes a crash dump to. The `dumpon` rc script reads it once at boot, so changing it alone leaves the running kernel with its dump device configured until the next reboot.
 
-            ```bash
-            sysrc dumpdev="NO"
-            ```
+            1. Stop the kernel from saving crash dumps at boot:
+
+                ```bash
+                sysrc dumpdev="NO"
+                ```
+
+            2. Remove the dump device from the running kernel:
+
+                ```bash
+                dumpon off
+                ```
+
+            3. Confirm that no dump device remains. The command prints `/dev/null` when none is configured:
+
+                ```bash
+                dumpon -l
+                ```
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -436,6 +450,10 @@ queries:
 
             echo "Disabling crash dump storage..."
             sysrc dumpdev="NO"
+
+            # rc.conf is only read at boot, so also clear the dump device
+            # configured in the running kernel.
+            dumpon off
 
             echo "Crash dump storage disabled."
             ```
@@ -457,17 +475,31 @@ queries:
                   community.general.sysrc:
                     name: dumpdev
                     value: 'NO'
+                  notify: Clear the running dump device
+
+              handlers:
+                - name: Clear the running dump device
+                  ansible.builtin.command: dumpon off
+                  changed_when: true
             ```
+
+            The handler runs `dumpon off` because `/etc/rc.conf` is only read at boot, and the running kernel otherwise keeps its dump device until the next reboot.
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to stop the kernel from writing a crash dump device:
+            Use this Chef Infra recipe code to stop the kernel from writing crash dumps. `sysrc` changes the setting applied at boot, and `dumpon off` clears the dump device the running kernel already has:
 
             ```ruby
+            execute 'clear the running dump device' do
+              command 'dumpon off'
+              action :nothing
+            end
+
             execute 'set dumpdev in rc.conf' do
               command 'sysrc dumpdev=NO'
               not_if 'sysrc -n dumpdev | grep -qx NO'
+              notifies :run, 'execute[clear the running dump device]', :immediately
             end
             ```
   - uid: mondoo-freebsd-security-ip-forwarding-is-disabled
@@ -517,6 +549,8 @@ queries:
           desc: |
             **Using the CLI**
 
+            **Do not apply this to a host that routes traffic.** Gateways, firewalls, and hosts that route for VNET jails or virtual machines stop passing traffic between networks as soon as forwarding is off.
+
             1. Disable forwarding immediately:
 
                 ```bash
@@ -530,9 +564,20 @@ queries:
                 net.inet.ip.forwarding=0
                 net.inet6.ip6.forwarding=0
                 ```
+
+            3. Turn off the gateway settings in `/etc/rc.conf`:
+
+                ```bash
+                sysrc gateway_enable="NO"
+                sysrc ipv6_gateway_enable="NO"
+                ```
+
+                The `routing` rc script sets both forwarding parameters from `gateway_enable` and `ipv6_gateway_enable` every time it starts. If either is still `YES`, the next `service routing restart` turns forwarding back on.
         - id: sh
           desc: |
             **Using a Shell Script**
+
+            **Do not apply this to a host that routes traffic.** Gateways, firewalls, and hosts that route for VNET jails or virtual machines stop passing traffic between networks as soon as forwarding is off.
 
             ```sh
             #!/bin/sh
@@ -551,6 +596,11 @@ queries:
               fi
             done
 
+            # The routing rc script sets both parameters from these rc.conf
+            # variables whenever it starts.
+            sysrc gateway_enable="NO"
+            sysrc ipv6_gateway_enable="NO"
+
             echo "IP forwarding disabled."
             ```
         - id: ansible
@@ -559,6 +609,8 @@ queries:
 
             1. Add the following tasks to a playbook targeting the FreeBSD host.
             2. Run the playbook.
+
+            **Do not apply this to a host that routes traffic.** Gateways, firewalls, and hosts that route for VNET jails or virtual machines stop passing traffic between networks as soon as forwarding is off.
 
             ```yaml
             ---
@@ -576,14 +628,33 @@ queries:
                   loop:
                     - net.inet.ip.forwarding
                     - net.inet6.ip6.forwarding
+
+                - name: Turn off the rc.conf gateway settings
+                  community.general.sysrc:
+                    name: "{{ item }}"
+                    value: 'NO'
+                  loop:
+                    - gateway_enable
+                    - ipv6_gateway_enable
             ```
+
+            The second task matters because the `routing` rc script sets both forwarding parameters from `gateway_enable` and `ipv6_gateway_enable` whenever it starts, so leaving either at `YES` turns forwarding back on.
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to disable IP forwarding. Skip this on hosts that route traffic, such as gateways and jail hosts:
+            **Do not apply this to a host that routes traffic.** Gateways, firewalls, and hosts that route for VNET jails or virtual machines stop passing traffic between networks as soon as forwarding is off.
+
+            Use this Chef Infra recipe code to disable IP forwarding. The recipe also sets `gateway_enable` and `ipv6_gateway_enable` to `NO`, because the `routing` rc script sets both forwarding parameters from them whenever it starts:
 
             ```ruby
+            %w(gateway_enable ipv6_gateway_enable).each do |rcvar|
+              execute "set #{rcvar} in rc.conf" do
+                command "sysrc #{rcvar}=NO"
+                not_if "sysrc -n #{rcvar} | grep -qix no"
+              end
+            end
+
             sysctl_conf = '/etc/sysctl.conf'
 
             execute 'reload sysctl settings' do
@@ -816,6 +887,14 @@ queries:
                 net.inet.icmp.drop_redirect=1
                 net.inet6.icmp6.rediraccept=0
                 ```
+
+            3. Set the matching rc.conf variable:
+
+                ```bash
+                sysrc icmp_drop_redirect="YES"
+                ```
+
+                The `routing` rc script writes `net.inet.icmp.drop_redirect` from `icmp_drop_redirect` every time it starts. The default value `auto` resolves to `NO` on a host that runs no routing daemon, so without this step the next `service routing restart` sets the parameter back to `0`.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -836,6 +915,10 @@ queries:
                 echo "$param" >> /etc/sysctl.conf
               fi
             done
+
+            # The routing rc script writes net.inet.icmp.drop_redirect from this
+            # variable whenever it starts, and its default of auto means NO.
+            sysrc icmp_drop_redirect="YES"
 
             echo "ICMP redirect rejection configured."
             ```
@@ -862,14 +945,26 @@ queries:
                   loop:
                     - { name: net.inet.icmp.drop_redirect, value: '1' }
                     - { name: net.inet6.icmp6.rediraccept, value: '0' }
+
+                - name: Keep the routing rc script from re-enabling IPv4 redirects
+                  community.general.sysrc:
+                    name: icmp_drop_redirect
+                    value: 'YES'
             ```
+
+            The second task is needed because the `routing` rc script writes `net.inet.icmp.drop_redirect` from `icmp_drop_redirect` whenever it starts, and the default value `auto` resolves to `NO` on a host without a routing daemon.
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to drop incoming ICMP redirects:
+            Use this Chef Infra recipe code to drop incoming ICMP redirects. It also sets `icmp_drop_redirect` to `YES`, because the `routing` rc script writes `net.inet.icmp.drop_redirect` from that variable whenever it starts, and the default value `auto` resolves to `NO` on a host without a routing daemon:
 
             ```ruby
+            execute 'set icmp_drop_redirect in rc.conf' do
+              command 'sysrc icmp_drop_redirect=YES'
+              not_if 'sysrc -n icmp_drop_redirect | grep -qix yes'
+            end
+
             sysctl_conf = '/etc/sysctl.conf'
 
             execute 'reload sysctl settings' do
@@ -1208,6 +1303,10 @@ queries:
           desc: |
             **Using the CLI**
 
+            `net.inet6.ip6.accept_rtadv` is the default each network interface copies into its own `accept_rtadv` flag when the interface attaches. Changing the parameter does not clear the flag on interfaces that already have it, and those interfaces keep accepting router advertisements until they are reconfigured.
+
+            **Hosts that take their IPv6 address or default route from router advertisements lose them.** Configure a static IPv6 address and route first on any such host.
+
             1. Disable router advertisements immediately:
 
                 ```bash
@@ -1219,9 +1318,26 @@ queries:
                 ```ini
                 net.inet6.ip6.accept_rtadv=0
                 ```
+
+            3. Clear the flag on every interface that already carries it:
+
+                ```bash
+                for ifn in $(ifconfig -l inet6); do ifconfig "$ifn" inet6 -accept_rtadv; done
+                ```
+
+            4. Remove the rc.conf settings that set the flag again at boot. Delete `accept_rtadv` from every `ifconfig_<interface>_ipv6` line in `/etc/rc.conf`, where `<interface>` is an interface name such as `em0`, and remove `ipv6_cpe_wanif` and the legacy `ipv6_enable` variable if either is set. If `rtsold_enable` is `YES`, stop and disable the router solicitation daemon:
+
+                ```bash
+                service rtsold stop
+                sysrc rtsold_enable="NO"
+                ```
         - id: sh
           desc: |
             **Using a Shell Script**
+
+            **Hosts that take their IPv6 address or default route from router advertisements lose them.** Configure a static IPv6 address and route first on any such host.
+
+            The script clears the `accept_rtadv` flag on interfaces that are already attached, because changing the parameter only affects interfaces that attach later. Remove `accept_rtadv` from the `ifconfig_<interface>_ipv6` lines in `/etc/rc.conf` by hand, or the flag returns at the next boot.
 
             ```sh
             #!/bin/sh
@@ -1236,6 +1352,10 @@ queries:
               echo 'net.inet6.ip6.accept_rtadv=0' >> /etc/sysctl.conf
             fi
 
+            for ifn in $(ifconfig -l inet6); do
+              ifconfig "$ifn" inet6 -accept_rtadv
+            done
+
             echo "IPv6 router advertisements disabled."
             ```
         - id: ansible
@@ -1244,6 +1364,8 @@ queries:
 
             1. Add the following task to a playbook targeting the FreeBSD host.
             2. Run the playbook.
+
+            **Hosts that take their IPv6 address or default route from router advertisements lose them.** Configure a static IPv6 address and route first on any such host.
 
             ```yaml
             ---
@@ -1258,14 +1380,31 @@ queries:
                     value: '0'
                     sysctl_file: /etc/sysctl.conf
                     reload: true
+                  notify: Clear accept_rtadv on attached interfaces
+
+              handlers:
+                - name: Clear accept_rtadv on attached interfaces
+                  ansible.builtin.shell: for ifn in $(ifconfig -l inet6); do ifconfig "$ifn" inet6 -accept_rtadv; done
+                  changed_when: true
             ```
+
+            The handler clears the `accept_rtadv` flag on interfaces that are already attached, because the parameter only sets the default for interfaces that attach later. Remove `accept_rtadv` from the `ifconfig_<interface>_ipv6` lines in `/etc/rc.conf` as well, or the flag returns at the next boot.
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to reject IPv6 router advertisements. Skip this on hosts that rely on SLAAC for their IPv6 address:
+            **Hosts that take their IPv6 address or default route from router advertisements lose them.** Skip this on hosts that rely on SLAAC, or configure a static IPv6 address and route first.
+
+            Use this Chef Infra recipe code to reject IPv6 router advertisements. The `execute` resource clears the `accept_rtadv` flag on interfaces that are already attached, because the parameter only sets the default for interfaces that attach later.
+
+            Remove `accept_rtadv` from the `ifconfig_<interface>_ipv6` lines in `/etc/rc.conf` as well, where `<interface>` is an interface name such as `em0`, or the flag returns at the next boot:
 
             ```ruby
+            execute 'clear accept_rtadv on attached interfaces' do
+              command 'for ifn in $(ifconfig -l inet6); do ifconfig "$ifn" inet6 -accept_rtadv; done'
+              action :nothing
+            end
+
             sysctl_conf = '/etc/sysctl.conf'
 
             execute 'reload sysctl settings' do
@@ -1292,6 +1431,7 @@ queries:
                     ::File.read(sysctl_conf).match?(/^#{pattern}\s*=\s*#{Regexp.escape(value)}\s*$/)
                 end
                 notifies :run, 'execute[reload sysctl settings]', :delayed
+                notifies :run, 'execute[clear accept_rtadv on attached interfaces]', :delayed
               end
             end
             ```
@@ -1489,7 +1629,7 @@ queries:
             sysrc inetd_enable="NO"
             ```
 
-            Stop before you disable. Once `inetd_enable` is `NO`, `service inetd stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot.
+            **Stop before you disable.** Once `inetd_enable` is `NO`, `service inetd stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -1732,7 +1872,7 @@ queries:
             sysrc nis_server_enable="NO"
             ```
 
-            Stop before you disable. Once `nis_server_enable` is `NO`, `service ypserv stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot.
+            **Stop before you disable.** Once `nis_server_enable` is `NO`, `service ypserv stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -1835,21 +1975,44 @@ queries:
           desc: |
             **Using the CLI**
 
-            Stop `rpcbind`, then disable it so it does not come back at boot:
+            1. Find the services that still depend on `rpcbind`:
 
-            ```bash
-            service rpcbind stop
-            sysrc rpcbind_enable="NO"
-            ```
+                ```bash
+                sysrc -n nfs_server_enable mountd_enable nis_server_enable nis_client_enable rpc_statd_enable rpc_lockd_enable
+                ```
 
-            Stop before you disable. Once `rpcbind_enable` is `NO`, `service rpcbind stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot.
+                Each of these rc scripts force-starts `rpcbind` at boot when its own variable is `YES`, even with `rpcbind_enable` set to `NO`. A remaining `YES` brings `rpcbind` back on the next reboot and the check fails again.
+
+            2. Stop and disable each dependent service this host does not need, for example `service mountd stop` followed by `sysrc mountd_enable="NO"`. If one of them is required, the host needs `rpcbind` and this check does not apply to it.
+
+            3. Stop `rpcbind`, then disable it so it does not come back at boot:
+
+                ```bash
+                service rpcbind stop
+                sysrc rpcbind_enable="NO"
+                ```
+
+            **Stop before you disable.** Once `rpcbind_enable` is `NO`, `service rpcbind stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot.
+
+            **RPC services on this host stop answering as soon as `rpcbind` stops.** That includes an NFS server, NIS, and NFS file locking through `rpc.lockd` and `rpc.statd`.
         - id: sh
           desc: |
             **Using a Shell Script**
 
+            The script stops without changing anything if a service that force-starts `rpcbind` at boot is still enabled, because `rpcbind` would come back on the next reboot.
+
             ```sh
             #!/bin/sh
             set -e
+
+            for rcvar in nfs_server_enable mountd_enable nis_server_enable nis_client_enable rpc_statd_enable rpc_lockd_enable; do
+              case "$(sysrc -n "$rcvar")" in
+                [Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Oo][Nn]|1)
+                  echo "$rcvar is enabled and starts rpcbind at boot. Disable that service first." >&2
+                  exit 1
+                  ;;
+              esac
+            done
 
             echo "Disabling rpcbind..."
             sysrc rpcbind_enable="NO"
@@ -1864,6 +2027,8 @@ queries:
             1. Add the following tasks to a playbook targeting the FreeBSD host.
             2. Run the playbook.
 
+            The playbook fails before changing anything if a service that force-starts `rpcbind` at boot is still enabled, because `rpcbind` would come back on the next reboot.
+
             ```yaml
             ---
             - name: Disable rpcbind in rc.conf
@@ -1871,6 +2036,16 @@ queries:
               become: true
 
               tasks:
+                - name: Read the rc.conf variables of services that start rpcbind
+                  ansible.builtin.command: sysrc -n nfs_server_enable mountd_enable nis_server_enable nis_client_enable rpc_statd_enable rpc_lockd_enable
+                  register: rpcbind_dependents
+                  changed_when: false
+
+                - name: Fail when a service that starts rpcbind is still enabled
+                  ansible.builtin.fail:
+                    msg: "A service that force-starts rpcbind at boot is still enabled. Disable it first."
+                  when: rpcbind_dependents.stdout_lines | map('upper') | select('equalto', 'YES') | list | length > 0
+
                 - name: Disable rpcbind in rc.conf
                   community.general.sysrc:
                     name: rpcbind_enable
@@ -1885,7 +2060,7 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to stop and disable rpcbind:
+            Use this Chef Infra recipe code to stop and disable rpcbind. Disable the NFS server, `mountd`, NIS, `rpc.statd`, and `rpc.lockd` first if this host does not need them, because each of those rc scripts force-starts `rpcbind` at boot while its own variable is `YES`:
 
             ```ruby
             service 'rpcbind' do
@@ -1958,9 +2133,9 @@ queries:
             sysrc mountd_enable="NO"
             ```
 
-            Stop before you disable. Once `nfs_server_enable` is `NO`, `service nfsd stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot. The same applies to `mountd` and `mountd_enable`.
+            **Stop before you disable.** Once `nfs_server_enable` is `NO`, `service nfsd stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot. The same applies to `mountd` and `mountd_enable`.
 
-            If no other RPC services are needed on this host, also disable `rpcbind` using the dedicated rpcbind check in this policy. Leave `rpcbind` running only if another service requires it.
+            If no other RPC services are needed on this host, also disable `rpcbind` by following the remediation for the check that `rpcbind` is not enabled. Leave `rpcbind` running only if another service requires it.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -1991,25 +2166,35 @@ queries:
               become: true
 
               tasks:
-                - name: Disable NFS server in rc.conf
+                - name: Disable the NFS server and mountd in rc.conf
                   community.general.sysrc:
-                    name: nfs_server_enable
+                    name: "{{ item }}"
                     value: 'NO'
+                  loop:
+                    - nfs_server_enable
+                    - mountd_enable
 
-                - name: Stop the nfsd service
+                - name: Stop nfsd and mountd
                   ansible.builtin.service:
-                    name: nfsd
+                    name: "{{ item }}"
                     state: stopped
+                  loop:
+                    - nfsd
+                    - mountd
             ```
+
+            The playbook stops `mountd` as well as `nfsd`, because `mountd` keeps answering mount requests for the directories in `/etc/exports` on its own.
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to stop and disable the NFS daemon:
+            Use this Chef Infra recipe code to stop and disable the NFS daemon and `mountd`, which keeps answering mount requests for the directories in `/etc/exports` on its own:
 
             ```ruby
-            service 'nfsd' do
-              action %i(stop disable)
+            %w(nfsd mountd).each do |svc|
+              service svc do
+                action %i(stop disable)
+              end
             end
             ```
   - uid: mondoo-freebsd-security-snmp-server-is-not-enabled
@@ -2065,9 +2250,9 @@ queries:
             sysrc snmpd_enable="NO"
             ```
 
-            Stop before you disable. Once `snmpd_enable` is `NO`, `service snmpd stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot.
+            **Stop before you disable.** Once `snmpd_enable` is `NO`, `service snmpd stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot.
 
-            Or remove the package entirely:
+            Or remove the package entirely. Stop `snmpd` with the command above first, because `pkg delete` removes the files but leaves a running daemon listening until it is stopped or the host reboots:
 
             ```bash
             pkg delete net-snmp
@@ -2313,7 +2498,7 @@ queries:
 
             The cyrus-imapd port installs its rc script as `imapd` while keeping `cyrus_imapd_enable` as the rc.conf variable, so the two names differ by design.
 
-            Stop before you disable. Once the rc variable is `NO`, `service ... stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot.
+            **Stop before you disable.** Once the rc variable is `NO`, `service ... stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -2427,9 +2612,9 @@ queries:
             sysrc squid_enable="NO"
             ```
 
-            Stop before you disable. Once `squid_enable` is `NO`, `service squid stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot.
+            **Stop before you disable.** Once `squid_enable` is `NO`, `service squid stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot.
 
-            Or remove the package entirely:
+            Or remove the package entirely. Stop `squid` with the command above first, because `pkg delete` removes the files but leaves a running daemon listening until it is stopped or the host reboots:
 
             ```bash
             pkg delete squid
@@ -2535,7 +2720,9 @@ queries:
             inet_interfaces = localhost
             ```
 
-            Then restart Postfix:
+            `localhost` binds Postfix to the loopback addresses only. `loopback-only`, `127.0.0.1`, and `::1` also satisfy the check, alone or together. Any other address, or `all`, fails it. Postfix still delivers mail it sends from this host to remote servers, because the setting only controls where it listens.
+
+            Then restart Postfix. A reload does not apply a change to `inet_interfaces`:
 
             ```bash
             service postfix restart
@@ -2990,13 +3177,15 @@ queries:
 
         Weak ciphers can be exploited to decrypt SSH traffic. CBC-mode ciphers are vulnerable to plaintext recovery attacks, and legacy ciphers like 3DES have insufficient key lengths for modern security requirements. Only authenticated encryption modes (GCM) and strong stream ciphers (CTR, ChaCha20) should be used.
       audit: |
-        To verify the SSH ciphers in effect, run the following command:
+        To verify the SSH ciphers, inspect the SSH server configuration file:
 
         ```bash
-        sshd -T | grep -i '^ciphers'
+        grep -i '^[[:space:]]*Ciphers' /etc/ssh/sshd_config
         ```
 
-        If only strong ciphers (`chacha20-poly1305`, AES-GCM, and AES-CTR variants) are listed, the check passes. If any weak cipher such as 3DES, Blowfish, CAST128, or a CBC-mode cipher appears, the check fails.
+        If a `Ciphers` line is returned and every cipher on it is one of `chacha20-poly1305@openssh.com`, `aes256-gcm@openssh.com`, `aes128-gcm@openssh.com`, `aes256-ctr`, `aes192-ctr`, or `aes128-ctr`, the check passes. If any other cipher appears, or no line is returned, the check fails.
+
+        Do not audit this with `sshd -T`. The check reads the configuration file, so a missing `Ciphers` line fails even when the cipher list OpenSSH applies by default would pass.
       remediation:
         - id: cli
           desc: |
@@ -3007,6 +3196,8 @@ queries:
             ```text
             Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
             ```
+
+            The check accepts only the six ciphers on this line. You can remove ciphers from the list, but adding any other cipher, including a CBC-mode one, fails the check. The line has to be present, because the check reads the configuration file rather than the list OpenSSH uses by default.
 
             Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
@@ -3027,15 +3218,22 @@ queries:
             CIPHERS="chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr"
 
             echo "Configuring strong SSH ciphers..."
+            cp -p "$SSHD_CONFIG" "${SSHD_CONFIG}.bak"
             if grep -q '^Ciphers' "$SSHD_CONFIG" 2>/dev/null; then
               sed -i '' "s/^Ciphers.*/Ciphers ${CIPHERS}/" "$SSHD_CONFIG"
             else
               echo "Ciphers ${CIPHERS}" >> "$SSHD_CONFIG"
             fi
 
-            # Validate the configuration before restarting so a syntax error
-            # cannot stop sshd and lock out future logins.
-            sshd -t && service sshd restart
+            # Validate the edited file before restarting. If sshd rejects it,
+            # put the original back so a later restart or reboot still starts
+            # sshd, and stop without restarting.
+            if ! sshd -t -f "$SSHD_CONFIG"; then
+              cp -p "${SSHD_CONFIG}.bak" "$SSHD_CONFIG"
+              echo "sshd -t rejected the new configuration. The original file was restored." >&2
+              exit 1
+            fi
+            service sshd restart
 
             echo "Strong SSH ciphers configured."
             ```
@@ -3045,6 +3243,8 @@ queries:
 
             1. Add the following task to a playbook targeting the FreeBSD host.
             2. Run the playbook.
+
+            The `validate` option runs `sshd -t` against the edited copy of `sshd_config`, and Ansible writes the file only if that copy passes. A configuration `sshd` cannot parse would otherwise stop the service from starting again and lock out new SSH logins.
 
             ```yaml
             ---
@@ -3058,6 +3258,7 @@ queries:
                     path: /etc/ssh/sshd_config
                     regexp: '^#?Ciphers'
                     line: 'Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr'
+                    validate: /usr/sbin/sshd -t -f %s
                   notify: Restart sshd
 
               handlers:
@@ -3070,6 +3271,8 @@ queries:
           desc: |
             **Using Chef Infra**
 
+            **An invalid SSH server configuration locks out remote access.** The `verify` property runs `sshd -t` against the edited copy of `sshd_config`, and Chef writes the file only if that copy passes. The `only_if` guard on the service runs `sshd -t` again before the restart and skips it if the complete configuration fails.
+
             Use this Chef Infra recipe code to restrict SSH to strong ciphers:
 
             ```ruby
@@ -3077,20 +3280,22 @@ queries:
 
             service 'sshd' do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'Ciphers' => 'chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, 'service[sshd]', :delayed
               end
@@ -3146,6 +3351,8 @@ queries:
             MACs umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,umac-128@openssh.com,hmac-sha2-256,hmac-sha2-512
             ```
 
+            The check accepts only the six MAC algorithms on this line. You can remove algorithms from the list, but adding any other one fails the check. OpenSSH's default list includes `umac-64` and `hmac-sha1` algorithms, so leaving the directive out fails as well.
+
             Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
@@ -3165,15 +3372,22 @@ queries:
             MACS="umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,umac-128@openssh.com,hmac-sha2-256,hmac-sha2-512"
 
             echo "Configuring strong SSH MAC algorithms..."
+            cp -p "$SSHD_CONFIG" "${SSHD_CONFIG}.bak"
             if grep -q '^MACs' "$SSHD_CONFIG" 2>/dev/null; then
               sed -i '' "s/^MACs.*/MACs ${MACS}/" "$SSHD_CONFIG"
             else
               echo "MACs ${MACS}" >> "$SSHD_CONFIG"
             fi
 
-            # Validate the configuration before restarting so a syntax error
-            # cannot stop sshd and lock out future logins.
-            sshd -t && service sshd restart
+            # Validate the edited file before restarting. If sshd rejects it,
+            # put the original back so a later restart or reboot still starts
+            # sshd, and stop without restarting.
+            if ! sshd -t -f "$SSHD_CONFIG"; then
+              cp -p "${SSHD_CONFIG}.bak" "$SSHD_CONFIG"
+              echo "sshd -t rejected the new configuration. The original file was restored." >&2
+              exit 1
+            fi
+            service sshd restart
 
             echo "Strong SSH MAC algorithms configured."
             ```
@@ -3183,6 +3397,8 @@ queries:
 
             1. Add the following task to a playbook targeting the FreeBSD host.
             2. Run the playbook.
+
+            The `validate` option runs `sshd -t` against the edited copy of `sshd_config`, and Ansible writes the file only if that copy passes. A configuration `sshd` cannot parse would otherwise stop the service from starting again and lock out new SSH logins.
 
             ```yaml
             ---
@@ -3196,6 +3412,7 @@ queries:
                     path: /etc/ssh/sshd_config
                     regexp: '^#?MACs'
                     line: 'MACs umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,umac-128@openssh.com,hmac-sha2-256,hmac-sha2-512'
+                    validate: /usr/sbin/sshd -t -f %s
                   notify: Restart sshd
 
               handlers:
@@ -3208,6 +3425,8 @@ queries:
           desc: |
             **Using Chef Infra**
 
+            **An invalid SSH server configuration locks out remote access.** The `verify` property runs `sshd -t` against the edited copy of `sshd_config`, and Chef writes the file only if that copy passes. The `only_if` guard on the service runs `sshd -t` again before the restart and skips it if the complete configuration fails.
+
             Use this Chef Infra recipe code to restrict SSH to strong MAC algorithms:
 
             ```ruby
@@ -3215,20 +3434,22 @@ queries:
 
             service 'sshd' do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'MACs' => 'umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,umac-128@openssh.com,hmac-sha2-256,hmac-sha2-512' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, 'service[sshd]', :delayed
               end
@@ -3284,6 +3505,8 @@ queries:
             KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,curve25519-sha256,diffie-hellman-group18-sha512,diffie-hellman-group16-sha512
             ```
 
+            The check accepts only the five algorithms on this line. You can remove algorithms from the list, but adding any other one fails the check. OpenSSH's default list includes the NIST `ecdh-sha2` curves, so leaving the directive out fails as well.
+
             Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
@@ -3303,15 +3526,22 @@ queries:
             KEXS="sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,curve25519-sha256,diffie-hellman-group18-sha512,diffie-hellman-group16-sha512"
 
             echo "Configuring strong SSH key exchange algorithms..."
+            cp -p "$SSHD_CONFIG" "${SSHD_CONFIG}.bak"
             if grep -q '^KexAlgorithms' "$SSHD_CONFIG" 2>/dev/null; then
               sed -i '' "s/^KexAlgorithms.*/KexAlgorithms ${KEXS}/" "$SSHD_CONFIG"
             else
               echo "KexAlgorithms ${KEXS}" >> "$SSHD_CONFIG"
             fi
 
-            # Validate the configuration before restarting so a syntax error
-            # cannot stop sshd and lock out future logins.
-            sshd -t && service sshd restart
+            # Validate the edited file before restarting. If sshd rejects it,
+            # put the original back so a later restart or reboot still starts
+            # sshd, and stop without restarting.
+            if ! sshd -t -f "$SSHD_CONFIG"; then
+              cp -p "${SSHD_CONFIG}.bak" "$SSHD_CONFIG"
+              echo "sshd -t rejected the new configuration. The original file was restored." >&2
+              exit 1
+            fi
+            service sshd restart
 
             echo "Strong SSH key exchange algorithms configured."
             ```
@@ -3321,6 +3551,8 @@ queries:
 
             1. Add the following task to a playbook targeting the FreeBSD host.
             2. Run the playbook.
+
+            The `validate` option runs `sshd -t` against the edited copy of `sshd_config`, and Ansible writes the file only if that copy passes. A configuration `sshd` cannot parse would otherwise stop the service from starting again and lock out new SSH logins.
 
             ```yaml
             ---
@@ -3342,6 +3574,7 @@ queries:
                     path: /etc/ssh/sshd_config
                     regexp: '^#?KexAlgorithms'
                     line: "KexAlgorithms {{ ssh_kex_algorithms | join(',') }}"
+                    validate: /usr/sbin/sshd -t -f %s
                   notify: Restart sshd
 
               handlers:
@@ -3354,6 +3587,8 @@ queries:
           desc: |
             **Using Chef Infra**
 
+            **An invalid SSH server configuration locks out remote access.** The `verify` property runs `sshd -t` against the edited copy of `sshd_config`, and Chef writes the file only if that copy passes. The `only_if` guard on the service runs `sshd -t` again before the restart and skips it if the complete configuration fails.
+
             Use this Chef Infra recipe code to restrict SSH to strong key exchange algorithms:
 
             ```ruby
@@ -3361,20 +3596,22 @@ queries:
 
             service 'sshd' do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'KexAlgorithms' => 'sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,curve25519-sha256,diffie-hellman-group18-sha512,diffie-hellman-group16-sha512' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, 'service[sshd]', :delayed
               end
@@ -3419,23 +3656,29 @@ queries:
 
         Before applying `no`, confirm that an administrative account exists, that it can reach the host, and that it is a member of `wheel` so it can escalate. Locking out root without a verified path back in is a common way to lose access to a system.
       audit: |
-        To verify the SSH root login setting in effect, run the following command:
+        To verify the SSH root login setting, inspect the SSH server configuration file:
 
         ```bash
-        sshd -T | grep -i '^permitrootlogin'
+        grep -i '^[[:space:]]*PermitRootLogin' /etc/ssh/sshd_config
         ```
 
-        If the value is `no`, `prohibit-password`, or `without-password`, the check passes. If the value is `yes`, the check fails.
+        If the value is `no`, `prohibit-password`, or `without-password`, the check passes. If the value is `yes`, or no line is returned, the check fails.
+
+        Do not audit this with `sshd -T`. The check reads the configuration file, so a missing `PermitRootLogin` line fails even though `sshd -T` prints the secure built-in default.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
+
+            **Confirm another way into root before you apply this.** Log in as an administrative account that is a member of `wheel` and check that it can escalate with `su` or `sudo`. Without one, disabling root login removes your only remote path to root.
 
             Edit `/etc/ssh/sshd_config` and set:
 
             ```text
             PermitRootLogin no
             ```
+
+            `no` blocks every root login over SSH. `prohibit-password` also satisfies the check and keeps key-based root login for automation that needs it, while refusing passwords. The older synonym `without-password` is accepted too. The check reads the configuration file, so write the line even though OpenSSH applies a default when it is absent.
 
             Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
@@ -3448,6 +3691,8 @@ queries:
           desc: |
             **Using a Shell Script**
 
+            **Confirm another way into root before you run this.** An account in the `wheel` group must be able to log in and escalate with `su` or `sudo`, or the script removes your only remote path to root.
+
             ```sh
             #!/bin/sh
             set -e
@@ -3455,6 +3700,7 @@ queries:
             SSHD_CONFIG="/etc/ssh/sshd_config"
 
             echo "Disabling SSH root login..."
+            cp -p "$SSHD_CONFIG" "${SSHD_CONFIG}.bak"
             if grep -q '^PermitRootLogin' "$SSHD_CONFIG" 2>/dev/null; then
               sed -i '' 's/^PermitRootLogin.*/PermitRootLogin no/' "$SSHD_CONFIG"
             elif grep -q '^#PermitRootLogin' "$SSHD_CONFIG" 2>/dev/null; then
@@ -3463,9 +3709,15 @@ queries:
               echo 'PermitRootLogin no' >> "$SSHD_CONFIG"
             fi
 
-            # Validate the configuration before restarting so a syntax error
-            # cannot stop sshd and lock out future logins.
-            sshd -t && service sshd restart
+            # Validate the edited file before restarting. If sshd rejects it,
+            # put the original back so a later restart or reboot still starts
+            # sshd, and stop without restarting.
+            if ! sshd -t -f "$SSHD_CONFIG"; then
+              cp -p "${SSHD_CONFIG}.bak" "$SSHD_CONFIG"
+              echo "sshd -t rejected the new configuration. The original file was restored." >&2
+              exit 1
+            fi
+            service sshd restart
 
             echo "SSH root login disabled."
             ```
@@ -3473,8 +3725,11 @@ queries:
           desc: |
             To disable SSH root login using Ansible:
 
-            1. Add the following task to a playbook targeting the FreeBSD host.
-            2. Run the playbook.
+            1. Confirm that an account in the `wheel` group can log in and escalate with `su` or `sudo`. The playbook removes root's own SSH login, so without that account you lose remote access to root.
+            2. Add the following task to a playbook targeting the FreeBSD host.
+            3. Run the playbook.
+
+            The `validate` option runs `sshd -t` against the edited copy of `sshd_config`, and Ansible writes the file only if that copy passes. A configuration `sshd` cannot parse would otherwise stop the service from starting again and lock out new SSH logins.
 
             ```yaml
             ---
@@ -3488,6 +3743,7 @@ queries:
                     path: /etc/ssh/sshd_config
                     regexp: '^#?PermitRootLogin'
                     line: 'PermitRootLogin no'
+                    validate: /usr/sbin/sshd -t -f %s
                   notify: Restart sshd
 
               handlers:
@@ -3500,27 +3756,33 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to stop root from logging in over SSH. Confirm that an account in the `wheel` group can log in and reach root before you apply it, or you will lock yourself out:
+            **An invalid SSH server configuration locks out remote access.** The `verify` property runs `sshd -t` against the edited copy of `sshd_config`, and Chef writes the file only if that copy passes. The `only_if` guard on the service runs `sshd -t` again before the restart and skips it if the complete configuration fails.
+
+            **Confirm another way into root before you apply this.** An account in the `wheel` group must be able to log in and escalate with `su` or `sudo`, or the recipe removes your only remote path to root.
+
+            Use this Chef Infra recipe code to stop root from logging in over SSH:
 
             ```ruby
             sshd_config = '/etc/ssh/sshd_config'
 
             service 'sshd' do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'PermitRootLogin' => 'no' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, 'service[sshd]', :delayed
               end
@@ -3557,13 +3819,15 @@ queries:
 
         Accounts with empty passwords provide trivial access to any attacker who discovers or guesses the username. SSH should never allow authentication without a password or key.
       audit: |
-        To verify the SSH empty-password setting in effect, run the following command:
+        To verify the SSH empty-password setting, inspect the SSH server configuration file:
 
         ```bash
-        sshd -T | grep -i '^permitemptypasswords'
+        grep -i '^[[:space:]]*PermitEmptyPasswords' /etc/ssh/sshd_config
         ```
 
-        If the value is `no`, the check passes. If the value is `yes`, the check fails.
+        If the value is `no`, the check passes. If the value is `yes`, or no line is returned, the check fails.
+
+        Do not audit this with `sshd -T`. The check reads the configuration file, so a missing `PermitEmptyPasswords` line fails even though `sshd -T` prints the secure built-in default of `no`.
       remediation:
         - id: cli
           desc: |
@@ -3574,6 +3838,8 @@ queries:
             ```text
             PermitEmptyPasswords no
             ```
+
+            Write the line even though OpenSSH already uses `no` when `PermitEmptyPasswords` is absent. The check reads the configuration file and fails until the directive is present there.
 
             Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
@@ -3593,6 +3859,7 @@ queries:
             SSHD_CONFIG="/etc/ssh/sshd_config"
 
             echo "Disabling SSH empty passwords..."
+            cp -p "$SSHD_CONFIG" "${SSHD_CONFIG}.bak"
             if grep -q '^PermitEmptyPasswords' "$SSHD_CONFIG" 2>/dev/null; then
               sed -i '' 's/^PermitEmptyPasswords.*/PermitEmptyPasswords no/' "$SSHD_CONFIG"
             elif grep -q '^#PermitEmptyPasswords' "$SSHD_CONFIG" 2>/dev/null; then
@@ -3601,9 +3868,15 @@ queries:
               echo 'PermitEmptyPasswords no' >> "$SSHD_CONFIG"
             fi
 
-            # Validate the configuration before restarting so a syntax error
-            # cannot stop sshd and lock out future logins.
-            sshd -t && service sshd restart
+            # Validate the edited file before restarting. If sshd rejects it,
+            # put the original back so a later restart or reboot still starts
+            # sshd, and stop without restarting.
+            if ! sshd -t -f "$SSHD_CONFIG"; then
+              cp -p "${SSHD_CONFIG}.bak" "$SSHD_CONFIG"
+              echo "sshd -t rejected the new configuration. The original file was restored." >&2
+              exit 1
+            fi
+            service sshd restart
 
             echo "SSH empty passwords disabled."
             ```
@@ -3613,6 +3886,8 @@ queries:
 
             1. Add the following task to a playbook targeting the FreeBSD host.
             2. Run the playbook.
+
+            The `validate` option runs `sshd -t` against the edited copy of `sshd_config`, and Ansible writes the file only if that copy passes. A configuration `sshd` cannot parse would otherwise stop the service from starting again and lock out new SSH logins.
 
             ```yaml
             ---
@@ -3626,6 +3901,7 @@ queries:
                     path: /etc/ssh/sshd_config
                     regexp: '^#?PermitEmptyPasswords'
                     line: 'PermitEmptyPasswords no'
+                    validate: /usr/sbin/sshd -t -f %s
                   notify: Restart sshd
 
               handlers:
@@ -3638,6 +3914,8 @@ queries:
           desc: |
             **Using Chef Infra**
 
+            **An invalid SSH server configuration locks out remote access.** The `verify` property runs `sshd -t` against the edited copy of `sshd_config`, and Chef writes the file only if that copy passes. The `only_if` guard on the service runs `sshd -t` again before the restart and skips it if the complete configuration fails.
+
             Use this Chef Infra recipe code to reject accounts with an empty password:
 
             ```ruby
@@ -3645,20 +3923,22 @@ queries:
 
             service 'sshd' do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'PermitEmptyPasswords' => 'no' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, 'service[sshd]', :delayed
               end
@@ -3695,13 +3975,15 @@ queries:
 
         Host-based authentication trusts the connecting host rather than the individual user, similar to the insecure `.rhosts` mechanism. An attacker who compromises a trusted host can access all systems that trust it. User-based authentication (passwords or keys) should be used instead.
       audit: |
-        To verify the SSH host-based authentication setting in effect, run the following command:
+        To verify the SSH host-based authentication setting, inspect the SSH server configuration file:
 
         ```bash
-        sshd -T | grep -i '^hostbasedauthentication'
+        grep -i '^[[:space:]]*HostbasedAuthentication' /etc/ssh/sshd_config
         ```
 
-        If the value is `no`, the check passes. If the value is `yes`, the check fails.
+        If the value is `no`, the check passes. If the value is `yes`, or no line is returned, the check fails.
+
+        Do not audit this with `sshd -T`. The check reads the configuration file, so a missing `HostbasedAuthentication` line fails even though `sshd -T` prints the secure built-in default of `no`.
       remediation:
         - id: cli
           desc: |
@@ -3712,6 +3994,8 @@ queries:
             ```text
             HostbasedAuthentication no
             ```
+
+            Write the line even though OpenSSH already uses `no` when `HostbasedAuthentication` is absent. The check reads the configuration file and fails until the directive is present there.
 
             Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
@@ -3731,6 +4015,7 @@ queries:
             SSHD_CONFIG="/etc/ssh/sshd_config"
 
             echo "Disabling SSH host-based authentication..."
+            cp -p "$SSHD_CONFIG" "${SSHD_CONFIG}.bak"
             if grep -q '^HostbasedAuthentication' "$SSHD_CONFIG" 2>/dev/null; then
               sed -i '' 's/^HostbasedAuthentication.*/HostbasedAuthentication no/' "$SSHD_CONFIG"
             elif grep -q '^#HostbasedAuthentication' "$SSHD_CONFIG" 2>/dev/null; then
@@ -3739,9 +4024,15 @@ queries:
               echo 'HostbasedAuthentication no' >> "$SSHD_CONFIG"
             fi
 
-            # Validate the configuration before restarting so a syntax error
-            # cannot stop sshd and lock out future logins.
-            sshd -t && service sshd restart
+            # Validate the edited file before restarting. If sshd rejects it,
+            # put the original back so a later restart or reboot still starts
+            # sshd, and stop without restarting.
+            if ! sshd -t -f "$SSHD_CONFIG"; then
+              cp -p "${SSHD_CONFIG}.bak" "$SSHD_CONFIG"
+              echo "sshd -t rejected the new configuration. The original file was restored." >&2
+              exit 1
+            fi
+            service sshd restart
 
             echo "SSH host-based authentication disabled."
             ```
@@ -3751,6 +4042,8 @@ queries:
 
             1. Add the following task to a playbook targeting the FreeBSD host.
             2. Run the playbook.
+
+            The `validate` option runs `sshd -t` against the edited copy of `sshd_config`, and Ansible writes the file only if that copy passes. A configuration `sshd` cannot parse would otherwise stop the service from starting again and lock out new SSH logins.
 
             ```yaml
             ---
@@ -3764,6 +4057,7 @@ queries:
                     path: /etc/ssh/sshd_config
                     regexp: '^#?HostbasedAuthentication'
                     line: 'HostbasedAuthentication no'
+                    validate: /usr/sbin/sshd -t -f %s
                   notify: Restart sshd
 
               handlers:
@@ -3776,6 +4070,8 @@ queries:
           desc: |
             **Using Chef Infra**
 
+            **An invalid SSH server configuration locks out remote access.** The `verify` property runs `sshd -t` against the edited copy of `sshd_config`, and Chef writes the file only if that copy passes. The `only_if` guard on the service runs `sshd -t` again before the restart and skips it if the complete configuration fails.
+
             Use this Chef Infra recipe code to disable host-based authentication:
 
             ```ruby
@@ -3783,20 +4079,22 @@ queries:
 
             service 'sshd' do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'HostbasedAuthentication' => 'no' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, 'service[sshd]', :delayed
               end
@@ -3833,13 +4131,15 @@ queries:
 
         Allowing users to set environment variables via SSH can bypass security restrictions. For example, an attacker could set `LD_PRELOAD` to load a malicious shared library or modify `PATH` to execute malicious commands. Disabling this option prevents environment-based privilege escalation.
       audit: |
-        To verify the SSH user-environment setting in effect, run the following command:
+        To verify the SSH user-environment setting, inspect the SSH server configuration file:
 
         ```bash
-        sshd -T | grep -i '^permituserenvironment'
+        grep -i '^[[:space:]]*PermitUserEnvironment' /etc/ssh/sshd_config
         ```
 
-        If the value is `no`, the check passes. If the value is `yes`, the check fails.
+        If the value is `no`, the check passes. If the value is `yes`, or no line is returned, the check fails.
+
+        Do not audit this with `sshd -T`. The check reads the configuration file, so a missing `PermitUserEnvironment` line fails even though `sshd -T` prints the secure built-in default of `no`.
       remediation:
         - id: cli
           desc: |
@@ -3850,6 +4150,8 @@ queries:
             ```text
             PermitUserEnvironment no
             ```
+
+            Write the line even though OpenSSH already uses `no` when `PermitUserEnvironment` is absent. The check reads the configuration file and fails until the directive is present there.
 
             Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
@@ -3869,6 +4171,7 @@ queries:
             SSHD_CONFIG="/etc/ssh/sshd_config"
 
             echo "Disabling SSH PermitUserEnvironment..."
+            cp -p "$SSHD_CONFIG" "${SSHD_CONFIG}.bak"
             if grep -q '^PermitUserEnvironment' "$SSHD_CONFIG" 2>/dev/null; then
               sed -i '' 's/^PermitUserEnvironment.*/PermitUserEnvironment no/' "$SSHD_CONFIG"
             elif grep -q '^#PermitUserEnvironment' "$SSHD_CONFIG" 2>/dev/null; then
@@ -3877,9 +4180,15 @@ queries:
               echo 'PermitUserEnvironment no' >> "$SSHD_CONFIG"
             fi
 
-            # Validate the configuration before restarting so a syntax error
-            # cannot stop sshd and lock out future logins.
-            sshd -t && service sshd restart
+            # Validate the edited file before restarting. If sshd rejects it,
+            # put the original back so a later restart or reboot still starts
+            # sshd, and stop without restarting.
+            if ! sshd -t -f "$SSHD_CONFIG"; then
+              cp -p "${SSHD_CONFIG}.bak" "$SSHD_CONFIG"
+              echo "sshd -t rejected the new configuration. The original file was restored." >&2
+              exit 1
+            fi
+            service sshd restart
 
             echo "SSH PermitUserEnvironment disabled."
             ```
@@ -3889,6 +4198,8 @@ queries:
 
             1. Add the following task to a playbook targeting the FreeBSD host.
             2. Run the playbook.
+
+            The `validate` option runs `sshd -t` against the edited copy of `sshd_config`, and Ansible writes the file only if that copy passes. A configuration `sshd` cannot parse would otherwise stop the service from starting again and lock out new SSH logins.
 
             ```yaml
             ---
@@ -3902,6 +4213,7 @@ queries:
                     path: /etc/ssh/sshd_config
                     regexp: '^#?PermitUserEnvironment'
                     line: 'PermitUserEnvironment no'
+                    validate: /usr/sbin/sshd -t -f %s
                   notify: Restart sshd
 
               handlers:
@@ -3914,6 +4226,8 @@ queries:
           desc: |
             **Using Chef Infra**
 
+            **An invalid SSH server configuration locks out remote access.** The `verify` property runs `sshd -t` against the edited copy of `sshd_config`, and Chef writes the file only if that copy passes. The `only_if` guard on the service runs `sshd -t` again before the restart and skips it if the complete configuration fails.
+
             Use this Chef Infra recipe code to stop sshd from reading user-supplied environment options:
 
             ```ruby
@@ -3921,20 +4235,22 @@ queries:
 
             service 'sshd' do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'PermitUserEnvironment' => 'no' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, 'service[sshd]', :delayed
               end
@@ -3971,13 +4287,15 @@ queries:
 
         The `.rhosts` mechanism provides a trust relationship based on hostname and username, which is inherently insecure. An attacker who controls DNS or compromises a trusted host can exploit this to gain unauthorized access. SSH should always ignore these files.
       audit: |
-        To verify the SSH `IgnoreRhosts` setting in effect, run the following command:
+        To verify the SSH `IgnoreRhosts` setting, inspect the SSH server configuration file:
 
         ```bash
-        sshd -T | grep -i '^ignorerhosts'
+        grep -i '^[[:space:]]*IgnoreRhosts' /etc/ssh/sshd_config
         ```
 
-        If the value is `yes`, the check passes. If the value is `no`, the check fails.
+        If the value is `yes`, the check passes. If the value is `no`, or no line is returned, the check fails.
+
+        Do not audit this with `sshd -T`. The check reads the configuration file, so a missing `IgnoreRhosts` line fails even though `sshd -T` prints the secure built-in default of `yes`.
       remediation:
         - id: cli
           desc: |
@@ -3988,6 +4306,8 @@ queries:
             ```text
             IgnoreRhosts yes
             ```
+
+            Write the line even though OpenSSH already uses `yes` when `IgnoreRhosts` is absent. The check reads the configuration file and fails until the directive is present there.
 
             Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
@@ -4007,6 +4327,7 @@ queries:
             SSHD_CONFIG="/etc/ssh/sshd_config"
 
             echo "Enabling SSH IgnoreRhosts..."
+            cp -p "$SSHD_CONFIG" "${SSHD_CONFIG}.bak"
             if grep -q '^IgnoreRhosts' "$SSHD_CONFIG" 2>/dev/null; then
               sed -i '' 's/^IgnoreRhosts.*/IgnoreRhosts yes/' "$SSHD_CONFIG"
             elif grep -q '^#IgnoreRhosts' "$SSHD_CONFIG" 2>/dev/null; then
@@ -4015,9 +4336,15 @@ queries:
               echo 'IgnoreRhosts yes' >> "$SSHD_CONFIG"
             fi
 
-            # Validate the configuration before restarting so a syntax error
-            # cannot stop sshd and lock out future logins.
-            sshd -t && service sshd restart
+            # Validate the edited file before restarting. If sshd rejects it,
+            # put the original back so a later restart or reboot still starts
+            # sshd, and stop without restarting.
+            if ! sshd -t -f "$SSHD_CONFIG"; then
+              cp -p "${SSHD_CONFIG}.bak" "$SSHD_CONFIG"
+              echo "sshd -t rejected the new configuration. The original file was restored." >&2
+              exit 1
+            fi
+            service sshd restart
 
             echo "SSH IgnoreRhosts enabled."
             ```
@@ -4027,6 +4354,8 @@ queries:
 
             1. Add the following task to a playbook targeting the FreeBSD host.
             2. Run the playbook.
+
+            The `validate` option runs `sshd -t` against the edited copy of `sshd_config`, and Ansible writes the file only if that copy passes. A configuration `sshd` cannot parse would otherwise stop the service from starting again and lock out new SSH logins.
 
             ```yaml
             ---
@@ -4040,6 +4369,7 @@ queries:
                     path: /etc/ssh/sshd_config
                     regexp: '^#?IgnoreRhosts'
                     line: 'IgnoreRhosts yes'
+                    validate: /usr/sbin/sshd -t -f %s
                   notify: Restart sshd
 
               handlers:
@@ -4052,6 +4382,8 @@ queries:
           desc: |
             **Using Chef Infra**
 
+            **An invalid SSH server configuration locks out remote access.** The `verify` property runs `sshd -t` against the edited copy of `sshd_config`, and Chef writes the file only if that copy passes. The `only_if` guard on the service runs `sshd -t` again before the restart and skips it if the complete configuration fails.
+
             Use this Chef Infra recipe code to make sshd ignore `.rhosts` and `.shosts` files:
 
             ```ruby
@@ -4059,20 +4391,22 @@ queries:
 
             service 'sshd' do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'IgnoreRhosts' => 'yes' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, 'service[sshd]', :delayed
               end
@@ -4127,6 +4461,8 @@ queries:
             MaxAuthTries 4
             ```
 
+            Any value from `1` to `4` satisfies the check. `4` still leaves room for a user whose SSH agent offers several keys before the right one, because each offered key counts as an attempt. The directive has to be present, since OpenSSH defaults to `6` when it is absent.
+
             Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
@@ -4145,6 +4481,7 @@ queries:
             SSHD_CONFIG="/etc/ssh/sshd_config"
 
             echo "Setting SSH MaxAuthTries to 4..."
+            cp -p "$SSHD_CONFIG" "${SSHD_CONFIG}.bak"
             if grep -q '^MaxAuthTries' "$SSHD_CONFIG" 2>/dev/null; then
               sed -i '' 's/^MaxAuthTries.*/MaxAuthTries 4/' "$SSHD_CONFIG"
             elif grep -q '^#MaxAuthTries' "$SSHD_CONFIG" 2>/dev/null; then
@@ -4153,9 +4490,15 @@ queries:
               echo 'MaxAuthTries 4' >> "$SSHD_CONFIG"
             fi
 
-            # Validate the configuration before restarting so a syntax error
-            # cannot stop sshd and lock out future logins.
-            sshd -t && service sshd restart
+            # Validate the edited file before restarting. If sshd rejects it,
+            # put the original back so a later restart or reboot still starts
+            # sshd, and stop without restarting.
+            if ! sshd -t -f "$SSHD_CONFIG"; then
+              cp -p "${SSHD_CONFIG}.bak" "$SSHD_CONFIG"
+              echo "sshd -t rejected the new configuration. The original file was restored." >&2
+              exit 1
+            fi
+            service sshd restart
 
             echo "SSH MaxAuthTries set to 4."
             ```
@@ -4165,6 +4508,8 @@ queries:
 
             1. Add the following task to a playbook targeting the FreeBSD host.
             2. Run the playbook.
+
+            The `validate` option runs `sshd -t` against the edited copy of `sshd_config`, and Ansible writes the file only if that copy passes. A configuration `sshd` cannot parse would otherwise stop the service from starting again and lock out new SSH logins.
 
             ```yaml
             ---
@@ -4178,6 +4523,7 @@ queries:
                     path: /etc/ssh/sshd_config
                     regexp: '^#?MaxAuthTries'
                     line: 'MaxAuthTries 4'
+                    validate: /usr/sbin/sshd -t -f %s
                   notify: Restart sshd
 
               handlers:
@@ -4190,6 +4536,8 @@ queries:
           desc: |
             **Using Chef Infra**
 
+            **An invalid SSH server configuration locks out remote access.** The `verify` property runs `sshd -t` against the edited copy of `sshd_config`, and Chef writes the file only if that copy passes. The `only_if` guard on the service runs `sshd -t` again before the restart and skips it if the complete configuration fails.
+
             Use this Chef Infra recipe code to cap the number of authentication attempts per connection:
 
             ```ruby
@@ -4197,20 +4545,22 @@ queries:
 
             service 'sshd' do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'MaxAuthTries' => '4' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, 'service[sshd]', :delayed
               end
@@ -4274,6 +4624,8 @@ queries:
             LoginGraceTime 60
             ```
 
+            Any value from `1` to `60` seconds satisfies the check, and a time suffix such as `1m` is also accepted. `0` fails because it removes the limit entirely, and so does leaving the directive out, since OpenSSH then waits 120 seconds.
+
             Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
@@ -4292,6 +4644,7 @@ queries:
             SSHD_CONFIG="/etc/ssh/sshd_config"
 
             echo "Setting SSH LoginGraceTime to 60..."
+            cp -p "$SSHD_CONFIG" "${SSHD_CONFIG}.bak"
             if grep -q '^LoginGraceTime' "$SSHD_CONFIG" 2>/dev/null; then
               sed -i '' 's/^LoginGraceTime.*/LoginGraceTime 60/' "$SSHD_CONFIG"
             elif grep -q '^#LoginGraceTime' "$SSHD_CONFIG" 2>/dev/null; then
@@ -4300,9 +4653,15 @@ queries:
               echo 'LoginGraceTime 60' >> "$SSHD_CONFIG"
             fi
 
-            # Validate the configuration before restarting so a syntax error
-            # cannot stop sshd and lock out future logins.
-            sshd -t && service sshd restart
+            # Validate the edited file before restarting. If sshd rejects it,
+            # put the original back so a later restart or reboot still starts
+            # sshd, and stop without restarting.
+            if ! sshd -t -f "$SSHD_CONFIG"; then
+              cp -p "${SSHD_CONFIG}.bak" "$SSHD_CONFIG"
+              echo "sshd -t rejected the new configuration. The original file was restored." >&2
+              exit 1
+            fi
+            service sshd restart
 
             echo "SSH LoginGraceTime set to 60."
             ```
@@ -4312,6 +4671,8 @@ queries:
 
             1. Add the following task to a playbook targeting the FreeBSD host.
             2. Run the playbook.
+
+            The `validate` option runs `sshd -t` against the edited copy of `sshd_config`, and Ansible writes the file only if that copy passes. A configuration `sshd` cannot parse would otherwise stop the service from starting again and lock out new SSH logins.
 
             ```yaml
             ---
@@ -4325,6 +4686,7 @@ queries:
                     path: /etc/ssh/sshd_config
                     regexp: '^#?LoginGraceTime'
                     line: 'LoginGraceTime 60'
+                    validate: /usr/sbin/sshd -t -f %s
                   notify: Restart sshd
 
               handlers:
@@ -4337,6 +4699,8 @@ queries:
           desc: |
             **Using Chef Infra**
 
+            **An invalid SSH server configuration locks out remote access.** The `verify` property runs `sshd -t` against the edited copy of `sshd_config`, and Chef writes the file only if that copy passes. The `only_if` guard on the service runs `sshd -t` again before the restart and skips it if the complete configuration fails.
+
             Use this Chef Infra recipe code to close connections that do not authenticate within one minute:
 
             ```ruby
@@ -4344,20 +4708,22 @@ queries:
 
             service 'sshd' do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'LoginGraceTime' => '60' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, 'service[sshd]', :delayed
               end
@@ -4394,13 +4760,15 @@ queries:
 
         Logging SSH authentication events is essential for detecting and investigating unauthorized access attempts. The `INFO` level records login attempts, source addresses, and authentication methods. The `VERBOSE` level adds additional detail useful for forensic analysis. Lower levels may miss important security events.
       audit: |
-        To verify the SSH `LogLevel` setting in effect, run the following command:
+        To verify the SSH `LogLevel` setting, inspect the SSH server configuration file:
 
         ```bash
-        sshd -T | grep -i '^loglevel'
+        grep -i '^[[:space:]]*LogLevel' /etc/ssh/sshd_config
         ```
 
-        If the value is `INFO` or `VERBOSE`, the check passes. If the value is a lower level such as `QUIET` or `ERROR`, the check fails.
+        If the value is `INFO` or `VERBOSE`, the check passes. If the value is any other level, such as `QUIET`, `ERROR`, or `DEBUG`, or no line is returned, the check fails.
+
+        Do not audit this with `sshd -T`. The check reads the configuration file, so a missing `LogLevel` line fails even though `sshd -T` prints the built-in default of `INFO`.
       remediation:
         - id: cli
           desc: |
@@ -4411,6 +4779,8 @@ queries:
             ```text
             LogLevel VERBOSE
             ```
+
+            Either `INFO` or `VERBOSE` satisfies the check. Any other level fails, and so does leaving `LogLevel` out, because the check reads the configuration file and does not fall back to the built-in default of `INFO`.
 
             Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
@@ -4430,6 +4800,7 @@ queries:
             SSHD_CONFIG="/etc/ssh/sshd_config"
 
             echo "Setting SSH LogLevel to VERBOSE..."
+            cp -p "$SSHD_CONFIG" "${SSHD_CONFIG}.bak"
             if grep -q '^LogLevel' "$SSHD_CONFIG" 2>/dev/null; then
               sed -i '' 's/^LogLevel.*/LogLevel VERBOSE/' "$SSHD_CONFIG"
             elif grep -q '^#LogLevel' "$SSHD_CONFIG" 2>/dev/null; then
@@ -4438,9 +4809,15 @@ queries:
               echo 'LogLevel VERBOSE' >> "$SSHD_CONFIG"
             fi
 
-            # Validate the configuration before restarting so a syntax error
-            # cannot stop sshd and lock out future logins.
-            sshd -t && service sshd restart
+            # Validate the edited file before restarting. If sshd rejects it,
+            # put the original back so a later restart or reboot still starts
+            # sshd, and stop without restarting.
+            if ! sshd -t -f "$SSHD_CONFIG"; then
+              cp -p "${SSHD_CONFIG}.bak" "$SSHD_CONFIG"
+              echo "sshd -t rejected the new configuration. The original file was restored." >&2
+              exit 1
+            fi
+            service sshd restart
 
             echo "SSH LogLevel set to VERBOSE."
             ```
@@ -4450,6 +4827,8 @@ queries:
 
             1. Add the following task to a playbook targeting the FreeBSD host.
             2. Run the playbook.
+
+            The `validate` option runs `sshd -t` against the edited copy of `sshd_config`, and Ansible writes the file only if that copy passes. A configuration `sshd` cannot parse would otherwise stop the service from starting again and lock out new SSH logins.
 
             ```yaml
             ---
@@ -4463,6 +4842,7 @@ queries:
                     path: /etc/ssh/sshd_config
                     regexp: '^#?LogLevel'
                     line: 'LogLevel VERBOSE'
+                    validate: /usr/sbin/sshd -t -f %s
                   notify: Restart sshd
 
               handlers:
@@ -4475,6 +4855,8 @@ queries:
           desc: |
             **Using Chef Infra**
 
+            **An invalid SSH server configuration locks out remote access.** The `verify` property runs `sshd -t` against the edited copy of `sshd_config`, and Chef writes the file only if that copy passes. The `only_if` guard on the service runs `sshd -t` again before the restart and skips it if the complete configuration fails.
+
             Use this Chef Infra recipe code to raise the SSH log level so that failed logins and key fingerprints are recorded:
 
             ```ruby
@@ -4482,20 +4864,22 @@ queries:
 
             service 'sshd' do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'LogLevel' => 'VERBOSE' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, 'service[sshd]', :delayed
               end
@@ -4564,6 +4948,8 @@ queries:
             ClientAliveCountMax 3
             ```
 
+            `ClientAliveInterval` must be between `1` and `300` seconds and `ClientAliveCountMax` between `1` and `3`. With these values `sshd` closes a session after about 15 minutes without a response from the client. Lower values close abandoned sessions sooner. `ClientAliveCountMax 0` fails the check, because OpenSSH treats it as never closing the session.
+
             Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
@@ -4582,6 +4968,7 @@ queries:
             SSHD_CONFIG="/etc/ssh/sshd_config"
 
             echo "Configuring SSH idle timeout..."
+            cp -p "$SSHD_CONFIG" "${SSHD_CONFIG}.bak"
 
             # Set ClientAliveInterval
             if grep -q '^ClientAliveInterval' "$SSHD_CONFIG" 2>/dev/null; then
@@ -4601,9 +4988,15 @@ queries:
               echo 'ClientAliveCountMax 3' >> "$SSHD_CONFIG"
             fi
 
-            # Validate the configuration before restarting so a syntax error
-            # cannot stop sshd and lock out future logins.
-            sshd -t && service sshd restart
+            # Validate the edited file before restarting. If sshd rejects it,
+            # put the original back so a later restart or reboot still starts
+            # sshd, and stop without restarting.
+            if ! sshd -t -f "$SSHD_CONFIG"; then
+              cp -p "${SSHD_CONFIG}.bak" "$SSHD_CONFIG"
+              echo "sshd -t rejected the new configuration. The original file was restored." >&2
+              exit 1
+            fi
+            service sshd restart
 
             echo "SSH idle timeout configured."
             ```
@@ -4613,6 +5006,8 @@ queries:
 
             1. Add the following tasks to a playbook targeting the FreeBSD host.
             2. Run the playbook.
+
+            The `validate` option runs `sshd -t` against the edited copy of `sshd_config`, and Ansible writes the file only if that copy passes. A configuration `sshd` cannot parse would otherwise stop the service from starting again and lock out new SSH logins.
 
             ```yaml
             ---
@@ -4626,6 +5021,7 @@ queries:
                     path: /etc/ssh/sshd_config
                     regexp: "{{ item.regexp }}"
                     line: "{{ item.line }}"
+                    validate: /usr/sbin/sshd -t -f %s
                   loop:
                     - { regexp: '^#?ClientAliveInterval', line: 'ClientAliveInterval 300' }
                     - { regexp: '^#?ClientAliveCountMax', line: 'ClientAliveCountMax 3' }
@@ -4641,6 +5037,8 @@ queries:
           desc: |
             **Using Chef Infra**
 
+            **An invalid SSH server configuration locks out remote access.** The `verify` property runs `sshd -t` against the edited copy of `sshd_config`, and Chef writes the file only if that copy passes. The `only_if` guard on the service runs `sshd -t` again before the restart and skips it if the complete configuration fails.
+
             Use this Chef Infra recipe code to disconnect idle SSH sessions:
 
             ```ruby
@@ -4648,20 +5046,22 @@ queries:
 
             service 'sshd' do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'ClientAliveInterval' => '300', 'ClientAliveCountMax' => '3' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, 'service[sshd]', :delayed
               end
@@ -4716,6 +5116,8 @@ queries:
             DisableForwarding yes
             ```
 
+            **This breaks every workflow that forwards through this host.** `DisableForwarding yes` turns off TCP port forwarding, SSH agent forwarding, X11 forwarding, and Unix socket forwarding, which includes using the host as a `ProxyJump` bastion. Confirm nobody relies on these before you apply it. SFTP and `scp` keep working.
+
             Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
@@ -4727,6 +5129,8 @@ queries:
           desc: |
             **Using a Shell Script**
 
+            **This breaks every workflow that forwards through this host.** `DisableForwarding yes` turns off TCP port forwarding, SSH agent forwarding, X11 forwarding, and Unix socket forwarding, which includes using the host as a `ProxyJump` bastion. Confirm nobody relies on these before you apply it. SFTP and `scp` keep working.
+
             ```sh
             #!/bin/sh
             set -e
@@ -4734,6 +5138,7 @@ queries:
             SSHD_CONFIG="/etc/ssh/sshd_config"
 
             echo "Enabling SSH DisableForwarding..."
+            cp -p "$SSHD_CONFIG" "${SSHD_CONFIG}.bak"
             if grep -q '^DisableForwarding' "$SSHD_CONFIG" 2>/dev/null; then
               sed -i '' 's/^DisableForwarding.*/DisableForwarding yes/' "$SSHD_CONFIG"
             elif grep -q '^#DisableForwarding' "$SSHD_CONFIG" 2>/dev/null; then
@@ -4742,9 +5147,15 @@ queries:
               echo 'DisableForwarding yes' >> "$SSHD_CONFIG"
             fi
 
-            # Validate the configuration before restarting so a syntax error
-            # cannot stop sshd and lock out future logins.
-            sshd -t && service sshd restart
+            # Validate the edited file before restarting. If sshd rejects it,
+            # put the original back so a later restart or reboot still starts
+            # sshd, and stop without restarting.
+            if ! sshd -t -f "$SSHD_CONFIG"; then
+              cp -p "${SSHD_CONFIG}.bak" "$SSHD_CONFIG"
+              echo "sshd -t rejected the new configuration. The original file was restored." >&2
+              exit 1
+            fi
+            service sshd restart
 
             echo "SSH DisableForwarding enabled."
             ```
@@ -4754,6 +5165,10 @@ queries:
 
             1. Add the following task to a playbook targeting the FreeBSD host.
             2. Run the playbook.
+
+            **This breaks every workflow that forwards through this host.** `DisableForwarding yes` turns off TCP port forwarding, SSH agent forwarding, X11 forwarding, and Unix socket forwarding, which includes using the host as a `ProxyJump` bastion. Confirm nobody relies on these before you apply it. SFTP and `scp` keep working.
+
+            The `validate` option runs `sshd -t` against the edited copy of `sshd_config`, and Ansible writes the file only if that copy passes. A configuration `sshd` cannot parse would otherwise stop the service from starting again and lock out new SSH logins.
 
             ```yaml
             ---
@@ -4767,6 +5182,7 @@ queries:
                     path: /etc/ssh/sshd_config
                     regexp: '^#?DisableForwarding'
                     line: 'DisableForwarding yes'
+                    validate: /usr/sbin/sshd -t -f %s
                   notify: Restart sshd
 
               handlers:
@@ -4779,27 +5195,33 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to turn off all SSH forwarding: Apply it only where no one relies on port, agent, or X11 forwarding through this host.
+            **An invalid SSH server configuration locks out remote access.** The `verify` property runs `sshd -t` against the edited copy of `sshd_config`, and Chef writes the file only if that copy passes. The `only_if` guard on the service runs `sshd -t` again before the restart and skips it if the complete configuration fails.
+
+            **This breaks every workflow that forwards through this host.** `DisableForwarding yes` turns off TCP port forwarding, SSH agent forwarding, X11 forwarding, and Unix socket forwarding, which includes using the host as a `ProxyJump` bastion. Confirm nobody relies on these before you apply it. SFTP and `scp` keep working.
+
+            Use this Chef Infra recipe code to turn off all SSH forwarding:
 
             ```ruby
             sshd_config = '/etc/ssh/sshd_config'
 
             service 'sshd' do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'DisableForwarding' => 'yes' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, 'service[sshd]', :delayed
               end
@@ -4836,13 +5258,15 @@ queries:
 
         PAM provides a flexible framework for authentication, session management, and account controls. When UsePAM is disabled, SSH cannot enforce PAM-based policies such as password complexity requirements, account lockout, or session limits. Enabling PAM ensures consistent enforcement of the system's authentication policies.
       audit: |
-        To verify the SSH `UsePAM` setting in effect, run the following command:
+        To verify the SSH `UsePAM` setting, inspect the SSH server configuration file:
 
         ```bash
-        sshd -T | grep -i '^usepam'
+        grep -i '^[[:space:]]*UsePAM' /etc/ssh/sshd_config
         ```
 
-        If the value is `yes`, the check passes. If the value is `no`, the check fails.
+        If the value is `yes`, the check passes. If the value is `no`, or no line is returned, the check fails.
+
+        Do not audit this with `sshd -T`. The check reads the configuration file, so a missing `UsePAM` line fails even though `sshd -T` prints the secure built-in default of `yes`.
       remediation:
         - id: cli
           desc: |
@@ -4853,6 +5277,8 @@ queries:
             ```text
             UsePAM yes
             ```
+
+            Write the line even though OpenSSH already uses `yes` when `UsePAM` is absent. The check reads the configuration file and fails until the directive is present there.
 
             Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
@@ -4872,6 +5298,7 @@ queries:
             SSHD_CONFIG="/etc/ssh/sshd_config"
 
             echo "Enabling SSH UsePAM..."
+            cp -p "$SSHD_CONFIG" "${SSHD_CONFIG}.bak"
             if grep -q '^UsePAM' "$SSHD_CONFIG" 2>/dev/null; then
               sed -i '' 's/^UsePAM.*/UsePAM yes/' "$SSHD_CONFIG"
             elif grep -q '^#UsePAM' "$SSHD_CONFIG" 2>/dev/null; then
@@ -4880,9 +5307,15 @@ queries:
               echo 'UsePAM yes' >> "$SSHD_CONFIG"
             fi
 
-            # Validate the configuration before restarting so a syntax error
-            # cannot stop sshd and lock out future logins.
-            sshd -t && service sshd restart
+            # Validate the edited file before restarting. If sshd rejects it,
+            # put the original back so a later restart or reboot still starts
+            # sshd, and stop without restarting.
+            if ! sshd -t -f "$SSHD_CONFIG"; then
+              cp -p "${SSHD_CONFIG}.bak" "$SSHD_CONFIG"
+              echo "sshd -t rejected the new configuration. The original file was restored." >&2
+              exit 1
+            fi
+            service sshd restart
 
             echo "SSH UsePAM enabled."
             ```
@@ -4892,6 +5325,8 @@ queries:
 
             1. Add the following task to a playbook targeting the FreeBSD host.
             2. Run the playbook.
+
+            The `validate` option runs `sshd -t` against the edited copy of `sshd_config`, and Ansible writes the file only if that copy passes. A configuration `sshd` cannot parse would otherwise stop the service from starting again and lock out new SSH logins.
 
             ```yaml
             ---
@@ -4905,6 +5340,7 @@ queries:
                     path: /etc/ssh/sshd_config
                     regexp: '^#?UsePAM'
                     line: 'UsePAM yes'
+                    validate: /usr/sbin/sshd -t -f %s
                   notify: Restart sshd
 
               handlers:
@@ -4917,6 +5353,8 @@ queries:
           desc: |
             **Using Chef Infra**
 
+            **An invalid SSH server configuration locks out remote access.** The `verify` property runs `sshd -t` against the edited copy of `sshd_config`, and Chef writes the file only if that copy passes. The `only_if` guard on the service runs `sshd -t` again before the restart and skips it if the complete configuration fails.
+
             Use this Chef Infra recipe code to have sshd authenticate through PAM:
 
             ```ruby
@@ -4924,20 +5362,22 @@ queries:
 
             service 'sshd' do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'UsePAM' => 'yes' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, 'service[sshd]', :delayed
               end
@@ -5623,25 +6063,27 @@ queries:
             awk -F: '$3 != 0 { print $3 }' /etc/passwd | sort -n | uniq -d
             ```
 
-            For each duplicated UID, list the accounts that share it so you can decide which one to renumber:
+            1. For each duplicated UID, list the accounts that share it so you can decide which one to renumber. Replace `<uid>` with a UID from the previous command:
 
-            ```bash
-            awk -F: -v u=<uid> '$3 == u { print $1 }' /etc/passwd
-            ```
+                ```bash
+                awk -F: -v u=<uid> '$3 == u { print $1 }' /etc/passwd
+                ```
 
-            Assign a new, unused UID to the account you chose to change:
+            2. Assign a new, unused UID to the account you chose to change, where `<name>` is that account and `<new-uid>` is a UID no other account has. `pw` refuses a UID that is already taken:
 
-            ```bash
-            pw usermod <name> -u <new-uid>
-            ```
+                ```bash
+                pw usermod <name> -u <new-uid>
+                ```
 
-            Changing a UID does not update files that the account already owns. Those files keep the old numeric UID, so re-own them to the new UID:
+            3. Re-own the files that belong to the renumbered account. Changing a UID does not update files the account already owns, so they keep the old numeric UID, which is `<uid>` from step 1. Limit the change to that account's own files, such as its home directory at `<home>`:
 
-            ```bash
-            find / -uid <old-uid> -exec chown <new-uid> {} +
-            ```
+                ```bash
+                find <home> -user <uid> -exec chown -h <new-uid> {} +
+                ```
 
-            Confirm that the new UID is not already in use before assigning it, and verify the account can still log in and access its files afterward.
+            **Do not re-own every file on the system that has the old UID.** The other account keeps that UID, and a system-wide `find / -user <uid>` cannot tell its files apart from those of the account you renumbered, so a blanket `chown` hands the other account's files to the wrong user. Review any file outside the home directory before changing its owner.
+
+            Verify afterward that both accounts can still log in and reach their own files.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -5740,25 +6182,27 @@ queries:
             awk -F: '{print $3}' /etc/group | sort -n | uniq -d
             ```
 
-            For each duplicated GID, list the groups that share it so you can decide which one to renumber:
+            1. For each duplicated GID, list the groups that share it so you can decide which one to renumber. Replace `<gid>` with a GID from the previous command:
 
-            ```bash
-            awk -F: -v g=<gid> '$3 == g { print $1 }' /etc/group
-            ```
+                ```bash
+                awk -F: -v g=<gid> '$3 == g { print $1 }' /etc/group
+                ```
 
-            Assign a new, unused GID to the group you chose to change:
+            2. Assign a new, unused GID to the group you chose to change, where `<name>` is that group and `<new-gid>` is a GID no other group has. `pw` refuses a GID that is already taken:
 
-            ```bash
-            pw groupmod <name> -g <new-gid>
-            ```
+                ```bash
+                pw groupmod <name> -g <new-gid>
+                ```
 
-            Changing a GID does not update files that already carry the old group ownership. Re-group them to the new GID:
+            3. Re-group the files that belong to the renumbered group. Changing a GID does not update files that already carry the old group ownership, which is `<gid>` from step 1. Limit the change to directories that group owns, such as a shared project directory at `<directory>`:
 
-            ```bash
-            find / -gid <old-gid> -exec chgrp <new-gid> {} +
-            ```
+                ```bash
+                find <directory> -group <gid> -exec chgrp -h <new-gid> {} +
+                ```
 
-            Confirm that the new GID is not already in use before assigning it, and verify that members of the group still have the access they need afterward.
+            **Do not re-group every file on the system that has the old GID.** The other group keeps that GID, and a system-wide `find / -group <gid>` cannot tell its files apart from those of the group you renumbered, so a blanket `chgrp` moves the other group's files to the wrong group.
+
+            Verify afterward that members of both groups still have the access they need. Users whose primary GID in `/etc/passwd` was `<gid>` stay in the group that kept it, so change their primary group with `pw usermod <user> -g <new-gid>` where they belong to the renumbered one.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -5851,11 +6295,23 @@ queries:
           desc: |
             **Using the CLI**
 
-            Identify and resolve duplicate user names:
+            1. Identify the duplicated user names:
 
-            ```bash
-            awk -F: '{print $1}' /etc/passwd | sort | uniq -d
-            ```
+                ```bash
+                awk -F: '{print $1}' /etc/passwd | sort | uniq -d
+                ```
+
+            2. Open the account database with `vipw`, which edits `/etc/master.passwd` under a lock:
+
+                ```bash
+                vipw
+                ```
+
+            3. Find the entries that share each reported name. Delete the one that should not exist, or rename it to a unique login name. Compare the UID, home directory, and shell of both entries first, so the account that owns the files and the sudo rules is the one that keeps the name.
+
+            4. Save and exit. `vipw` runs `pwd_mkdb`, which rebuilds `/etc/passwd` and the password databases from the edited file.
+
+            **Do not edit `/etc/passwd` directly.** `pwd_mkdb` generates it from `/etc/master.passwd`, so a direct edit is overwritten the next time any account changes.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -5944,11 +6400,27 @@ queries:
           desc: |
             **Using the CLI**
 
-            Identify and resolve duplicate group names:
+            1. Identify the duplicated group names:
 
-            ```bash
-            awk -F: '{print $1}' /etc/group | sort | uniq -d
-            ```
+                ```bash
+                awk -F: '{print $1}' /etc/group | sort | uniq -d
+                ```
+
+            2. List every entry that uses a reported name, with its GID and members. Replace `<group>` with a name from the previous command:
+
+                ```bash
+                grep '^<group>:' /etc/group
+                ```
+
+            3. Edit `/etc/group` and leave one entry per name. If both entries describe the same group, merge their member lists into one entry and delete the other. If they are different groups, rename one of them to a unique name.
+
+            4. Check that the edited file is still well formed, then run the command from step 1 again and confirm it prints nothing:
+
+                ```bash
+                chkgrp
+                ```
+
+            Tools that look a group up by name use the first matching entry, so members listed only on the second entry do not get that group's access until the entries are merged.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -6045,7 +6517,21 @@ queries:
             awk -F: 'NR==FNR { gids[$3]; next } !($4 in gids) { print $1 " GID " $4 }' /etc/group /etc/passwd
             ```
 
-            Create each missing group with `pw groupadd -g <gid> <name>` or reassign the user's primary group with `pw usermod`.
+            For each reported user, either create the missing group or move the user to a group that exists:
+
+            - Create the group with the GID the user already references, where `<name>` is the new group name and `<gid>` is the GID from the output above. `pw` reads the group name only when it comes right after `groupadd`, before any option:
+
+                ```bash
+                pw groupadd <name> -g <gid>
+                ```
+
+            - Or change the user's primary group to an existing one, where `<user>` is the reported user and `<group>` is an existing group name or GID:
+
+                ```bash
+                pw usermod <user> -g <group>
+                ```
+
+                Files the user already created keep the old GID, so re-group them with `chgrp` where needed.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -6524,11 +7010,14 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to require a pseudo terminal for sudo. The `sudo` resource knows FreeBSD keeps its sudoers configuration under `/usr/local/etc`, and validates the generated file with `visudo` before installing it:
+            Use this Chef Infra recipe code to require a pseudo terminal for sudo. The `sudo` resource knows FreeBSD keeps its sudoers configuration under `/usr/local/etc`, and validates the generated file with `visudo` before installing it.
+
+            Set `visudo_binary` to `/usr/local/sbin/visudo`, where the sudo package installs it. The resource looks for `/usr/sbin/visudo` by default, and when that file is missing it logs a warning and installs the file without validating it:
 
             ```ruby
             sudo '99-use-pty' do
               defaults ['use_pty']
+              visudo_binary '/usr/local/sbin/visudo'
             end
             ```
   - uid: mondoo-freebsd-security-sudo-nopasswd-is-not-configured
@@ -6698,7 +7187,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            Warning: Starting a firewall on a remote system can terminate your SSH session and lock you out. Run these commands from the system console, and confirm the rule set allows SSH before starting the firewall.
+            **Starting a firewall on a remote system can terminate your SSH session and lock you out.** Run these commands from the system console, and confirm the rule set allows SSH before starting the firewall.
 
             Enable `ipfw`. The `workstation` profile opens the ports in `firewall_myservices` to the networks in `firewall_allowservices`. The example below allows SSH from a single admin network instead of from any source, which keeps the management surface small:
 
@@ -6722,17 +7211,32 @@ queries:
           desc: |
             **Using a Shell Script**
 
-            Warning: Starting a firewall on a remote system can terminate your SSH session and lock you out. Run this script from the system console, and confirm the rule set allows SSH before starting the firewall.
+            **Starting a firewall on a remote system can terminate your SSH session and lock you out.** Run this script from the system console, and confirm the rule set allows SSH before starting the firewall.
+
+            The `workstation` firewall type admits inbound connections only to the ports in `firewall_myservices`, and only from the sources in `firewall_allowservices`:
+
+            - `firewall_myservices` is `22/tcp`, the SSH port. Replace it with the real SSH port if the host listens elsewhere, and add every other port this host serves, separated by spaces, or those services stop answering.
+            - `firewall_allowservices` is `any`, which lets every source reach those ports. Replace it with your administrative network in CIDR notation, such as `192.0.2.0/24`, to limit who can connect.
+
+            The script leaves an existing configuration alone when `firewall_enable` or `pf_enable` is already on, in any letter case.
 
             ```sh
             #!/bin/sh
             set -e
 
             echo "Checking firewall status..."
+            # rc.subr accepts YES, TRUE, ON, or 1 in any letter case.
+            is_on() {
+              case "$1" in
+                [Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Oo][Nn]|1) return 0 ;;
+                *) return 1 ;;
+              esac
+            }
+
             IPFW_ENABLED=$(sysrc -n firewall_enable 2>/dev/null || echo "NO")
             PF_ENABLED=$(sysrc -n pf_enable 2>/dev/null || echo "NO")
 
-            if [ "$IPFW_ENABLED" = "YES" ] || [ "$PF_ENABLED" = "YES" ]; then
+            if is_on "$IPFW_ENABLED" || is_on "$PF_ENABLED"; then
               echo "A firewall is already enabled."
             else
               echo "No firewall enabled. Enabling ipfw in workstation mode..."
@@ -6751,6 +7255,13 @@ queries:
 
             1. Add the following tasks to a playbook targeting the FreeBSD host.
             2. Run the playbook.
+
+            **Starting a firewall on a remote system can terminate the SSH connection Ansible uses and lock you out.** Confirm the rule set allows SSH from the control node before you run the playbook.
+
+            The `workstation` firewall type admits inbound connections only to the ports in `firewall_myservices`, and only from the sources in `firewall_allowservices`:
+
+            - `firewall_myservices` is `22/tcp`, the SSH port. Replace it with the real SSH port if the host listens elsewhere, and add every other port this host serves, separated by spaces, or those services stop answering.
+            - `firewall_allowservices` is `any`, which lets every source reach those ports. Replace it with your administrative network in CIDR notation, such as `192.0.2.0/24`, to limit who can connect.
 
             ```yaml
             ---
@@ -6778,7 +7289,14 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            **Warning: confirm the rule set allows your management access before you apply this.** The `workstation` firewall type denies inbound traffic that is not listed in `firewall_myservices`, so add every port you rely on to that list first. Use this Chef Infra recipe code to enable ipfw:
+            **Confirm the rule set allows your management access before you apply this.** Starting a firewall on a remote system can terminate your SSH session and lock you out.
+
+            The `workstation` firewall type admits inbound connections only to the ports in `firewall_myservices`, and only from the sources in `firewall_allowservices`:
+
+            - `firewall_myservices` is `22/tcp`, the SSH port. Replace it with the real SSH port if the host listens elsewhere, and add every other port this host serves, separated by spaces, or those services stop answering.
+            - `firewall_allowservices` is `any`, which lets every source reach those ports. Replace it with your administrative network in CIDR notation, such as `192.0.2.0/24`, to limit who can connect.
+
+            Use this Chef Infra recipe code to enable ipfw:
 
             ```ruby
             service 'ipfw' do
@@ -6792,8 +7310,8 @@ queries:
               'firewall_allowservices' => 'any',
             }.each do |key, value|
               execute "set #{key} in rc.conf" do
-                command "sysrc #{key}=#{value}"
-                not_if "sysrc -n #{key} | grep -qx #{value}"
+                command "sysrc #{key}='#{value}'"
+                not_if "sysrc -n #{key} | grep -qxF '#{value}'"
                 notifies :start, 'service[ipfw]', :delayed
               end
             end
@@ -6866,7 +7384,9 @@ queries:
             echo "Enabling time synchronization daemon (ntpd)..."
             sysrc ntpd_enable="YES"
             sysrc ntpd_sync_on_start="YES"
-            service ntpd start 2>/dev/null || service ntpd onestart 2>/dev/null || true
+            # Start ntpd unless it is already running. A failed start stops the
+            # script under set -e instead of reporting success.
+            service ntpd status >/dev/null 2>&1 || service ntpd start
 
             echo "ntpd enabled and started."
             ```
@@ -6896,6 +7416,22 @@ queries:
                   ansible.builtin.service:
                     name: ntpd
                     state: started
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to enable and start `ntpd` from the base system. The FreeBSD service provider sets `ntpd_enable` in `/etc/rc.conf`, and `ntpd_sync_on_start` steps the clock at startup so a large initial offset is corrected immediately:
+
+            ```ruby
+            execute 'set ntpd_sync_on_start in rc.conf' do
+              command 'sysrc ntpd_sync_on_start=YES'
+              not_if 'sysrc -n ntpd_sync_on_start | grep -qix yes'
+            end
+
+            service 'ntpd' do
+              action %i(enable start)
+            end
             ```
   - uid: mondoo-freebsd-security-pkg-signature-verification-is-enabled
     title: Ensure pkg repository signature verification is enabled
@@ -6955,7 +7491,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            1. Restore fingerprint verification for the base repository by editing `/etc/pkg/FreeBSD.conf` so the `FreeBSD` block contains:
+            1. Restore fingerprint verification for the base repositories by editing `/etc/pkg/FreeBSD.conf` so that every repository block contains the two lines below. FreeBSD 14 names the blocks `FreeBSD` and `FreeBSD-kmods`, and FreeBSD 15 names them `FreeBSD-ports`, `FreeBSD-ports-kmods`, and `FreeBSD-base`:
 
                 ```ini
                 signature_type: "fingerprints",
@@ -6968,10 +7504,25 @@ queries:
                 ls /usr/share/keys/pkg/trusted
                 ```
 
-            If the directory is missing or empty, reinstall the keys from your FreeBSD source tree or restore them from a known-good host before re-running `pkg update`.
+                If the directory is missing or empty, restore it from a known-good host of the same FreeBSD release before running `pkg update`.
+
+            3. List the custom repository files that define a `url` but no `signature_type`:
+
+                ```bash
+                for f in /usr/local/etc/pkg/repos/*.conf; do grep -q 'url:' "$f" && ! grep -q 'signature_type' "$f" && echo "$f"; done
+                ```
+
+                The check fails for each file this prints. A new repository without a `signature_type` installs packages without verifying them. A file that only overrides one of the FreeBSD repositories keeps the setting from `/etc/pkg/FreeBSD.conf`, but it still fails the check until it declares its own. Add a `signature_type` to the repository block in each file:
+
+                - For a file that points one of the FreeBSD repositories at another URL, copy the two lines from step 1.
+                - For a third-party or internal repository, use `signature_type: "pubkey"` and set `pubkey` to the path of the public key that repository signs with, such as `/usr/local/etc/ssl/pkg.pub`. Get that key from the repository's operator. `fingerprints` also works if the operator publishes a fingerprints directory.
+
+            4. Run `pkg update -f` and confirm every repository updates without a signature error.
         - id: sh
           desc: |
             **Using a Shell Script**
+
+            The script switches every `signature_type: "none"` in `/etc/pkg/FreeBSD.conf` back to `fingerprints`. It only reports custom repository files under `/usr/local/etc/pkg/repos` that lack a `signature_type`, because the right key for those depends on who signs the repository. Fix those files with step 3 of the CLI instructions.
 
             ```sh
             #!/bin/sh
@@ -6989,6 +7540,16 @@ queries:
               echo "WARNING: /usr/share/keys/pkg/trusted is missing; restore the fingerprint keys before running pkg update." >&2
             fi
 
+            # Custom repositories need their own signature_type. The key to use
+            # depends on who signs the repository, so report them instead of
+            # guessing.
+            for f in /usr/local/etc/pkg/repos/*.conf; do
+              [ -f "$f" ] || continue
+              if grep -q 'url:' "$f" && ! grep -q 'signature_type' "$f"; then
+                echo "WARNING: $f defines a repository without signature_type. Add one by hand." >&2
+              fi
+            done
+
             echo "pkg signature verification configured."
             ```
         - id: ansible
@@ -6998,24 +7559,20 @@ queries:
             1. Add the following tasks to a playbook targeting the FreeBSD host.
             2. Run the playbook.
 
+            `/etc/pkg/FreeBSD.conf` holds more than one repository block, so the playbook uses `replace`, which changes every `signature_type: "none"` in the file. The playbook covers the base repositories only. Add a `signature_type` to each custom repository file under `/usr/local/etc/pkg/repos` as described in step 3 of the CLI instructions.
+
             ```yaml
             ---
-            - name: Enforce fingerprint signature verification for the base repository
+            - name: Enforce fingerprint signature verification for the base repositories
               hosts: all
               become: true
 
               tasks:
-                - name: Enforce fingerprint signature verification for the base repository
-                  ansible.builtin.lineinfile:
+                - name: Enforce fingerprint signature verification for the base repositories
+                  ansible.builtin.replace:
                     path: /etc/pkg/FreeBSD.conf
-                    regexp: '^\s*signature_type:'
-                    line: '  signature_type: "fingerprints",'
-
-                - name: Ensure the fingerprints path is configured
-                  ansible.builtin.lineinfile:
-                    path: /etc/pkg/FreeBSD.conf
-                    regexp: '^\s*fingerprints:'
-                    line: '  fingerprints: "/usr/share/keys/pkg"'
+                    regexp: 'signature_type:\s*"none"'
+                    replace: 'signature_type: "fingerprints"'
 
                 - name: Confirm the trusted fingerprint keys are present
                   ansible.builtin.stat:
@@ -7026,4 +7583,21 @@ queries:
                   ansible.builtin.fail:
                     msg: "/usr/share/keys/pkg/trusted is missing; restore the fingerprint keys before running pkg update."
                   when: not pkg_keys.stat.exists
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to switch every `signature_type: "none"` in `/etc/pkg/FreeBSD.conf` back to `fingerprints`. It covers the base repositories only. Add a `signature_type` to each custom repository file under `/usr/local/etc/pkg/repos` as described in step 3 of the CLI instructions:
+
+            ```ruby
+            pkg_conf = '/etc/pkg/FreeBSD.conf'
+
+            ruby_block 'restore fingerprint verification in FreeBSD.conf' do
+              block do
+                body = ::File.read(pkg_conf)
+                ::File.write(pkg_conf, body.gsub(/signature_type:\s*"none"/, 'signature_type: "fingerprints"'))
+              end
+              only_if { ::File.exist?(pkg_conf) && ::File.read(pkg_conf).match?(/signature_type:\s*"none"/) }
+            end
             ```
