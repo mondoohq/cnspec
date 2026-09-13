@@ -204,6 +204,27 @@ func scanSnippet(bundleFile, policyMrn string, asset *inventory.Asset) ([]*polic
 	return nil, err
 }
 
+// variantParents maps each variant uid to the check that declares it in its
+// `variants:` list.
+//
+// Pairing has to come from that list rather than from trimming the IaC suffix
+// off the variant uid. The two agree for almost every check, but a parent uid
+// that does not end where its variants' names resume — one ending in a stray
+// hyphen, say — trims to a uid no query has, and the variant then silently left
+// this suite with its remediation never scanned. Reading the declaration finds
+// the parent whatever either uid is called.
+func variantParents(bundle *policy.Bundle) map[string]*policy.Mquery {
+	parents := make(map[string]*policy.Mquery, len(bundle.Queries))
+	for _, q := range bundle.Queries {
+		for _, v := range q.Variants {
+			if v.Uid != "" {
+				parents[v.Uid] = q
+			}
+		}
+	}
+	return parents
+}
+
 // TestRemediationSatisfiesCheck scans each IaC variant's own remediation snippet
 // and requires the check that recommends it to pass.
 //
@@ -217,10 +238,7 @@ func TestRemediationSatisfiesCheck(t *testing.T) {
 		bundle, err := policy.DefaultBundleLoader().BundleFromPaths(bundlePath(pol.bundleFile))
 		require.NoError(t, err)
 
-		byUid := make(map[string]*policy.Mquery, len(bundle.Queries))
-		for _, q := range bundle.Queries {
-			byUid[q.Uid] = q
-		}
+		parents := variantParents(bundle)
 
 		uids := make([]string, 0, len(bundle.Queries))
 		for _, q := range bundle.Queries {
@@ -233,15 +251,25 @@ func TestRemediationSatisfiesCheck(t *testing.T) {
 			if !ok {
 				continue
 			}
-			parent := byUid[strings.TrimSuffix(uid, suffix)]
+			if !inShard(uid, shardIndex, shardTotal) {
+				continue
+			}
+			parent, ok := parents[uid]
+			if !ok {
+				// An IaC variant nothing declares has no remediation to close
+				// it, and the reader who finds it has no parent check to read.
+				// Reported rather than skipped: skipping silently is how the
+				// suffix-trimming pairing dropped a check.
+				t.Errorf("no check lists %s in its variants, so this suite cannot "+
+					"find the remediation that is supposed to close it.\nAdd the "+
+					"variant to its parent's variants: list in %s", uid, pol.bundleFile)
+				continue
+			}
 			snippet, ok := snippetFor(parent, suffix)
 			if !ok {
 				// No same-language remediation to test. Whether one is required
 				// is TestTerraformVariantCoverage's and the content rules'
 				// business, not this suite's.
-				continue
-			}
-			if !inShard(uid, shardIndex, shardTotal) {
 				continue
 			}
 
