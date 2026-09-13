@@ -9676,7 +9676,9 @@ queries:
             ```
         - id: terraform
           desc: |
-            Reference a subnet that prohibits public IPs:
+            **Editing `subnet_id` on an existing `oci_redis_redis_cluster` destroys the cluster and builds an empty one.** The argument is `ForceNew` in the `oracle/oci` provider, so `terraform plan` reports the cluster as `must be replaced` and the apply discards every key it held. Restore the replacement from a backup instead of changing the subnet in place.
+
+            1. Declare a subnet that prohibits public IPs:
 
             ```hcl
             resource "oci_core_subnet" "cache_private" {
@@ -9686,7 +9688,11 @@ queries:
               prohibit_public_ip_on_vnic = true
               prohibit_internet_ingress  = true
             }
+            ```
 
+            2. For a new deployment, place the cluster in that subnet:
+
+            ```hcl
             resource "oci_redis_redis_cluster" "app" {
               compartment_id     = var.compartment_ocid
               display_name       = "app-cache"
@@ -9696,6 +9702,28 @@ queries:
               subnet_id          = oci_core_subnet.cache_private.id
             }
             ```
+
+            3. To move an existing cluster, back it up and declare a second cluster that restores from that backup. `backup_id` is `ForceNew` as well, so set it when the replacement is first created. Keep `node_count` and `node_memory_in_gbs` at the old cluster's values so the restored data fits:
+
+            ```hcl
+            resource "oci_redis_oci_cache_backup" "pre_migration" {
+              compartment_id    = var.compartment_ocid
+              display_name      = "pre-migration"
+              source_cluster_id = oci_redis_redis_cluster.legacy.id
+            }
+
+            resource "oci_redis_redis_cluster" "app_private" {
+              compartment_id     = var.compartment_ocid
+              display_name       = "app-cache-private"
+              node_count         = 3
+              node_memory_in_gbs = 4
+              software_version   = "VALKEY_8_1"
+              subnet_id          = oci_core_subnet.cache_private.id
+              backup_id          = oci_redis_oci_cache_backup.pre_migration.id
+            }
+            ```
+
+            4. Point application connection strings at the new cluster endpoint, then remove the old `oci_redis_redis_cluster` resource from the configuration and apply. Deletion is permanent and loses anything written to the old cluster after the backup was taken.
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/ocicache/home.htm
         title: OCI Cache Overview
