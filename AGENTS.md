@@ -136,6 +136,36 @@ Content rules: no secrets, internal hostnames, customer names, or details of an
 unpatched vulnerability. ADRs are proposed and discussed in a pull request, so
 the decision has a review trail.
 
+## Writing: facts, and the reasoning behind the decision
+
+This applies to ADRs, commit messages, pull request descriptions and code
+comments alike.
+
+**State facts, not anecdotes.** "Installing one release candidate over another
+returns exit code 0 and leaves the installed ProductCode unchanged" is a fact a
+reader can act on. "This bit us last week" is not. Where a number, an exit
+code, a version or a measurement is available, give it; where the source is an
+estimate or a reading of documentation rather than a measurement, say which.
+
+**Describe the system, not the episode.** Records are read by people who were
+not present. Write what the system does and why it is built that way, not the
+story of how it came to be written. A defect is worth naming when it explains a
+constraint that still holds; it is not worth narrating.
+
+**Give the reasoning, not just the outcome.** The valuable part of a decision
+record is why the alternatives were rejected, because that is the part that
+cannot be recovered from the code. An option rejected for a real
+reason — a cost, a constraint, a measured result — is worth more than three
+options listed without one.
+
+**Separate what was verified from what was reasoned.** "Tested on Windows 11
+ARM64, both architectures" and "follows from the WiX documentation" are
+different claims and should not read the same. A behaviour that has not been
+observed is reported as not observed.
+
+**Prefer the smallest correct change,** and say what it costs. Every real
+decision has a downside; a record without one has not been thought through.
+
 ## Development rules
 
 ### Dependencies
