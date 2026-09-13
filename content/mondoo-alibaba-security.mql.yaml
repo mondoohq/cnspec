@@ -2991,6 +2991,8 @@ queries:
 
         Each RDS instance carries one or more whitelist groups that decide which source addresses may open a connection. You edit them in the ApsaraDB for RDS console on the Data Security page under Whitelist Settings, or with the `ModifySecurityIps` API action, and in Terraform through the `security_ips` argument on the database instance. The check fails an instance whose allowlist contains `0.0.0.0/0`, and it also rejects a bare `0.0.0.0` entry and any other range carrying a `/0` prefix length.
 
+        A read-only replica is a separate RDS instance with its own whitelist groups, and it serves the same data as the primary it replicates from. The check evaluates read-only instances on the same terms, so an open allowlist on a replica fails even when the primary is scoped correctly.
+
         **Why this matters**
 
         An entry of `0.0.0.0/0` accepts connection attempts from every address on the internet. The database is then subject to the same continuous scanning, credential stuffing, and brute-force traffic that any exposed service receives, and each attempt is answered by the engine itself.
@@ -3004,14 +3006,20 @@ queries:
         ### Audit via Console
 
         1. Sign in to the [ApsaraDB for RDS console](https://rdsnext.console.aliyun.com/).
-        2. Open each instance and navigate to **Data Security** > **Whitelist Settings**.
+        2. Open each instance, including every read-only replica, and navigate to **Data Security** > **Whitelist Settings**.
         3. Review every whitelist group and confirm that no group contains `0.0.0.0/0`.
 
         A passing instance restricts the allowlist to specific addresses. A failing instance lists `0.0.0.0/0`.
 
         ### Audit via CLI
 
-        1. Describe the IP allowlist of each instance:
+        1. List every instance in the region, primaries and read-only replicas alike:
+
+        ```bash
+        aliyun rds DescribeDBInstances --RegionId <region>
+        ```
+
+        2. Describe the IP allowlist of each instance returned above:
 
         ```bash
         aliyun rds DescribeDBInstanceIPArrayList --DBInstanceId <instance-id>
@@ -3046,7 +3054,7 @@ queries:
             **Clients whose address is not in the new list lose access immediately.** Collect the application source ranges before you replace the list.
         - id: terraform
           desc: |
-            To scope the RDS allowlist in Terraform, set `security_ips` to specific trusted ranges instead of `0.0.0.0/0`:
+            To scope the RDS allowlist in Terraform, set `security_ips` to specific trusted ranges instead of `0.0.0.0/0`. A read-only replica keeps its own allowlist, so scope `security_ips` on `alicloud_db_readonly_instance` as well:
 
             ```hcl
             resource "alicloud_db_instance" "example" {
@@ -3054,6 +3062,15 @@ queries:
               engine_version   = "8.0"
               instance_type    = "rds.mysql.s2.large"
               instance_storage = 30
+
+              security_ips = ["10.0.0.0/24", "10.0.1.0/24"]
+            }
+
+            resource "alicloud_db_readonly_instance" "example" {
+              master_db_instance_id = alicloud_db_instance.example.id
+              engine_version        = "8.0"
+              instance_type         = "rds.mysql.s2.large"
+              instance_storage      = 30
 
               security_ips = ["10.0.0.0/24", "10.0.1.0/24"]
             }
@@ -3087,23 +3104,23 @@ queries:
 
   - uid: mondoo-alibaba-security-rds-instance-restrict-security-ip-list-terraform-hcl
     filters: |
-      asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_db_instance")
+      asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_db_instance" || nameLabel == "alicloud_db_readonly_instance")
     mql: |
-      terraform.resources("alicloud_db_instance").all(
+      terraform.resources.where(nameLabel == "alicloud_db_instance" || nameLabel == "alicloud_db_readonly_instance").all(
         arguments["security_ips"] == empty || arguments["security_ips"].none(_ == "0.0.0.0" || _.contains("/0"))
       )
   - uid: mondoo-alibaba-security-rds-instance-restrict-security-ip-list-terraform-plan
     filters: |
-      asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_db_instance")
+      asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_db_instance" || type == "alicloud_db_readonly_instance")
     mql: |
-      terraform.plan.resourceChanges.where(type == "alicloud_db_instance").all(
+      terraform.plan.resourceChanges.where(type == "alicloud_db_instance" || type == "alicloud_db_readonly_instance").all(
         change.after["security_ips"] == empty || change.after["security_ips"].none(_ == "0.0.0.0" || _.contains("/0"))
       )
   - uid: mondoo-alibaba-security-rds-instance-restrict-security-ip-list-terraform-state
     filters: |
-      asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_db_instance")
+      asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_db_instance" || type == "alicloud_db_readonly_instance")
     mql: |
-      terraform.state.resources.where(type == "alicloud_db_instance").all(
+      terraform.state.resources.where(type == "alicloud_db_instance" || type == "alicloud_db_readonly_instance").all(
         values["security_ips"] == empty || values["security_ips"].none(_ == "0.0.0.0" || _.contains("/0"))
       )
 
