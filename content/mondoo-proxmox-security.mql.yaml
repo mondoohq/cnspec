@@ -4413,15 +4413,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-3
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
+    refs:
+      - title: Proxmox VE PCI(e) Passthrough
+        url: https://pve.proxmox.com/pve-docs/chapter-qm.html#qm_pci_passthrough
+      - title: The kernel's command-line parameters
+        url: https://www.kernel.org/doc/html/latest/admin-guide/kernel-parameters.html
     mql: |
-      file("/proc/cmdline").content.contains("intel_iommu=on") ||
-      file("/proc/cmdline").content.contains("amd_iommu=on") ||
-      file("/proc/cmdline").content.contains("iommu=pt")
+      file("/proc/cmdline").content.contains("iommu=off") == false
+      file("/proc/cmdline").content.contains("iommu=pt") == false
+      file("/proc/cmdline").content.contains("iommu.passthrough=1") == false
+      files.find(from: "/sys/kernel/iommu_groups", type: "directory", regex: "/sys/kernel/iommu_groups/[0-9][0-9]*").length > 0
     docs:
       desc: |
-        This check verifies that the kernel is booted with the IOMMU turned on.
+        This check verifies that the IOMMU is active on the running kernel and that no boot parameter disables it or puts it in passthrough mode.
 
-        The check looks for `intel_iommu=on`, `amd_iommu=on`, or `iommu=pt` on the running kernel command line in `/proc/cmdline`. The parameter is added to `/etc/default/grub` for a GRUB boot or `/etc/kernel/cmdline` for the systemd-boot layout Proxmox uses with ZFS on UEFI, then applied with `update-grub` or `proxmox-boot-tool refresh` and a reboot. It must also be enabled in the system firmware, where it is usually labeled VT-d or AMD-Vi.
+        The IOMMU is turned on in the system firmware, where it is labeled VT-d on Intel and AMD-Vi on AMD. Once it initializes, the kernel creates one numbered directory under `/sys/kernel/iommu_groups` for every isolation group it manages, so a node with no numbered group there has no working IOMMU whatever its boot parameters say. The check reads that directory, then reads the running kernel command line in `/proc/cmdline`, which must not carry `iommu=off`, `intel_iommu=off`, or `amd_iommu=off`, which stop the driver, nor `iommu=pt` or `iommu.passthrough=1`, which switch DMA to passthrough mode.
+
+        Proxmox VE enables the IOMMU by default on AMD CPUs, and on Intel CPUs from kernel 6.8 onward, so a current node needs no `intel_iommu=on` at all. On an older kernel with an Intel CPU that parameter is still required. It is added to `/etc/default/grub` for a GRUB boot or `/etc/kernel/cmdline` for the systemd-boot layout Proxmox uses with ZFS on UEFI, then applied with `update-grub` or `proxmox-boot-tool refresh` and a reboot. There is no matching parameter on AMD: `amd_iommu=on` is not a value the driver recognizes, so the kernel logs it as an unknown option and ignores it.
 
         **Why this matters**
 
@@ -4429,55 +4437,66 @@ queries:
 
         That matters most where a device is under guest control. A VM with a passed-through GPU or NIC programs that device's descriptors and can therefore aim its DMA anywhere, reading another tenant's memory or writing into the host kernel to take it over. Malicious or compromised device firmware on any add-in card does the same thing without a guest being involved.
 
+        Passthrough mode is a separate weakening, usually added for throughput. It keeps translation for devices handed to a guest, but gives every device the host itself owns an identity mapping, so a compromised storage controller or NIC writes anywhere in host memory with nothing in the path checking.
+
         The IOMMU is also what makes the group boundaries meaningful that a companion check in this policy protects from being faked.
 
         Enabling it can expose firmware bugs on older hardware and change device behavior, so test on one node before rolling it out. Where no passthrough is in use the exposure is smaller, but the setting is still the difference between an add-in card being confined and having the run of system memory.
       audit: |
         ### Audit via CLI
 
-        Run the command on a cluster node:
+        Run both commands on a cluster node.
+
+        First, list the IOMMU groups the kernel created:
 
         ```bash
-        grep -oE '(intel_iommu=on|amd_iommu=on|iommu=pt)' /proc/cmdline
+        find /sys/kernel/iommu_groups -type d -regex '/sys/kernel/iommu_groups/[0-9][0-9]*'
         ```
 
-        A passing result shows at least one IOMMU flag on the running kernel command line; a failing result returns no output, indicating IOMMU is not enabled.
+        A passing node prints one directory per group. No output means the IOMMU never initialized, which is almost always VT-d or AMD-Vi left disabled in the system firmware.
+
+        Then confirm that nothing on the running kernel command line disables the IOMMU or asks for passthrough mode:
+
+        ```bash
+        grep -oE 'intel_iommu=off|amd_iommu=off|iommu=off|iommu=pt|iommu\.passthrough=1' /proc/cmdline
+        ```
+
+        A passing node prints no output. Any match fails the check.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            Enable the IOMMU in the system firmware, where it is labeled VT-d on Intel and AMD-Vi on AMD, then add the vendor's IOMMU parameter to the kernel command line and reboot. The finding reads the running command line in `/proc/cmdline`, so it stays open until the node boots with the parameter.
+            Enable the IOMMU in the system firmware, where it is labeled VT-d on Intel and AMD-Vi on AMD, then clear any kernel parameter that turns it off or asks for passthrough mode, and reboot. The finding reads the IOMMU groups the kernel created and the running command line in `/proc/cmdline`, so it stays open until the node has booted with the IOMMU active.
 
-            - On Intel, add `intel_iommu=on`, which turns the Intel IOMMU driver on.
-            - On AMD, add `amd_iommu=on`. The AMD driver is already on by default once AMD-Vi is enabled in firmware, and the kernel logs `on` as an unknown option and ignores it, so on AMD the firmware setting does the work and the parameter records it where the finding looks.
-
-            Do not add `iommu=pt` for this purpose. It puts devices the host itself uses into passthrough mode, where their DMA bypasses IOMMU translation, which is the protection this setting exists to provide.
+            - Remove `iommu=off`, `intel_iommu=off`, and `amd_iommu=off`. Each one stops the IOMMU driver from initializing, and no group is created.
+            - Remove `iommu=pt` and `iommu.passthrough=1`. They put devices the host itself uses into passthrough mode, where their DMA bypasses IOMMU translation, which is the protection this setting exists to provide.
+            - On an Intel CPU running a kernel older than 6.8, add `intel_iommu=on`. AMD CPUs, and Intel CPUs on kernel 6.8 and newer, need no parameter. Do not add `amd_iommu=on`: it is not a value the AMD driver recognizes, so the kernel ignores it.
 
             **Test on one node first, and migrate guests off before the reboot.** Enabling the IOMMU can expose firmware bugs and change device behavior on older hardware.
 
-            For a node booting with GRUB:
+            For a node booting with GRUB, the arguments live in `GRUB_CMDLINE_LINUX_DEFAULT` in `/etc/default/grub`:
 
             ```bash
-            sed -i -E 's|^(GRUB_CMDLINE_LINUX_DEFAULT=")(.*)"$|\1\2 intel_iommu=on"|' /etc/default/grub
+            sed -i -E 's/ *(intel_iommu=off|amd_iommu=off|iommu=off|iommu=pt|iommu\.passthrough=1)//g' /etc/default/grub
             update-grub
             echo 'Reboot required for the change to take effect.'
             ```
 
-            For a node booting with systemd-boot, which Proxmox VE uses for ZFS root on UEFI, the arguments live in `/etc/kernel/cmdline`:
+            For a node booting with systemd-boot, which Proxmox VE uses for ZFS root on UEFI, they live in `/etc/kernel/cmdline`:
 
             ```bash
-            sed -i 's|$| intel_iommu=on|' /etc/kernel/cmdline
+            sed -i -E 's/ *(intel_iommu=off|amd_iommu=off|iommu=off|iommu=pt|iommu\.passthrough=1)//g' /etc/kernel/cmdline
             proxmox-boot-tool refresh
             echo 'Reboot required for the change to take effect.'
             ```
 
-            For AMD, replace `intel_iommu=on` with `amd_iommu=on`.
+            On an Intel node running a kernel older than 6.8, append ` intel_iommu=on` to the same line before refreshing the boot loader.
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Detect the CPU vendor, append `intel_iommu=on` or `amd_iommu=on` to whichever boot configurations exist, and refresh the boot loader. The IOMMU must also be enabled in firmware as VT-d or AMD-Vi, and the parameter takes effect at the next reboot, which the script leaves to you.
+            Strip the parameters that disable the IOMMU or request passthrough mode from whichever boot configurations exist, add `intel_iommu=on` where the CPU and kernel still need it, and refresh the boot loader. The IOMMU must also be enabled in firmware as VT-d or AMD-Vi, and the change takes effect at the next reboot, which the script leaves to you.
 
             **Test on one node first, and migrate guests off before rebooting.** Enabling the IOMMU can expose firmware bugs on older hardware.
 
@@ -4485,23 +4504,44 @@ queries:
             #!/bin/bash
             set -e
 
-            vendor=$(awk -F: '/vendor_id/ {print $2; exit}' /proc/cpuinfo | tr -d ' ')
-            case "$vendor" in
-              GenuineIntel) flag="intel_iommu=on";;
-              AuthenticAMD) flag="amd_iommu=on";;
-              *) echo "Unknown CPU vendor: $vendor" >&2; exit 1;;
-            esac
-
+            bad='intel_iommu=off|amd_iommu=off|iommu=off|iommu=pt|iommu\.passthrough=1'
             changed=0
 
-            if [ -f /etc/default/grub ] && ! grep -qE 'intel_iommu=on|amd_iommu=on' /etc/default/grub; then
-              sed -i -E "s|^(GRUB_CMDLINE_LINUX_DEFAULT=\")(.*)\"$|\\1\\2 ${flag}\"|" /etc/default/grub
-              changed=1
+            for conf in /etc/default/grub /etc/kernel/cmdline; do
+              [ -f "$conf" ] || continue
+              if grep -qE "$bad" "$conf"; then
+                sed -i -E "s/ *($bad)//g" "$conf"
+                changed=1
+              fi
+            done
+
+            # Only Intel CPUs on kernels older than 6.8 still need a parameter.
+            # AMD CPUs, and Intel CPUs from 6.8 on, enable the IOMMU by default.
+            vendor=$(awk -F: '/vendor_id/ {print $2; exit}' /proc/cpuinfo | tr -d ' ')
+            release=$(uname -r)
+            major=${release%%.*}
+            rest=${release#*.}
+            minor=${rest%%.*}
+            minor=${minor%%[!0-9]*}
+
+            needs_flag=0
+            if [ "$vendor" = "GenuineIntel" ]; then
+              if [ "$major" -lt 6 ]; then
+                needs_flag=1
+              elif [ "$major" -eq 6 ] && [ "$minor" -lt 8 ]; then
+                needs_flag=1
+              fi
             fi
 
-            if [ -f /etc/kernel/cmdline ] && ! grep -qE 'intel_iommu=on|amd_iommu=on' /etc/kernel/cmdline; then
-              sed -i "s|\$| ${flag}|" /etc/kernel/cmdline
-              changed=1
+            if [ "$needs_flag" -eq 1 ]; then
+              if [ -f /etc/default/grub ] && ! grep -q 'intel_iommu=on' /etc/default/grub; then
+                sed -i -E 's|^(GRUB_CMDLINE_LINUX_DEFAULT=")(.*)"$|\1\2 intel_iommu=on"|' /etc/default/grub
+                changed=1
+              fi
+              if [ -f /etc/kernel/cmdline ] && ! grep -q 'intel_iommu=on' /etc/kernel/cmdline; then
+                sed -i 's|$| intel_iommu=on|' /etc/kernel/cmdline
+                changed=1
+              fi
             fi
 
             if [ "$changed" -eq 1 ]; then
@@ -4514,7 +4554,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to add `intel_iommu=on` or `amd_iommu=on`, based on CPU vendor, to the GRUB and systemd-boot configurations that exist. The IOMMU must also be enabled in firmware as VT-d or AMD-Vi, and the parameter takes effect when each node reboots, so reboot the nodes one at a time after migrating their guests off.
+            Use this Ansible playbook to strip the parameters that disable the IOMMU or request passthrough mode from the GRUB and systemd-boot configurations that exist, and to add `intel_iommu=on` on Intel nodes still running a kernel older than 6.8. The IOMMU must also be enabled in firmware as VT-d or AMD-Vi, and the change takes effect when each node reboots, so reboot the nodes one at a time after migrating their guests off.
 
             ```yaml
             ---
@@ -4522,30 +4562,40 @@ queries:
               hosts: proxmox
               become: true
 
+              vars:
+                iommu_disabling_params: 'intel_iommu=off|amd_iommu=off|iommu=off|iommu=pt|iommu\.passthrough=1'
+
               tasks:
-                - name: Determine CPU vendor
-                  ansible.builtin.shell: |
-                    awk -F: '/vendor_id/ {print $2; exit}' /proc/cpuinfo | tr -d ' '
-                  register: cpu_vendor
-                  changed_when: false
+                - name: Remove parameters that disable the IOMMU or request passthrough mode
+                  ansible.builtin.replace:
+                    path: "{{ item }}"
+                    regexp: ' *({{ iommu_disabling_params }})'
+                    replace: ''
+                  loop:
+                    - /etc/default/grub
+                    - /etc/kernel/cmdline
+                  register: strip_change
+                  failed_when: false
 
-                - name: Set IOMMU flag fact
-                  ansible.builtin.set_fact:
-                    iommu_flag: "{{ 'intel_iommu=on' if cpu_vendor.stdout == 'GenuineIntel' else 'amd_iommu=on' }}"
-
-                - name: Add IOMMU flag to GRUB_CMDLINE_LINUX_DEFAULT
+                - name: Add intel_iommu=on to GRUB_CMDLINE_LINUX_DEFAULT
                   ansible.builtin.replace:
                     path: /etc/default/grub
-                    regexp: '^(GRUB_CMDLINE_LINUX_DEFAULT="(?:(?!{{ iommu_flag }}).)*)"$'
-                    replace: '\1 {{ iommu_flag }}"'
+                    regexp: '^(GRUB_CMDLINE_LINUX_DEFAULT="(?:(?!intel_iommu=on).)*)"$'
+                    replace: '\1 intel_iommu=on"'
+                  when:
+                    - "'GenuineIntel' in ansible_facts['processor']"
+                    - ansible_facts['kernel'] is version('6.8', '<')
                   register: grub_change
                   failed_when: false
 
-                - name: Add IOMMU flag to /etc/kernel/cmdline for systemd-boot
+                - name: Add intel_iommu=on to /etc/kernel/cmdline for systemd-boot
                   ansible.builtin.replace:
                     path: /etc/kernel/cmdline
-                    regexp: '^(?!.*{{ iommu_flag }})(.+)$'
-                    replace: '\1 {{ iommu_flag }}'
+                    regexp: '^(?!.*intel_iommu=on)(.+)$'
+                    replace: '\1 intel_iommu=on'
+                  when:
+                    - "'GenuineIntel' in ansible_facts['processor']"
+                    - ansible_facts['kernel'] is version('6.8', '<')
                   register: cmdline_change
                   failed_when: false
 
@@ -4554,7 +4604,10 @@ queries:
                     set -e
                     if command -v update-grub >/dev/null; then update-grub; fi
                     if command -v proxmox-boot-tool >/dev/null; then proxmox-boot-tool refresh; fi
-                  when: (grub_change.changed | default(false)) or (cmdline_change.changed | default(false))
+                  when: >
+                    (strip_change.changed | default(false)) or
+                    (grub_change.changed | default(false)) or
+                    (cmdline_change.changed | default(false))
             ```
 
   - uid: mondoo-proxmox-security-auditd-watches-pve-directory
