@@ -1,0 +1,20 @@
+provider "okta" {
+  org_name  = "example"
+  base_url  = "okta.com"
+  api_token = var.okta_api_token
+}
+
+resource "okta_policy_mfa" "helpdesk" {
+  name   = "Helpdesk"
+  is_oie = true
+
+  okta_verify = {
+    enroll = "REQUIRED"
+  }
+  okta_email = {
+    enroll = "REQUIRED"
+  }
+  phone_number = {
+    enroll = "NOT_ALLOWED"
+  }
+}
