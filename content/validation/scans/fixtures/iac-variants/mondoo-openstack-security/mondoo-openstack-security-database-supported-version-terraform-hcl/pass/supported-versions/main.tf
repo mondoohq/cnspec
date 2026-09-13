@@ -5,7 +5,7 @@ resource "openstack_db_instance_v1" "mysql" {
 
   datastore {
     type    = "mysql"
-    version = "8.0"
+    version = "8.4"
   }
 
   network {
