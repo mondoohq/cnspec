@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-digitalocean-security
     name: Mondoo DigitalOcean Security
-    version: 2.5.4
+    version: 2.5.5
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -264,7 +264,7 @@ queries:
       remediation:
         - id: console
           desc: |
-            DigitalOcean does not support moving an existing Droplet into a VPC directly. The fix is a destructive cutover that replaces the Droplet, so plan for downtime and treat it as a migration rather than an in-place edit.
+            **This fix replaces the Droplet.** DigitalOcean does not support moving an existing Droplet into a VPC, so plan for downtime and treat the change as a migration rather than an in-place edit.
 
             To fix this in the DigitalOcean Cloud Control Panel, create a snapshot of the Droplet, create a replacement Droplet from the snapshot inside the target VPC, and retire the original:
 
@@ -276,21 +276,44 @@ queries:
             6. Destroy the original Droplet only after the replacement is confirmed healthy.
         - id: cli
           desc: |
-            This fix is a destructive cutover that replaces the Droplet, so plan for downtime, keep the original until the replacement is verified, and note that the new Droplet receives a new public IP address.
+            **This fix replaces the Droplet.** DigitalOcean cannot move an existing Droplet into a VPC, so plan for downtime, keep the original until the replacement is verified, and expect the new Droplet to receive a new public IP address.
 
-            To fix this on the command line using the `doctl` CLI, power down the Droplet for a consistent snapshot, then create a replacement inside the target VPC:
+            To fix this on the command line using the `doctl` CLI, snapshot the Droplet and create a replacement from the snapshot with a VPC set:
 
-            ```bash
-            doctl compute droplet-action power-off <droplet-id> --wait
-            doctl compute droplet-action snapshot <droplet-id> --snapshot-name <name> --wait
-            doctl compute droplet create <new-name> \
-              --image <snapshot-id> \
-              --size <size> \
-              --region <region> \
-              --vpc-uuid <vpc-uuid>
-            ```
+            1. Power off the Droplet so the snapshot captures a consistent filesystem, then take the snapshot:
 
-            Verify the replacement is serving traffic, then destroy the original Droplet.
+                ```bash
+                doctl compute droplet-action power-off <droplet-id> --wait
+                doctl compute droplet-action snapshot <droplet-id> --snapshot-name <snapshot-name> --wait
+                ```
+
+            2. Look up the snapshot ID and the VPCs available to the replacement:
+
+                ```bash
+                doctl compute snapshot list --resource droplet --format ID,Name,Regions,MinDiskSize
+                doctl vpcs list --format ID,Name,Region,IPRange
+                ```
+
+            3. Create the replacement Droplet inside the VPC:
+
+                ```bash
+                doctl compute droplet create <new-name> \
+                  --image <snapshot-id> \
+                  --size <size> \
+                  --region <region> \
+                  --vpc-uuid <vpc-uuid>
+                ```
+
+                - `<snapshot-id>` is the `ID` of the snapshot taken in step 1.
+                - `<region>` must be a region the snapshot is available in, and `<vpc-uuid>` must be the `ID` of a VPC in that same region. Setting `--vpc-uuid` gives the new Droplet the VPC membership the check requires.
+                - `<size>` must provide a disk at least as large as the snapshot's `MinDiskSize`. Reusing the original Droplet's size slug keeps the same capacity.
+
+            4. Update DNS, firewall rules, and monitoring to reference the new Droplet, and verify that it serves traffic.
+            5. Delete the original Droplet. It keeps failing the check for as long as it exists outside a VPC:
+
+                ```bash
+                doctl compute droplet delete <droplet-id>
+                ```
         - id: terraform
           desc: |
             To deploy Droplets inside a VPC in Terraform, set `vpc_uuid` on the `digitalocean_droplet` resource:
@@ -392,21 +415,29 @@ queries:
       remediation:
         - id: console
           desc: |
+            A Droplet passes once at least one Cloud Firewall covers it, either by Droplet ID or through a tag the Droplet carries.
+
+            **Attaching a firewall can cut off traffic to the Droplet.** A Cloud Firewall drops all inbound and outbound traffic that no rule permits, so review its rules before attaching it. Make sure it allows the inbound ports the Droplet serves and the outbound traffic it needs, such as DNS, package updates, and calls to other services.
+
             To fix this in the DigitalOcean Cloud Control Panel:
 
-            1. Navigate to **Networking** > **Firewalls** and open (or create) a firewall that should protect the Droplet.
+            1. Navigate to **Networking** > **Firewalls** and open an existing firewall that should protect the Droplet, or create a new one.
             2. Under **Apply to Droplets**, add the Droplet by name or attach a tag the Droplet already carries.
             3. Save the firewall and verify the Droplet now lists the firewall under its **Networking** tab.
         - id: cli
           desc: |
-            To fix this on the command line using the `doctl` CLI, attach the Droplet to an existing firewall:
+            A Droplet passes once at least one Cloud Firewall covers it, either by Droplet ID or through a tag the Droplet carries.
+
+            **Attaching a firewall can cut off traffic to the Droplet.** A Cloud Firewall drops all inbound and outbound traffic that no rule permits. Before attaching one, confirm with `doctl compute firewall get <firewall-id> --format InboundRules,OutboundRules` that it allows the ports the Droplet serves and the outbound traffic it needs.
+
+            To fix this on the command line using the `doctl` CLI, find the firewall ID with `doctl compute firewall list --format ID,Name,Tags`, then attach the Droplet directly:
 
             ```bash
             doctl compute firewall add-droplets <firewall-id> \
               --droplet-ids <droplet-id>
             ```
 
-            Or, if you scope firewalls by tag, ensure the Droplet carries the tag the firewall targets:
+            Or, if you scope firewalls by tag, apply one of the tags listed in the firewall's `Tags` column to the Droplet:
 
             ```bash
             doctl compute droplet tag <droplet-id> --tag-name <firewall-tag>
@@ -475,25 +506,51 @@ queries:
       remediation:
         - id: console
           desc: |
+            A Droplet with a public IP address passes only when at least one Cloud Firewall covers it and none of the firewalls covering it has an inbound rule, on any port or protocol, whose sources include `All IPv4` (`0.0.0.0/0`) or `All IPv6` (`::/0`). A Droplet that no firewall covers always counts as reachable.
+
+            **Narrowing inbound sources drops connections from every address you leave out.** Include your own management address before you remove a world-open SSH rule, or you lose access to the Droplet. A host that must stay public, such as a web server, needs an exception rather than this fix.
+
             To close the internet-reachable path in the DigitalOcean Cloud Control Panel:
 
-            1. Navigate to **Networking** > **Firewalls** and open (or create and attach) a firewall covering the affected Droplet.
-            2. Edit any inbound rule whose source is `All IPv4` (`0.0.0.0/0`) or `All IPv6` (`::/0`) and scope it to a specific trusted CIDR, tag, or Droplet ID.
-            3. If the Droplet does not need a public edge, plan a VPC-only cutover so it is reachable solely over private networking.
+            1. Open the Droplet, select its **Networking** tab, and note every firewall listed under **Firewalls**. If none is listed, navigate to **Networking** > **Firewalls**, create a firewall with the inbound and outbound rules the Droplet needs, and apply it to the Droplet.
+            2. In each listed firewall, edit every inbound rule whose sources include `All IPv4` or `All IPv6`. Replace those sources with the specific trusted CIDRs, tags, Droplets, or load balancers that need to reach the port.
+            3. Save each firewall.
         - id: cli
           desc: |
-            To scope the world-open path on the command line using the `doctl` CLI, remove the unrestricted inbound rules and replace them with a trusted source. If the Droplet has no firewall, create one and attach it first:
+            A Droplet with a public IP address passes only when at least one Cloud Firewall covers it and none of the firewalls covering it has an inbound rule, on any port or protocol, whose sources include `0.0.0.0/0` or `::/0`. A Droplet that no firewall covers always counts as reachable.
 
-            ```bash
-            doctl compute firewall remove-rules "<firewall-id>" \
-              --inbound-rules "protocol:tcp,ports:443,address:0.0.0.0/0 protocol:tcp,ports:443,address:::/0"
-            doctl compute firewall add-rules "<firewall-id>" \
-              --inbound-rules "protocol:tcp,ports:443,address:203.0.113.0/24"
-            doctl compute firewall add-droplets "<firewall-id>" --droplet-ids <droplet-id>
-            ```
+            **Narrowing inbound sources drops connections from every address you leave out.** Add the scoped rule before removing the world-open one, and include your own management address in any SSH rule, or you lose access to the Droplet.
+
+            To fix this on the command line using the `doctl` CLI:
+
+            1. List the firewalls covering the Droplet and print their inbound rules exactly as they are stored:
+
+                ```bash
+                doctl compute firewall list-by-droplet <droplet-id> --format ID,Name,InboundRules
+                ```
+
+            2. For each rule whose sources include `address:0.0.0.0/0` or `address:::/0`, add a replacement rule with the same protocol and ports scoped to a trusted source, then remove the world-open rule. Pass the rule to `remove-rules` exactly as step 1 printed it, including every `address` entry it lists:
+
+                ```bash
+                doctl compute firewall add-rules <firewall-id> \
+                  --inbound-rules "protocol:tcp,ports:<port>,address:<trusted-cidr>"
+                doctl compute firewall remove-rules <firewall-id> \
+                  --inbound-rules "<rule-as-printed-in-step-1>"
+                ```
+
+                `<port>` is the port or range of the rule being replaced, and `<trusted-cidr>` is the network that legitimately connects to it, such as an office range or a VPN egress address. Any source other than `0.0.0.0/0` and `::/0` satisfies the check.
+
+            3. If step 1 returned no firewall, create one that covers the Droplet. A Cloud Firewall drops all traffic no rule permits, so give it the outbound rules the Droplet needs as well as scoped inbound rules:
+
+                ```bash
+                doctl compute firewall create --name <firewall-name> \
+                  --droplet-ids <droplet-id> \
+                  --inbound-rules "protocol:tcp,ports:22,address:<trusted-cidr>" \
+                  --outbound-rules "protocol:tcp,ports:all,address:0.0.0.0/0,address:::/0 protocol:udp,ports:all,address:0.0.0.0/0,address:::/0"
+                ```
         - id: terraform
           desc: |
-            Keep Droplets off the public internet by covering them with a firewall whose `inbound_rule` blocks are scoped to trusted CIDRs rather than `0.0.0.0/0` or `::/0`:
+            Keep Droplets off the public internet by covering them with a firewall whose `inbound_rule` blocks are scoped to trusted CIDRs rather than `0.0.0.0/0` or `::/0`. Replace `203.0.113.0/24`, a documentation range, with the network that legitimately connects to the port. A firewall drops all traffic no rule permits, so also declare `outbound_rule` blocks for the traffic the Droplet sends:
 
             ```hcl
             resource "digitalocean_firewall" "scoped" {
@@ -504,6 +561,18 @@ queries:
                 protocol         = "tcp"
                 port_range       = "443"
                 source_addresses = ["203.0.113.0/24"]
+              }
+
+              outbound_rule {
+                protocol              = "tcp"
+                port_range            = "all"
+                destination_addresses = ["0.0.0.0/0", "::/0"]
+              }
+
+              outbound_rule {
+                protocol              = "udp"
+                port_range            = "all"
+                destination_addresses = ["0.0.0.0/0", "::/0"]
               }
             }
             ```
@@ -584,24 +653,42 @@ queries:
       remediation:
         - id: console
           desc: |
+            The firewall passes once no inbound TCP rule for port `22` lists `All IPv4` (`0.0.0.0/0`) or `All IPv6` (`::/0`) among its sources.
+
+            **Keep your own access in the new source list.** Removing the world-open source immediately blocks SSH from every address the replacement rule does not cover, including your own if you leave it out.
+
             To fix this in the DigitalOcean Cloud Control Panel:
 
             1. Navigate to **Networking** > **Firewalls** and open the affected firewall.
-            2. Edit the offending inbound rule for SSH and change the source from `All IPv4`/`All IPv6` to a specific trusted CIDR, tag, or Droplet ID.
+            2. Edit the inbound SSH rule and replace the `All IPv4` and `All IPv6` sources with the trusted CIDR, tag, or Droplet that operators connect from, such as a bastion host or VPN range.
             3. Save the firewall.
         - id: cli
           desc: |
-            To fix this on the command line using the `doctl` CLI, remove the unrestricted SSH rule for both the IPv4 and IPv6 catch-all sources, then add a replacement rule scoped to a trusted CIDR:
+            The firewall passes once no inbound TCP rule for port `22` lists `0.0.0.0/0` or `::/0` among its sources.
 
-            ```bash
-            doctl compute firewall remove-rules "<firewall-id>" \
-              --inbound-rules "protocol:tcp,ports:22,address:0.0.0.0/0 protocol:tcp,ports:22,address:::/0"
-            doctl compute firewall add-rules "<firewall-id>" \
-              --inbound-rules "protocol:tcp,ports:22,address:<your-trusted-cidr>"
-            ```
+            **Keep your own access in the new source list.** Add the scoped rule before removing the world-open one, and make sure `<trusted-cidr>` includes the address you connect from, or you lose SSH access to every Droplet the firewall covers.
+
+            To fix this on the command line using the `doctl` CLI:
+
+            1. Print the firewall's inbound rules exactly as they are stored:
+
+                ```bash
+                doctl compute firewall get <firewall-id> --format InboundRules
+                ```
+
+            2. Add an SSH rule scoped to the trusted source, then remove the world-open SSH rule. Pass the rule to `remove-rules` exactly as step 1 printed it, including every `address` entry it lists, for example `protocol:tcp,ports:22,address:0.0.0.0/0,address:::/0`:
+
+                ```bash
+                doctl compute firewall add-rules <firewall-id> \
+                  --inbound-rules "protocol:tcp,ports:22,address:<trusted-cidr>"
+                doctl compute firewall remove-rules <firewall-id> \
+                  --inbound-rules "<ssh-rule-as-printed-in-step-1>"
+                ```
+
+                `<trusted-cidr>` is the range operators connect from, such as a bastion host address or VPN egress range.
         - id: terraform
           desc: |
-            To scope SSH access in Terraform, set `source_addresses` on the `inbound_rule` for port 22 to a trusted CIDR instead of `0.0.0.0/0` or `::/0`:
+            To scope SSH access in Terraform, set `source_addresses` on the `inbound_rule` for port 22 to a trusted CIDR instead of `0.0.0.0/0` or `::/0`. Replace `203.0.113.0/24`, a documentation range, with the range operators connect from:
 
             ```hcl
             resource "digitalocean_firewall" "example" {
@@ -723,22 +810,45 @@ queries:
       remediation:
         - id: console
           desc: |
+            The firewall passes once no inbound TCP rule for port `3389` lists `All IPv4` (`0.0.0.0/0`) or `All IPv6` (`::/0`) among its sources.
+
+            **Sessions from addresses outside the new source list are disconnected.** Include the addresses administrators connect from before you save the change.
+
             To fix this in the DigitalOcean Cloud Control Panel:
 
             1. Navigate to **Networking** > **Firewalls** and open the affected firewall.
-            2. Remove the RDP rule entirely, or restrict the source to a specific trusted CIDR, tag, or Droplet ID.
+            2. Remove the RDP rule entirely, or replace its `All IPv4` and `All IPv6` sources with the trusted CIDR, tag, or Droplet that administrators connect from, such as a bastion host or VPN range.
             3. Save the firewall.
         - id: cli
           desc: |
-            To fix this on the command line using the `doctl` CLI, remove the unrestricted RDP rule for both the IPv4 and IPv6 catch-all sources:
+            The firewall passes once no inbound TCP rule for port `3389` lists `0.0.0.0/0` or `::/0` among its sources.
 
-            ```bash
-            doctl compute firewall remove-rules "<firewall-id>" \
-              --inbound-rules "protocol:tcp,ports:3389,address:0.0.0.0/0 protocol:tcp,ports:3389,address:::/0"
-            ```
+            **Sessions from addresses outside the new source list are disconnected.** Add the scoped rule before removing the world-open one.
+
+            To fix this on the command line using the `doctl` CLI:
+
+            1. Print the firewall's inbound rules exactly as they are stored:
+
+                ```bash
+                doctl compute firewall get <firewall-id> --format InboundRules
+                ```
+
+            2. If administrators still need RDP, add a rule scoped to the trusted source first. `<trusted-cidr>` is the range they connect from, such as a bastion host address or VPN egress range:
+
+                ```bash
+                doctl compute firewall add-rules <firewall-id> \
+                  --inbound-rules "protocol:tcp,ports:3389,address:<trusted-cidr>"
+                ```
+
+            3. Remove the world-open RDP rule. Pass it exactly as step 1 printed it, including every `address` entry it lists, for example `protocol:tcp,ports:3389,address:0.0.0.0/0,address:::/0`:
+
+                ```bash
+                doctl compute firewall remove-rules <firewall-id> \
+                  --inbound-rules "<rdp-rule-as-printed-in-step-1>"
+                ```
         - id: terraform
           desc: |
-            To remove unrestricted RDP access in Terraform, drop the public `inbound_rule` for port 3389 or scope its `source_addresses` to a trusted CIDR:
+            To remove unrestricted RDP access in Terraform, drop the public `inbound_rule` for port 3389 or scope its `source_addresses` to a trusted CIDR. Replace `203.0.113.0/24`, a documentation range, with the range administrators connect from:
 
             ```hcl
             resource "digitalocean_firewall" "example" {
@@ -867,17 +977,36 @@ queries:
             3. Repeat for each offending port. For managed databases, prefer the database's built-in **Trusted Sources** restriction over Droplet-level firewall rules.
         - id: cli
           desc: |
-            To fix this on the command line using the `doctl` CLI, remove the offending inbound rule for both the IPv4 and IPv6 catch-all sources, or restrict the source to a trusted CIDR, tag, or Droplet ID:
+            The firewall passes once no inbound TCP rule for `3306`, `5432`, `27017`, `6379`, `9092`, or `9200` lists `0.0.0.0/0` or `::/0` among its sources.
 
-            ```bash
-            doctl compute firewall remove-rules "<firewall-id>" \
-              --inbound-rules "protocol:tcp,ports:5432,address:0.0.0.0/0 protocol:tcp,ports:5432,address:::/0"
-            ```
+            **Clients outside the new source list lose their database connections.** Include every application host that connects, and add the replacement rule before removing the world-open one.
 
-            Repeat for each offending port (`3306`, `5432`, `27017`, `6379`, `9092`, `9200`).
+            To fix this on the command line using the `doctl` CLI:
+
+            1. Print the firewall's inbound rules exactly as they are stored:
+
+                ```bash
+                doctl compute firewall get <firewall-id> --format InboundRules
+                ```
+
+            2. For each world-open database-port rule, add a replacement scoped to the clients that need it. `<port>` is the database port, and `<client-tag>` is a tag carried by the application Droplets. An `address:<vpc-cidr>` source for the VPC range also satisfies the check:
+
+                ```bash
+                doctl compute firewall add-rules <firewall-id> \
+                  --inbound-rules "protocol:tcp,ports:<port>,tag:<client-tag>"
+                ```
+
+            3. Remove the world-open rule. Pass it exactly as step 1 printed it, including every `address` entry it lists, for example `protocol:tcp,ports:5432,address:0.0.0.0/0,address:::/0`:
+
+                ```bash
+                doctl compute firewall remove-rules <firewall-id> \
+                  --inbound-rules "<db-rule-as-printed-in-step-1>"
+                ```
+
+            Repeat steps 2 and 3 for each offending port.
         - id: terraform
           desc: |
-            To keep database ports off the public internet in Terraform, scope each database-port `inbound_rule` to a trusted CIDR or omit the public rule entirely:
+            To keep database ports off the public internet in Terraform, scope each database-port `inbound_rule` to a trusted CIDR or omit the public rule entirely. The example allows PostgreSQL only from `10.0.0.0/8`; replace it with the private range of the VPC your application Droplets use:
 
             ```hcl
             resource "digitalocean_firewall" "example" {
@@ -1011,18 +1140,34 @@ queries:
             4. Save the firewall.
         - id: cli
           desc: |
-            To fix this on the command line using the `doctl` CLI, first read the rule exactly as the firewall stores it, then remove it for both the IPv4 and IPv6 catch-all sources. Match the `ports` value the firewall reports, which may be `0`, `all`, `1-65535`, or `0-65535`, and repeat for `udp` rules if present:
+            The firewall passes once no inbound TCP or UDP rule whose sources include `0.0.0.0/0` or `::/0` covers the whole port range, stored as `0`, `all`, `1-65535`, or `0-65535`. Narrow per-port rules from anywhere still pass this check.
 
-            ```bash
-            doctl compute firewall get "<firewall-id>" --format InboundRules
-            doctl compute firewall remove-rules "<firewall-id>" \
-              --inbound-rules "protocol:tcp,ports:all,address:0.0.0.0/0 protocol:tcp,ports:all,address:::/0"
-            ```
+            **Add the narrow rules before removing the catch-all.** Any service on the covered Droplets that the new rules leave out stops accepting connections as soon as the catch-all is gone.
 
-            Replace the removed rule with narrow rules that expose only the specific ports required by the workload, scoped to trusted source CIDRs.
+            To fix this on the command line using the `doctl` CLI:
+
+            1. Print the firewall's inbound rules exactly as they are stored:
+
+                ```bash
+                doctl compute firewall get <firewall-id> --format InboundRules
+                ```
+
+            2. Add a rule for each port the workload serves. `<port>` is a single port or a narrow range, and `<source-cidr>` is the network allowed to reach it:
+
+                ```bash
+                doctl compute firewall add-rules <firewall-id> \
+                  --inbound-rules "protocol:tcp,ports:<port>,address:<source-cidr>"
+                ```
+
+            3. Remove each catch-all rule. Pass it exactly as step 1 printed it, including its `ports` value and every `address` entry, for example `protocol:tcp,ports:0,address:0.0.0.0/0,address:::/0`. Repeat for a `udp` catch-all if one is present:
+
+                ```bash
+                doctl compute firewall remove-rules <firewall-id> \
+                  --inbound-rules "<catch-all-rule-as-printed-in-step-1>"
+                ```
         - id: terraform
           desc: |
-            To avoid a catch-all rule in Terraform, define `inbound_rule` blocks that name only the specific ports the workload needs instead of `port_range = "all"` (or the full range), and scope `source_addresses`:
+            To avoid a catch-all rule in Terraform, define `inbound_rule` blocks that name only the specific ports the workload needs instead of `port_range = "all"` or the full `1-65535` range. The example opens only HTTPS, which is acceptable from `0.0.0.0/0` and `::/0` for a public web service because this check fails only a full port range; scope `source_addresses` to trusted CIDRs for any port that is not meant to be public:
 
             ```hcl
             resource "digitalocean_firewall" "example" {
@@ -1042,7 +1187,7 @@ queries:
   - uid: mondoo-digitalocean-security-firewall-no-all-ports-open-digitalocean
     filters: asset.platform == "digitalocean-firewall"
     mql: |
-      digitalocean.firewall.ingressRules.where(openToInternet).none(ports.in(["0", "all", "1-65535", "0-65535"]))
+      digitalocean.firewall.ingressRules.where(openToInternet).none(protocol != "icmp" && ports.in(["0", "all", "1-65535", "0-65535"]))
   - uid: mondoo-digitalocean-security-firewall-no-all-ports-open-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_firewall")
     mql: |
@@ -1137,6 +1282,10 @@ queries:
       remediation:
         - id: console
           desc: |
+            The cluster passes once its Trusted Sources list holds at least one entry.
+
+            **The first entry blocks every client not on the list.** As soon as one Trusted Source exists, the cluster refuses connections from all other sources, so add every application host, App Platform app, Kubernetes cluster, and administrator address in the same change. Never add `0.0.0.0/0`, which leaves the cluster open to the internet.
+
             To fix this in the DigitalOcean Cloud Control Panel:
 
             1. Navigate to **Databases** and open the affected cluster.
@@ -1144,13 +1293,23 @@ queries:
             3. Add the Droplets, tags, apps, Kubernetes clusters, or specific IP addresses that need database access.
         - id: cli
           desc: |
-            To fix this on the command line using the `doctl` CLI, append a Trusted Source rule for each Droplet or CIDR that needs access:
+            The cluster passes once its Trusted Sources list holds at least one entry.
+
+            **The first rule blocks every client not on the list.** As soon as one rule exists, the cluster refuses connections from all other sources, so append a rule for every client before applications reconnect. Never use `ip_addr:0.0.0.0/0`, which leaves the cluster open to the internet.
+
+            To fix this on the command line using the `doctl` CLI, append one rule per client. Each rule is `<type>:<value>`:
+
+            - `droplet:<droplet-id>` allows one Droplet, using the ID from `doctl compute droplet list --format ID,Name`.
+            - `tag:<tag-name>` allows every Droplet carrying the tag.
+            - `k8s:<cluster-id>` and `app:<app-id>` allow a DOKS cluster or an App Platform app.
+            - `ip_addr:<address>` allows a single IP address or a CIDR range, such as an administrator's office network.
 
             ```bash
             doctl databases firewalls append <database-id> \
               --rule droplet:<droplet-id>
             doctl databases firewalls append <database-id> \
-              --rule ip_addr:<cidr>
+              --rule ip_addr:<address>
+            doctl databases firewalls list <database-id>
             ```
         # No Terraform remediation: the same cross-resource correlation limitation as the variants above. Trusted Sources are a separate digitalocean_database_firewall resource referencing cluster_id, so an HCL snippet cannot assert coverage of an arbitrary cluster.
     refs:
@@ -1228,31 +1387,45 @@ queries:
       remediation:
         - id: console
           desc: |
-            DigitalOcean does not support moving an existing managed database into a VPC. The fix is a destructive cutover to a replacement cluster, so plan for downtime and treat it as a migration.
+            A managed database cluster can be migrated into a VPC network directly, so the same cluster and its data stay in service without a replacement. The cluster passes once it reports a private network UUID.
 
-            A fork or new cluster does not inherit the source's Trusted Sources, database users, or connection pools, so you must re-apply them before cutover. A fork must be created in the same region as the source cluster.
+            **Schedule the migration in a maintenance window.** The cluster shows a `migrating` status until the move completes, and it is assigned a new IP address in the VPC network. Check the private connection details afterward and update any client that uses them.
 
-            To fix this in the DigitalOcean Cloud Control Panel, create a fork or a new cluster in the desired VPC, migrate the data, and retire the original:
+            To fix this in the DigitalOcean Cloud Control Panel:
 
-            1. Navigate to **Databases** and open the affected cluster.
-            2. Create a fork, a point-in-time snapshot, and select a VPC under **Network** in the creation flow. Keep the fork in the same region as the source.
-            3. Re-create the database users, connection pools, and Trusted Sources on the new cluster, since these are not carried over.
-            4. Cut applications over to the new cluster's private endpoint and verify connectivity.
-            5. Destroy the original cluster only after the replacement is confirmed healthy.
+            1. Navigate to **Databases**, open the affected cluster, and select the **Settings** tab.
+            2. Under **Cluster datacenter**, click **Edit**.
+            3. Keep the cluster's current datacenter, select the target network from the **VPC Network** menu, and click **Save**.
+            4. When the migration finishes, copy the private connection details from the **Overview** tab into the applications that use them.
         - id: cli
           desc: |
-            This fix is a destructive cutover to a replacement cluster, so plan for downtime. A new cluster created with `--private-network-uuid` is empty and does not inherit the source's Trusted Sources, database users, or connection pools, so you must migrate the data and re-apply those settings before cutover.
+            A managed database cluster can be migrated into a VPC network directly with `doctl databases migrate`, so the same cluster and its data stay in service without a replacement. The cluster passes once it reports a private network UUID.
 
-            To fix this on the command line using the `doctl` CLI, create a replacement cluster inside the target VPC and migrate data into it:
+            **Schedule the migration in a maintenance window.** The cluster shows a `migrating` status until the move completes, and it is assigned a new IP address in the VPC network. Check the private connection details afterward and update any client that uses them.
 
-            ```bash
-            doctl databases create <new-name> \
-              --engine <engine> \
-              --region <region> \
-              --private-network-uuid <vpc-uuid>
-            ```
+            To fix this on the command line using the `doctl` CLI:
 
-            After the cluster is created, migrate the data, re-create the users and connection pools, re-apply the Trusted Sources, then cut applications over and destroy the original.
+            1. Look up the cluster's current region and the VPC networks in that region:
+
+                ```bash
+                doctl databases list --format ID,Name,Region
+                doctl vpcs list --format ID,Name,Region,IPRange
+                ```
+
+            2. Migrate the cluster into the VPC network. `<region>` is the cluster's current region, which keeps it in the same datacenter, and `<vpc-uuid>` is the `ID` of a VPC network in that region:
+
+                ```bash
+                doctl databases migrate <database-id> \
+                  --region <region> \
+                  --private-network-uuid <vpc-uuid> \
+                  --wait
+                ```
+
+            3. Print the new connection details and update the applications that use the private hostname:
+
+                ```bash
+                doctl databases connection <database-id> --private --format Host,Port
+                ```
         - id: terraform
           desc: |
             To attach a managed database to a VPC in Terraform, set `private_network_uuid` on the `digitalocean_database_cluster` resource:
@@ -1351,23 +1524,41 @@ queries:
       remediation:
         - id: console
           desc: |
+            A cluster with a public connection endpoint passes once its Trusted Sources list is not empty and contains no `0.0.0.0/0` or `::/0` entry. Connecting clients over the private VPC hostname does not remove the public endpoint, so the Trusted Sources list is what closes the finding.
+
+            **Clients missing from the list lose access.** Once the list is restrictive, the cluster refuses every source not on it, so add all application hosts and administrator addresses before removing the world-open entry.
+
             To close the internet-reachable path in the DigitalOcean Cloud Control Panel:
 
             1. Navigate to **Databases** and open the affected cluster.
-            2. On the **Settings** tab, edit **Trusted Sources** and add the specific droplets, tags, Kubernetes clusters, or narrow CIDRs that need access.
-            3. Remove any trusted-source entry of `0.0.0.0/0` or `::/0`, and confirm at least one restrictive trusted source remains so the public endpoint is no longer open to every host.
-            4. Where the cluster does not need a public edge, attach it to a VPC and connect over the private endpoint instead.
+            2. On the **Settings** tab, edit **Trusted Sources** and add the specific Droplets, tags, apps, Kubernetes clusters, or narrow CIDRs that need access.
+            3. Remove any trusted-source entry of `0.0.0.0/0` or `::/0`, and confirm at least one restrictive trusted source remains.
         - id: cli
           desc: |
-            To restrict the trusted sources on the command line using the `doctl` CLI, replace any world-open rule with specific sources:
+            A cluster with a public connection endpoint passes once its Trusted Sources list is not empty and contains no `ip_addr` rule of `0.0.0.0/0` or `::/0`.
 
-            ```bash
-            doctl databases firewalls append <database-id> --rule ip_addr:203.0.113.10
-            doctl databases firewalls append <database-id> --rule droplet:<droplet-id>
-            doctl databases firewalls list <database-id>
-            ```
+            **Clients missing from the list lose access.** Once the list is restrictive, the cluster refuses every source not on it, so append rules for all clients before removing the world-open rule.
 
-            After confirming the restrictive rules are in place, remove the world-open rule by re-applying the full rule set without it using `doctl databases firewalls replace <database-id> --rule ...`.
+            To restrict the trusted sources on the command line using the `doctl` CLI:
+
+            1. Append a rule for each client that needs access. `droplet:<droplet-id>` allows one Droplet, and `ip_addr:<address>` allows one IP address or a narrow CIDR range such as an office network. `tag:`, `k8s:`, and `app:` rules are also accepted:
+
+                ```bash
+                doctl databases firewalls append <database-id> --rule droplet:<droplet-id>
+                doctl databases firewalls append <database-id> --rule ip_addr:<address>
+                ```
+
+            2. List the rules and note the UUID of any `ip_addr` rule whose value is `0.0.0.0/0` or `::/0`:
+
+                ```bash
+                doctl databases firewalls list <database-id>
+                ```
+
+            3. Remove each world-open rule by its UUID:
+
+                ```bash
+                doctl databases firewalls remove <database-id> --uuid <rule-uuid>
+                ```
         # No Terraform remediation: internetReachable is a runtime correlation of the live
         # public endpoint with the effective trusted-source rules and has no single
         # configuration analog. Express the desired posture with the db-in-private-network
@@ -1455,14 +1646,31 @@ queries:
       remediation:
         - id: console
           desc: |
-            Major-version upgrades for managed databases on DigitalOcean require a migration path. First confirm the current supported target versions for your engine with `doctl databases options versions --engine <engine>`, since the supported set changes as versions reach EOL. Review the DigitalOcean upgrade documentation for your engine, run the upgrade in a non-production clone first, then cut over. To fix this in the DigitalOcean Cloud Control Panel:
+            The cluster fails while it runs one of these versions, so upgrade to a newer version that DigitalOcean still offers:
+
+            - PostgreSQL `9` through `13`
+            - MySQL `5.6` and `5.7`
+            - Redis `4` through `6`
+            - MongoDB `3.6` through `5.0`
+            - Kafka `2.8` through `3.4`
+            - OpenSearch `1.x`
+
+            Confirm which versions DigitalOcean currently offers with `doctl databases options versions --engine <engine>` before choosing a target.
+
+            **A major-version upgrade cannot be rolled back.** Backups taken on the old version can no longer be used for point-in-time recovery, so add a read-only node or test the upgrade on a fork first.
+
+            To upgrade in place in the DigitalOcean Cloud Control Panel, where the engine offers it:
 
             1. Navigate to **Databases** and open the affected cluster.
-            2. Go to **Settings** > **Upgrade Major Version**. Availability depends on the engine.
-            3. Follow the prompts. Otherwise, create a new cluster on a supported version and migrate data using `pg_dump`, `mysqldump`, or native replication.
+            2. On the **Overview** tab, scroll to **CURRENT VERSION** and click **Upgrade Now**.
+            3. Select a supported version. If the compatibility check reports issues, fix them and retry, then click **Upgrade Now**.
+
+            If the engine offers no in-place upgrade, create a new cluster on a supported version, migrate the data with engine-native tools such as `pg_dump` or `mysqldump`, and delete the old cluster after cutover.
         - id: cli
           desc: |
-            `doctl` does not perform an in-place major-version upgrade; `doctl databases migrate` only changes regions. Spin up a replacement cluster on a supported version and cut over with engine-native tools.
+            `doctl` has no major-version upgrade command, so on the command line the fix is a replacement cluster on a supported version, followed by a cutover with engine-native tools. The control panel upgrades supported engines in place instead.
+
+            **This replaces the cluster.** The new cluster does not inherit the old cluster's data, database users, connection pools, or Trusted Sources, and the final step permanently deletes the old cluster with its data and backups.
 
             1. Identify affected clusters and list supported versions for each engine:
 
@@ -1488,20 +1696,25 @@ queries:
                   --private-network-uuid <vpc-uuid>
                 ```
 
-            3. Pull connection info for the new cluster and migrate data with engine-native tools (`pg_dump | pg_restore`, `mysqldump`, `MIGRATE` for Redis, etc.):
+                - The example creates PostgreSQL `16`. For another engine, set `--engine` to the old cluster's `Engine` value and `--version` to a version from that engine's `options versions` output that is newer than the failing versions.
+                - `<region>`, `<size-slug>`, and `<count>` are the old cluster's `Region`, `Size`, and `NumNodes` values, and `<vpc-uuid>` is the VPC network the application hosts use.
+
+            3. Pull connection info for the new cluster, then migrate the data and re-create the users, connection pools, and Trusted Sources with engine-native tools such as `pg_dump` and `pg_restore` or `mysqldump`:
 
                 ```bash
                 doctl databases connection <new-cluster-id> --format Host,Port,User,Password,Database
                 ```
 
-            4. Repoint applications, then delete the old cluster once migration is verified:
+            4. Repoint applications and verify them against the new cluster. Then delete the old cluster, which keeps failing the check for as long as it exists:
 
                 ```bash
                 doctl databases delete <old-cluster-id>
                 ```
         - id: terraform
           desc: |
-            Terraform manages the engine version through the `version` argument on `digitalocean_database_cluster`. Set it to a supported major version. Note that Terraform performs an in-place update only where the engine supports it; otherwise the resource is replaced, so review the plan and back up data first:
+            Terraform manages the engine version through the `version` argument on `digitalocean_database_cluster`. Set it to a supported major version newer than the failing versions, such as `16` for PostgreSQL. Changing `version` makes the provider call the major-version upgrade API on the existing cluster rather than replacing it.
+
+            **The upgrade cannot be rolled back.** Backups taken on the old version can no longer be used for point-in-time recovery, so test the upgrade on a fork first:
 
             ```hcl
             resource "digitalocean_database_cluster" "example" {
@@ -1621,29 +1834,34 @@ queries:
       remediation:
         - id: console
           desc: |
-            DigitalOcean rotates managed database CA certificates on the platform side; the operator action when a CA is approaching or past expiry is to fetch the new certificate and distribute it to every client:
+            The check reads the CA certificate the cluster itself publishes, and only DigitalOcean can issue a replacement. Distributing a certificate to clients keeps their connections working but does not change what the cluster publishes, so it does not clear the finding.
 
-            1. In the Cloud Control Panel, open the cluster's **Overview** tab.
-            2. Click **Download CA Certificate** to retrieve the current `ca-certificate.crt`.
-            3. Update every application configuration, Kubernetes secret, and CI pipeline that pins the old CA to use the new file.
-            4. Restart connecting services so the new CA is loaded.
+            To fix this in the DigitalOcean Cloud Control Panel:
 
-            If the download still returns an expired certificate, open a DigitalOcean support ticket from the cluster page so the platform can issue a replacement.
+            1. Open the cluster's **Overview** tab and click **Download CA Certificate** to retrieve the current `ca-certificate.crt`.
+            2. Check its expiry with `openssl x509 -in ca-certificate.crt -noout -enddate`.
+            3. If the date is still in the past, open a DigitalOcean support ticket from the cluster page and ask for the cluster CA to be reissued. The check passes once the cluster publishes the reissued certificate.
+            4. Once a valid certificate is available, update every application configuration, Kubernetes secret, and CI pipeline that pins the old CA, then restart the connecting services so they load it.
         - id: cli
           desc: |
-            Pull the new CA with `doctl` and roll it out to every consumer. The command prints the PEM-encoded certificate directly:
+            The check reads the CA certificate the cluster itself publishes, and only DigitalOcean can issue a replacement. Distributing a certificate to clients keeps their connections working but does not change what the cluster publishes, so it does not clear the finding.
 
-            ```bash
-            doctl databases get-ca "<database-id>" --format Certificate --no-header > ca-certificate.crt
-            ```
+            To fix this on the command line using the `doctl` CLI:
 
-            Verify the new validity window before distribution:
+            1. Download the certificate the cluster currently publishes. The command prints it PEM-encoded:
 
-            ```bash
-            openssl x509 -in ca-certificate.crt -noout -enddate -subject
-            ```
+                ```bash
+                doctl databases get-ca <database-id> --format Certificate --no-header > ca-certificate.crt
+                ```
 
-            Replace the certificate file in every client trust store, restart services, and confirm new connections succeed.
+            2. Check its validity window:
+
+                ```bash
+                openssl x509 -in ca-certificate.crt -noout -enddate -subject
+                ```
+
+            3. If `notAfter` is still in the past, open a DigitalOcean support ticket for the cluster and ask for the CA to be reissued. `doctl` has no command that rotates it. The check passes once the cluster publishes the reissued certificate.
+            4. Once a valid certificate is available, replace the certificate file in every client trust store, restart the connecting services, and confirm new connections succeed.
         # No Terraform remediation: the CA certificate is provisioned and rotated by DigitalOcean, not declared in digitalocean_database_cluster HCL. Terraform-managed clusters still pull the active CA via the runtime API; remediation is to refresh the trust store on consumers, which is a deployment-time concern outside Terraform.
     refs:
       - url: https://docs.digitalocean.com/products/databases/postgresql/how-to/secure/
@@ -1711,21 +1929,23 @@ queries:
       remediation:
         - id: console
           desc: |
-            DigitalOcean enables TLS/SSL on managed database connection endpoints by default and does not expose a toggle to disable it in the Cloud Control Panel. If a client is connecting without TLS, the fix is on the client side:
+            The check reads the read-only SSL flag on the connection details DigitalOcean publishes for the cluster. No setting in the Cloud Control Panel changes that flag, and neither do client connection strings, so a cluster that reports SSL as disabled needs DigitalOcean to correct it:
 
-            1. In the Cloud Control Panel, open the cluster's **Overview** tab and copy the **Connection Details**.
-            2. Update every application connection string to request TLS, for example `sslmode=require` for PostgreSQL or `ssl-mode=REQUIRED` for MySQL.
-            3. Download the cluster's CA certificate and configure clients to verify against it for full certificate validation.
-            4. Restart connecting services so the TLS-enabled configuration takes effect.
+            1. Open the cluster's **Overview** tab and confirm that the **Connection Details** show SSL disabled.
+            2. Open a DigitalOcean support ticket from the cluster page and ask for TLS to be enabled on the cluster's connection endpoint. The check passes once the connection details report SSL as enabled.
+            3. Until then, and afterward as defense in depth, make every client require TLS, for example `sslmode=require` for PostgreSQL or `ssl-mode=REQUIRED` for MySQL, and verify the server against the cluster's CA certificate.
         - id: cli
           desc: |
-            Retrieve the TLS-enabled connection details and roll them out to every client. The connection command returns the host, port, user, and SSL flag for the cluster:
+            The check reads the read-only SSL flag on the connection details DigitalOcean publishes for the cluster. No `doctl` command changes that flag, and neither do client connection strings, so a cluster that reports SSL as disabled needs DigitalOcean to correct it.
 
-            ```bash
-            doctl databases connection <database-id> --format Host,Port,User,SSL
-            ```
+            1. Confirm the flag the cluster reports:
 
-            Update each application's connection string to require TLS, such as appending `?sslmode=require` for PostgreSQL, then restart the connecting services and confirm sessions negotiate TLS.
+                ```bash
+                doctl databases connection <database-id> --format Host,Port,User,SSL
+                ```
+
+            2. If `SSL` is `false`, open a DigitalOcean support ticket for the cluster and ask for TLS to be enabled on its connection endpoint. The check passes once the command above reports `true`.
+            3. Until then, and afterward as defense in depth, make every client require TLS, such as `sslmode=require` in a PostgreSQL connection string, then restart the connecting services and confirm sessions negotiate TLS.
         # No Terraform remediation: TLS on managed database connections is enforced by the DigitalOcean platform and is not a declarable argument on digitalocean_database_cluster. Requiring TLS is a client-side connection-string concern that lives outside the cluster's Terraform definition.
     refs:
       - url: https://docs.digitalocean.com/products/databases/postgresql/how-to/secure/
@@ -1810,20 +2030,43 @@ queries:
             3. Enable **Redirect HTTP to HTTPS**. Confirm that an HTTPS forwarding rule and TLS certificate are configured.
         - id: cli
           desc: |
-            The `doctl compute load-balancer update` command sends a full replacement of the load balancer configuration: any attribute you do not pass is reset to its default value. First read the current configuration, then repeat it in the update call together with the redirect flag:
+            The load balancer passes once `redirect_http_to_https` is enabled, which answers every HTTP request with a redirect to HTTPS. It also passes if it has no HTTP forwarding rule at all.
 
-            ```bash
-            doctl compute load-balancer get "<lb-id>" \
-              --format Name,Region,ForwardingRules,DropletIDs --no-header
-            doctl compute load-balancer update "<lb-id>" \
-              --name "<name>" \
-              --region "<region>" \
-              --forwarding-rules "<current-forwarding-rules>" \
-              --droplet-ids "<droplet-ids>" \
-              --redirect-http-to-https
-            ```
+            **`doctl compute load-balancer update` resets every setting you leave out.** The update replaces the whole load balancer configuration, so a flag you omit returns its setting to the default. That includes the HTTP-to-HTTPS redirect, the TLS cipher policy, and the firewall allow and deny lists, each of which another check depends on. The command has no flag for the HTTP idle timeout, so a custom idle timeout returns to its default and must be set again in the control panel. The control panel method changes the redirect without this risk.
 
-            If the load balancer targets Droplets by tag, pass `--tag-name` instead of `--droplet-ids`.
+            To fix this on the command line using the `doctl` CLI:
+
+            1. Print the current settings. The first command prints most values in the syntax the update flags accept, and the JSON output adds the TLS cipher policy, proxy protocol, and backend keepalive settings:
+
+                ```bash
+                doctl compute load-balancer get <lb-id> \
+                  --format Name,Region,SizeUnit,VPCUUID,Tag,DropletIDs,RedirectHttpToHttps,StickySessions,HealthCheck,ForwardingRules,Firewall
+                doctl compute load-balancer get <lb-id> --output json
+                ```
+
+            2. Re-apply the configuration with the redirect enabled:
+
+                ```bash
+                doctl compute load-balancer update <lb-id> \
+                  --name <name> \
+                  --region <region> \
+                  --size-unit <size-unit> \
+                  --vpc-uuid <vpc-uuid> \
+                  --forwarding-rules "<forwarding-rules>" \
+                  --health-check "<health-check>" \
+                  --sticky-sessions "<sticky-sessions>" \
+                  --droplet-ids <droplet-ids> \
+                  --tls-cipher-policy <tls-cipher-policy> \
+                  --allow-list <allow-list> \
+                  --redirect-http-to-https
+                ```
+
+                - Copy `<name>`, `<region>`, `<size-unit>`, `<vpc-uuid>`, `<forwarding-rules>`, `<health-check>`, and `<sticky-sessions>` from step 1. Quote values that contain spaces, since several forwarding rules are separated by spaces, and drop any of these flags whose value is empty.
+                - `<droplet-ids>` is the `DropletIDs` value. If the load balancer targets a tag instead, replace `--droplet-ids` with `--tag-name <tag>`.
+                - Add `--enable-proxy-protocol` or `--enable-backend-keepalive` if step 1 shows either enabled.
+                - `<tls-cipher-policy>` is the JSON `tls_cipher_policy` value. Use `STRONG` to keep the cipher policy check passing.
+                - `<allow-list>` is the comma-separated `allow` entries from the `Firewall` value, such as `cidr:203.0.113.0/24`. Drop `--allow-list` if the list is empty, and pass the `deny` entries the same way with `--deny-list`.
+                - The redirect needs an HTTPS forwarding rule with a certificate to send clients to, so confirm one is present in `<forwarding-rules>`.
         - id: terraform
           desc: |
             To enforce the HTTP-to-HTTPS redirect in Terraform, set `redirect_http_to_https = true` on the `digitalocean_loadbalancer` resource alongside an HTTPS forwarding rule:
@@ -1955,18 +2198,44 @@ queries:
             3. Confirm that clients still negotiate successfully, since the strong policy drops TLS 1.1 and older and legacy ciphers.
         - id: cli
           desc: |
-            The `doctl compute load-balancer update` command replaces the full load balancer configuration, so any attribute you do not pass is reset to its default. Read the current configuration first, then re-apply it together with the strong cipher policy:
+            The load balancer passes once `tls_cipher_policy` is `STRONG`, which limits TLS termination to TLS 1.2 and later with modern cipher suites. It also passes if it has no HTTPS or TLS forwarding rule.
 
-            ```bash
-            doctl compute load-balancer get "<lb-id>" \
-              --format Name,Region,ForwardingRules,DropletIDs --no-header
-            doctl compute load-balancer update "<lb-id>" \
-              --name "<name>" \
-              --region "<region>" \
-              --forwarding-rules "<current-forwarding-rules>" \
-              --droplet-ids "<droplet-ids>" \
-              --tls-cipher-policy STRONG
-            ```
+            **Clients that only support TLS 1.1 or older can no longer connect.** Confirm that every client supports TLS 1.2 before switching.
+
+            **`doctl compute load-balancer update` resets every setting you leave out.** The update replaces the whole load balancer configuration, so a flag you omit returns its setting to the default. That includes the HTTP-to-HTTPS redirect, the TLS cipher policy, and the firewall allow and deny lists, each of which another check depends on. The command has no flag for the HTTP idle timeout, so a custom idle timeout returns to its default and must be set again in the control panel. The control panel method changes the cipher policy without this risk.
+
+            To fix this on the command line using the `doctl` CLI:
+
+            1. Print the current settings. The first command prints most values in the syntax the update flags accept, and the JSON output adds the TLS cipher policy, proxy protocol, and backend keepalive settings:
+
+                ```bash
+                doctl compute load-balancer get <lb-id> \
+                  --format Name,Region,SizeUnit,VPCUUID,Tag,DropletIDs,RedirectHttpToHttps,StickySessions,HealthCheck,ForwardingRules,Firewall
+                doctl compute load-balancer get <lb-id> --output json
+                ```
+
+            2. Re-apply the configuration with the strong cipher policy:
+
+                ```bash
+                doctl compute load-balancer update <lb-id> \
+                  --name <name> \
+                  --region <region> \
+                  --size-unit <size-unit> \
+                  --vpc-uuid <vpc-uuid> \
+                  --forwarding-rules "<forwarding-rules>" \
+                  --health-check "<health-check>" \
+                  --sticky-sessions "<sticky-sessions>" \
+                  --droplet-ids <droplet-ids> \
+                  --redirect-http-to-https \
+                  --allow-list <allow-list> \
+                  --tls-cipher-policy STRONG
+                ```
+
+                - Copy `<name>`, `<region>`, `<size-unit>`, `<vpc-uuid>`, `<forwarding-rules>`, `<health-check>`, and `<sticky-sessions>` from step 1. Quote values that contain spaces, since several forwarding rules are separated by spaces, and drop any of these flags whose value is empty.
+                - `<droplet-ids>` is the `DropletIDs` value. If the load balancer targets a tag instead, replace `--droplet-ids` with `--tag-name <tag>`.
+                - Add `--enable-proxy-protocol` or `--enable-backend-keepalive` if step 1 shows either enabled.
+                - Keep `--redirect-http-to-https` only if `RedirectHttpToHttps` is `true` in step 1. Leaving it out turns the redirect off.
+                - `<allow-list>` is the comma-separated `allow` entries from the `Firewall` value, such as `cidr:203.0.113.0/24`. Drop `--allow-list` if the list is empty, and pass the `deny` entries the same way with `--deny-list`.
         - id: terraform
           desc: |
             To enforce the strong cipher policy in Terraform, set `tls_cipher_policy = "STRONG"` on the `digitalocean_loadbalancer` resource that terminates TLS:
@@ -2091,24 +2360,53 @@ queries:
       remediation:
         - id: console
           desc: |
-            DigitalOcean does not support moving a load balancer between VPCs after creation. To fix this in the Cloud Control Panel, create a replacement load balancer in the target VPC and cut traffic over:
+            **This fix replaces the load balancer.** DigitalOcean cannot move a load balancer into a VPC network, and the replacement receives a new IP address, so plan the DNS cutover.
+
+            To fix this in the Cloud Control Panel, create a replacement load balancer in the target VPC and cut traffic over:
 
             1. Navigate to **Networking** > **Load Balancers** and create a new load balancer.
             2. In the creation flow, select the target VPC under **Network**.
-            3. Configure forwarding rules and attach the same Droplets (or the same tag).
-            4. Update DNS to point at the new load balancer's IP, then delete the old one.
+            3. Configure the same forwarding rules, health check, redirect, TLS cipher policy, and firewall rules as the original, and attach the same Droplets or the same tag.
+            4. Update DNS to point at the new load balancer's IP address and verify that it serves traffic.
+            5. Delete the original load balancer, which keeps failing the check for as long as it exists.
         - id: cli
           desc: |
-            To fix this on the command line using the `doctl` CLI, create a replacement load balancer inside the target VPC:
+            **This fix replaces the load balancer.** DigitalOcean cannot move a load balancer into a VPC network, and the replacement receives a new IP address, so plan the DNS cutover.
 
-            ```bash
-            doctl compute load-balancer create \
-              --name <new-name> \
-              --region <region> \
-              --vpc-uuid <vpc-uuid> \
-              --droplet-ids <droplet-ids> \
-              --forwarding-rules "entry_protocol:https,entry_port:443,target_protocol:http,target_port:80,certificate_id:<cert-id>"
-            ```
+            To fix this on the command line using the `doctl` CLI:
+
+            1. Print the original load balancer's settings and the VPC networks in its region:
+
+                ```bash
+                doctl compute load-balancer get <lb-id> \
+                  --format Name,Region,SizeUnit,Tag,DropletIDs,RedirectHttpToHttps,StickySessions,HealthCheck,ForwardingRules,Firewall
+                doctl vpcs list --format ID,Name,Region,IPRange
+                ```
+
+            2. Create the replacement inside the VPC network:
+
+                ```bash
+                doctl compute load-balancer create \
+                  --name <new-name> \
+                  --region <region> \
+                  --vpc-uuid <vpc-uuid> \
+                  --droplet-ids <droplet-ids> \
+                  --forwarding-rules "entry_protocol:https,entry_port:443,target_protocol:http,target_port:80,certificate_id:<cert-id>" \
+                  --redirect-http-to-https \
+                  --tls-cipher-policy STRONG
+                ```
+
+                - `<vpc-uuid>` is the `ID` of a VPC network in `<region>`, the original load balancer's region. Setting it gives the replacement the VPC membership the check requires.
+                - Replace the example `--forwarding-rules` with the original's `ForwardingRules` value, and pass its `HealthCheck`, `StickySessions`, and firewall entries with `--health-check`, `--sticky-sessions`, and `--allow-list`.
+                - `<droplet-ids>` is the original's `DropletIDs` value. If it targets a tag instead, replace `--droplet-ids` with `--tag-name <tag>`.
+                - `<cert-id>` is the ID of a certificate from `doctl compute certificate list` that covers the served domain.
+
+            3. Update DNS to point at the new load balancer's IP address and verify that it serves traffic.
+            4. Delete the original load balancer, which keeps failing the check for as long as it exists:
+
+                ```bash
+                doctl compute load-balancer delete <lb-id>
+                ```
         - id: terraform
           desc: |
             To deploy load balancers inside a VPC in Terraform, set `vpc_uuid` on the `digitalocean_loadbalancer` resource:
@@ -2222,13 +2520,21 @@ queries:
       remediation:
         - id: console
           desc: |
+            The cluster passes once automatic upgrades are enabled. DigitalOcean then applies new patch releases during the cluster's maintenance window. Minor-version upgrades remain a manual step.
+
+            **Each automatic upgrade replaces the worker nodes.** Workloads are rescheduled and the new nodes receive new IP addresses, so keep surge upgrades enabled and set a maintenance window the workload can absorb.
+
             To fix this in the DigitalOcean Cloud Control Panel:
 
             1. Navigate to **Kubernetes** and open the affected cluster.
-            2. Go to **Settings** > **Maintenance**.
-            3. Enable **Automatically upgrade my cluster to patch releases**.
+            2. Select the **Settings** tab.
+            3. In the **Automatically upgrade minor version patches** section, select **Automatically install minor version patches**.
         - id: cli
           desc: |
+            The cluster passes once automatic upgrades are enabled. DigitalOcean then applies new patch releases during the cluster's maintenance window. Minor-version upgrades remain a manual step.
+
+            **Each automatic upgrade replaces the worker nodes.** Workloads are rescheduled and the new nodes receive new IP addresses, so keep surge upgrades enabled and set a maintenance window the workload can absorb.
+
             To fix this on the command line using the `doctl` CLI, enable auto-upgrade on the affected cluster:
 
             ```bash
@@ -2236,13 +2542,17 @@ queries:
             ```
         - id: terraform
           desc: |
-            To enable automatic patch upgrades in Terraform, set `auto_upgrade = true` on the `digitalocean_kubernetes_cluster` resource (a `maintenance_policy` block is recommended to control the upgrade window):
+            To enable automatic patch upgrades in Terraform, set `auto_upgrade = true` on the `digitalocean_kubernetes_cluster` resource. The `maintenance_policy` block sets the window the upgrades run in, and the `digitalocean_kubernetes_versions` data source resolves the latest patch release of a supported minor version:
 
             ```hcl
+            data "digitalocean_kubernetes_versions" "example" {
+              version_prefix = "1.35."
+            }
+
             resource "digitalocean_kubernetes_cluster" "example" {
               name         = "example"
               region       = "nyc3"
-              version      = "1.31.1-do.0"
+              version      = data.digitalocean_kubernetes_versions.example.latest_version
               auto_upgrade = true
 
               maintenance_policy {
@@ -2350,26 +2660,44 @@ queries:
       remediation:
         - id: console
           desc: |
+            The cluster passes once it runs Kubernetes 1.30 or newer. A cluster moves up one minor version per upgrade, and only after it has the latest patch release of its current minor version, so a cluster several versions behind needs several upgrades.
+
+            **An upgrade replaces every worker node.** Workloads are rescheduled, the new nodes receive new IP addresses, and APIs removed in the target version stop working, so check the deprecated API removals for each hop and keep surge upgrades enabled.
+
             To fix this in the DigitalOcean Cloud Control Panel:
 
             1. Navigate to **Kubernetes** and open the affected cluster.
             2. Go to **Overview** and click **Upgrade Available** if present.
-            3. Select a supported version and confirm the upgrade.
+            3. Select the offered version, run the cluster linter from the upgrade window, and confirm the upgrade.
+            4. Repeat until the cluster runs 1.30 or newer.
         - id: cli
           desc: |
-            To fix this on the command line using the `doctl` CLI, list the available versions and then upgrade the cluster:
+            The cluster passes once it runs Kubernetes 1.30 or newer. A cluster moves up one minor version per upgrade, and only after it has the latest patch release of its current minor version, so a cluster several versions behind needs several upgrades.
 
-            ```bash
-            doctl kubernetes options versions
-            doctl kubernetes cluster upgrade <cluster-id> --version <supported-version>
-            ```
+            **An upgrade replaces every worker node.** Workloads are rescheduled, the new nodes receive new IP addresses, and APIs removed in the target version stop working, so check the deprecated API removals for each hop and keep surge upgrades enabled.
+
+            To fix this on the command line using the `doctl` CLI:
+
+            1. List the versions this cluster can upgrade to. `doctl kubernetes options versions` lists versions for new clusters instead, which are not always valid upgrade targets:
+
+                ```bash
+                doctl kubernetes cluster get-upgrades <cluster-id>
+                ```
+
+            2. Upgrade to a version slug from that list, taking the latest patch of the current minor version first if it is offered:
+
+                ```bash
+                doctl kubernetes cluster upgrade <cluster-id> --version <version-slug>
+                ```
+
+            3. Repeat both steps until the cluster runs 1.30 or newer.
         - id: terraform
           desc: |
-            Terraform manages the cluster version through the `version` argument on `digitalocean_kubernetes_cluster`. Use the `digitalocean_kubernetes_versions` data source to resolve the latest patch release for a minor version, and keep the prefix pointed at a release DigitalOcean still supports, 1.30 or newer:
+            Terraform manages the cluster version through the `version` argument on `digitalocean_kubernetes_cluster`. Use the `digitalocean_kubernetes_versions` data source to resolve the latest patch release for a minor version. The check requires 1.30 or newer, but DigitalOcean only creates clusters on its three most recent minor releases, so point `version_prefix` at one of those, such as `1.35.`:
 
             ```hcl
             data "digitalocean_kubernetes_versions" "example" {
-              version_prefix = "1.31."
+              version_prefix = "1.35."
             }
 
             resource "digitalocean_kubernetes_cluster" "example" {
@@ -2416,11 +2744,8 @@ queries:
         values.version == /^1\.(3[0-9]|[4-9][0-9]|[1-9][0-9]{2})\./
       )
 
-  # No Terraform variants: SSO configuration was added to the DigitalOcean godo
-  # SDK in v1.187.0 and the digitalocean Terraform provider does not yet expose
-  # an `sso` block on digitalocean_kubernetes_cluster. Revisit once the provider
-  # adds the field.
-  # No Terraform remediation: see above.
+  # No Terraform variants yet: the digitalocean Terraform provider now exposes an
+  # `sso` block on digitalocean_kubernetes_cluster, so variants can be added.
   - uid: mondoo-digitalocean-security-doks-sso-enabled
     filters: asset.platform == "digitalocean-kubernetes-cluster"
     title: Ensure DOKS clusters have SSO configured
@@ -2494,15 +2819,41 @@ queries:
               --sso-client-id "<client-id>" \
               --sso-enabled
             ```
+
+            `<oidc-issuer-url>` is the issuer URL of the identity provider, and `<client-id>` is the ID of the OIDC client registered there for the cluster.
+        - id: terraform
+          desc: |
+            To configure SSO in Terraform, add an `sso` block with `enabled = true` to the `digitalocean_kubernetes_cluster` resource. Set `issuer_url` to the identity provider's issuer URL and `client_id` to the OIDC client registered there for the cluster:
+
+            ```hcl
+            data "digitalocean_kubernetes_versions" "example" {
+              version_prefix = "1.35."
+            }
+
+            resource "digitalocean_kubernetes_cluster" "example" {
+              name    = "example"
+              region  = "nyc3"
+              version = data.digitalocean_kubernetes_versions.example.latest_version
+
+              node_pool {
+                name       = "default"
+                size       = "s-1vcpu-2gb"
+                node_count = 1
+              }
+
+              sso {
+                enabled    = true
+                issuer_url = "https://idp.example.com"
+                client_id  = "example-client-id"
+              }
+            }
+            ```
     refs:
       - url: https://docs.digitalocean.com/products/kubernetes/how-to/connect-to-cluster/
         title: How to Connect to a DigitalOcean Kubernetes Cluster
 
-  # No Terraform variants: SSO configuration was added to the DigitalOcean godo
-  # SDK in v1.187.0 and the digitalocean Terraform provider does not yet expose
-  # an `sso` block on digitalocean_kubernetes_cluster. Revisit once the provider
-  # adds the field.
-  # No Terraform remediation: see above.
+  # No Terraform variants yet: the digitalocean Terraform provider now exposes an
+  # `sso` block on digitalocean_kubernetes_cluster, so variants can be added.
   - uid: mondoo-digitalocean-security-doks-sso-required
     filters: asset.platform == "digitalocean-kubernetes-cluster"
     title: Ensure DOKS clusters require SSO for cluster authentication
@@ -2560,6 +2911,8 @@ queries:
       remediation:
         - id: console
           desc: |
+            **Requiring SSO stops the cluster from accepting static kubeconfig tokens.** CI pipelines, controllers, and operators that authenticate with a downloaded kubeconfig lose access, so move them to an identity from the OIDC provider first.
+
             To fix this in the DigitalOcean Cloud Control Panel:
 
             1. Navigate to **Kubernetes** and open the affected cluster.
@@ -2568,7 +2921,9 @@ queries:
             4. Enable **Require SSO for cluster access** so that token-based access is no longer permitted.
         - id: cli
           desc: |
-            To fix this on the command line using the `doctl` CLI, enable SSO and mark it as required so the cluster rejects non-SSO authentication:
+            **Requiring SSO stops the cluster from accepting static kubeconfig tokens.** CI pipelines, controllers, and operators that authenticate with a downloaded kubeconfig lose access, so move them to an identity from the OIDC provider first.
+
+            To fix this on the command line using the `doctl` CLI, enable SSO and mark it as required so the cluster rejects non-SSO authentication. `<oidc-issuer-url>` is the issuer URL of the identity provider, and `<client-id>` is the ID of the OIDC client registered there for the cluster:
 
             ```bash
             doctl kubernetes cluster update "<cluster-id>" \
@@ -2576,6 +2931,36 @@ queries:
               --sso-client-id "<client-id>" \
               --sso-enabled \
               --sso-required
+            ```
+        - id: terraform
+          desc: |
+            **Requiring SSO stops the cluster from accepting static kubeconfig tokens.** CI pipelines, controllers, and operators that authenticate with a downloaded kubeconfig lose access, so move them to an identity from the OIDC provider first.
+
+            To require SSO in Terraform, set both `enabled = true` and `required = true` in the `sso` block of the `digitalocean_kubernetes_cluster` resource. Set `issuer_url` to the identity provider's issuer URL and `client_id` to the OIDC client registered there for the cluster:
+
+            ```hcl
+            data "digitalocean_kubernetes_versions" "example" {
+              version_prefix = "1.35."
+            }
+
+            resource "digitalocean_kubernetes_cluster" "example" {
+              name    = "example"
+              region  = "nyc3"
+              version = data.digitalocean_kubernetes_versions.example.latest_version
+
+              node_pool {
+                name       = "default"
+                size       = "s-1vcpu-2gb"
+                node_count = 1
+              }
+
+              sso {
+                enabled    = true
+                required   = true
+                issuer_url = "https://idp.example.com"
+                client_id  = "example-client-id"
+              }
+            }
             ```
     refs:
       - url: https://docs.digitalocean.com/products/kubernetes/how-to/connect-to-cluster/
@@ -2652,33 +3037,52 @@ queries:
       remediation:
         - id: console
           desc: |
-            DigitalOcean does not support moving an existing DOKS cluster into a different VPC. The fix is to create a replacement cluster in the target VPC and migrate workloads, so plan for a cutover.
+            **This fix replaces the cluster.** DigitalOcean cannot move an existing DOKS cluster into a VPC network, so plan a cutover. Persistent volumes, load balancers, and in-cluster state do not move with the workloads and must be recreated or migrated.
+
+            To fix this in the DigitalOcean Cloud Control Panel:
 
             1. Navigate to **Kubernetes** and create a new cluster.
             2. In the creation flow, select the target VPC under **VPC Network**.
-            3. Re-deploy workloads (for example with `kubectl` or your GitOps pipeline) to the new cluster and verify connectivity.
-            4. Repoint ingress and DNS, then delete the original cluster.
+            3. Redeploy workloads to the new cluster with `kubectl` or a GitOps pipeline and verify connectivity.
+            4. Repoint ingress and DNS to the new cluster.
+            5. Delete the original cluster, which keeps failing the check for as long as it exists.
         - id: cli
           desc: |
-            Create a replacement cluster inside the target VPC and migrate workloads, since the VPC cannot be changed in place:
+            **This fix replaces the cluster.** DigitalOcean cannot move an existing DOKS cluster into a VPC network, so plan a cutover. Persistent volumes, load balancers, and in-cluster state do not move with the workloads and must be recreated or migrated.
 
-            ```bash
-            doctl kubernetes cluster create <new-name> \
-              --region <region> \
-              --vpc-uuid <vpc-uuid> \
-              --node-pool "name=default;size=s-1vcpu-2gb;count=3"
-            ```
+            To fix this on the command line using the `doctl` CLI:
 
-            Migrate workloads to the new cluster, verify, then delete the original.
+            1. Create a replacement cluster inside the VPC network:
+
+                ```bash
+                doctl kubernetes cluster create <new-name> \
+                  --region <region> \
+                  --vpc-uuid <vpc-uuid> \
+                  --node-pool "name=default;size=s-1vcpu-2gb;count=3"
+                ```
+
+                - `<vpc-uuid>` is the `ID` of a VPC network in `<region>` from `doctl vpcs list --format ID,Name,Region`. Setting it gives the new cluster the VPC membership the check requires.
+                - Adjust the `--node-pool` size and count to match the original cluster's node pools.
+
+            2. Redeploy workloads to the new cluster, verify them, and repoint ingress and DNS.
+            3. Delete the original cluster, which keeps failing the check for as long as it exists:
+
+                ```bash
+                doctl kubernetes cluster delete <cluster-id>
+                ```
         - id: terraform
           desc: |
             To deploy a DOKS cluster inside a VPC in Terraform, set `vpc_uuid` on the `digitalocean_kubernetes_cluster` resource:
 
             ```hcl
+            data "digitalocean_kubernetes_versions" "example" {
+              version_prefix = "1.35."
+            }
+
             resource "digitalocean_kubernetes_cluster" "example" {
               name     = "example"
               region   = "nyc3"
-              version  = "1.31.1-do.0"
+              version  = data.digitalocean_kubernetes_versions.example.latest_version
               vpc_uuid = digitalocean_vpc.example.id
 
               node_pool {
@@ -2773,6 +3177,10 @@ queries:
       remediation:
         - id: console
           desc: |
+            The cluster passes once the control plane firewall is enabled and its allowed addresses contain neither `0.0.0.0/0` nor `::/0`. Allowed addresses must be public IPv4 ranges in CIDR notation. Worker nodes and DigitalOcean's management systems are allowed automatically.
+
+            **Addresses left off the list lose access to the API server.** Include the public addresses of every administrator, CI/CD runner, and external tool that runs `kubectl` against the cluster, including your own, or you lock yourself out. Requests may be briefly disrupted the first time the firewall is enabled.
+
             To restrict API server access in the DigitalOcean Cloud Control Panel:
 
             1. Navigate to **Kubernetes** and open the affected cluster.
@@ -2781,6 +3189,10 @@ queries:
             4. Confirm that your management tooling can still reach the cluster after the change.
         - id: cli
           desc: |
+            The cluster passes once the control plane firewall is enabled and its allowed addresses contain neither `0.0.0.0/0` nor `::/0`. Allowed addresses must be public IPv4 ranges in CIDR notation. Worker nodes and DigitalOcean's management systems are allowed automatically.
+
+            **Addresses left off the list lose access to the API server.** Include the public addresses of every administrator, CI/CD runner, and external tool that runs `kubectl` against the cluster, including your own, or you lock yourself out. The flag replaces the whole existing list, and requests may be briefly disrupted the first time the firewall is enabled.
+
             To enable and scope the control-plane firewall on the command line using the `doctl` CLI:
 
             ```bash
@@ -2789,10 +3201,33 @@ queries:
               --control-plane-firewall-allowed-addresses "203.0.113.0/24,198.51.100.10/32"
             ```
 
-            Replace the addresses with the trusted source ranges that need API access. Verify connectivity from an allowed range afterward.
-        # No Terraform remediation: controlPlaneFirewallEnabled is a managed control-plane posture
-        # surfaced only by the live API; the digitalocean_kubernetes_cluster resource does not
-        # express the control-plane firewall, so it cannot be remediated through Terraform.
+            Replace the example addresses, which are documentation ranges, with the trusted source ranges that need API access. Verify connectivity from an allowed range afterward.
+        - id: terraform
+          desc: |
+            To enable the control plane firewall in Terraform, add a `control_plane_firewall` block with `enabled = true` to the `digitalocean_kubernetes_cluster` resource. Set `allowed_addresses` to the public IPv4 ranges that need API server access, never `0.0.0.0/0`, and replace the example documentation range:
+
+            ```hcl
+            data "digitalocean_kubernetes_versions" "example" {
+              version_prefix = "1.35."
+            }
+
+            resource "digitalocean_kubernetes_cluster" "example" {
+              name    = "example"
+              region  = "nyc3"
+              version = data.digitalocean_kubernetes_versions.example.latest_version
+
+              node_pool {
+                name       = "default"
+                size       = "s-1vcpu-2gb"
+                node_count = 1
+              }
+
+              control_plane_firewall {
+                enabled           = true
+                allowed_addresses = ["203.0.113.0/24"]
+              }
+            }
+            ```
     refs:
       - url: https://docs.digitalocean.com/products/kubernetes/how-to/add-control-plane-firewall/
         title: How to Add a Control Plane Firewall
@@ -2859,11 +3294,14 @@ queries:
       remediation:
         - id: console
           desc: |
+            The account passes once no stored certificate has a `notAfter` date in the past. Creating a renewed certificate is not enough on its own, because the expired certificate keeps failing the check until it is deleted.
+
             To fix this in the DigitalOcean Cloud Control Panel:
 
             1. Navigate to **Networking** > **Certificates**.
-            2. Identify the expired certificate and either upload a renewed version or regenerate a Let's Encrypt certificate.
-            3. Update any load balancers, CDN endpoints, or App Platform apps referencing the old certificate.
+            2. Identify the expired certificate and either upload a renewed version or create a new Let's Encrypt certificate for the same domains.
+            3. Update any load balancers, CDN endpoints, or App Platform apps referencing the old certificate to use the new one.
+            4. Delete the expired certificate once no resource references it.
         - id: cli
           desc: |
             To fix this on the command line using the `doctl` CLI, create a renewed certificate and then update any consumers to reference it. Choose the variant that matches how the domain's DNS is hosted.
@@ -2888,7 +3326,14 @@ queries:
               --private-key-path <privkey.pem>
             ```
 
-            After creating the replacement, update any load balancers, CDN endpoints, or App Platform apps to reference the new certificate.
+            `<domain>` is a comma-separated list of the domains the expired certificate covered, and `<cert.pem>`, `<chain.pem>`, and `<privkey.pem>` are the paths to the renewed leaf certificate, its intermediate chain, and its private key.
+
+            After creating the replacement, update any load balancers, CDN endpoints, or App Platform apps to reference the new certificate. Then delete the expired certificate, which keeps failing the check for as long as it exists:
+
+            ```bash
+            doctl compute certificate list --format ID,Name,NotAfter
+            doctl compute certificate delete <expired-certificate-id>
+            ```
         # No Terraform remediation: expiry is not a configurable field. A digitalocean_certificate resource can provision a replacement, but Terraform cannot express or assert the validity window of an issued certificate.
     refs:
       - url: https://docs.digitalocean.com/platform/teams/how-to/manage-certificates/
@@ -3088,6 +3533,8 @@ queries:
       remediation:
         - id: console
           desc: |
+            **Deleting the unscoped key immediately breaks every application still using it.** Move each application to its replacement key before the final step.
+
             To fix this in the DigitalOcean Cloud Control Panel:
 
             1. Navigate to **API** > **Spaces Keys**.
@@ -3096,12 +3543,16 @@ queries:
             4. Delete the unscoped key.
         - id: cli
           desc: |
+            **Deleting the unscoped key immediately breaks every application still using it.** Move each application to its replacement key before deleting the old one.
+
             To fix this on the command line using the `doctl` CLI, create a scoped replacement key first:
 
             ```bash
             doctl spaces keys create "<new-name>" \
               --grants "bucket=<bucket-name>;permission=read"
             ```
+
+            `<bucket-name>` is the one bucket the application uses, and `permission` is `read` or `readwrite`, whichever the application needs. Add more grants separated by commas, such as `bucket=logs;permission=read,bucket=uploads;permission=readwrite`. Never use an empty bucket name or `permission=fullaccess`, which grant access to every bucket in the account.
 
             Update every application that used the unscoped key, then delete it by its access key ID:
 
@@ -3227,31 +3678,59 @@ queries:
 
             To remove anonymous read access:
 
-            1. Set the bucket ACL to private using `s3cmd setacl s3://<bucket> --acl-private` or the equivalent `aws s3api put-bucket-acl --acl private` call shown in the CLI remediation. This is the change that clears the finding.
-            2. Reset any individual objects that carry their own public ACLs to private, since a private bucket ACL does not override per-object grants.
-            3. In the Cloud Control Panel, navigate to **Spaces Object Storage**, open the bucket, and on the **Settings** tab set **File Listing** to **Restricted (Signed URLs only)** as defense in depth.
-            4. If the bucket must serve public content, route requests through a DigitalOcean CDN endpoint or a pattern that enforces auth or rate limits.
+            1. Set the bucket ACL to private using `s3cmd setacl s3://<bucket> --acl-private` or the equivalent `aws s3api put-bucket-acl --acl private` call shown in the CLI remediation.
+            2. Remove any bucket policy statement that allows the wildcard `*` principal, as shown in the CLI remediation. Bucket policies are not editable in the control panel, and the check fails a bucket that is public through its policy even when the ACL is private.
+            3. Reset any individual objects that carry their own public ACLs to private, since a private bucket ACL does not override per-object grants.
+            4. In the Cloud Control Panel, navigate to **Spaces Object Storage**, open the bucket, and on the **Settings** tab set **File Listing** to **Restricted (Signed URLs only)** as defense in depth.
+            5. If the bucket must serve public content, route requests through a DigitalOcean CDN endpoint or a pattern that enforces auth or rate limits.
         - id: cli
           desc: |
-            DigitalOcean Spaces is S3-compatible, so you manage its ACLs with the AWS CLI or `s3cmd` pointed at the Spaces endpoint rather than with `doctl`. The `<spaces-key>` and `<spaces-secret>` are a Spaces access key pair generated on the **Spaces Keys** page in the API section of the control panel; they are not the DigitalOcean API token. Install the AWS CLI first, and set `<region>` to the Spaces region slug such as `nyc3`.
+            DigitalOcean Spaces is S3-compatible, so you manage its ACLs and bucket policy with the AWS CLI pointed at the Spaces endpoint rather than with `doctl`. The bucket passes once its ACL grants nothing to the `AllUsers` or `AuthenticatedUsers` groups and its policy has no `Allow` statement for the wildcard `*` principal.
 
-            To remove anonymous read access using the S3-compatible API:
+            `<spaces-key>` and `<spaces-secret>` are a Spaces access key pair generated on the **Spaces Keys** page in the API section of the control panel, not the DigitalOcean API token. `<region>` is the Spaces region slug such as `nyc3`.
 
-            ```bash
-            AWS_ACCESS_KEY_ID=<spaces-key> AWS_SECRET_ACCESS_KEY=<spaces-secret> \
-              aws s3api put-bucket-acl --bucket <bucket> --acl private \
-                --endpoint-url https://<region>.digitaloceanspaces.com
-            ```
+            1. Export the credentials so every command below uses them:
 
-            For per-object public ACLs left over from previous configuration, iterate and reset:
+                ```bash
+                export AWS_ACCESS_KEY_ID=<spaces-key>
+                export AWS_SECRET_ACCESS_KEY=<spaces-secret>
+                ```
 
-            ```bash
-            AWS_ACCESS_KEY_ID=<spaces-key> AWS_SECRET_ACCESS_KEY=<spaces-secret> \
-              aws s3 ls s3://<bucket> --recursive --endpoint-url https://<region>.digitaloceanspaces.com \
-              | awk '{print $4}' \
-              | xargs -I{} aws s3api put-object-acl --bucket <bucket> --key {} --acl private \
+            2. Set the bucket ACL to private, which removes the group grants:
+
+                ```bash
+                aws s3api put-bucket-acl --bucket <bucket> --acl private \
                   --endpoint-url https://<region>.digitaloceanspaces.com
-            ```
+                ```
+
+            3. Print the bucket policy. A `NoSuchBucketPolicy` error means there is none and this step is done:
+
+                ```bash
+                aws s3api get-bucket-policy --bucket <bucket> \
+                  --endpoint-url https://<region>.digitaloceanspaces.com \
+                  --query Policy --output text
+                ```
+
+                If a statement has `"Effect": "Allow"` with `"Principal": "*"`, save the policy without those statements to `policy.json` and apply it. If no statement remains, delete the policy with `aws s3api delete-bucket-policy` instead:
+
+                ```bash
+                aws s3api put-bucket-policy --bucket <bucket> \
+                  --policy file://policy.json \
+                  --endpoint-url https://<region>.digitaloceanspaces.com
+                ```
+
+            4. Optionally reset per-object public ACLs left over from earlier configuration. The check does not read object ACLs, but a `public-read` object stays downloadable after the bucket is private:
+
+                ```bash
+                aws s3api list-objects-v2 --bucket <bucket> \
+                  --endpoint-url https://<region>.digitaloceanspaces.com \
+                  --query 'Contents[].Key' --output text \
+                  | tr '\t' '\n' \
+                  | while IFS= read -r key; do
+                      aws s3api put-object-acl --bucket <bucket> --key "$key" --acl private \
+                        --endpoint-url https://<region>.digitaloceanspaces.com
+                    done
+                ```
         - id: terraform
           desc: |
             To declare the bucket as private with Terraform, set `acl = "private"` on `digitalocean_spaces_bucket` (the default) and avoid any `digitalocean_spaces_bucket_policy` or `_acl` resource that grants `AllUsers` read:
@@ -3346,13 +3825,13 @@ queries:
       remediation:
         - id: console
           desc: |
-            To remove anonymous write access from the Cloud Control Panel:
+            The check reads the bucket ACL and passes once it grants no `WRITE` permission to the `AllUsers` group. The Cloud Control Panel has no setting for a `WRITE` grant or for bucket policies, so reset the ACL with the S3-compatible API shown in the CLI remediation.
 
-            1. Open the bucket under **Spaces Object Storage**.
-            2. Inspect the **Settings** tab for any bucket policy and remove statements that grant `s3:PutObject`, `s3:DeleteObject`, or `s3:*` to `Principal: "*"`.
-            3. If the bucket genuinely needs third-party uploads, replace the anonymous policy with a workflow that issues pre-signed `PUT` URLs from application code.
+            If the bucket genuinely needs third-party uploads, issue pre-signed `PUT` URLs from application code instead of granting anonymous write access.
         - id: cli
           desc: |
+            The check reads the bucket ACL and passes once it grants no `WRITE` permission to the `AllUsers` group. Setting the canned `private` ACL removes every group grant. `<spaces-key>` and `<spaces-secret>` are a Spaces access key pair from the **Spaces Keys** page, and `<region>` is the Spaces region slug such as `nyc3`.
+
             To remove anonymous write access using the S3-compatible API:
 
             ```bash
@@ -3361,7 +3840,9 @@ queries:
                 --endpoint-url https://<region>.digitaloceanspaces.com
             ```
 
-            If a bucket policy grants writes to `*`, delete it:
+            A bucket policy that grants writes to `*` also allows anonymous uploads, although this check does not read it. If the bucket needs no policy, delete it.
+
+            **This deletes every statement in the policy**, including any that other applications rely on. To keep the rest, re-apply the policy without the wildcard statements with `aws s3api put-bucket-policy` instead:
 
             ```bash
             AWS_ACCESS_KEY_ID=<spaces-key> AWS_SECRET_ACCESS_KEY=<spaces-secret> \
@@ -3630,12 +4111,9 @@ queries:
       remediation:
         - id: console
           desc: |
-            To enable versioning from the Cloud Control Panel:
+            The Cloud Control Panel shows whether versioning is enabled but cannot change it, so enable versioning with the S3-compatible API shown in the CLI remediation. The bucket passes once its **Object Versioning** section on the **Settings** tab shows **Enabled**.
 
-            1. Open the bucket under **Spaces Object Storage**.
-            2. Open the **Settings** tab.
-            3. Under **Versioning**, switch the setting to **Enabled**.
-            4. Pair versioning with a lifecycle rule that expires noncurrent versions after a defined retention window so the bucket does not grow unbounded.
+            Pair versioning with a lifecycle rule that expires noncurrent versions after a defined retention window so the bucket does not grow unbounded.
         - id: cli
           desc: |
             Spaces is S3-compatible, so use the AWS CLI pointed at the Spaces endpoint. The `<spaces-key>` and `<spaces-secret>` come from the **Spaces Keys** page in the API section of the control panel, not the DigitalOcean API token, and `<region>` is the Spaces region slug such as `nyc3`.
@@ -3843,12 +4321,16 @@ queries:
       remediation:
         - id: console
           desc: |
-            Spaces bucket policies are managed through the S3-compatible API rather than the Cloud Control Panel. Use the CLI remediation below to remove or scope the public statement, then confirm the change on the bucket's **Settings** tab.
+            Spaces bucket policies can only be viewed and changed through the S3-compatible API, not the Cloud Control Panel. Use the CLI remediation to remove the wildcard statement, then confirm the result with `aws s3api get-bucket-policy`.
         - id: cli
           desc: |
             DigitalOcean Spaces is S3-compatible, so manage its policy with the AWS CLI pointed at the Spaces endpoint. The `<spaces-key>` and `<spaces-secret>` come from the **Spaces Keys** page in the API section of the control panel, not the DigitalOcean API token, and `<region>` is the Spaces region slug such as `nyc3`.
 
-            If the bucket does not need a policy at all, delete it:
+            The bucket passes once no `Allow` statement in its policy names the wildcard `*` principal.
+
+            **Removing a wildcard statement cuts off every anonymous client that relied on it**, such as public downloads or a static site served straight from the bucket. Move that content behind a CDN endpoint or pre-signed URLs first.
+
+            If the bucket does not need a policy at all, delete it. This removes every statement, including ones that do not use the wildcard:
 
             ```bash
             AWS_ACCESS_KEY_ID=<spaces-key> AWS_SECRET_ACCESS_KEY=<spaces-secret> \
@@ -3856,9 +4338,13 @@ queries:
                 --endpoint-url https://<region>.digitaloceanspaces.com
             ```
 
-            If a policy is required, re-apply it with each statement's `Principal` scoped to specific account or Spaces-key identities instead of `"*"`:
+            To keep the other statements, print the policy, save a copy to `scoped-policy.json` with every `Allow` statement whose `Principal` is `"*"` removed, and re-apply it:
 
             ```bash
+            AWS_ACCESS_KEY_ID=<spaces-key> AWS_SECRET_ACCESS_KEY=<spaces-secret> \
+              aws s3api get-bucket-policy --bucket <bucket> \
+                --endpoint-url https://<region>.digitaloceanspaces.com \
+                --query Policy --output text
             AWS_ACCESS_KEY_ID=<spaces-key> AWS_SECRET_ACCESS_KEY=<spaces-secret> \
               aws s3api put-bucket-policy --bucket <bucket> \
                 --endpoint-url https://<region>.digitaloceanspaces.com \
@@ -4332,7 +4818,9 @@ queries:
             4. Redeploy the agent.
         - id: cli
           desc: |
-            Switch the agent deployment to private:
+            **Clients that reach the agent through its public endpoint lose access.** Move them to an authenticated integration before switching.
+
+            Switch the agent deployment to private. `VISIBILITY_PRIVATE` passes the check, as does any value other than `VISIBILITY_PUBLIC`:
 
             ```bash
             doctl genai agent update-visibility "<agent-uuid>" --visibility VISIBILITY_PRIVATE
@@ -4407,9 +4895,9 @@ queries:
             To attach a content guardrail using the DigitalOcean Cloud Control Panel:
 
             1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
-            2. Open the **GradientAI** platform and select the agent.
-            3. Open the **Guardrails** configuration, attach an appropriate guardrail, and set its default response.
-            4. Redeploy the agent so the guardrail takes effect.
+            2. Under **INFERENCE** in the left menu, click **Agent Platform**, then open the workspace that contains the agent on the **Agent Workspaces** tab.
+            3. On the workspace's **Agents** tab, click the agent and open its **Resources** tab.
+            4. Under **GUARDRAILS**, click **Add guardrails**, select the guardrails that fit the agent's use case, and click **Save**.
         # No CLI remediation: doctl genai exposes agent lifecycle operations but no command to
         # attach a guardrail to an agent; guardrail attachment is performed through the GradientAI
         # control panel or the GradientAI API.
@@ -4559,29 +5047,35 @@ queries:
 
             1. Navigate to **Functions** and open the affected function.
             2. Under the function's web settings, enable the option that requires an API key for web invocation (secured web access), or disable web invocation entirely if the function does not need to be reachable over HTTP.
-            3. Save the change and confirm that legitimate callers now present the API key.
+            3. Save the change and confirm that legitimate callers now send the secret in the `X-Require-Whisk-Auth` header.
+
+            **Callers that do not send the secret are rejected once secured web access is on.** Give the secret to every legitimate caller before saving.
         - id: cli
           desc: |
-            DigitalOcean Functions are deployed from a `project.yml` manifest. Mark the function as requiring authenticated web access and redeploy it with the `doctl` CLI.
+            DigitalOcean Functions are deployed from a `project.yml` manifest. The function passes once it requires authentication for web invocation, or once it is no longer web-accessible.
 
-            In `project.yml`, secure the function's web access:
+            **Callers that do not send the secret are rejected after the redeploy.** Give the secret to every legitimate caller first.
 
-            ```yaml
-            packages:
-              - name: default
-                functions:
-                  - name: my-function
-                    web: true
-                    webSecure: true
-            ```
+            1. In `project.yml`, set `webSecure` on the function. The value is the secret token callers must send in the `X-Require-Whisk-Auth` header. Load it from the environment rather than committing it, for example from a `.env` file next to `project.yml` that defines `WEB_SECRET` as a long random string:
 
-            Then redeploy the project:
+                ```yaml
+                packages:
+                  - name: default
+                    functions:
+                      - name: my-function
+                        web: true
+                        webSecure: "${WEB_SECRET}"
+                ```
 
-            ```bash
-            doctl serverless deploy <project-directory>
-            ```
+                If the function does not need to be reachable over HTTP, set `web: false` instead. Omitting `web` leaves the function web-accessible, because it defaults to `true`.
 
-            Setting `webSecure: true` requires callers to present the function's API key. Set `web: false` instead if the function does not need to be reachable over HTTP.
+            2. Redeploy the project:
+
+                ```bash
+                doctl serverless deploy <project-directory>
+                ```
+
+                `<project-directory>` is the directory that contains `project.yml`.
         # No Terraform remediation: DigitalOcean Functions have no digitalocean
         # Terraform resource; they are managed only through project.yml and doctl.
     refs:
@@ -4741,14 +5235,24 @@ queries:
             3. Delete the unused keys, and rotate the keys that remain.
         - id: cli
           desc: |
-            Manage a namespace's access keys with the `doctl serverless` command group. After confirming a key is unused, delete it:
+            A namespace passes once every access key was used within the last 90 days or was created within the last 90 days. Deleting the stale keys closes the finding.
 
-            ```bash
-            doctl serverless connect
-            doctl serverless namespaces list
-            ```
+            **A deleted key stops working immediately.** Confirm in the control panel that the key has not been used recently, because `doctl` does not show when a key was last used.
 
-            Remove the stale key through the namespace's key management, then rotate the remaining keys on a regular schedule.
+            1. List the namespaces, then the access keys of the affected namespace:
+
+                ```bash
+                doctl serverless namespaces list
+                doctl serverless key list --namespace <namespace-id> --format ID,Name,CreatedAt,ExpiresAt
+                ```
+
+            2. Delete each stale key by its `ID`:
+
+                ```bash
+                doctl serverless key delete <access-key-id> --namespace <namespace-id>
+                ```
+
+            Rotate the remaining keys on a regular schedule.
         # No Terraform remediation: Functions namespace access keys have no
         # digitalocean Terraform resource; they are managed only through doctl and
         # the control panel.
@@ -4904,23 +5408,66 @@ queries:
             3. Add the specific source ranges that need access, or remove the allowlist entirely if the load balancer is meant to be public.
         - id: cli
           desc: |
-            The `doctl compute load-balancer update` command replaces the full load balancer configuration, so any attribute you do not pass is reset to its default. Read the current configuration first, then re-apply it together with the scoped allowlist:
+            The load balancer passes once its firewall allow list is empty or contains no entry with a `/0` prefix, such as `cidr:0.0.0.0/0` or `cidr:::/0`.
 
-            ```bash
-            doctl compute load-balancer get "<load-balancer-id>" \
-              --format Name,Region,ForwardingRules,DropletIDs --no-header
-            doctl compute load-balancer update "<load-balancer-id>" \
-              --name "<name>" \
-              --region "<region>" \
-              --forwarding-rules "<current-forwarding-rules>" \
-              --droplet-ids "<droplet-ids>" \
-              --allow-list cidr:203.0.113.0/24,ip:198.51.100.10
+            **Sources left out of a non-empty allow list can no longer reach the load balancer.** Include every client, CDN, and monitoring range that must connect, or leave the allow list empty if the load balancer is meant to be public.
+
+            **`doctl compute load-balancer update` resets every setting you leave out.** The update replaces the whole load balancer configuration, so a flag you omit returns its setting to the default. That includes the HTTP-to-HTTPS redirect, the TLS cipher policy, and the firewall allow and deny lists, each of which another check depends on. The command has no flag for the HTTP idle timeout, so a custom idle timeout returns to its default and must be set again in the control panel. The control panel method changes the allow list without this risk.
+
+            To fix this on the command line using the `doctl` CLI:
+
+            1. Print the current settings. The first command prints most values in the syntax the update flags accept, and the JSON output adds the TLS cipher policy, proxy protocol, and backend keepalive settings:
+
+                ```bash
+                doctl compute load-balancer get <lb-id> \
+                  --format Name,Region,SizeUnit,VPCUUID,Tag,DropletIDs,RedirectHttpToHttps,StickySessions,HealthCheck,ForwardingRules,Firewall
+                doctl compute load-balancer get <lb-id> --output json
+                ```
+
+            2. Re-apply the configuration with a scoped allow list:
+
+                ```bash
+                doctl compute load-balancer update <lb-id> \
+                  --name <name> \
+                  --region <region> \
+                  --size-unit <size-unit> \
+                  --vpc-uuid <vpc-uuid> \
+                  --forwarding-rules "<forwarding-rules>" \
+                  --health-check "<health-check>" \
+                  --sticky-sessions "<sticky-sessions>" \
+                  --droplet-ids <droplet-ids> \
+                  --redirect-http-to-https \
+                  --tls-cipher-policy <tls-cipher-policy> \
+                  --allow-list cidr:203.0.113.0/24,ip:198.51.100.10
+                ```
+
+                - Copy `<name>`, `<region>`, `<size-unit>`, `<vpc-uuid>`, `<forwarding-rules>`, `<health-check>`, and `<sticky-sessions>` from step 1. Quote values that contain spaces, since several forwarding rules are separated by spaces, and drop any of these flags whose value is empty.
+                - `<droplet-ids>` is the `DropletIDs` value. If the load balancer targets a tag instead, replace `--droplet-ids` with `--tag-name <tag>`.
+                - Add `--enable-proxy-protocol` or `--enable-backend-keepalive` if step 1 shows either enabled.
+                - Keep `--redirect-http-to-https` only if `RedirectHttpToHttps` is `true` in step 1, and set `<tls-cipher-policy>` to the JSON `tls_cipher_policy` value. Leaving either out resets it.
+                - Replace the example `--allow-list` entries, which are documentation ranges, with the `cidr:` and `ip:` sources that need access. Omit `--allow-list` entirely to leave the load balancer public, and pass any existing `deny` entries with `--deny-list`.
+        - id: terraform
+          desc: |
+            To scope the allow list in Terraform, list only specific sources in the `allow` argument of the `firewall` block on `digitalocean_loadbalancer`. Each entry is `cidr:<range>` or `ip:<address>`, and no entry may use a `/0` prefix. Replace the example documentation ranges with the sources that need access, or omit the `firewall` block if the load balancer is meant to be public:
+
+            ```hcl
+            resource "digitalocean_loadbalancer" "example" {
+              name   = "example-lb"
+              region = "nyc3"
+
+              forwarding_rule {
+                entry_port       = 443
+                entry_protocol   = "https"
+                target_port      = 80
+                target_protocol  = "http"
+                certificate_name = digitalocean_certificate.example.name
+              }
+
+              firewall {
+                allow = ["cidr:203.0.113.0/24", "ip:198.51.100.10"]
+              }
+            }
             ```
-
-            Provide the trusted source ranges that need access. Omit `--allow-list` from the update if the load balancer is intentionally public.
-        # No Terraform remediation: the load balancer firewall is a nested block on
-        # digitalocean_loadbalancer using cidr:/ip: encoded entries; fix it by editing
-        # the firewall.allow list in that block to remove any-address entries.
     refs:
       - url: https://docs.digitalocean.com/products/networking/load-balancers/how-to/manage/
         title: Manage DigitalOcean load balancers
