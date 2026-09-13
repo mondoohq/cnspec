@@ -1,4 +1,5 @@
-# Non-compliant: vulnerability scanning is disabled.
+# Compliant: the security posture mode is set to BASIC. Workload vulnerability
+# scanning was retired by Google and is no longer part of this check.
 resource "google_container_cluster" "primary" {
   name     = "vuln-disabled-cluster"
   location = "us-central1"
