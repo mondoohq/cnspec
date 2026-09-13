@@ -1,4 +1,5 @@
-# Compliant: automatic acceptance but scoped to an explicit consumer allow list.
+# Non-compliant: automatic acceptance accepts every consumer, so the accept list
+# is never consulted.
 resource "google_compute_service_attachment" "psc" {
   name                  = "psc-service"
   region                = "us-central1"
