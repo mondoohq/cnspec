@@ -8654,7 +8654,7 @@ queries:
       desc: |
         This check verifies that cluster and workload activity is captured in a central, managed logging service rather than staying on the nodes.
 
-        GKE sends logs to Cloud Logging through the Kubernetes-native endpoint `logging.googleapis.com/kubernetes`, which carries structured system and workload logs. New clusters are created with Cloud Logging enabled, but it can be turned off, or pointed at the legacy non-Kubernetes endpoint `logging.googleapis.com`, which yields far less structured data. The console shows the state under Kubernetes Engine > Clusters > Details > Features as Cloud Logging, where a healthy cluster reads System and workload logging. On an existing cluster, `gcloud container clusters update` with `--logging=SYSTEM,WORKLOAD` restores it, and cluster definitions should carry `logging_service = "logging.googleapis.com/kubernetes"` so structured system and workload logs are captured rather than only legacy VM-level logs.
+        GKE sends logs to Cloud Logging through the Kubernetes-native endpoint `logging.googleapis.com/kubernetes`, which carries structured system and workload logs. New clusters are created with Cloud Logging enabled, but it can be turned off. The console shows the state under Kubernetes Engine > Clusters > Details > Features as Cloud Logging, where a healthy cluster reads System and workload logging. On an existing cluster, `gcloud container clusters update` with `--logging=SYSTEM,WORKLOAD` restores it, and cluster definitions should either carry `logging_service = "logging.googleapis.com/kubernetes"` or leave the argument unset, which resolves to the same endpoint.
 
         **Why this matters**
 
@@ -8664,7 +8664,7 @@ queries:
 
         Centralized, tamper-evident audit logs are also required by PCI DSS, HIPAA, NIST 800-53, and other frameworks for environments that handle sensitive data.
 
-        Pair this with retention that matches your investigation horizon, exporting logs to Cloud Storage or BigQuery for long-term availability, and alerting when ingestion drops or stops, which can itself indicate tampering. The Terraform version of this check accepts an unset `logging_service`, because a cluster declared without that argument receives the Kubernetes endpoint by default.
+        Pair this with retention that matches your investigation horizon, exporting logs to Cloud Storage or BigQuery for long-term availability, and alerting when ingestion drops or stops, which can itself indicate tampering. The Terraform version of this check accepts an unset `logging_service`, because a cluster declared without that argument receives the Kubernetes endpoint by default. It still rejects the legacy endpoint `logging.googleapis.com`, which GKE has not offered since version 1.15, so a definition that names it never applies cleanly.
       audit: |
         ### Audit via Console
 
@@ -8685,7 +8685,7 @@ queries:
           --format="value(loggingService)"
         ```
 
-        A passing cluster returns `logging.googleapis.com/kubernetes`. A failing cluster returns `none` or `logging.googleapis.com` (the legacy non-Kubernetes logging endpoint).
+        A passing cluster returns `logging.googleapis.com/kubernetes`. A failing cluster returns `none`. The legacy endpoint `logging.googleapis.com` is the only other value the API documents, and it has not been available since GKE 1.15.
       remediation:
         - id: terraform
           desc: |
@@ -8784,7 +8784,9 @@ queries:
       desc: |
         This check verifies that the cluster is able to enforce Kubernetes NetworkPolicy objects, giving operators control over pod-to-pod and pod-to-external traffic.
 
-        Enforcement comes from the network policy addon, which must not be disabled on the cluster. In the console the state appears under Kubernetes Engine > Clusters > Details > Networking as Network policy enforcement, and a healthy cluster reads Enabled. On an existing cluster, `gcloud container clusters update` with `--update-addons=NetworkPolicy=ENABLED` followed by `--enable-network-policy` turns it on. In cluster definitions this is the `network_policy` block with `enabled = true` and `provider = "CALICO"`, alongside `network_policy_config` with `disabled = false` in the addons configuration.
+        Enforcement comes from one of two places. Clusters running GKE Dataplane V2, identified by a datapath provider of `ADVANCED_DATAPATH`, enforce NetworkPolicy in the dataplane itself and need no addon. This check accepts those clusters as they are. Every other cluster relies on the network policy addon, which must not be disabled.
+
+        In the console the state appears under Kubernetes Engine > Clusters > Details > Networking as Network policy enforcement, and a healthy cluster without Dataplane V2 reads Enabled. On such a cluster, `gcloud container clusters update` with `--update-addons=NetworkPolicy=ENABLED` followed by `--enable-network-policy` turns it on. In cluster definitions this is the `network_policy` block with `enabled = true` and `provider = "CALICO"`, alongside `network_policy_config` with `disabled = false` in the addons configuration. Do not add either to a Dataplane V2 cluster. GKE rejects the request with `Enabling NetworkPolicy for clusters with DatapathProvider=ADVANCED_DATAPATH is not allowed.`
 
         **Why this matters**
 
@@ -8799,21 +8801,21 @@ queries:
         1. Sign in to the [Google Cloud Console](https://console.cloud.google.com).
         2. Navigate to **Kubernetes Engine** > **Clusters**.
         3. Select a cluster and click the **Details** tab.
-        4. Under the **Networking** section, check the value of **Network policy enforcement**.
+        4. Under the **Networking** section, check the values of **Dataplane V2** and **Network policy enforcement**.
 
-        A passing cluster shows **Network policy enforcement: Enabled**. A failing cluster shows **Network policy enforcement: Disabled**.
+        A passing cluster shows **Dataplane V2: Enabled**, or **Network policy enforcement: Enabled**. A failing cluster shows **Dataplane V2: Disabled** together with **Network policy enforcement: Disabled**.
 
         ### Audit via CLI
 
-        1. Describe the cluster and check the network policy addon status:
+        1. Describe the cluster and check the datapath provider and the network policy addon status:
 
         ```bash
         gcloud container clusters describe CLUSTER_NAME \
           --zone ZONE \
-          --format="value(addonsConfig.networkPolicyConfig.disabled)"
+          --format="value(networkConfig.datapathProvider,addonsConfig.networkPolicyConfig.disabled)"
         ```
 
-        A passing cluster returns `False` or no output (indicating the addon is not disabled). A failing cluster returns `True`.
+        A passing cluster returns `ADVANCED_DATAPATH` for the datapath provider, or returns `False` or no output for the addon field, which means the addon is not disabled. A failing cluster returns a datapath provider other than `ADVANCED_DATAPATH` together with `True` for the addon field.
       remediation:
         - id: terraform
           desc: |
@@ -8836,6 +8838,8 @@ queries:
               }
             }
             ```
+
+            **Skip this on a GKE Dataplane V2 cluster.** A definition that sets `datapath_provider = "ADVANCED_DATAPATH"` or `enable_autopilot = true` already enforces NetworkPolicy, and adding a `network_policy` block to it makes the apply fail.
         - id: console
           desc: |
             To ensure network policy is enabled on GKE clusters using the Google Cloud Console:
@@ -8845,6 +8849,8 @@ queries:
             3. Select **Edit**.
             4. In the **Networking** section, enable **Network policy enforcement**.
             5. Select **Save**.
+
+            **Skip this on a GKE Dataplane V2 cluster.** The **Enable Kubernetes Network Policy** option is greyed out there because enforcement is built into the dataplane.
         - id: cli
           desc: |
             To ensure network policy is enabled on GKE clusters using the Google Cloud CLI:
@@ -8853,19 +8859,26 @@ queries:
             gcloud container clusters update CLUSTER_NAME --zone ZONE --update-addons=NetworkPolicy=ENABLED
             gcloud container clusters update CLUSTER_NAME --zone ZONE --enable-network-policy
             ```
+
+            **Skip this on a GKE Dataplane V2 cluster.** GKE rejects both commands with `Enabling NetworkPolicy for clusters with DatapathProvider=ADVANCED_DATAPATH is not allowed.` because enforcement is built into the dataplane.
     refs:
       - url: https://docs.cloud.google.com/kubernetes-engine/docs/concepts/security-overview
         title: GKE Security Overview
+      - url: https://docs.cloud.google.com/kubernetes-engine/docs/concepts/dataplane-v2
+        title: GKE Dataplane V2
   - uid: mondoo-gcp-security-gke-cluster-network-policy-enabled-gcp
     filters: asset.platform == "gcp-gke-cluster"
-    mql: gcp.project.gkeService.cluster.addonsConfig.networkPolicyConfig['disabled'] != true
+    mql: |
+      gcp.project.gkeService.cluster {
+        networkConfig != null && networkConfig.datapathProvider == "ADVANCED_DATAPATH" || addonsConfig == null || addonsConfig.networkPolicyAddon.disabled != true
+      }
   - uid: mondoo-gcp-security-gke-cluster-network-policy-enabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' &&
         terraform.resources.contains(nameLabel == 'google_container_cluster')
     mql: |
       terraform.resources('google_container_cluster').all(
-        blocks.where(type == 'network_policy').any(arguments.enabled == true)
+        arguments.datapath_provider == 'ADVANCED_DATAPATH' || arguments.enable_autopilot == true || blocks.where(type == 'network_policy').any(arguments.enabled == true)
       )
   - uid: mondoo-gcp-security-gke-cluster-network-policy-enabled-terraform-plan
     filters: |
@@ -8873,6 +8886,8 @@ queries:
       terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after['datapath_provider'] == 'ADVANCED_DATAPATH' ||
+        change.after['enable_autopilot'] == true ||
         change.after['network_policy'] != empty &&
         change.after['network_policy'].any(_['enabled'] == true)
       )
@@ -8882,6 +8897,8 @@ queries:
       terraform.state.resources.contains(type == 'google_container_cluster')
     mql: |
       terraform.state.resources.where(type == 'google_container_cluster').all(
+        values['datapath_provider'] == 'ADVANCED_DATAPATH' ||
+        values['enable_autopilot'] == true ||
         values['network_policy'] != empty &&
         values['network_policy'].any(_['enabled'] == true)
       )
