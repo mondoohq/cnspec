@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright Mondoo, Inc. 2025, 2026
+# Copyright Mondoo, Inc. 2024, 2026
 # SPDX-License-Identifier: BUSL-1.1
 #
 # The release workflows must be identical on main and on every v{major} support
