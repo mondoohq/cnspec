@@ -27087,11 +27087,13 @@ queries:
       desc: |
         This check verifies that the producer of a published private service decides who may connect to it.
 
-        A Private Service Connect (PSC) service attachment can be set to `ACCEPT_MANUAL`, which requires per-connection approval, or to `ACCEPT_AUTOMATIC`, which accepts consumers without review. This check passes an attachment set to `ACCEPT_MANUAL`, or one set to automatic acceptance that carries a non-empty consumer accept list. The setting is `Connection preference` under `Network services` then `Private Service Connect` then `Published services`, and is changed with `gcloud compute service-attachments update <attachment> --region=<region> --connection-preference=ACCEPT_MANUAL`.
+        A Private Service Connect (PSC) service attachment can be set to `ACCEPT_MANUAL`, which accepts an inbound connection request only from a consumer the producer has approved, or to `ACCEPT_AUTOMATIC`, which always accepts every inbound connection request from any consumer. This check passes an attachment set to `ACCEPT_MANUAL`. The setting is `Connection preference` under `Network services` then `Private Service Connect` then `Published services`, and is changed with `gcloud compute service-attachments update <attachment> --region=<region> --connection-preference=ACCEPT_MANUAL`.
+
+        A consumer accept list takes effect only under `ACCEPT_MANUAL`, where it names the consumers that are approved without a per-connection decision. Under automatic acceptance the list is never consulted, so an attachment that carries one still accepts every consumer.
 
         **Why this matters**
 
-        An attachment set to `ACCEPT_AUTOMATIC` with an empty accept list can be consumed by any project that knows the attachment target, and the service producer is never notified that it happened.
+        An attachment set to `ACCEPT_AUTOMATIC` can be consumed by any project that knows the attachment target, and the service producer is never notified that it happened.
 
         That breaks the boundary many organizations rely on. Where environments or tenants are segmented, the accept list is what enforces the separation, and automatic acceptance bypasses it wholesale, allowing accidental cross-project and cross-tenant data access.
 
@@ -27105,24 +27107,23 @@ queries:
 
         1. Sign in to the Google Cloud Console and navigate to **Network services** > **Private Service Connect** > **Published services**.
         2. For each service attachment, check the **Connection preference** column.
-        3. If **Connection preference** is **Accept connections automatically**, verify that an explicit **Consumer accept list** with specific project IDs or network entries is configured.
 
-        A passing service attachment either shows **Accept manual connections** as the preference, or shows **Accept connections automatically** with a non-empty consumer accept list. A failing service attachment shows **Accept connections automatically** with no consumer accept list entries.
+        A passing service attachment shows **Accept manual connections** as the preference. A failing service attachment shows **Accept connections automatically**, whether or not a consumer accept list is configured, because the list is not consulted under automatic acceptance.
 
         ### Audit via CLI
 
-        1. List all service attachments and inspect their connection preference and consumer accept lists:
+        1. List all service attachments and inspect their connection preference:
 
         ```bash
         gcloud compute service-attachments list \
           --format="table(name,region,connectionPreference,consumerAcceptLists)"
         ```
 
-        A passing service attachment returns `connectionPreference: ACCEPT_MANUAL` or returns `connectionPreference: ACCEPT_AUTOMATIC` with a non-empty `consumerAcceptLists`. A failing service attachment returns `connectionPreference: ACCEPT_AUTOMATIC` with an empty `consumerAcceptLists`.
+        A passing service attachment returns `connectionPreference: ACCEPT_MANUAL`. A failing service attachment returns `connectionPreference: ACCEPT_AUTOMATIC`, including when `consumerAcceptLists` is non-empty.
       remediation:
         - id: terraform
           desc: |
-            Set `connection_preference` to `ACCEPT_MANUAL`, or use `ACCEPT_AUTOMATIC` only with an explicit `consumer_accept_lists`:
+            Set `connection_preference` to `ACCEPT_MANUAL`, and name the consumers that may connect without a per-connection decision in `consumer_accept_lists`:
 
             ```hcl
             resource "google_compute_service_attachment" "svc" {
@@ -27132,11 +27133,11 @@ queries:
               nat_subnets           = [google_compute_subnetwork.psc_nat.id]
               enable_proxy_protocol = false
               connection_preference = "ACCEPT_MANUAL"
-              # Or: connection_preference = "ACCEPT_AUTOMATIC" with an explicit list:
-              # consumer_accept_lists {
-              #   project_id_or_num = "consumer-project-id"
-              #   connection_limit  = 10
-              # }
+
+              consumer_accept_lists {
+                project_id_or_num = "consumer-project-id"
+                connection_limit  = 10
+              }
             }
             ```
         - id: console
@@ -27145,7 +27146,7 @@ queries:
 
             1. Open **Network services** → **Private Service Connect** → **Published services**.
             2. Edit the service attachment.
-            3. Set **Connection preference** to **Accept connections for selected projects and networks** and populate the accept list with specific consumer project IDs / networks, **OR** set it to **Accept manual connections** to require per-connection approval.
+            3. Set **Connection preference** to **Accept connections for selected projects and networks** and populate the accept list with specific consumer project IDs and networks, or set it to **Accept manual connections** to approve every connection by hand.
         - id: cli
           desc: |
             Switch an existing service attachment to manual-accept:
@@ -27162,32 +27163,28 @@ queries:
     filters: asset.platform == 'gcp-project'
     mql: |
       gcp.project.computeService.serviceAttachments.all(
-        connectionPreference == "ACCEPT_MANUAL" ||
-        consumerAcceptLists.length > 0
+        connectionPreference == "ACCEPT_MANUAL"
       )
   - uid: mondoo-gcp-security-compute-service-attachment-consumer-reviewed-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_service_attachment')
     mql: |
       terraform.resources('google_compute_service_attachment').all(
-        arguments['connection_preference'] == "ACCEPT_MANUAL" ||
-        blocks.where(type == 'consumer_accept_lists') != empty
+        arguments['connection_preference'] == "ACCEPT_MANUAL"
       )
   - uid: mondoo-gcp-security-compute-service-attachment-consumer-reviewed-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_service_attachment')
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_compute_service_attachment').all(
-        change.after['connection_preference'] == "ACCEPT_MANUAL" ||
-        change.after['consumer_accept_lists'] != empty
+        change.after['connection_preference'] == "ACCEPT_MANUAL"
       )
   - uid: mondoo-gcp-security-compute-service-attachment-consumer-reviewed-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_service_attachment')
     mql: |
       terraform.state.resources.where(type == 'google_compute_service_attachment').all(
-        values['connection_preference'] == "ACCEPT_MANUAL" ||
-        values['consumer_accept_lists'] != empty
+        values['connection_preference'] == "ACCEPT_MANUAL"
       )
   # Terraform variants intentionally check google_sql_user resources directly without
   # filtering by parent instance database_version. The runtime check exempts "sqlserver"
