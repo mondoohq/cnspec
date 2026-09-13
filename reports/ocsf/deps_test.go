@@ -17,7 +17,7 @@ import (
 //
 // This package is the OCSF schema and the writers for it, and nothing about
 // cnspec: that is what keeps it extractable as go.mondoo.com/ocsf, which
-// docs/adr/0005-ocsf-type-generation.md, doc.go and CLAUDE.md all state as the
+// docs/adr/0005-ocsf-type-generation.md, doc.go and AGENTS.md all state as the
 // reason for the split. Until now nothing enforced it, and the import that
 // breaks it is the easy one to add -- one policy.Score in a helper and the
 // package is no longer publishable, with every test still green.

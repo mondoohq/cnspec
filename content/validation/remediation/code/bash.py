@@ -145,7 +145,7 @@ class ShellcheckResult:
 # it is correct — quoting, loops, redirection.
 #
 # Reading the fence rather than the id is also what keeps a `script` entry
-# holding PowerShell (the Windows convention in content/CLAUDE.md) out of
+# holding PowerShell (the Windows convention in content/AGENTS.md) out of
 # shellcheck: it is fenced ```powershell, so it is simply not matched.
 SHELL_FENCE_LANGUAGES = ("bash", "sh")
 
