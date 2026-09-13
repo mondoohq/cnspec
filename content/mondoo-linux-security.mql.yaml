@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-linux-security
     name: Mondoo Linux Security
-    version: 2.8.3
+    version: 2.8.4
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -12499,6 +12499,11 @@ queries:
           desc: |
             **Using Ansible**
 
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+
+            1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+
             To set the SSH protocol to version 2, use the following Ansible playbook:
 
             ```yaml
@@ -12513,7 +12518,13 @@ queries:
                     path: /etc/ssh/sshd_config
                     regexp: '^Protocol'
                     line: 'Protocol 2'
+                    validate: /usr/sbin/sshd -t -f %s
                   register: ssh_config_change
+
+                - name: Validate the SSH server configuration before restarting
+                  ansible.builtin.command: sshd -t
+                  changed_when: false
+                  when: ssh_config_change.changed
 
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
@@ -12529,6 +12540,11 @@ queries:
           desc: |
             **Using Chef Infra**
 
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+
             Use this Chef Infra recipe code to pin the SSH protocol to version 2:
 
             ```ruby
@@ -12537,20 +12553,22 @@ queries:
 
             service ssh_service do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'Protocol' => '2' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, "service[#{ssh_service}]", :delayed
               end
@@ -12698,6 +12716,11 @@ queries:
           desc: |
             **Using Ansible**
 
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+
+            1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+
             To set the SSH LogLevel to an appropriate value, use the following Ansible playbook:
 
             ```yaml
@@ -12734,7 +12757,13 @@ queries:
                     path: "{{ sshd_target }}"
                     regexp: '^LogLevel'
                     line: 'LogLevel VERBOSE'
+                    validate: /usr/sbin/sshd -t -f %s
                   register: ssh_config_change
+
+                - name: Validate the SSH server configuration before restarting
+                  ansible.builtin.command: sshd -t
+                  changed_when: false
+                  when: ssh_config_change.changed
 
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
@@ -12749,6 +12778,11 @@ queries:
         - id: chef
           desc: |
             **Using Chef Infra**
+
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to raise the SSH log level so that failed logins and key fingerprints are recorded:
 
@@ -12778,20 +12812,22 @@ queries:
 
             service ssh_service do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'LogLevel' => 'VERBOSE' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, "service[#{ssh_service}]", :delayed
               end
@@ -12933,6 +12969,11 @@ queries:
           desc: |
             **Using Ansible**
 
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+
+            1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+
             To disable SSH X11 forwarding, use the following Ansible playbook:
 
             ```yaml
@@ -12969,7 +13010,13 @@ queries:
                     path: "{{ sshd_target }}"
                     regexp: '^X11Forwarding'
                     line: 'X11Forwarding no'
+                    validate: /usr/sbin/sshd -t -f %s
                   register: ssh_config_change
+
+                - name: Validate the SSH server configuration before restarting
+                  ansible.builtin.command: sshd -t
+                  changed_when: false
+                  when: ssh_config_change.changed
 
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
@@ -12984,6 +13031,11 @@ queries:
         - id: chef
           desc: |
             **Using Chef Infra**
+
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to disable X11 forwarding:
 
@@ -13013,20 +13065,22 @@ queries:
 
             service ssh_service do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'X11Forwarding' => 'no' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, "service[#{ssh_service}]", :delayed
               end
@@ -13168,6 +13222,11 @@ queries:
           desc: |
             **Using Ansible**
 
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+
+            1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+
             To set the SSH MaxAuthTries to 4 or less, use the following Ansible playbook:
 
             ```yaml
@@ -13204,7 +13263,13 @@ queries:
                     path: "{{ sshd_target }}"
                     regexp: '^MaxAuthTries'
                     line: 'MaxAuthTries 4'
+                    validate: /usr/sbin/sshd -t -f %s
                   register: ssh_config_change
+
+                - name: Validate the SSH server configuration before restarting
+                  ansible.builtin.command: sshd -t
+                  changed_when: false
+                  when: ssh_config_change.changed
 
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
@@ -13219,6 +13284,11 @@ queries:
         - id: chef
           desc: |
             **Using Chef Infra**
+
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to cap the number of authentication attempts per connection:
 
@@ -13248,20 +13318,22 @@ queries:
 
             service ssh_service do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'MaxAuthTries' => '4' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, "service[#{ssh_service}]", :delayed
               end
@@ -13403,6 +13475,11 @@ queries:
           desc: |
             **Using Ansible**
 
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+
+            1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+
             To enable SSH IgnoreRhosts, use the following Ansible playbook:
 
             ```yaml
@@ -13439,7 +13516,13 @@ queries:
                     path: "{{ sshd_target }}"
                     regexp: '^IgnoreRhosts'
                     line: 'IgnoreRhosts yes'
+                    validate: /usr/sbin/sshd -t -f %s
                   register: ssh_config_change
+
+                - name: Validate the SSH server configuration before restarting
+                  ansible.builtin.command: sshd -t
+                  changed_when: false
+                  when: ssh_config_change.changed
 
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
@@ -13454,6 +13537,11 @@ queries:
         - id: chef
           desc: |
             **Using Chef Infra**
+
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to make sshd ignore `.rhosts` and `.shosts` files:
 
@@ -13483,20 +13571,22 @@ queries:
 
             service ssh_service do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'IgnoreRhosts' => 'yes' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, "service[#{ssh_service}]", :delayed
               end
@@ -13638,6 +13728,11 @@ queries:
           desc: |
             **Using Ansible**
 
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+
+            1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+
             To disable SSH HostbasedAuthentication, use the following Ansible playbook:
 
             ```yaml
@@ -13674,7 +13769,13 @@ queries:
                     path: "{{ sshd_target }}"
                     regexp: '^HostbasedAuthentication'
                     line: 'HostbasedAuthentication no'
+                    validate: /usr/sbin/sshd -t -f %s
                   register: ssh_config_change
+
+                - name: Validate the SSH server configuration before restarting
+                  ansible.builtin.command: sshd -t
+                  changed_when: false
+                  when: ssh_config_change.changed
 
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
@@ -13689,6 +13790,11 @@ queries:
         - id: chef
           desc: |
             **Using Chef Infra**
+
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to disable host-based authentication:
 
@@ -13718,20 +13824,22 @@ queries:
 
             service ssh_service do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'HostbasedAuthentication' => 'no' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, "service[#{ssh_service}]", :delayed
               end
@@ -13879,6 +13987,11 @@ queries:
           desc: |
             **Using Ansible**
 
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+
+            1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+
             To disable SSH root login or set it to prohibit password authentication, use the following Ansible playbook:
 
             ```yaml
@@ -13915,7 +14028,13 @@ queries:
                     path: "{{ sshd_target }}"
                     regexp: '^PermitRootLogin'
                     line: 'PermitRootLogin no'
+                    validate: /usr/sbin/sshd -t -f %s
                   register: ssh_config_change
+
+                - name: Validate the SSH server configuration before restarting
+                  ansible.builtin.command: sshd -t
+                  changed_when: false
+                  when: ssh_config_change.changed
 
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
@@ -13930,6 +14049,11 @@ queries:
         - id: chef
           desc: |
             **Using Chef Infra**
+
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to stop root from logging in over SSH. Confirm that an administrative account with sudo access can log in before you apply it, or you will lock yourself out:
 
@@ -13959,20 +14083,22 @@ queries:
 
             service ssh_service do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'PermitRootLogin' => 'no' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, "service[#{ssh_service}]", :delayed
               end
@@ -14114,6 +14240,11 @@ queries:
           desc: |
             **Using Ansible**
 
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+
+            1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+
             To disable SSH PermitEmptyPasswords, use the following Ansible playbook:
 
             ```yaml
@@ -14150,7 +14281,13 @@ queries:
                     path: "{{ sshd_target }}"
                     regexp: '^PermitEmptyPasswords'
                     line: 'PermitEmptyPasswords no'
+                    validate: /usr/sbin/sshd -t -f %s
                   register: ssh_config_change
+
+                - name: Validate the SSH server configuration before restarting
+                  ansible.builtin.command: sshd -t
+                  changed_when: false
+                  when: ssh_config_change.changed
 
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
@@ -14165,6 +14302,11 @@ queries:
         - id: chef
           desc: |
             **Using Chef Infra**
+
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to reject accounts with an empty password:
 
@@ -14194,20 +14336,22 @@ queries:
 
             service ssh_service do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'PermitEmptyPasswords' => 'no' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, "service[#{ssh_service}]", :delayed
               end
@@ -14351,6 +14495,11 @@ queries:
           desc: |
             **Using Ansible**
 
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+
+            1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+
             To disable SSH PermitUserEnvironment, use the following Ansible playbook:
 
             ```yaml
@@ -14387,7 +14536,13 @@ queries:
                     path: "{{ sshd_target }}"
                     regexp: '^PermitUserEnvironment'
                     line: 'PermitUserEnvironment no'
+                    validate: /usr/sbin/sshd -t -f %s
                   register: ssh_config_change
+
+                - name: Validate the SSH server configuration before restarting
+                  ansible.builtin.command: sshd -t
+                  changed_when: false
+                  when: ssh_config_change.changed
 
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
@@ -14402,6 +14557,11 @@ queries:
         - id: chef
           desc: |
             **Using Chef Infra**
+
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to stop sshd from reading user-supplied environment options:
 
@@ -14431,20 +14591,22 @@ queries:
 
             service ssh_service do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'PermitUserEnvironment' => 'no' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, "service[#{ssh_service}]", :delayed
               end
@@ -14610,6 +14772,11 @@ queries:
           desc: |
             **Using Ansible**
 
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+
+            1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+
             To configure SSH to use only strong ciphers, use the following Ansible playbook. On hosts running OpenSSH 6.x, change the `Ciphers` line to `Ciphers aes256-ctr,aes192-ctr,aes128-ctr` because the chacha20 and GCM ciphers are not supported there:
 
             ```yaml
@@ -14648,6 +14815,7 @@ queries:
                     line: 'Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr'
                     create: yes
                     state: present
+                    validate: /usr/sbin/sshd -t -f %s
                   register: ssh_ciphers_config_change
 
                 - name: Validate the SSH server configuration before restarting
@@ -14669,7 +14837,12 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to restrict SSH to strong ciphers: On hosts running OpenSSH 6.x, change the value to `aes256-ctr,aes192-ctr,aes128-ctr`, because the chacha20 and GCM ciphers are not supported there.
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+
+            Use this Chef Infra recipe code to restrict SSH to strong ciphers. On hosts running OpenSSH 6.x, change the value to `aes256-ctr,aes192-ctr,aes128-ctr`, because the chacha20 and GCM ciphers are not supported there:
 
             ```ruby
             # sshd uses the first value it reads for each keyword, and the Include at the top of
@@ -14697,20 +14870,22 @@ queries:
 
             service ssh_service do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'Ciphers' => 'chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, "service[#{ssh_service}]", :delayed
               end
@@ -14861,6 +15036,11 @@ queries:
           desc: |
             **Using Ansible**
 
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+
+            1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+
             To configure SSH to use only strong MAC algorithms, use the following Ansible playbook:
 
             ```yaml
@@ -14899,6 +15079,7 @@ queries:
                     line: 'MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256'
                     create: yes
                     state: present
+                    validate: /usr/sbin/sshd -t -f %s
                   register: ssh_mac_config_change
 
                 - name: Validate the SSH server configuration before restarting
@@ -14919,6 +15100,11 @@ queries:
         - id: chef
           desc: |
             **Using Chef Infra**
+
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to restrict SSH to strong MAC algorithms:
 
@@ -14948,20 +15134,22 @@ queries:
 
             service ssh_service do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'MACs' => 'hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, "service[#{ssh_service}]", :delayed
               end
@@ -15166,6 +15354,11 @@ queries:
           desc: |
             **Using Ansible**
 
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+
+            1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+
             To configure SSH to use only approved key exchange algorithms, use the following Ansible playbook:
 
             ```yaml
@@ -15228,6 +15421,7 @@ queries:
                     line: "KexAlgorithms {{ kexalgos | trim }}"
                     create: yes
                     state: present
+                    validate: /usr/sbin/sshd -t -f %s
                   register: kexalgos_config_change
 
                 - name: Validate the SSH server configuration before restarting
@@ -15248,6 +15442,11 @@ queries:
         - id: chef
           desc: |
             **Using Chef Infra**
+
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to restrict SSH to approved key exchange algorithms. The algorithm list depends on the OpenSSH release, so it is selected from the version reported by the installed binary:
 
@@ -15287,20 +15486,22 @@ queries:
 
             service ssh_service do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'KexAlgorithms' => kex_algorithms }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, "service[#{ssh_service}]", :delayed
               end
@@ -15485,6 +15686,11 @@ queries:
           desc: |
             **Using Ansible**
 
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+
+            1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+
             To set the SSH idle timeout interval using Ansible, use the following playbook:
 
             ```yaml
@@ -15523,6 +15729,7 @@ queries:
                     line: 'ClientAliveInterval 300'
                     create: yes
                     state: present
+                    validate: /usr/sbin/sshd -t -f %s
                   register: ssh_interval_change
 
                 - name: Ensure ClientAliveCountMax is set in sshd_config
@@ -15532,6 +15739,7 @@ queries:
                     line: 'ClientAliveCountMax 2'
                     create: yes
                     state: present
+                    validate: /usr/sbin/sshd -t -f %s
                   register: ssh_countmax_change
 
                 - name: Validate the SSH server configuration before restarting
@@ -15552,6 +15760,11 @@ queries:
         - id: chef
           desc: |
             **Using Chef Infra**
+
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to disconnect idle SSH sessions after ten minutes:
 
@@ -15581,20 +15794,22 @@ queries:
 
             service ssh_service do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'ClientAliveInterval' => '300', 'ClientAliveCountMax' => '2' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, "service[#{ssh_service}]", :delayed
               end
@@ -15737,6 +15952,11 @@ queries:
           desc: |
             **Using Ansible**
 
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+
+            1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+
             To set the SSH LoginGraceTime using Ansible, use the following playbook:
 
             ```yaml
@@ -15775,6 +15995,7 @@ queries:
                     line: 'LoginGraceTime 60'
                     create: yes
                     state: present
+                    validate: /usr/sbin/sshd -t -f %s
                   register: ssh_logingracetime_change
 
                 - name: Validate the SSH server configuration before restarting
@@ -15795,6 +16016,11 @@ queries:
         - id: chef
           desc: |
             **Using Chef Infra**
+
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to close connections that do not authenticate within one minute:
 
@@ -15824,20 +16050,22 @@ queries:
 
             service ssh_service do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'LoginGraceTime' => '60' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, "service[#{ssh_service}]", :delayed
               end
@@ -15965,6 +16193,11 @@ queries:
           desc: |
             **Using Ansible**
 
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+
+            1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+
             **Warning: avoid locking yourself out.** Once `AllowGroups` is set, every account outside the listed groups is denied SSH access, including the account Ansible connects with. Before you run this playbook, set `ssh_allow_groups` to a space-separated list of groups that together contain every account that must keep SSH access, and make sure those groups already exist with their members. To limit SSH access using Ansible, use the following playbook:
 
             ```yaml
@@ -15983,6 +16216,7 @@ queries:
                     line: "AllowGroups {{ ssh_allow_groups }}"
                     create: yes
                     state: present
+                    validate: /usr/sbin/sshd -t -f %s
                   register: allow_groups_changed
 
                 - name: Validate the SSH server configuration before restarting
@@ -16004,6 +16238,11 @@ queries:
           desc: |
             **Using Chef Infra**
 
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+
             Use this Chef Infra recipe code to limit SSH access to a named group. Create the group and add your administrators to it before you apply this, or no one will be able to log in:
 
             ```ruby
@@ -16012,20 +16251,22 @@ queries:
 
             service ssh_service do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'AllowGroups' => 'sshusers' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, "service[#{ssh_service}]", :delayed
               end
@@ -16174,6 +16415,11 @@ queries:
           desc: |
             **Using Ansible**
 
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+
+            1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+
             To set the SSH warning banner using Ansible, use the following playbook:
 
             ```yaml
@@ -16212,6 +16458,7 @@ queries:
                     line: 'Banner /etc/issue.net'
                     create: yes
                     state: present
+                    validate: /usr/sbin/sshd -t -f %s
                   register: ssh_banner_change
 
                 - name: Validate the SSH server configuration before restarting
@@ -16232,6 +16479,11 @@ queries:
         - id: chef
           desc: |
             **Using Chef Infra**
+
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to present a warning banner before authentication:
 
@@ -16261,20 +16513,22 @@ queries:
 
             service ssh_service do
               action :nothing
+              only_if '/usr/sbin/sshd -t'
             end
 
             { 'Banner' => '/etc/issue.net' }.each do |keyword, value|
-              ruby_block "set #{keyword} in sshd_config" do
-                block do
+              file "set #{keyword} in sshd_config" do
+                path sshd_config
+                content(lazy do
                   body = ::File.read(sshd_config)
                   directive = "#{keyword} #{value}"
-                  body = if body.match?(/^\s*#{keyword}\b/i)
-                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
-                         else
-                           "#{body.chomp}\n#{directive}\n"
-                         end
-                  ::File.write(sshd_config, body)
-                end
+                  if body.match?(/^\s*#{keyword}\b/i)
+                    body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                  else
+                    "#{body.chomp}\n#{directive}\n"
+                  end
+                end)
+                verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
                 notifies :restart, "service[#{ssh_service}]", :delayed
               end
