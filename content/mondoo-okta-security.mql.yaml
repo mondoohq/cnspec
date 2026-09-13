@@ -767,7 +767,7 @@ queries:
       desc: |
         This check verifies that Okta sessions expire on a bounded schedule instead of staying valid indefinitely.
 
-        The global session policy sets how long a signed-in session survives and how long it may sit unused before Okta ends it. Its rules are written in the Admin Console under Security > Global Session Policy, where each rule carries a maximum global session lifetime and a maximum global session idle time. This check requires every active rule to set both within the configured maximums, which default to 120 minutes idle and 1440 minutes total.
+        The global session policy sets how long a signed-in session survives and how long it may sit unused before Okta ends it. Its rules are written in the Admin Console under Security > Global Session Policy, where each rule carries a maximum global session lifetime and a maximum global session idle time. This check requires every active rule to set both within the configured maximums, which default to 120 minutes idle and 1440 minutes total. A lifetime of 0, which the Admin Console labels **No time limit**, disables the lifetime bound and fails the check.
 
         **Why this matters**
 
@@ -784,8 +784,9 @@ queries:
         1. In the Admin Console, go to **Security > Authentication**.
         2. Select **Sign On** and open each policy.
         3. Review each active rule and confirm the **Session expires after** value is within your approved limit.
+        4. On Identity Engine orgs, confirm **Maximum Okta global session lifetime** is **Set time limit** rather than **No time limit**.
 
-        A passing result shows every active sign-on rule with a bounded session lifetime and idle timeout; a failing result shows a rule with an excessive or unset session lifetime.
+        A passing result shows every active sign-on rule with a bounded session lifetime and idle timeout; a failing result shows a rule with an excessive or unset session lifetime, or a rule with no time limit on the session lifetime.
 
         ### Audit via API
 
@@ -796,7 +797,7 @@ queries:
           "https://$OKTA_ORG.okta.com/api/v1/policies?type=OKTA_SIGN_ON"
         ```
 
-        For each policy, fetch its rules with `GET /api/v1/policies/{policyId}/rules` and inspect `actions.signon.session`. A passing response shows `maxSessionIdleMinutes` and `maxSessionLifetimeMinutes` within the approved limits for every active rule; a failing response shows a rule exceeding those limits.
+        For each policy, fetch its rules with `GET /api/v1/policies/{policyId}/rules` and inspect `actions.signon.session`. A passing response shows `maxSessionIdleMinutes` and `maxSessionLifetimeMinutes` within the approved limits for every active rule, with `maxSessionLifetimeMinutes` greater than `0`; a failing response shows a rule exceeding those limits or a `maxSessionLifetimeMinutes` of `0`, which disables the lifetime limit.
       remediation:
         - id: console
           desc: |
@@ -849,27 +850,28 @@ queries:
         mql: return 1440
     mql: |
       okta.policies.signOn.where(_.rules.all(status == "ACTIVE")).all(_.rules.all(actions["signon"]["session"]["maxSessionIdleMinutes"] <= props.mondooOktaSecurityMaxSessionIdleMinutes ))
-      okta.policies.signOn.where(_.rules.all(status == "ACTIVE")).all(_.rules.all(actions["signon"]["session"]["maxSessionLifetimeMinutes"] <= props.mondooOktaSecurityMaxSessionLifetimeMinutes ))
+      okta.policies.signOn.where(_.rules.all(status == "ACTIVE")).all(_.rules.all(actions["signon"]["session"]["maxSessionLifetimeMinutes"] > 0 && actions["signon"]["session"]["maxSessionLifetimeMinutes"] <= props.mondooOktaSecurityMaxSessionLifetimeMinutes ))
   # The HCL variant accepts a `var.something` reference for session_idle /
   # session_lifetime as a static-analysis pass-through — the resolved value
   # isn't known at HCL-parse time. Plan and state variants below evaluate the
   # resolved value, so they don't need the escape hatch and intentionally
-  # omit it.
+  # omit it. An omitted session_idle or session_lifetime takes the okta
+  # provider's schema default of 120, so HCL treats it as within bounds.
   - uid: mondoo-okta-security-okta-enforce-session-lifetime-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.providers.any( nameLabel == "okta" )
     mql: |
-      terraform.resources("okta_policy_rule_signon").all( arguments['session_idle'] == /^var\./ || arguments['session_idle'] <= 120 )
-      terraform.resources("okta_policy_rule_signon").all( arguments['session_lifetime'] == /^var\./ || arguments['session_lifetime'] <= 1440 )
+      terraform.resources("okta_policy_rule_signon").all( arguments['session_idle'] == /^var\./ || arguments['session_idle'] == null || arguments['session_idle'] <= 120 )
+      terraform.resources("okta_policy_rule_signon").all( arguments['session_lifetime'] == /^var\./ || arguments['session_lifetime'] == null || arguments['session_lifetime'] > 0 && arguments['session_lifetime'] <= 1440 )
   - uid: mondoo-okta-security-okta-enforce-session-lifetime-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( providerName == /okta/ )
     mql: |
       terraform.plan.resourceChanges.where( type == "okta_policy_rule_signon" ).all( change.after['session_idle'] <= 120 )
-      terraform.plan.resourceChanges.where( type == "okta_policy_rule_signon" ).all( change.after['session_lifetime'] <= 1440 )
+      terraform.plan.resourceChanges.where( type == "okta_policy_rule_signon" ).all( change.after['session_lifetime'] > 0 && change.after['session_lifetime'] <= 1440 )
   - uid: mondoo-okta-security-okta-enforce-session-lifetime-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == /okta_policy_rule_signon/ )
     mql: |
       terraform.state.resources.where( type == "okta_policy_rule_signon" ).all( values['session_idle'] <= 120 )
-      terraform.state.resources.where( type == "okta_policy_rule_signon" ).all( values['session_lifetime'] <= 1440 )
+      terraform.state.resources.where( type == "okta_policy_rule_signon" ).all( values['session_lifetime'] > 0 && values['session_lifetime'] <= 1440 )
   - uid: mondoo-okta-security-okta-auth-openid-saml
     title: Enable SAML or OIDC authentication for supported apps
     impact: 100
