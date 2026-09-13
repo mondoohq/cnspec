@@ -402,19 +402,58 @@ m["missing"] == empty || m["missing"].all(_ == 1)   # [ok] true      (null-safe 
 
 So `blocks.where(type == 'x').all(y)` and `values['x'].all(y)` are not equivalent rewrites: the first is vacuously true when nothing matches, the second fails outright. Don't swap them. The vacuous pass and the hard fail are both wrong answers for "the block is absent", and which one you want depends on the vendor default (see Terraform variants above).
 
-### A dotted path that is also a resource name is not a field read
+### A dotted path that is also a resource name is not always a field read
 
-The compiler extends the resource path greedily, and the longest matching resource name wins unconditionally over a field on a shorter one, even when the longer resource can't stand on its own. `azure.subscription.aksService.cluster.autoUpgradeProfile.upgradeChannel` builds a bare `...cluster.autoUpgradeProfile` resource with no id and no fields; the cluster's accessor never runs and every field reads `null`. With the asymmetry above, the check returns a confident wrong answer instead of an error.
+The compiler extends the resource path greedily, so a longer resource name can win over a field of the same name on a shorter one. When it does, the query builds a bare sub-resource with no id and no fields: the owner's accessor never runs and every field reads `null`. With the asymmetry above, the check then returns a confident wrong answer instead of an error.
 
-Suspect it when the value is a sub-object (a profile, config, or settings block) **and** the full path appears as a resource in its own right in `cnspec providers resources <provider> --json`. Confirm by running the query: the log line is `provider returned no data and no error for a field ... id=` with an empty `id=`. Fix by reaching the value through an accessor whose path isn't a resource name (`azure.subscription.aks.cluster....`) or by binding a block to the parent:
+[mql#10349](https://github.com/mondoohq/mql/pull/10349) narrowed this on 2026-08-24, and the fix is in the mql revision this repo pins. The walk now stops at the owner, giving the field read the author meant, but only when **all four** of these hold:
 
-```coffee
-azure.subscription.aks.cluster {
-  autoUpgradeProfile.upgradeChannel != "none"
-}
+- the longer resource is `private`, **and**
+- the owner declares a field of that name, **and**
+- that field is not an implicit resource, which is the singular accessor `lr` generates for every `x.y` resource, **and**
+- the field's type is exactly that resource
+
+Miss any one and the greedy walk still wins.
+
+**Being a resource name settles nothing on its own.** Two schema reads decide it, and neither needs a cloud account:
+
+```bash
+# 1. is the longer resource private?
+cnspec providers resources aws aws.emr.cluster.encryptionConfiguration --json   # "private": true
+# 2. does the owner declare a field of that name, with exactly that type?
+cnspec providers resources aws aws.emr.cluster --json                           # encryptionConfiguration, type aws.emr.cluster.encryptionConfiguration
 ```
 
-Not Azure-specific: Cloudflare (`cloudflare.zone.settings.*`), GCP (`gcp.project.gkeService.cluster.networkPolicy.*`), AWS (`aws.emr.cluster.encryptionConfiguration.*`), vSphere, and Arista all have resources shaped this way. Cloudflare adds a second failure mode: a 401/403 degrades to an empty list rather than an error, so an unauthorized scan passes vacuously.
+Implicit accessors are not listed in a resource's field list, so "the owner declares a field of that name" in the second command already excludes them.
+
+The four examples this section used to carry satisfy every condition and compile as field reads today: `azure.subscription.aksService.cluster.autoUpgradeProfile.*`, `gcp.project.gkeService.cluster.networkPolicy.*`, `aws.emr.cluster.encryptionConfiguration.*`, and `cloudflare.zone.settings.*`. Don't file against them. #3450 was filed against four GKE checks on a schema read alone and none of the four was broken.
+
+**What still bites is the type mismatch**: the owner carries a field of that name with a *different* type, the redirect is declined, and the resource wins. Around a dozen paths in the released provider schemas are in this shape today. A sample:
+
+| Path | Owner's field of that name | What you see |
+|---|---|---|
+| `gitlab.user.email` | `string` | compiles to the resource, silently |
+| `azure.subscription.sqlService.server.failoverGroup.readWriteEndpoint` | `dict`, deprecated for the typed `readWriteListener` | compiles to the resource, silently |
+| `azure.subscription.cacheService.redisInstance.redisConfiguration` | `dict` | compiles to the resource, silently |
+| `ms365.exchangeonline.mailbox` | `[]dict` | compiles to the resource, silently |
+| `arista.eos.portSecurity` | `[]arista.eos.portSecurity` | the resource wins; a list operation on it then fails to compile |
+| `hetzner.server.privateNet` | `[]hetzner.server.privateNet` | the same |
+
+A list-typed field at least fails loudly once a list operation is applied to it, with `failed to compile $whereNot: resource '<path>' is not a list type`. A `dict` or scalar field never does: the path compiles, it runs, and it answers with nulls.
+
+Fix it by reaching the name from inside a block or list operation bound to the owner, where it resolves as a field and never as a resource path. Where the provider also exposes the value under a name that is not a resource, prefer that name: the typed replacements for deprecated dicts are usually shaped exactly this way, and `readWriteListener` sidesteps the collision that `readWriteEndpoint` walks into.
+
+```coffee
+azure.subscription.sqlService.servers.all(
+  failoverGroups.all( readWriteListener.failoverPolicy == "Automatic" )
+)
+```
+
+Starting the query at the private sub-resource is not a fix, however the value is named: `azure.subscription.sqlService.server.failoverGroup.readWriteListener.failoverPolicy` compiles, but its first chunk is still a bare `...server.failoverGroup` that no accessor ever filled.
+
+Two things that will mislead you while checking this. A released `cnspec` 13.x binary still carries the old greedy compiler, because mql#10349 shipped on the v14 line and is not in mql v13.38.1, so a local `cnquery run <provider> --ast -c '<query>'` can disagree with what CI compiles. And `cnspec providers resources <provider> --json` lists only public resources, so a private sub-resource is absent from it; name the resource explicitly, as above, to see it.
+
+Cloudflare adds a second, unrelated failure mode: a 401/403 degrades to an empty list rather than an error, so an unauthorized scan passes vacuously.
 
 ### Smaller ones that still flip a verdict
 
