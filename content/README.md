@@ -383,7 +383,7 @@ make test/content                                   # lint + bundle scans + comp
 
 Two documents cover the rest:
 
-- **[`CLAUDE.md`](CLAUDE.md)** — the authoring rules: bundle structure, impact bands, UID conventions, the shape of `desc`/`audit`/`remediation`, compliance tagging, IaC variants, and the MQL behaviors that return a wrong verdict without erroring.
+- **[`AGENTS.md`](AGENTS.md)** — the authoring rules: bundle structure, impact bands, UID conventions, the shape of `desc`/`audit`/`remediation`, compliance tagging, IaC variants, and the MQL behaviors that return a wrong verdict without erroring.
 - **[`validation/README.md`](validation/README.md)** — every check that runs against this directory, what each one proves, when CI runs it, and how to run it yourself.
 
 ## Join the community!

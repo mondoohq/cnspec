@@ -405,7 +405,7 @@ When no registry fits because the vendor has no non-interactive surface at all, 
 5. If the check recommends an IaC fix, the closed loop will scan that snippet and require the check to pass. Run it before you find out in CI.
 6. Delete any `KNOWN_BUG.md` marker your change fixes, in the same change. A stale marker fails the build.
 
-See [`../CLAUDE.md`](../CLAUDE.md) for the authoring rules: bundle structure, variants, compliance tags, and MQL idioms.
+See [`../AGENTS.md`](../AGENTS.md) for the authoring rules: bundle structure, variants, compliance tags, and MQL idioms.
 
 ## Adding a new validator
 
