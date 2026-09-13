@@ -23568,6 +23568,8 @@ queries:
         Modern alternatives make these mechanisms unnecessary. OAuth tokens, Workload Identity, and IAM-based authentication all provide short-lived, revocable, individually attributable access.
 
         For GKE 1.19 and later these methods are off by default and the console elements for them have been removed, so no console action is required on current clusters. Omitting `--enable-basic-auth` and `--issue-client-certificate` at creation time is all a new cluster needs. The remaining work is limited to older clusters still configured with basic authentication or certificate issuance, where the update command above turns them off.
+
+        The Terraform versions of this check read `master_auth.client_certificate_config.issue_client_certificate` and require it to be anything other than `true`. A cluster that omits the `master_auth` block passes, because GKE does not issue a client certificate by default. Version 4.0 of the Google provider removed the `username` and `password` arguments, so basic authentication can no longer be expressed in current Terraform code and only a live cluster scan reports it.
       audit: |
         ### Audit via Console
 
@@ -23626,7 +23628,6 @@ queries:
               location = "us-central1"
 
               master_auth {
-                # Leave username and password empty to disable basic auth
                 client_certificate_config {
                   issue_client_certificate = false
                 }
@@ -23648,7 +23649,10 @@ queries:
       terraform.resources('google_container_cluster').all(
         blocks.where(type == 'master_auth').all(
           arguments.username == empty &&
-          arguments.password == empty
+          arguments.password == empty &&
+          blocks.where(type == 'client_certificate_config').all(
+            arguments.issue_client_certificate != true
+          )
         )
       )
   - uid: mondoo-gcp-security-gke-legacy-client-auth-disabled-terraform-plan
@@ -23656,18 +23660,18 @@ queries:
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
-        change.after['master_auth'] == null ||
-        change.after['master_auth'][0]['username'] == "" &&
-        change.after['master_auth'][0]['password'] == ""
+        change.after['master_auth'] == empty ||
+        change.after['master_auth'][0]['client_certificate_config'] == empty ||
+        change.after['master_auth'][0]['client_certificate_config'][0]['issue_client_certificate'] != true
       )
   - uid: mondoo-gcp-security-gke-legacy-client-auth-disabled-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
     mql: |
       terraform.state.resources.where(type == 'google_container_cluster').all(
-        values['master_auth'] == null ||
-        values['master_auth'][0]['username'] == "" &&
-        values['master_auth'][0]['password'] == ""
+        values['master_auth'] == empty ||
+        values['master_auth'][0]['client_certificate_config'] == empty ||
+        values['master_auth'][0]['client_certificate_config'][0]['issue_client_certificate'] != true
       )
   - uid: mondoo-gcp-security-gke-node-auto-upgrade-enabled
     title: Ensure GKE node auto-upgrade is enabled
