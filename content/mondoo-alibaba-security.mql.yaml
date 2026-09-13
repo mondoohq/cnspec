@@ -4625,9 +4625,9 @@ queries:
     impact: 70
     docs:
       desc: |
-        This check verifies that the account captures network traffic records through at least one VPC flow log that is in the `Active` state with a `TrafficType` value of `All`.
+        This check verifies that each VPC records its network traffic through a flow log of its own that is active and captures all traffic.
 
-        Flow logs record information about the traffic crossing elastic network interfaces, VSwitches, and VPCs, giving the network-level visibility needed to detect anomalous connections and reconstruct incidents. A flow log scoped to only `Allow` or only `Drop` traffic records half the picture. Flow logs are created in the VPC console under Flow Log, or with `aliyun vpc CreateFlowLog --TrafficType All`, and are delivered to a Simple Log Service project and Logstore.
+        A flow log records the traffic crossing the elastic network interfaces in its scope and delivers the records to a Simple Log Service project and Logstore. It can be scoped to a VPC, a vSwitch, or a single elastic network interface, and only a flow log whose resource is the VPC itself covers every interface in that VPC. Flow logs are managed in the VPC console under **Flow Log**. The VPC needs a flow log with resource type **VPC**, status **Active**, and traffic type **All**. A flow log on one of its vSwitches or network interfaces does not count, and neither does one that captures only allowed or only denied traffic.
 
         **Why this matters**
 
@@ -4635,29 +4635,38 @@ queries:
 
         Partial capture hides half the evidence. Recording only accepted traffic loses the scanning and probing that security group rules blocked, which is the earliest signal of an attacker mapping the environment. Recording only rejected traffic loses the connections that actually succeeded, which is where the damage happened.
 
-        Detection pipelines need the traffic record as an input. Flow logs feed monitoring and threat detection, and an inactive or absent flow log removes a primary signal for identifying malicious network behavior. Delivering the records to Simple Log Service is what enables alerting on suspicious flows before they escalate rather than after.
+        Narrow scopes leave gaps. A flow log on one vSwitch or one network interface records nothing about the rest of the VPC, so traffic to and from instances in the VPC's other vSwitches leaves no trace. A flow log on the VPC covers every network interface in it.
 
-        Overly permissive security groups and unexpected egress are also far easier to spot when the traffic traversing them is being logged, so flow logs surface misconfiguration and not only intrusion.
+        Detection pipelines need the traffic record as an input. Flow logs feed monitoring and threat detection, and an inactive or absent flow log removes a primary signal for identifying malicious network behavior. Overly permissive security groups and unexpected egress are also far easier to spot when the traffic traversing them is being logged, so flow logs surface misconfiguration and not only intrusion.
 
-        This check is satisfied by a single qualifying flow log covering the network; it does not assert that every interface or VSwitch is individually covered, so confirm that the flow log's scope actually spans the resources you care about.
+        Each VPC is assessed on its own. A qualifying flow log on one VPC does nothing for the others, so every new VPC fails until its own flow log is created.
       audit: |
         ### Audit via Console
 
-        1. Sign in to the [VPC console](https://vpc.console.aliyun.com/).
+        1. Sign in to the [VPC console](https://vpc.console.aliyun.com/) and select the region that contains the VPC.
         2. Navigate to **Flow Log**.
-        3. Confirm at least one flow log exists, its status is **Active**, and its traffic type is **All**.
+        3. Find the flow logs whose resource type is **VPC** and whose resource is the VPC being audited.
+        4. Confirm that at least one of them has status **Active** and traffic type **All**.
 
-        A passing account has an active flow log capturing all traffic. A failing account has no flow log, has only inactive flow logs, or captures only accepted or only rejected traffic.
+        A passing VPC has its own active flow log capturing all traffic. A failing VPC has no flow log whose resource is the VPC, or has only flow logs that are not yet active or that capture only allowed or only denied traffic. Flow logs on the VPC's vSwitches or network interfaces are not counted.
 
         ### Audit via CLI
 
-        1. List flow logs and review each flow log's status:
+        1. List the VPCs in each region:
 
         ```bash
-        aliyun vpc DescribeFlowLogs
+        aliyun vpc DescribeVpcs --RegionId <region-id>
         ```
 
-        A passing account returns a flow log whose `Status` is `Active` and whose `TrafficType` is `All`. A failing account returns no flow log, flow logs whose status is `Inactive`, or flow logs whose `TrafficType` is `Allow` or `Drop`.
+        2. For each VPC, list the flow logs whose resource is that VPC:
+
+        ```bash
+        aliyun vpc DescribeFlowLogs --RegionId <region-id> --ResourceType VPC --ResourceId <vpc-id>
+        ```
+
+        `<region-id>` is the region the VPC is in, and `<vpc-id>` is its `VpcId` from the first command.
+
+        A passing VPC returns at least one flow log whose `Status` is `Active` and whose `TrafficType` is `All`. A failing VPC returns no flow log, or returns only flow logs whose `Status` is `Inactive` or `Activating` or whose `TrafficType` is `Allow` or `Drop`.
       remediation:
         - id: console
           desc: |
@@ -4677,8 +4686,9 @@ queries:
               --ProjectName <sls-project> --LogStoreName <sls-logstore>
             ```
 
-            Replace the values as follows:
+            Run the command once for each VPC that fails, replacing the values as follows:
 
+            - `<region-id>` is the region the VPC is in.
             - `<vpc-id>` is the VPC that has no active flow log. Keep `--ResourceType VPC`, because a flow log on a vSwitch or an elastic network interface does not resolve the finding.
             - `--TrafficType All` records both allowed and denied traffic, which the check requires.
             - `<sls-project>` and `<sls-logstore>` are an existing Simple Log Service project and Logstore in the same region.
@@ -4686,9 +4696,14 @@ queries:
             The flow log reports `Activating` while it is created and `Active` once it is running.
         - id: terraform
           desc: |
-            To declare an active VPC flow log in Terraform, set `status` to `Active` and `traffic_type` to `All`:
+            To declare an active flow log for each VPC in Terraform, add an `alicloud_vpc_flow_log` per VPC with `resource_type` set to `VPC`, `resource_id` referencing the VPC, `traffic_type` set to `All`, and `status` set to `Active`. `project_name` and `log_store_name` name an existing Simple Log Service project and Logstore in the same region:
 
             ```hcl
+            resource "alicloud_vpc" "example" {
+              vpc_name   = "example-vpc"
+              cidr_block = "10.0.0.0/16"
+            }
+
             resource "alicloud_vpc_flow_log" "example" {
               flow_log_name  = "example-flow-log"
               resource_type  = "VPC"
@@ -4728,23 +4743,33 @@ queries:
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_vpc_flow_log")
     mql: |
-      terraform.resources("alicloud_vpc_flow_log").all(
+      terraform.resources("alicloud_vpc_flow_log").any(arguments["resource_type"] == "VPC")
+      terraform.resources("alicloud_vpc_flow_log").where(arguments["resource_type"] == "VPC").all(
         arguments["status"] != "Inactive" && arguments["traffic_type"] == "All"
       )
+      loggedVpcs = terraform.resources("alicloud_vpc_flow_log").where(arguments["resource_type"] == "VPC").map(arguments["resource_id"]).join(" ")
+      terraform.resources("alicloud_vpc").all(loggedVpcs.contains("alicloud_vpc." + labels[1] + "."))
   - uid: mondoo-alibaba-security-vpc-flow-logs-enabled-terraform-plan
     filters: |
       asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_vpc_flow_log")
+    # A VPC created in this plan has no ID until apply, so it cannot be matched to its flow log and is skipped.
     mql: |
-      terraform.plan.resourceChanges.where(type == "alicloud_vpc_flow_log").all(
+      terraform.plan.resourceChanges.where(type == "alicloud_vpc_flow_log").any(change.after["resource_type"] == "VPC")
+      terraform.plan.resourceChanges.where(type == "alicloud_vpc_flow_log" && change.after["resource_type"] == "VPC").all(
         change.after["status"] != "Inactive" && change.after["traffic_type"] == "All"
       )
+      loggedVpcIds = terraform.plan.resourceChanges.where(type == "alicloud_vpc_flow_log" && change.after["resource_type"] == "VPC").map(change.after["resource_id"]).join("|").split("|")
+      terraform.plan.resourceChanges.where(type == "alicloud_vpc").all(change.after["id"] == null || change.after["id"].in(loggedVpcIds))
   - uid: mondoo-alibaba-security-vpc-flow-logs-enabled-terraform-state
     filters: |
       asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_vpc_flow_log")
     mql: |
-      terraform.state.resources.where(type == "alicloud_vpc_flow_log").all(
+      terraform.state.resources.where(type == "alicloud_vpc_flow_log").any(values["resource_type"] == "VPC")
+      terraform.state.resources.where(type == "alicloud_vpc_flow_log" && values["resource_type"] == "VPC").all(
         values["status"] != "Inactive" && values["traffic_type"] == "All"
       )
+      loggedVpcIds = terraform.state.resources.where(type == "alicloud_vpc_flow_log" && values["resource_type"] == "VPC").map(values["resource_id"]).join("|").split("|")
+      terraform.state.resources.where(type == "alicloud_vpc").all(values["id"].in(loggedVpcIds))
 
   # ===========================================================================
   # Container Service for Kubernetes (ACK)
