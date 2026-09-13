@@ -1483,22 +1483,22 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
-      files.find(from: "/etc/pve/nodes", regex: "host.fw$", type: "file").list.all(
-        file(_.path).content.lines.any(_ == /^enable:\s*1/)
+      files.find(from: "/etc/pve/nodes", regex: ".*/host[.]fw$", type: "file").list.all(
+        file(_.path).content.lines.none(_ == /^enable:\s*0\s*$/i)
       )
     docs:
       desc: |
         This check verifies that every node in the cluster has its own host firewall switched on.
 
-        Each node keeps its firewall options in `/etc/pve/nodes/<node>/host.fw`, and the switch is the line `enable: 1`. It is set per node under the node's Firewall, then Options panel, or with `pvesh set /nodes/<node>/firewall/options --enable 1`. This check reads every `host.fw` in the cluster and requires the setting on all of them, because enabling it on one node says nothing about the others.
+        Each node keeps its firewall options in `/etc/pve/nodes/<node>/host.fw`, and the switch is the `enable` line. It is set per node under the node's Firewall, then Options panel, or with `pvesh set /nodes/<node>/firewall/options --enable 1`. The option defaults to `1`, so the host firewall is on for a node with no `host.fw` file and for a node whose `host.fw` carries no `enable` line. This check reads every `host.fw` in the cluster and fails a node only when the file turns the host firewall off with `enable: 0`, because one opted-out node undoes the protection the rest of the cluster has.
 
         **Why this matters**
 
-        A cluster is only as reachable as its most open member. Nodes are added at different times, sometimes by different people, and the one that joined during an incident or a capacity crunch is the one whose firewall was never turned on. It accepts inbound traffic that its peers drop, which means an attacker probing the management network finds one host answering on ports the rest refuse.
+        A cluster is only as reachable as its most open member. The host firewall arrives switched on, so a node loses it only when somebody turns it off, and that usually happens under pressure while chasing a connectivity problem. The node then accepts inbound traffic that its peers drop, which means an attacker probing the management network finds one host answering on ports the rest refuse.
 
         That host is a full entry point, not a partial one. Its web interface and SSH front the same cluster as every other node, its local storage holds real guest disks, and the cluster filesystem replicates whatever configuration change is made there to everyone else. A guest compromised on the unprotected node also reaches further, since the traffic it emits is unfiltered at the host level.
 
-        Uneven firewall state is hard to notice from the interface, because each node's setting is displayed on its own page rather than side by side. Check it across the cluster in one pass and enable it everywhere, and re-check after adding a node, since a new member starts with the firewall off.
+        Uneven firewall state is hard to notice from the interface, because each node's setting is displayed on its own page rather than side by side. Check it across the cluster in one pass, and re-check after anyone troubleshoots networking on a single node, since switching the host firewall off is a common first step and a rarely undone one.
       audit: |
         ### Audit via Web UI
 
@@ -1516,7 +1516,7 @@ queries:
         for node in $(pvesh get /nodes --output-format json | jq -r '.[].node'); do echo -n "$node: "; pvesh get /nodes/$node/firewall/options --output-format json | jq '.enable'; done
         ```
 
-        A passing result shows enable set to 1 for every node; a failing result shows 0 or null for any node.
+        A passing result shows enable set to 1 on every node, or reported as null where the option was never written and the default of 1 applies; a failing result shows 0 on any node.
       remediation:
         - id: cli
           desc: |
