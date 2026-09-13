@@ -5,6 +5,11 @@ provider "okta" {
 }
 
 resource "okta_policy_mfa_default" "example" {
+  is_oie = false
+
+  okta_otp = {
+    enroll = "REQUIRED"
+  }
   okta_sms = {
     enroll = "NOT_ALLOWED"
   }
@@ -12,9 +17,6 @@ resource "okta_policy_mfa_default" "example" {
     enroll = "NOT_ALLOWED"
   }
   okta_call = {
-    enroll = "NOT_ALLOWED"
-  }
-  phone_number = {
-    enroll = "NOT_ALLOWED"
+    enroll = "OPTIONAL"
   }
 }
