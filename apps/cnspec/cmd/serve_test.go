@@ -11,9 +11,9 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	cnspec_config "go.mondoo.com/cnspec/v13/apps/cnspec/cmd/config"
-	"go.mondoo.com/mql/v13/cli/execruntime"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	cnspec_config "go.mondoo.com/cnspec/apps/cnspec/cmd/config"
+	"go.mondoo.com/mql/cli/execruntime"
+	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 )
 
 // testRuntimeEnv stands in for the runtimeEnv every caller detects once at
