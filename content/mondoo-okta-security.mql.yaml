@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-okta-security
     name: Mondoo Okta Organization Security
-    version: 2.3.7
+    version: 2.3.8
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -158,7 +158,12 @@ queries:
 
             Super admin access in Okta can be granted to individual users and to groups. This check evaluates groups that hold the super admin role, so pay particular attention to group-based assignments. Keeping the super admin pool small limits the blast radius if one of those high-value accounts is phished or taken over.
 
-            Before you remove any super admin grant, confirm that at least one other verified super admin retains working access, and confirm your own continued access before revoking your own grant. Removing the last super admin, or revoking your own without a tested alternative, can leave the org without full administrative control.
+            Every group that carries the super admin role must meet both conditions:
+
+            - Fewer members than the configured maximum, which defaults to 15, so a group passes with at most 14 members.
+            - No group owners.
+
+            **Keep a working super admin before you remove any grant.** Confirm that at least one other verified super admin retains access, and confirm your own continued access before revoking your own grant. Removing the last super admin, or revoking your own without a tested alternative, can leave the org without full administrative control.
 
             1. In the Admin Console, go to **Security > Administrators**.
             2. Under **Admin Roles**, select the **Super** filter to display only super admins. The **Admin** tab lists grants by **Users** and by **Groups**, so review both.
@@ -252,16 +257,24 @@ queries:
       remediation:
         - id: terraform
           desc: |
+            Create an IP network zone whose usage is a blocklist and give it at least one gateway entry. Okta rejects every sign-in request from an address the zone lists before any policy runs.
+
+            - `type = "IP"` makes the zone match explicit addresses. Dynamic zones match locations or proxy types and have no gateways, so they do not satisfy the check on their own.
+            - `usage = "BLOCKLIST"` denies the listed addresses. The default, `POLICY`, only makes the zone available to policy conditions and blocks nothing.
+            - `gateways` lists the addresses to deny, as single addresses, CIDR ranges, or `first-last` ranges. Replace the documentation ranges in the example with the addresses your threat intelligence or incident response has identified. The list must not be empty.
+
             ```hcl
             resource "okta_network_zone" "example_blocklist" {
-              name     = "myBlockList"
+              name     = "Blocked IP addresses"
               type     = "IP"
               usage    = "BLOCKLIST"
-              gateways = ["1.2.3.4/24", "2.3.4.5-2.3.4.15"]
+              gateways = ["192.0.2.0/24", "198.51.100.10-198.51.100.20"]
             }
             ```
 
-            Proxy entries describe trusted forwarding for policy zones and are not accepted on blocklist zones, so omit the proxies argument.
+            Proxy entries describe trusted forwarding for policy zones and are not accepted on blocklist zones, so omit the `proxies` argument.
+
+            **Check each range before you apply it.** A range that includes addresses your own users, offices, or VPN egress use locks those users out of every application behind Okta.
         - id: console
           desc: |
             ### Add blocked IP addresses to a blocklist network zone
@@ -380,6 +393,12 @@ queries:
             5. Select **Update Policy**.
         - id: terraform
           desc: |
+            Set the `enroll` value of each weak factor to `NOT_ALLOWED`, so users can no longer register it. `OPTIONAL` and `REQUIRED` both fail the check. The factors to disallow are `okta_email`, `okta_sms`, and `phone_number`.
+
+            Use the example that matches the org. Set `is_oie = true` on Okta Identity Engine orgs, where enrollment is configured per authenticator, and `is_oie = false` on Okta Classic Engine orgs, where it is configured per factor.
+
+            `okta_policy_mfa_default` manages only the default enrollment policy. Every other enrollment policy in the org is checked too, so set the same values on each `okta_policy_mfa` resource, and change policies created outside Terraform in the Admin Console.
+
             For orgs on Okta Identity Engine:
 
             ```hcl
@@ -533,6 +552,8 @@ queries:
             5. Select **Update Policy**.
         - id: terraform
           desc: |
+            Set the `enroll` value for Okta Verify to `REQUIRED` in the default enrollment policy so users register it. On Okta Identity Engine, `OPTIONAL` also passes. Use the example that matches the org: `is_oie = false` for Okta Classic Engine, where Okta Verify is the `okta_otp` and `okta_push` factors, and `is_oie = true` for Okta Identity Engine, where it is the single `okta_verify` authenticator.
+
             For orgs on Okta Classic Engine:
 
             ```hcl
@@ -667,10 +688,10 @@ queries:
             4. Select **Update Policy**.
             5. To prompt users to enroll, edit the policy rule and choose to enroll users the first time they sign in or the first time they are challenged for MFA.
 
-            Before requiring a factor for everyone, account for service, break-glass, and API-only accounts that cannot complete interactive enrollment. Requiring a factor org-wide can lock those accounts out. Place them in a dedicated group and scope or exclude that group from the required-factor policy, and confirm at least one break-glass admin retains working access before you save.
+            **Requiring a factor org-wide can lock out accounts that cannot enroll.** Service, break-glass, and API-only accounts cannot complete interactive enrollment. Place them in a dedicated group, scope or exclude that group from the required-factor policy, and confirm at least one break-glass admin retains working access before you save.
         - id: terraform
           desc: |
-            The default MFA enrollment policy applies to all users in the org:
+            The default MFA enrollment policy is assigned to the Everyone group, so managing it covers every user. Set at least one strong factor's `enroll` value to `REQUIRED`; `OPTIONAL` leaves enrollment to the user. Set `is_oie = true` on Okta Identity Engine orgs, as in the example, and `is_oie = false` on Okta Classic Engine orgs, where Okta Verify is the `okta_otp` factor rather than `okta_verify`.
 
             ```hcl
             resource "okta_policy_mfa_default" "default" {
@@ -783,15 +804,24 @@ queries:
 
             This check evaluates the global sign-on policy, which controls the Okta session itself. On Okta Identity Engine this is the Global Session Policy, the correct surface for session idle time and session lifetime. Shorter limits reduce the window in which a hijacked or abandoned session can be abused.
 
+            The check requires every active rule in every policy, including each policy's **Default Rule**, to set both limits. With the default thresholds, that means:
+
+            - Session idle time of 120 minutes or less.
+            - Session lifetime of 1440 minutes, which is 24 hours, or less.
+
             1. On Okta Identity Engine orgs, go to **Security > Global Session Policy**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Sign On** tab.
             2. For each active policy rule, select **Edit**.
-            3. Set the maximum session idle time to 2 hours or less.
-            4. Set the maximum session lifetime to 24 hours or less.
-            5. Select **Update Rule**.
+            3. On Identity Engine, set **Maximum Okta global session idle time** to 2 hours or less. On Classic Engine, set the rule's session idle timeout to 2 hours or less.
+            4. On Identity Engine, set **Maximum Okta global session lifetime** to **Set time limit** with 24 hours or less. **No time limit** stores a lifetime of `0`, which removes the bound on stolen session cookies. On Classic Engine, set the rule's maximum session lifetime to 24 hours or less.
+            5. Save the rule, then repeat for the remaining active rules in every policy.
 
-            An aggressive idle timeout forces more frequent re-authentication and will interrupt active admin sessions, so choose a limit that balances exposure against operational friction.
+            **Short limits interrupt active work.** An aggressive idle timeout forces more frequent re-authentication and ends idle admin sessions, so choose a limit that balances exposure against operational friction.
         - id: terraform
           desc: |
+            `session_idle` and `session_lifetime` are in minutes. Set `session_idle` to 120 or less and `session_lifetime` to 1440 or less, but not `0`, which disables the lifetime limit. The `policy_id` refers to the global session policy the rule belongs to. The example also sets `mfa_required` and `mfa_prompt`, because a rule that does not require MFA fails the separate check for MFA in sign-on rules.
+
+            A new rule does not change the rules that already exist. The check evaluates every active rule in every global session policy, including each policy's **Default Rule**, so edit the existing rules that exceed the limits in the Admin Console as well.
+
             ```hcl
             resource "okta_policy_rule_signon" "default" {
               policy_id        = okta_policy_signon.default.id
@@ -799,6 +829,8 @@ queries:
               status           = "ACTIVE"
               session_idle     = 120
               session_lifetime = 1440
+              mfa_required     = true
+              mfa_prompt       = "ALWAYS"
             }
             ```
     refs:
@@ -912,9 +944,22 @@ queries:
             2. For each such app, check the **Okta Integration Network** with **Browse App Catalog** for a SAML 2.0 or OIDC version of the integration, or select **Create App Integration** and choose **SAML 2.0** or **OIDC - OpenID Connect** for a custom app.
             3. Configure the new integration with the application vendor, assign the same users and groups, and verify sign-in works.
             4. Deactivate the old SWA integration once users have migrated.
+
+            Every active application other than bookmarks and the Active Directory integration must use SAML 2.0 or OIDC. Assigning a password-based application to a narrower group does not change its sign-on mode, so an application that cannot federate keeps failing until it is deactivated.
+
+            **Deactivating an integration removes access for everyone assigned to it.** Confirm that users have moved to the federated integration before you deactivate the old one.
         - id: terraform
           desc: |
+            Define the application as an `okta_app_saml` or `okta_app_oauth` resource so it federates, and remove the password-based resource it replaces, such as `okta_app_swa`, `okta_app_three_field`, `okta_app_secure_password_store`, `okta_app_auto_login`, or `okta_app_basic_auth`. Applications created in the Admin Console must be migrated there.
+
             ### Configure a SAML application with Terraform
+
+            Replace the `example.com` values with the endpoints the application vendor publishes for its SAML integration:
+
+            - `sso_url`, `recipient`, and `destination` are the vendor's assertion consumer service URL.
+            - `audience` is the vendor's service provider entity ID.
+            - `subject_name_id_template` and `subject_name_id_format` must match the identifier the vendor expects, such as the user's email address.
+            - Keep `response_signed = true` and the SHA-256 algorithms so assertions cannot be altered in transit.
 
             >Note: If you receive the error `You do not have permission to access the feature you are requesting`, contact support and request the feature flag `ADVANCED_SSO` for your org.
 
@@ -936,6 +981,8 @@ queries:
             ```
 
             ### Configure an OIDC application with Terraform
+
+            Set `redirect_uris` to the callback URLs the application registers with its identity provider. `type = "web"` with the `authorization_code` grant and the `code` response type is the flow for a server-side web application.
 
             ```hcl
             resource "okta_app_oauth" "example" {
@@ -1060,6 +1107,10 @@ queries:
             When an end user selects the button, Okta records a `user.account.report_suspicious_activity_by_enduser` event in the System Log and surfaces it in the Admin Console for review.
         - id: terraform
           desc: |
+            Set `report_suspicious_activity_enabled` to `true`, which adds the report link to security notification emails. `okta_security_notification_emails` manages all five security notification settings for the whole org as one object, so the example enables every one of them. Setting any of the others to `false` turns that notification off.
+
+            **The provider must authenticate with an SSWS API token.** This resource is incompatible with OAuth 2.0 provider authentication and calls an internal Okta API endpoint that can change without notice.
+
             ```hcl
             resource "okta_security_notification_emails" "example" {
               report_suspicious_activity_enabled       = true
@@ -1168,6 +1219,10 @@ queries:
             4. Select **Save**.
         - id: terraform
           desc: |
+            Set `send_email_for_new_device_enabled` to `true`, which emails users about sign-ins from a new device. `okta_security_notification_emails` manages all five security notification settings for the whole org as one object, so the example enables every one of them. Setting any of the others to `false` turns that notification off.
+
+            **The provider must authenticate with an SSWS API token.** This resource is incompatible with OAuth 2.0 provider authentication and calls an internal Okta API endpoint that can change without notice.
+
             ```hcl
             resource "okta_security_notification_emails" "example" {
               report_suspicious_activity_enabled       = true
@@ -1274,6 +1329,10 @@ queries:
             4. Select **Save**.
         - id: terraform
           desc: |
+            Set `send_email_for_factor_enrollment_enabled` to `true`, which emails users when an authenticator is enrolled. `okta_security_notification_emails` manages all five security notification settings for the whole org as one object, so the example enables every one of them. Setting any of the others to `false` turns that notification off.
+
+            **The provider must authenticate with an SSWS API token.** This resource is incompatible with OAuth 2.0 provider authentication and calls an internal Okta API endpoint that can change without notice.
+
             ```hcl
             resource "okta_security_notification_emails" "example" {
               report_suspicious_activity_enabled       = true
@@ -1380,6 +1439,10 @@ queries:
             4. Select **Save**.
         - id: terraform
           desc: |
+            Set `send_email_for_factor_reset_enabled` to `true`, which emails users when an authenticator is reset. `okta_security_notification_emails` manages all five security notification settings for the whole org as one object, so the example enables every one of them. Setting any of the others to `false` turns that notification off.
+
+            **The provider must authenticate with an SSWS API token.** This resource is incompatible with OAuth 2.0 provider authentication and calls an internal Okta API endpoint that can change without notice.
+
             ```hcl
             resource "okta_security_notification_emails" "example" {
               report_suspicious_activity_enabled       = true
@@ -1486,6 +1549,10 @@ queries:
             4. Select **Save**.
         - id: terraform
           desc: |
+            Set `send_email_for_password_changed_enabled` to `true`, which emails users when their password changes. `okta_security_notification_emails` manages all five security notification settings for the whole org as one object, so the example enables every one of them. Setting any of the others to `false` turns that notification off.
+
+            **The provider must authenticate with an SSWS API token.** This resource is incompatible with OAuth 2.0 provider authentication and calls an internal Okta API endpoint that can change without notice.
+
             ```hcl
             resource "okta_security_notification_emails" "example" {
               report_suspicious_activity_enabled       = true
@@ -1588,12 +1655,15 @@ queries:
             ### Set a strong minimum password length
 
             1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
-            2. Locate the policy and select **Edit**.
+            2. Select **Edit** on a password policy.
             3. Under **Password settings**, set **Minimum length** to at least 15 characters.
             4. Select **Update Policy**.
+            5. Repeat steps 2 to 4 for every other password policy. The check evaluates each policy separately, so one policy left unchanged keeps it failing.
         - id: terraform
           desc: |
-            Set this attribute inside your single, consolidated `okta_policy_password_default` resource alongside your other password settings. The snippet below shows only the attribute relevant to this check. Applying a standalone resource that defines just this one attribute resets every other password setting on the default policy back to the Terraform provider defaults, so merge it with your existing definition rather than applying it on its own.
+            Set the attribute on every password policy, because the check fails when any single policy falls short. The default policy is the `okta_policy_password_default` resource shown below, and every additional policy you manage as an `okta_policy_password` resource needs the same attribute. Password policies created outside Terraform must be changed in the Admin Console.
+
+            **Merge the attribute into your existing resource.** The snippet shows only the attribute this check reads. Applying a resource that defines just this one attribute resets every other setting on the policy to the provider defaults, such as a minimum length of 8.
 
             ```hcl
             resource "okta_policy_password_default" "default" {
@@ -1699,12 +1769,15 @@ queries:
             ### Limit failed sign-in attempts before lockout
 
             1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
-            2. Locate the policy and select **Edit**.
+            2. Select **Edit** on a password policy.
             3. Under **Password settings**, in **Lock out**, enable the option to lock out users after unsuccessful attempts and set the limit to 5 or fewer. Do not leave the value at 0, which disables lockout entirely.
             4. Select **Update Policy**.
+            5. Repeat steps 2 to 4 for every other password policy. The check evaluates each policy separately, so one policy left unchanged keeps it failing.
         - id: terraform
           desc: |
-            Set this attribute inside your single, consolidated `okta_policy_password_default` resource alongside your other password settings. The snippet below shows only the attribute relevant to this check. Applying a standalone resource that defines just this one attribute resets every other password setting on the default policy back to the Terraform provider defaults, so merge it with your existing definition rather than applying it on its own.
+            Set the attribute on every password policy, because the check fails when any single policy falls short. The default policy is the `okta_policy_password_default` resource shown below, and every additional policy you manage as an `okta_policy_password` resource needs the same attribute. Password policies created outside Terraform must be changed in the Admin Console.
+
+            **Merge the attribute into your existing resource.** The snippet shows only the attribute this check reads. Applying a resource that defines just this one attribute resets every other setting on the policy to the provider defaults, such as a minimum length of 8.
 
             ```hcl
             resource "okta_policy_password_default" "default" {
@@ -1808,12 +1881,15 @@ queries:
             ### Require a lowercase character in passwords
 
             1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
-            2. Locate the policy and select **Edit**.
+            2. Select **Edit** on a password policy.
             3. Under **Password settings**, in the complexity requirements, enable **Lower case letter**.
             4. Select **Update Policy**.
+            5. Repeat steps 2 to 4 for every other password policy. The check evaluates each policy separately, so one policy left unchanged keeps it failing.
         - id: terraform
           desc: |
-            Set this attribute inside your single, consolidated `okta_policy_password_default` resource alongside your other password settings. The snippet below shows only the attribute relevant to this check. Applying a standalone resource that defines just this one attribute resets every other password setting on the default policy back to the Terraform provider defaults, so merge it with your existing definition rather than applying it on its own.
+            Set the attribute on every password policy, because the check fails when any single policy falls short. The default policy is the `okta_policy_password_default` resource shown below, and every additional policy you manage as an `okta_policy_password` resource needs the same attribute. Password policies created outside Terraform must be changed in the Admin Console.
+
+            **Merge the attribute into your existing resource.** The snippet shows only the attribute this check reads. Applying a resource that defines just this one attribute resets every other setting on the policy to the provider defaults, such as a minimum length of 8.
 
             ```hcl
             resource "okta_policy_password_default" "default" {
@@ -1917,12 +1993,15 @@ queries:
             ### Require a numeric character in passwords
 
             1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
-            2. Locate the policy and select **Edit**.
+            2. Select **Edit** on a password policy.
             3. Under **Password settings**, in the complexity requirements, enable **Number** so the policy requires at least one digit.
             4. Select **Update Policy**.
+            5. Repeat steps 2 to 4 for every other password policy. The check evaluates each policy separately, so one policy left unchanged keeps it failing.
         - id: terraform
           desc: |
-            Set this attribute inside your single, consolidated `okta_policy_password_default` resource alongside your other password settings. The snippet below shows only the attribute relevant to this check. Applying a standalone resource that defines just this one attribute resets every other password setting on the default policy back to the Terraform provider defaults, so merge it with your existing definition rather than applying it on its own.
+            Set the attribute on every password policy, because the check fails when any single policy falls short. The default policy is the `okta_policy_password_default` resource shown below, and every additional policy you manage as an `okta_policy_password` resource needs the same attribute. Password policies created outside Terraform must be changed in the Admin Console.
+
+            **Merge the attribute into your existing resource.** The snippet shows only the attribute this check reads. Applying a resource that defines just this one attribute resets every other setting on the policy to the provider defaults, such as a minimum length of 8.
 
             ```hcl
             resource "okta_policy_password_default" "default" {
@@ -2026,12 +2105,15 @@ queries:
             ### Require a symbol character in passwords
 
             1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
-            2. Locate the policy and select **Edit**.
+            2. Select **Edit** on a password policy.
             3. Under **Password settings**, in the complexity requirements, enable **Symbol** so the policy requires at least one special character.
             4. Select **Update Policy**.
+            5. Repeat steps 2 to 4 for every other password policy. The check evaluates each policy separately, so one policy left unchanged keeps it failing.
         - id: terraform
           desc: |
-            Set this attribute inside your single, consolidated `okta_policy_password_default` resource alongside your other password settings. The snippet below shows only the attribute relevant to this check. Applying a standalone resource that defines just this one attribute resets every other password setting on the default policy back to the Terraform provider defaults, so merge it with your existing definition rather than applying it on its own.
+            Set the attribute on every password policy, because the check fails when any single policy falls short. The default policy is the `okta_policy_password_default` resource shown below, and every additional policy you manage as an `okta_policy_password` resource needs the same attribute. Password policies created outside Terraform must be changed in the Admin Console.
+
+            **Merge the attribute into your existing resource.** The snippet shows only the attribute this check reads. Applying a resource that defines just this one attribute resets every other setting on the policy to the provider defaults, such as a minimum length of 8.
 
             ```hcl
             resource "okta_policy_password_default" "default" {
@@ -2136,12 +2218,15 @@ queries:
             ### Enforce a minimum password age
 
             1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
-            2. Locate the policy and select **Edit**.
+            2. Select **Edit** on a password policy.
             3. Under **Password settings**, in **Age**, set the minimum password age to at least 1 hour so users cannot cycle through their password history immediately. The console expresses this value in hours, which corresponds to 60 minutes in the API.
             4. Select **Update Policy**.
+            5. Repeat steps 2 to 4 for every other password policy. The check evaluates each policy separately, so one policy left unchanged keeps it failing.
         - id: terraform
           desc: |
-            Set this attribute inside your single, consolidated `okta_policy_password_default` resource alongside your other password settings. The snippet below shows only the attribute relevant to this check. Applying a standalone resource that defines just this one attribute resets every other password setting on the default policy back to the Terraform provider defaults, so merge it with your existing definition rather than applying it on its own.
+            Set the attribute on every password policy, because the check fails when any single policy falls short. The default policy is the `okta_policy_password_default` resource shown below, and every additional policy you manage as an `okta_policy_password` resource needs the same attribute. Password policies created outside Terraform must be changed in the Admin Console.
+
+            **Merge the attribute into your existing resource.** The snippet shows only the attribute this check reads. Applying a resource that defines just this one attribute resets every other setting on the policy to the provider defaults, such as a minimum length of 8.
 
             ```hcl
             resource "okta_policy_password_default" "default" {
@@ -2246,12 +2331,15 @@ queries:
             ### Exclude the username from passwords
 
             1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
-            2. Locate the policy and select **Edit**.
+            2. Select **Edit** on a password policy.
             3. Under **Password settings**, in the complexity requirements, enable **Does not contain part of username**.
             4. Select **Update Policy**.
+            5. Repeat steps 2 to 4 for every other password policy. The check evaluates each policy separately, so one policy left unchanged keeps it failing.
         - id: terraform
           desc: |
-            Set this attribute inside your single, consolidated `okta_policy_password_default` resource alongside your other password settings. The snippet below shows only the attribute relevant to this check. Applying a standalone resource that defines just this one attribute resets every other password setting on the default policy back to the Terraform provider defaults, so merge it with your existing definition rather than applying it on its own.
+            Set the attribute on every password policy, because the check fails when any single policy falls short. The default policy is the `okta_policy_password_default` resource shown below, and every additional policy you manage as an `okta_policy_password` resource needs the same attribute. Password policies created outside Terraform must be changed in the Admin Console.
+
+            **Merge the attribute into your existing resource.** The snippet shows only the attribute this check reads. Applying a resource that defines just this one attribute resets every other setting on the policy to the provider defaults, such as a minimum length of 8.
 
             ```hcl
             resource "okta_policy_password_default" "default" {
@@ -2356,12 +2444,15 @@ queries:
             ### Exclude the first name from passwords
 
             1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
-            2. Locate the policy and select **Edit**.
+            2. Select **Edit** on a password policy.
             3. Under **Password settings**, in the complexity requirements, enable **Does not contain first name**.
             4. Select **Update Policy**.
+            5. Repeat steps 2 to 4 for every other password policy. The check evaluates each policy separately, so one policy left unchanged keeps it failing.
         - id: terraform
           desc: |
-            Set this attribute inside your single, consolidated `okta_policy_password_default` resource alongside your other password settings. The snippet below shows only the attribute relevant to this check. Applying a standalone resource that defines just this one attribute resets every other password setting on the default policy back to the Terraform provider defaults, so merge it with your existing definition rather than applying it on its own.
+            Set the attribute on every password policy, because the check fails when any single policy falls short. The default policy is the `okta_policy_password_default` resource shown below, and every additional policy you manage as an `okta_policy_password` resource needs the same attribute. Password policies created outside Terraform must be changed in the Admin Console.
+
+            **Merge the attribute into your existing resource.** The snippet shows only the attribute this check reads. Applying a resource that defines just this one attribute resets every other setting on the policy to the provider defaults, such as a minimum length of 8.
 
             ```hcl
             resource "okta_policy_password_default" "default" {
@@ -2466,12 +2557,15 @@ queries:
             ### Exclude the last name from passwords
 
             1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
-            2. Locate the policy and select **Edit**.
+            2. Select **Edit** on a password policy.
             3. Under **Password settings**, in the complexity requirements, enable **Does not contain last name**.
             4. Select **Update Policy**.
+            5. Repeat steps 2 to 4 for every other password policy. The check evaluates each policy separately, so one policy left unchanged keeps it failing.
         - id: terraform
           desc: |
-            Set this attribute inside your single, consolidated `okta_policy_password_default` resource alongside your other password settings. The snippet below shows only the attribute relevant to this check. Applying a standalone resource that defines just this one attribute resets every other password setting on the default policy back to the Terraform provider defaults, so merge it with your existing definition rather than applying it on its own.
+            Set the attribute on every password policy, because the check fails when any single policy falls short. The default policy is the `okta_policy_password_default` resource shown below, and every additional policy you manage as an `okta_policy_password` resource needs the same attribute. Password policies created outside Terraform must be changed in the Admin Console.
+
+            **Merge the attribute into your existing resource.** The snippet shows only the attribute this check reads. Applying a resource that defines just this one attribute resets every other setting on the policy to the provider defaults, such as a minimum length of 8.
 
             ```hcl
             resource "okta_policy_password_default" "default" {
@@ -2576,12 +2670,15 @@ queries:
             ### Screen passwords against a common password dictionary
 
             1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
-            2. Locate the policy and select **Edit**.
+            2. Select **Edit** on a password policy.
             3. Under **Password settings**, in **Common password check**, enable **Restrict use of common passwords** so passwords are screened against a list of commonly used and breached passwords.
             4. Select **Update Policy**.
+            5. Repeat steps 2 to 4 for every other password policy. The check evaluates each policy separately, so one policy left unchanged keeps it failing.
         - id: terraform
           desc: |
-            Set this attribute inside your single, consolidated `okta_policy_password_default` resource alongside your other password settings. The snippet below shows only the attribute relevant to this check. Applying a standalone resource that defines just this one attribute resets every other password setting on the default policy back to the Terraform provider defaults, so merge it with your existing definition rather than applying it on its own.
+            Set the attribute on every password policy, because the check fails when any single policy falls short. The default policy is the `okta_policy_password_default` resource shown below, and every additional policy you manage as an `okta_policy_password` resource needs the same attribute. Password policies created outside Terraform must be changed in the Admin Console.
+
+            **Merge the attribute into your existing resource.** The snippet shows only the attribute this check reads. Applying a resource that defines just this one attribute resets every other setting on the policy to the provider defaults, such as a minimum length of 8.
 
             ```hcl
             resource "okta_policy_password_default" "default" {
@@ -2686,12 +2783,15 @@ queries:
             ### Set a maximum password age
 
             1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
-            2. Locate the policy and select **Edit**.
+            2. Select **Edit** on a password policy.
             3. Under **Password settings**, in **Age**, enable **Password expires after** and set it to 90 days or fewer. A value of 0 disables expiry and leaves passwords valid indefinitely.
             4. Select **Update Policy**.
+            5. Repeat steps 2 to 4 for every other password policy. The check evaluates each policy separately, so one policy left unchanged keeps it failing.
         - id: terraform
           desc: |
-            Set this attribute inside your single, consolidated `okta_policy_password_default` resource alongside your other password settings. The snippet below shows only the attribute relevant to this check. Applying a standalone resource that defines just this one attribute resets every other password setting on the default policy back to the Terraform provider defaults, so merge it with your existing definition rather than applying it on its own.
+            Set the attribute on every password policy, because the check fails when any single policy falls short. The default policy is the `okta_policy_password_default` resource shown below, and every additional policy you manage as an `okta_policy_password` resource needs the same attribute. Password policies created outside Terraform must be changed in the Admin Console.
+
+            **Merge the attribute into your existing resource.** The snippet shows only the attribute this check reads. Applying a resource that defines just this one attribute resets every other setting on the policy to the provider defaults, such as a minimum length of 8.
 
             ```hcl
             resource "okta_policy_password_default" "default" {
@@ -2796,12 +2896,15 @@ queries:
             ### Warn users before password expiry
 
             1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
-            2. Locate the policy and select **Edit**.
+            2. Select **Edit** on a password policy.
             3. Under **Password settings**, in **Age**, set the prompt that warns users before their password expires to exactly 15 days.
             4. Select **Update Policy**.
+            5. Repeat steps 2 to 4 for every other password policy. The check evaluates each policy separately, so one policy left unchanged keeps it failing.
         - id: terraform
           desc: |
-            Set this attribute inside your single, consolidated `okta_policy_password_default` resource alongside your other password settings. The snippet below shows only the attribute relevant to this check. Applying a standalone resource that defines just this one attribute resets every other password setting on the default policy back to the Terraform provider defaults, so merge it with your existing definition rather than applying it on its own.
+            Set the attribute on every password policy, because the check fails when any single policy falls short. The default policy is the `okta_policy_password_default` resource shown below, and every additional policy you manage as an `okta_policy_password` resource needs the same attribute. Password policies created outside Terraform must be changed in the Admin Console.
+
+            **Merge the attribute into your existing resource.** The snippet shows only the attribute this check reads. Applying a resource that defines just this one attribute resets every other setting on the policy to the provider defaults, such as a minimum length of 8.
 
             ```hcl
             resource "okta_policy_password_default" "default" {
@@ -2906,12 +3009,15 @@ queries:
             ### Enforce password history
 
             1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
-            2. Locate the policy and select **Edit**.
+            2. Select **Edit** on a password policy.
             3. Under **Password settings**, in **Age**, set **Enforce password history for last** to 24 or more passwords.
             4. Select **Update Policy**.
+            5. Repeat steps 2 to 4 for every other password policy. The check evaluates each policy separately, so one policy left unchanged keeps it failing.
         - id: terraform
           desc: |
-            Set this attribute inside your single, consolidated `okta_policy_password_default` resource alongside your other password settings. The snippet below shows only the attribute relevant to this check. Applying a standalone resource that defines just this one attribute resets every other password setting on the default policy back to the Terraform provider defaults, so merge it with your existing definition rather than applying it on its own.
+            Set the attribute on every password policy, because the check fails when any single policy falls short. The default policy is the `okta_policy_password_default` resource shown below, and every additional policy you manage as an `okta_policy_password` resource needs the same attribute. Password policies created outside Terraform must be changed in the Admin Console.
+
+            **Merge the attribute into your existing resource.** The snippet shows only the attribute this check reads. Applying a resource that defines just this one attribute resets every other setting on the policy to the provider defaults, such as a minimum length of 8.
 
             ```hcl
             resource "okta_policy_password_default" "default" {
@@ -3016,12 +3122,15 @@ queries:
             ### Delay automatic account unlock
 
             1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
-            2. Locate the policy and select **Edit**.
+            2. Select **Edit** on a password policy.
             3. Under **Password settings**, in **Lock out**, enable automatic unlocking and set the unlock delay to at least 30 minutes.
             4. Select **Update Policy**.
+            5. Repeat steps 2 to 4 for every other password policy. The check evaluates each policy separately, so one policy left unchanged keeps it failing.
         - id: terraform
           desc: |
-            Set this attribute inside your single, consolidated `okta_policy_password_default` resource alongside your other password settings. The snippet below shows only the attribute relevant to this check. Applying a standalone resource that defines just this one attribute resets every other password setting on the default policy back to the Terraform provider defaults, so merge it with your existing definition rather than applying it on its own.
+            Set the attribute on every password policy, because the check fails when any single policy falls short. The default policy is the `okta_policy_password_default` resource shown below, and every additional policy you manage as an `okta_policy_password` resource needs the same attribute. Password policies created outside Terraform must be changed in the Admin Console.
+
+            **Merge the attribute into your existing resource.** The snippet shows only the attribute this check reads. Applying a resource that defines just this one attribute resets every other setting on the policy to the provider defaults, such as a minimum length of 8.
 
             ```hcl
             resource "okta_policy_password_default" "default" {
@@ -3126,12 +3235,15 @@ queries:
             ### Inform users when their account is locked
 
             1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
-            2. Locate the policy and select **Edit**.
+            2. Select **Edit** on a password policy.
             3. Under **Password settings**, in **Lock out**, enable **Show lock out failures** so users see why sign-in is failing.
             4. Select **Update Policy**.
+            5. Repeat steps 2 to 4 for every other password policy. The check evaluates each policy separately, so one policy left unchanged keeps it failing.
         - id: terraform
           desc: |
-            Set this attribute inside your single, consolidated `okta_policy_password_default` resource alongside your other password settings. The snippet below shows only the attribute relevant to this check. Applying a standalone resource that defines just this one attribute resets every other password setting on the default policy back to the Terraform provider defaults, so merge it with your existing definition rather than applying it on its own.
+            Set the attribute on every password policy, because the check fails when any single policy falls short. The default policy is the `okta_policy_password_default` resource shown below, and every additional policy you manage as an `okta_policy_password` resource needs the same attribute. Password policies created outside Terraform must be changed in the Admin Console.
+
+            **Merge the attribute into your existing resource.** The snippet shows only the attribute this check reads. Applying a resource that defines just this one attribute resets every other setting on the policy to the provider defaults, such as a minimum length of 8.
 
             ```hcl
             resource "okta_policy_password_default" "default" {
@@ -3235,13 +3347,26 @@ queries:
           desc: |
             ### Enable email as a recovery factor
 
-            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
-            2. Locate the policy and select **Edit**.
-            3. In the **Account recovery** section, enable **Email** as a self-service recovery option.
+            Every password policy must offer email recovery, so repeat the steps for each policy.
+
+            On Okta Classic Engine orgs:
+
+            1. Go to **Security > Authentication** and select the **Password** tab.
+            2. Select **Edit** on a password policy.
+            3. In the **Account Recovery** section, enable **Email** as a self-service recovery option.
             4. Select **Update Policy**.
+
+            On Okta Identity Engine orgs, recovery methods are chosen in the rules of each password policy rather than in its password settings:
+
+            1. Go to **Security > Authenticators** and open the **Password** authenticator's policies.
+            2. Select a password policy, then select **Edit** on each of its rules.
+            3. Under **Users can initiate recovery with**, select **Email**.
+            4. Save the rule.
         - id: terraform
           desc: |
-            Set this attribute inside your single, consolidated `okta_policy_password_default` resource alongside your other password settings. The snippet below shows only the attribute relevant to this check. Applying a standalone resource that defines just this one attribute resets every other password setting on the default policy back to the Terraform provider defaults, so merge it with your existing definition rather than applying it on its own.
+            Set the attribute on every password policy, because the check fails when any single policy falls short. The default policy is the `okta_policy_password_default` resource shown below, and every additional policy you manage as an `okta_policy_password` resource needs the same attribute. Password policies created outside Terraform must be changed in the Admin Console.
+
+            **Merge the attribute into your existing resource.** The snippet shows only the attribute this check reads. Applying a resource that defines just this one attribute resets every other setting on the policy to the provider defaults, such as a minimum length of 8.
 
             ```hcl
             resource "okta_policy_password_default" "default" {
@@ -3345,14 +3470,29 @@ queries:
           desc: |
             ### Disable SMS as a recovery factor
 
-            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
-            2. Locate the policy and select **Edit**.
-            3. In the **Account recovery** section, clear the **SMS** option so text messages cannot be used to recover a password.
-            4. Confirm a stronger recovery option such as email remains enabled so users are not locked out of self-service recovery.
+            SMS recovery must be off in every password policy, so repeat the steps for each policy.
+
+            **Keep another recovery method enabled.** Removing SMS from a policy that offers nothing else leaves its users without self-service recovery and sends every forgotten password to the help desk.
+
+            On Okta Classic Engine orgs:
+
+            1. Go to **Security > Authentication** and select the **Password** tab.
+            2. Select **Edit** on a password policy.
+            3. In the **Account Recovery** section, clear the **SMS** option so text messages cannot be used to recover a password.
+            4. Confirm that **Email** remains enabled.
             5. Select **Update Policy**.
+
+            On Okta Identity Engine orgs, recovery methods are chosen in the rules of each password policy rather than in its password settings:
+
+            1. Go to **Security > Authenticators** and open the **Password** authenticator's policies.
+            2. Select a password policy, then select **Edit** on each of its rules.
+            3. Under **Users can initiate recovery with**, clear the SMS option of **Phone** and keep **Email** or **Okta Verify** selected.
+            4. Save the rule.
         - id: terraform
           desc: |
-            Set this attribute inside your single, consolidated `okta_policy_password_default` resource alongside your other password settings. The snippet below shows only the attribute relevant to this check. Applying a standalone resource that defines just this one attribute resets every other password setting on the default policy back to the Terraform provider defaults, so merge it with your existing definition rather than applying it on its own.
+            Set the attribute on every password policy, because the check fails when any single policy falls short. The default policy is the `okta_policy_password_default` resource shown below, and every additional policy you manage as an `okta_policy_password` resource needs the same attribute. Password policies created outside Terraform must be changed in the Admin Console.
+
+            **Merge the attribute into your existing resource.** The snippet shows only the attribute this check reads. Applying a resource that defines just this one attribute resets every other setting on the policy to the provider defaults, such as a minimum length of 8.
 
             ```hcl
             resource "okta_policy_password_default" "default" {
@@ -3456,14 +3596,29 @@ queries:
           desc: |
             ### Disable security questions as a recovery factor
 
-            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
-            2. Locate the policy and select **Edit**.
-            3. In the **Account recovery** section, clear the **Security question** option so knowledge questions cannot be used to recover a password.
-            4. Confirm a stronger recovery option such as email remains enabled so users are not locked out of self-service recovery.
+            Security question recovery must be off in every password policy, so repeat the steps for each policy.
+
+            **Keep another recovery method enabled.** A policy with no working self-service recovery sends every forgotten password to the help desk.
+
+            On Okta Classic Engine orgs:
+
+            1. Go to **Security > Authentication** and select the **Password** tab.
+            2. Select **Edit** on a password policy.
+            3. In the **Account Recovery** section, clear the **Security question** option so knowledge questions cannot be used to recover a password. Classic Engine requires the security question during password reset unless Okta Support enables the Early Access feature that omits it, so request that feature first if the option cannot be cleared.
+            4. Confirm that **Email** remains enabled.
             5. Select **Update Policy**.
+
+            On Okta Identity Engine orgs, recovery methods are chosen in the rules of each password policy rather than in its password settings:
+
+            1. Go to **Security > Authenticators** and open the **Password** authenticator's policies.
+            2. Select a password policy, then select **Edit** on each of its rules.
+            3. Set **Additional verification is** to the option that accepts any enrolled authenticator, or to **Not required**, rather than **Security Question only**.
+            4. Confirm that **Users can initiate recovery with** still includes **Email** or **Okta Verify**, then save the rule.
         - id: terraform
           desc: |
-            Set this attribute inside your single, consolidated `okta_policy_password_default` resource alongside your other password settings. The snippet below shows only the attribute relevant to this check. Applying a standalone resource that defines just this one attribute resets every other password setting on the default policy back to the Terraform provider defaults, so merge it with your existing definition rather than applying it on its own.
+            Set the attribute on every password policy, because the check fails when any single policy falls short. The default policy is the `okta_policy_password_default` resource shown below, and every additional policy you manage as an `okta_policy_password` resource needs the same attribute. Password policies created outside Terraform must be changed in the Admin Console.
+
+            **Merge the attribute into your existing resource.** The snippet shows only the attribute this check reads. Applying a resource that defines just this one attribute resets every other setting on the policy to the provider defaults, such as a minimum length of 8.
 
             ```hcl
             resource "okta_policy_password_default" "default" {
@@ -3570,6 +3725,8 @@ queries:
             5. Select **Save**. The change can take a few minutes to take effect.
         - id: terraform
           desc: |
+            Set `action` to `block`, which logs requests from IP addresses ThreatInsight scores as malicious and denies them. `audit` only logs those requests and `none` takes no action, so both fail the check. To keep ThreatInsight from blocking addresses you trust, list the IDs of those network zones in `exclude_zones`.
+
             ```hcl
             resource "okta_threat_insight_settings" "default" {
               action = "block"
@@ -3671,13 +3828,16 @@ queries:
 
             1. In the Admin Console, go to **Security > API**.
             2. Select the **Trusted Origins** tab.
-            3. Review each active trusted origin. For any origin using `http://`:
-               a. Select **Edit** next to the origin.
-               b. Update the **Origin URL** to use `https://` instead of `http://`.
-               c. Select **Save**.
-            4. If the underlying application does not yet support HTTPS, configure TLS on the application first, then update the trusted origin.
+            3. If the application behind an `http://` origin does not yet serve HTTPS, configure TLS on the application first. Otherwise the updated origin no longer matches the site and its cross-origin calls and redirects stop working.
+            4. For each active trusted origin whose URL starts with `http://`:
+               1. Select **Edit** next to the origin.
+               2. Update the **Origin URL** to use `https://` instead of `http://`.
+               3. Select **Save**.
+            5. Delete any `http://` origin that is no longer needed rather than leaving it in place.
         - id: terraform
           desc: |
+            Set `origin` to the `https://` URL of the site that calls Okta, with no path. Each `scopes` block grants one use: `CORS` lets the site call the Okta API from the browser, and `REDIRECT` lets the sign-in flow return to it. Keep only the scopes the site needs. Change every existing `okta_trusted_origin` whose `origin` starts with `http://` in the same way.
+
             ```hcl
             resource "okta_trusted_origin" "example" {
               name   = "Example Origin"
@@ -3790,7 +3950,7 @@ queries:
             On Okta Identity Engine orgs:
 
             1. Go to **Security > Global Session Policy**.
-            2. For each active rule, select **Edit** and set **Establish the user session with** to require a password and another factor, then select **Update Rule**.
+            2. For each active rule, select **Edit**, set **Multifactor authentication (MFA) is** to **Required**, choose when **Users will be prompted for MFA**, and save the rule. **Establish the user session with** only picks the first factor and does not make a second factor required.
             3. Go to **Security > Authentication Policies** to enforce MFA at the point each application is accessed. Open each policy, edit its rules, and require a second factor for app access.
 
             On Okta Classic Engine orgs:
@@ -3799,15 +3959,22 @@ queries:
             2. For each active policy, review its rules and select **Edit** on each rule.
             3. Select **Prompt for Factor** and choose how often users are prompted, then select **Update Rule**.
 
-            Repeat for all active rules so no rule allows password-only sign-in. Requiring a second factor blocks an attacker who holds only a stolen or guessed password.
+            Repeat for all active rules in every active policy, including each policy's **Default Rule**, so no rule allows password-only sign-in. Requiring a second factor blocks an attacker who holds only a stolen or guessed password.
+
+            **Confirm that users can complete MFA before you save.** Accounts with no enrolled authenticator cannot establish a session once their rule requires a factor, so enroll users first and keep a break-glass admin who can sign in.
         - id: terraform
           desc: |
+            Set `mfa_required = true` on every `okta_policy_rule_signon` resource, together with `mfa_prompt`, which Okta requires whenever MFA is required. `mfa_prompt` chooses when users are challenged: `ALWAYS` on every sign-in, `DEVICE` for a new device, or `SESSION` after the factor lifetime expires. The `policy_id` refers to the global session policy the rule belongs to.
+
+            A new rule does not change the rules that already exist. The check evaluates every active rule in every active global session policy, so edit existing rules that allow password-only sign-in, including each policy's **Default Rule**, in the Admin Console as well.
+
             ```hcl
             resource "okta_policy_rule_signon" "require_mfa" {
               policy_id    = okta_policy_signon.default.id
               name         = "Require MFA"
               status       = "ACTIVE"
               mfa_required = true
+              mfa_prompt   = "ALWAYS"
             }
             ```
     refs:
@@ -3903,7 +4070,10 @@ queries:
           desc: |
             ### Reduce the number of organization admins
 
-            Organization admin access in Okta can be granted to individual users and to groups. This check evaluates groups that hold the role, so pay particular attention to group-based assignments.
+            Organization admin access in Okta can be granted to individual users and to groups. This check evaluates groups that hold the role, so pay particular attention to group-based assignments. Every group that carries the org admin role must meet both conditions:
+
+            - Fewer members than the configured maximum, which defaults to 15, so a group passes with at most 14 members.
+            - No group owners.
 
             1. In the Admin Console, go to **Security > Administrators**.
             2. Under **Admin Roles**, filter the admin list by the org admin role to see every user and group that grants it. The **Admin** tab lists grants by **Users** and by **Groups**, so review both.
