@@ -3005,17 +3005,26 @@ queries:
         url: https://nvd.nist.gov/vuln/detail/CVE-2017-5715
       - title: CVE-2018-3639 Speculative Store Bypass
         url: https://nvd.nist.gov/vuln/detail/CVE-2018-3639
+      - title: Proxmox VE Meltdown / Spectre related CPU flags
+        url: https://pve.proxmox.com/pve-docs/chapter-qm.html#qm_meltdown_spectre
     mql: |
       files.find(from: "/etc/pve/qemu-server", regex: "[0-9]+.conf$", type: "file").list.all(
-        file(_.path).content.lines.where(_ == /^cpu:/).all(
-          _ == /[,=;]\+?spec-ctrl\b/ || _ == /[,=;]\+?ssbd\b/
+        file(_.path).content.lines.any(
+          _ == /^cpu:.*[,=;]\+?(spec-ctrl|ssbd|ibpb|virt-ssbd|amd-ssbd)\b/
         )
       )
     docs:
       desc: |
         This check verifies that each VM's CPU configuration exposes the speculative-execution mitigation features the guest needs to defend itself.
 
-        The `cpu:` line of a VM configuration under `/etc/pve/qemu-server` carries the CPU model and any extra flags. This check requires `+spec-ctrl` or `+ssbd` to be present, which is set from the VM's Hardware, then Processors entry, or with `qm set <vmid> --cpu '<existing-cpu-type>,flags=+spec-ctrl;+ssbd'`. Read the VM's current CPU type first and keep it; the flags are additions, not a replacement, and the VM needs a clean shutdown and start rather than a reset to pick them up.
+        The `cpu:` line of a VM configuration under `/etc/pve/qemu-server` carries the CPU model and any extra flags. This check requires every VM to have a `cpu:` line that enables at least one of the mitigation flags Proxmox VE documents:
+
+        - Intel processors: `spec-ctrl` and `ssbd`
+        - AMD processors: `ibpb`, `virt-ssbd` and `amd-ssbd`
+
+        A VM with no `cpu:` line at all fails, because Proxmox VE then starts it on the `kvm64` backend default, which enables none of these features.
+
+        Set the flags from the VM's Hardware, then Processors entry, or with `qm set <vmid> --cpu '<existing-cpu-type>,flags=+spec-ctrl;+ssbd'` on an Intel host and `qm set <vmid> --cpu '<existing-cpu-type>,flags=+ibpb;+amd-ssbd'` on an AMD host. Read the VM's current CPU type first and keep it; the flags are additions, not a replacement, and the VM needs a clean shutdown and start rather than a reset to pick them up.
 
         **Why this matters**
 
@@ -3023,7 +3032,7 @@ queries:
 
         Omit them and the guest kernel concludes the processor has no mitigation support and disables its own defenses. The workload then runs unprotected on hardware that is perfectly capable of protecting it, and neither the guest's administrator nor the platform's shows anything wrong. On a node hosting workloads from different teams or customers, the memory that can leak includes theirs.
 
-        `+spec-ctrl` exposes the indirect branch controls and `+ssbd` the speculative store bypass disable; a CPU model of `host` passes them through implicitly, but an explicit model such as `x86-64-v2-AES` or `kvm64` does not.
+        On Intel hosts `+spec-ctrl` exposes the indirect branch controls and `+ssbd` the speculative store bypass disable. On AMD hosts the equivalents are `+ibpb` for Spectre v1 and v2, and `+virt-ssbd` or `+amd-ssbd` for Spectre v4, where `+amd-ssbd` is the faster of the two and `+virt-ssbd` the one that works on hosts whose CPU does not expose the native bit. A CPU model of `host` passes the host's features through implicitly, but an explicit model such as `x86-64-v2-AES` or `kvm64` does not.
 
         Enabling mitigations costs measurable performance, which is exactly why they get left off. Take that trade-off deliberately, and where a workload cannot afford it, keep that VM off nodes that host anything it does not already trust.
       audit: |
@@ -3031,9 +3040,9 @@ queries:
 
         1. Sign in to the Proxmox VE web interface.
         2. Select a VM in the resource tree, then open its **Hardware** panel.
-        3. Open the **Processors** entry and review the configured CPU type and extra flags for `+spec-ctrl` or `+ssbd`.
+        3. Open the **Processors** entry and review the configured CPU type and extra flags for `+spec-ctrl` or `+ssbd` on an Intel host, or `+ibpb`, `+virt-ssbd` or `+amd-ssbd` on an AMD host.
 
-        A passing result shows the CPU configuration including `+spec-ctrl` or `+ssbd`; a failing result shows a CPU configuration without either mitigation flag.
+        A passing result shows the CPU configuration including one of those mitigation flags; a failing result shows a CPU configuration with none of them.
 
         ### Audit via CLI
 
@@ -3043,7 +3052,7 @@ queries:
         for c in /etc/pve/qemu-server/[0-9]*.conf; do echo "== $c =="; grep '^cpu:' "$c"; done
         ```
 
-        A passing result shows every `cpu:` line containing `+spec-ctrl` or `+ssbd`; a failing result shows a `cpu:` line missing both flags.
+        A passing result shows every VM printing a `cpu:` line that enables `+spec-ctrl`, `+ssbd`, `+ibpb`, `+virt-ssbd` or `+amd-ssbd`; a failing result shows a `cpu:` line with none of those flags, or a VM that prints no `cpu:` line at all and therefore runs on the `kvm64` backend default.
       remediation:
         - id: cli
           desc: |
@@ -3057,14 +3066,23 @@ queries:
             `<existing-cpu-type>` below. Do not paste `kvm64` blindly; that would
             overwrite a `host` or custom CPU type the VM already uses. If the
             VM has no `cpu:` line it defaults to `kvm64`, so use `kvm64` only in
-            that case:
+            that case. Pick the flag set that matches the node's CPU vendor,
+            which `lscpu` reports:
 
             ```bash
             # Read the VM's current CPU type and copy the value after "cpu:".
             qm config <vmid> | grep '^cpu:'
 
+            # Read the node's CPU vendor.
+            lscpu | grep '^Vendor ID:'
+
             # Replace <existing-cpu-type> with that value (for example host, x86-64-v2-AES, or kvm64).
+            # On an Intel node:
             qm set <vmid> --cpu '<existing-cpu-type>,flags=+spec-ctrl;+ssbd'
+
+            # On an AMD node:
+            qm set <vmid> --cpu '<existing-cpu-type>,flags=+ibpb;+amd-ssbd'
+
             qm shutdown <vmid>
             qm start <vmid>
             ```
@@ -3072,32 +3090,38 @@ queries:
             Keep the CPU type the VM already uses and only add the flags. Use
             `host` only when all cluster nodes share the same CPU model.
 
-            **A VM with a named CPU type does not start when the host lacks a flag it requests.** Proxmox VE starts those VMs with QEMU's `enforce` option. Proxmox VE documents `spec-ctrl` and `ssbd` as the flags for Intel processors, and the host needs microcode that provides them, so apply the change to one VM and start it on every node it can migrate to before rolling it out. If the value already contains `flags=`, add `+spec-ctrl;+ssbd` to that list instead of adding a second `flags=` key.
+            **A VM with a named CPU type does not start when the host lacks a flag it requests.** Proxmox VE starts those VMs with QEMU's `enforce` option. Proxmox VE documents `spec-ctrl` and `ssbd` for Intel processors and `ibpb`, `virt-ssbd` and `amd-ssbd` for AMD processors, and the host needs microcode that provides them, so apply the change to one VM and start it on every node it can migrate to before rolling it out. On an AMD node that rejects `+amd-ssbd`, use `+virt-ssbd` instead, which QEMU emulates. If the value already contains `flags=`, add the new flags to that list instead of adding a second `flags=` key.
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Append the mitigation flags to every VM while preserving the configured CPU type. A VM without a `cpu:` line runs as `kvm64`, so the script writes `kvm64` with the flags for those. The flags apply after each VM is shut down and started again.
+            Append the mitigation flags to every VM while preserving the configured CPU type. The script reads the node's CPU vendor and picks the Intel or the AMD flag set accordingly. A VM without a `cpu:` line runs as `kvm64`, so the script writes `kvm64` with the flags for those. The flags apply after each VM is shut down and started again.
 
-            **A VM with a named CPU type does not start when the host lacks a flag it requests.** Proxmox VE documents `spec-ctrl` and `ssbd` as the flags for Intel processors, and the host needs microcode that provides them, so test one VM on every node it can migrate to before running the script across the fleet.
+            **A VM with a named CPU type does not start when the host lacks a flag it requests.** Proxmox VE documents `spec-ctrl` and `ssbd` for Intel processors and `ibpb`, `virt-ssbd` and `amd-ssbd` for AMD processors, and the host needs microcode that provides them, so test one VM on every node it can migrate to before running the script across the fleet.
 
             ```bash
             #!/bin/bash
             set -e
+
+            if grep -q 'AuthenticAMD' /proc/cpuinfo; then
+              mitigations="+ibpb;+amd-ssbd"
+            else
+              mitigations="+spec-ctrl;+ssbd"
+            fi
 
             shopt -s nullglob
             for conf in /etc/pve/qemu-server/[0-9]*.conf; do
               vmid=$(basename "$conf" .conf)
               cpu_spec=$(awk -F': ' '/^cpu:/ {print $2}' "$conf")
               case "$cpu_spec" in
-                *spec-ctrl*|*ssbd*) continue ;;
+                *spec-ctrl*|*ssbd*|*ibpb*) continue ;;
               esac
               if [ -z "$cpu_spec" ]; then
-                new="kvm64,flags=+spec-ctrl;+ssbd"
+                new="kvm64,flags=$mitigations"
               elif [ "${cpu_spec#*flags=}" != "$cpu_spec" ]; then
-                new=${cpu_spec/flags=/flags=+spec-ctrl;+ssbd;}
+                new=${cpu_spec/flags=/flags=$mitigations;}
               else
-                new="$cpu_spec,flags=+spec-ctrl;+ssbd"
+                new="$cpu_spec,flags=$mitigations"
               fi
               echo "Setting CPU mitigations on VM $vmid"
               qm set "$vmid" --cpu "$new"
@@ -3108,9 +3132,9 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to add the mitigation flags while keeping each VM's configured CPU type. A running VM keeps its current CPU flags until it is shut down and started again with `qm shutdown <vmid>` and `qm start <vmid>`; a reboot from inside the guest is not enough.
+            Use this Ansible playbook to add the mitigation flags while keeping each VM's configured CPU type. The task reads the node's CPU vendor and picks the Intel or the AMD flag set accordingly. A running VM keeps its current CPU flags until it is shut down and started again with `qm shutdown <vmid>` and `qm start <vmid>`; a reboot from inside the guest is not enough.
 
-            **A VM with a named CPU type does not start when the host lacks a flag it requests.** Proxmox VE documents `spec-ctrl` and `ssbd` as the flags for Intel processors, and the host needs microcode that provides them, so test one VM on every node it can migrate to first.
+            **A VM with a named CPU type does not start when the host lacks a flag it requests.** Proxmox VE documents `spec-ctrl` and `ssbd` for Intel processors and `ibpb`, `virt-ssbd` and `amd-ssbd` for AMD processors, and the host needs microcode that provides them, so test one VM on every node it can migrate to first.
 
             ```yaml
             ---
@@ -3128,17 +3152,22 @@ queries:
                 - name: Add mitigation flags while keeping the configured CPU type
                   ansible.builtin.shell: |
                     set -e
+                    if grep -q 'AuthenticAMD' /proc/cpuinfo; then
+                      mitigations="+ibpb;+amd-ssbd"
+                    else
+                      mitigations="+spec-ctrl;+ssbd"
+                    fi
                     vmid=$(basename "{{ item.path }}" .conf)
                     cpu_spec=$(awk -F': ' '/^cpu:/ {print $2}' "{{ item.path }}")
                     case "$cpu_spec" in
-                      *spec-ctrl*|*ssbd*) exit 0 ;;
+                      *spec-ctrl*|*ssbd*|*ibpb*) exit 0 ;;
                     esac
                     if [ -z "$cpu_spec" ]; then
-                      new="kvm64,flags=+spec-ctrl;+ssbd"
+                      new="kvm64,flags=$mitigations"
                     elif [ "${cpu_spec#*flags=}" != "$cpu_spec" ]; then
-                      new=$(printf '%s' "$cpu_spec" | sed 's/flags=/flags=+spec-ctrl;+ssbd;/')
+                      new=$(printf '%s' "$cpu_spec" | sed "s/flags=/flags=$mitigations;/")
                     else
-                      new="$cpu_spec,flags=+spec-ctrl;+ssbd"
+                      new="$cpu_spec,flags=$mitigations"
                     fi
                     qm set "$vmid" --cpu "$new"
                   loop: "{{ vm_confs.files }}"
@@ -3433,14 +3462,20 @@ queries:
     refs:
       - title: CWE-319 Cleartext Transmission of Sensitive Information
         url: https://cwe.mitre.org/data/definitions/319.html
+      - title: corosync.conf(5) manual page
+        url: https://manpages.debian.org/bookworm/corosync/corosync.conf.5.en.html
     mql: |
-      file("/etc/pve/corosync.conf").content.contains("transport: knet") ||
-      file("/etc/pve/corosync.conf").content.contains("secauth: on")
+      file("/etc/pve/corosync.conf").content.lines.none(_ == /^\s*crypto_cipher:\s*none\b/)
+      file("/etc/pve/corosync.conf").content.lines.none(_ == /^\s*crypto_hash:\s*none\b/)
+      file("/etc/pve/corosync.conf").content.lines.any(_ == /^\s*secauth:\s*on\b/) ||
+      file("/etc/pve/corosync.conf").content.lines.any(_ == /^\s*crypto_cipher:\s*aes(128|192|256)\b/)
     docs:
       desc: |
         This check verifies that cluster membership traffic runs over an authenticated, encrypted transport.
 
-        Corosync configuration lives in `/etc/pve/corosync.conf`. The check passes when the `totem` block declares `transport: knet`, the default since Proxmox VE 6, or the legacy `secauth: on`. The knet transport takes its protection from the `crypto_cipher` and `crypto_hash` settings alongside it, which Proxmox writes as aes256 and sha256 when it creates a cluster.
+        Corosync configuration lives in `/etc/pve/corosync.conf`. The check passes when the `totem` block either sets `secauth: on`, which `pvecm create` writes for a new cluster and which corosync reads as `crypto_cipher: aes256` with `crypto_hash: sha256`, or names a cipher explicitly with `crypto_cipher: aes128`, `aes192` or `aes256`. An explicit `crypto_cipher: none` or `crypto_hash: none` fails the check even when `secauth: on` is also present, because corosync honors the explicit setting over the one `secauth` implies.
+
+        The transport itself carries no protection. `knet` has been the default transport since Proxmox VE 6 and corosync ships both `crypto_cipher` and `crypto_hash` defaulted to `none`, so a cluster can run knet and still put every membership message on the wire in the clear.
 
         **Why this matters**
 
@@ -3460,7 +3495,7 @@ queries:
         grep -E 'transport:|secauth:|crypto_' /etc/pve/corosync.conf
         ```
 
-        A passing result shows `transport: knet` or `secauth: on` within the `totem` block; a failing result shows neither, indicating unencrypted cluster communication.
+        A passing result shows `secauth: on` or a `crypto_cipher` of `aes128`, `aes192` or `aes256` within the `totem` block, and no `crypto_cipher: none` or `crypto_hash: none`; a failing result shows neither setting, or shows the crypto settings explicitly turned off, both of which mean cluster traffic is unencrypted. A `transport: knet` line on its own says nothing about encryption.
       remediation:
         - id: cli
           desc: |
