@@ -7759,12 +7759,19 @@ queries:
             fi
 
             # A block that declares no signature_type gets NONE, so every block
-            # in the base file needs one of its own.
-            blocks=$(grep -Ec '^[A-Za-z0-9_][A-Za-z0-9_.-]*[[:space:]]*:[[:space:]]*\{' "$CONF" || true)
-            signed=$(grep -Eci 'signature_type[[:space:]]*:[[:space:]]*"?(fingerprints|pubkey)' "$CONF" || true)
-            if [ "$blocks" -ne "$signed" ]; then
-              echo "WARNING: a repository block in $CONF declares no signature_type. Add one by hand." >&2
-            fi
+            # in the base file needs one of its own. Track the blocks one at a
+            # time, because two signature_type lines in one block would hide a
+            # second block that has none.
+            awk '
+              /^[A-Za-z0-9_][A-Za-z0-9_.-]*[[:space:]]*:[[:space:]]*\{/ {
+                if (inblock && !sig) print name
+                inblock = 1; sig = 0; name = $1; sub(/:.*/, "", name)
+              }
+              tolower($0) ~ /signature_type[[:space:]]*:/ { sig = 1 }
+              END { if (inblock && !sig) print name }
+            ' "$CONF" | while read -r name; do
+              echo "WARNING: block $name in $CONF declares no signature_type. Add one by hand." >&2
+            done
 
             if [ ! -d /usr/share/keys/pkg/trusted ]; then
               echo "WARNING: /usr/share/keys/pkg/trusted is missing; restore the fingerprint keys before running pkg update." >&2
