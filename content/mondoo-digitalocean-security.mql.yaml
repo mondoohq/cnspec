@@ -2627,7 +2627,7 @@ queries:
       desc: |
         This check verifies that every DOKS cluster runs a Kubernetes minor version that is still supported.
 
-        Upstream Kubernetes supports only the latest three minor versions, and DigitalOcean aligns its own support window with that. This check requires version 1.30 or newer, the boundary of that window. The running version is shown on the cluster overview in the DigitalOcean Cloud Control Panel and returned by `doctl kubernetes cluster get`.
+        Upstream Kubernetes supports only the latest three minor versions, and DigitalOcean aligns its own support window with that. This check requires version 1.34 or newer, the oldest minor release DigitalOcean still supported on 13 September 2026. Support for 1.33 ended on 28 June 2026, and support for 1.34 ends on 27 October 2026. The running version is shown on the cluster overview in the DigitalOcean Cloud Control Panel and returned by `doctl kubernetes cluster get`.
 
         **Why this matters**
 
@@ -2643,9 +2643,9 @@ queries:
 
         1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
         2. Navigate to **Kubernetes** and review the **Version** column for each cluster.
-        3. Compare the version against the currently supported minor versions (1.30 and newer). A banner or badge indicating **Upgrade Available** confirms the cluster is on an unsupported minor.
+        3. Compare the version against the currently supported minor versions, which are 1.34 and newer. A banner or badge indicating **Upgrade Available** confirms the cluster is on an unsupported minor.
 
-        A passing cluster shows a version of 1.30 or newer with no upgrade warning. A failing cluster shows a version older than 1.30 or displays an unsupported-version warning.
+        A passing cluster shows a version of 1.34 or newer with no upgrade warning. A failing cluster shows a version older than 1.34 or displays an unsupported-version warning.
 
         ### Audit via CLI
 
@@ -2660,7 +2660,7 @@ queries:
       remediation:
         - id: console
           desc: |
-            The cluster passes once it runs Kubernetes 1.30 or newer. A cluster moves up one minor version per upgrade, and only after it has the latest patch release of its current minor version, so a cluster several versions behind needs several upgrades.
+            The cluster passes once it runs Kubernetes 1.34 or newer. A cluster moves up one minor version per upgrade, and only after it has the latest patch release of its current minor version, so a cluster several versions behind needs several upgrades.
 
             **An upgrade replaces every worker node.** Workloads are rescheduled, the new nodes receive new IP addresses, and APIs removed in the target version stop working, so check the deprecated API removals for each hop and keep surge upgrades enabled.
 
@@ -2669,10 +2669,10 @@ queries:
             1. Navigate to **Kubernetes** and open the affected cluster.
             2. Go to **Overview** and click **Upgrade Available** if present.
             3. Select the offered version, run the cluster linter from the upgrade window, and confirm the upgrade.
-            4. Repeat until the cluster runs 1.30 or newer.
+            4. Repeat until the cluster runs 1.34 or newer.
         - id: cli
           desc: |
-            The cluster passes once it runs Kubernetes 1.30 or newer. A cluster moves up one minor version per upgrade, and only after it has the latest patch release of its current minor version, so a cluster several versions behind needs several upgrades.
+            The cluster passes once it runs Kubernetes 1.34 or newer. A cluster moves up one minor version per upgrade, and only after it has the latest patch release of its current minor version, so a cluster several versions behind needs several upgrades.
 
             **An upgrade replaces every worker node.** Workloads are rescheduled, the new nodes receive new IP addresses, and APIs removed in the target version stop working, so check the deprecated API removals for each hop and keep surge upgrades enabled.
 
@@ -2690,10 +2690,10 @@ queries:
                 doctl kubernetes cluster upgrade <cluster-id> --version <version-slug>
                 ```
 
-            3. Repeat both steps until the cluster runs 1.30 or newer.
+            3. Repeat both steps until the cluster runs 1.34 or newer.
         - id: terraform
           desc: |
-            Terraform manages the cluster version through the `version` argument on `digitalocean_kubernetes_cluster`. Use the `digitalocean_kubernetes_versions` data source to resolve the latest patch release for a minor version. The check requires 1.30 or newer, but DigitalOcean only creates clusters on its three most recent minor releases, so point `version_prefix` at one of those, such as `1.35.`:
+            Terraform manages the cluster version through the `version` argument on `digitalocean_kubernetes_cluster`. Use the `digitalocean_kubernetes_versions` data source to resolve the latest patch release for a minor version. The check requires 1.34 or newer, but DigitalOcean only creates clusters on its three most recent minor releases, so point `version_prefix` at one of those, such as `1.35.`:
 
             ```hcl
             data "digitalocean_kubernetes_versions" "example" {
@@ -2716,32 +2716,43 @@ queries:
       - url: https://docs.digitalocean.com/products/kubernetes/details/supported-releases/
         title: DOKS supported Kubernetes releases
 
+  # The floor is a literal because the provider has no supported-versions list to
+  # read at runtime. digitalocean.kubernetes.cluster.availableUpgradeVersions is the
+  # get-upgrades endpoint, which is non-empty for any cluster behind on a patch
+  # release, so it reports patch currency rather than whether the minor is still
+  # supported, and Terraform assets have no equivalent at all.
+  #
+  # DigitalOcean supports the three most recent minor releases. As of 13 September
+  # 2026 the oldest supported minor is 1.34, which reaches end of support on
+  # 27 October 2026. Raise this floor and the parent docs when the next minor
+  # leaves support:
+  # https://docs.digitalocean.com/products/kubernetes/details/supported-releases/
   - uid: mondoo-digitalocean-security-doks-supported-version-digitalocean
     filters: asset.platform == "digitalocean-kubernetes-cluster"
     mql: |
-      digitalocean.kubernetes.cluster.version == /^1\.(3[0-9]|[4-9][0-9]|[1-9][0-9]{2})\./
+      digitalocean.kubernetes.cluster.version == /^1\.(3[4-9]|[4-9][0-9]|[1-9][0-9]{2})\./
   - uid: mondoo-digitalocean-security-doks-supported-version-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_kubernetes_cluster")
     mql: |
       terraform.resources("digitalocean_kubernetes_cluster").all(
-        arguments["version"] == /^1\.(3[0-9]|[4-9][0-9]|[1-9][0-9]{2})\./ ||
+        arguments["version"] == /^1\.(3[4-9]|[4-9][0-9]|[1-9][0-9]{2})\./ ||
         arguments["version"] == /^data\.digitalocean_kubernetes_versions\./
       )
       terraform.datasources.where(nameLabel == "digitalocean_kubernetes_versions").all(
         arguments["version_prefix"] == empty ||
-        arguments["version_prefix"] == /^1\.(3[0-9]|[4-9][0-9]|[1-9][0-9]{2})\./
+        arguments["version_prefix"] == /^1\.(3[4-9]|[4-9][0-9]|[1-9][0-9]{2})\./
       )
   - uid: mondoo-digitalocean-security-doks-supported-version-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_kubernetes_cluster")
     mql: |
       terraform.plan.resourceChanges.where(type == "digitalocean_kubernetes_cluster").all(
-        change.after.version == /^1\.(3[0-9]|[4-9][0-9]|[1-9][0-9]{2})\./
+        change.after.version == /^1\.(3[4-9]|[4-9][0-9]|[1-9][0-9]{2})\./
       )
   - uid: mondoo-digitalocean-security-doks-supported-version-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_kubernetes_cluster")
     mql: |
       terraform.state.resources.where(type == "digitalocean_kubernetes_cluster").all(
-        values.version == /^1\.(3[0-9]|[4-9][0-9]|[1-9][0-9]{2})\./
+        values.version == /^1\.(3[4-9]|[4-9][0-9]|[1-9][0-9]{2})\./
       )
 
   # No Terraform variants yet: the digitalocean Terraform provider now exposes an

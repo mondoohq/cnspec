@@ -1,7 +1,7 @@
 resource "digitalocean_kubernetes_cluster" "primary" {
-  name    = "prod-cluster"
+  name    = "eos-cluster"
   region  = "nyc1"
-  version = "1.34.1-do.0"
+  version = "1.33.1-do.0"
 
   node_pool {
     name       = "worker-pool"
