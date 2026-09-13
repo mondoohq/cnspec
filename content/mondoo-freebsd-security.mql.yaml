@@ -6078,7 +6078,7 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to restrict the existing bootloader configuration to root. The `only_if` guard keeps the `file` resource from creating a configuration file the system does not have. The drop-in loop keeps each file's current mode and clears only the group and other write bits, so a package-managed drop-in is not otherwise rewritten:
+            Use this Chef Infra recipe code to restrict the existing bootloader configuration to root. Both `only_if` guards run at converge time. The first keeps the `file` resource from creating a configuration file the system does not have. The second runs the drop-in fix only when a drop-in is actually misowned or writable, and clears just the group and other write bits, so a package-managed drop-in keeps the mode its port installed:
 
             ```ruby
             %w(/boot/loader.conf /boot/loader.conf.local /boot/loader.conf.lua).each do |conf|
@@ -6090,13 +6090,15 @@ queries:
               end
             end
 
-            ::Dir.glob('/boot/loader.conf.d/*').each do |dropin|
-              next unless ::File.file?(dropin)
+            execute 'restrict bootloader configuration drop-in files' do
+              command 'find /boot/loader.conf.d -type f -exec chown root:wheel {} + -exec chmod go-w {} +'
+              only_if do
+                ::Dir.glob('/boot/loader.conf.d/*').any? do |dropin|
+                  next false unless ::File.file?(dropin)
 
-              file dropin do
-                owner 'root'
-                group 'wheel'
-                mode format('%04o', ::File.stat(dropin).mode & 0o7755)
+                  stat = ::File.stat(dropin)
+                  stat.uid != 0 || stat.gid != 0 || !(stat.mode & 0o022).zero?
+                end
               end
             end
             ```
