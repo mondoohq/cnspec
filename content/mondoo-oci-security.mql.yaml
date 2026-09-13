@@ -10839,33 +10839,67 @@ queries:
           desc: |
             To assign a customer-managed encryption key to a block volume using the OCI Console:
 
-            1. Navigate to **Storage > Block Volumes** and open the volume.
-            2. Select **Edit**.
-            3. Under **Encryption**, choose **Encrypt using customer-managed keys**.
-            4. Select the vault, master encryption key, and key version.
-            5. Select **Save Changes**.
+            1. Navigate to **Identity & Security > Policies**, select the compartment the policy belongs in, and select **Create Policy**. Add the statements below, replacing `KeyCompartment` with the name of the compartment that holds the key and `VolumeAdmins` with the group performing the assignment. Without the first statement the Block Volume service cannot use the key, and without the second the group cannot delegate it, so OCI rejects the assignment:
+
+            ```text
+            Allow service blockstorage to use keys in compartment KeyCompartment
+            Allow group VolumeAdmins to use key-delegate in compartment KeyCompartment
+            ```
+
+            2. Navigate to **Storage > Block Volumes** and open the volume.
+            3. Select **Edit**.
+            4. Under **Encryption**, choose **Encrypt using customer-managed keys**.
+            5. Select the vault, master encryption key, and key version.
+            6. Select **Save Changes**.
         - id: cli
           desc: |
             To assign a customer-managed encryption key to a block volume using the OCI CLI:
+
+            1. Grant the Block Volume service use of the key and let the assigning group delegate it. Replace `<compartment-ocid>` with the compartment the policy belongs in, `KeyCompartment` with the name of the compartment that holds the key, and `VolumeAdmins` with the group performing the assignment:
+
+            ```bash
+            oci iam policy create \
+              --compartment-id <compartment-ocid> \
+              --name blockstorage-use-volume-key \
+              --description "Allow Block Volume to encrypt with a customer-managed key" \
+              --statements '["Allow service blockstorage to use keys in compartment KeyCompartment","Allow group VolumeAdmins to use key-delegate in compartment KeyCompartment"]'
+            ```
+
+            2. Assign the key to the volume:
 
             ```bash
             oci bv volume-kms-key update --volume-id <volume-ocid> --kms-key-id <key-ocid>
             ```
         - id: terraform
           desc: |
-            To assign a customer-managed encryption key to a block volume in Terraform, reference the key in the volume resource:
+            To assign a customer-managed encryption key to a block volume in Terraform, grant the Block Volume service use of the key, then reference the key in the volume resource. The grant must exist before the volume is created, otherwise OCI rejects the `kms_key_id`:
 
             ```hcl
+            resource "oci_identity_policy" "blockstorage_keys" {
+              compartment_id = var.compartment_ocid
+              name           = "blockstorage-use-volume-key"
+              description    = "Allow Block Volume to encrypt with a customer-managed key"
+
+              statements = [
+                "Allow service blockstorage to use keys in compartment id ${var.key_compartment_ocid}",
+                "Allow group VolumeAdmins to use key-delegate in compartment id ${var.key_compartment_ocid}",
+              ]
+            }
+
             resource "oci_core_volume" "example" {
               compartment_id      = var.compartment_ocid
               availability_domain = var.availability_domain
               display_name        = "example-volume"
               kms_key_id          = oci_kms_key.example.id
+
+              depends_on = [oci_identity_policy.blockstorage_keys]
             }
             ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Block/Concepts/overview.htm
         title: OCI Block Volume encryption documentation
+      - url: https://docs.oracle.com/en-us/iaas/Content/Identity/policiescommon/commonpolicies.htm
+        title: Policy Builder Policy Templates
   - uid: mondoo-oci-security-block-volume-customer-managed-encryption-oci
     filters: asset.platform == 'oci'
     mql: |
@@ -10930,7 +10964,7 @@ queries:
       desc: |
         This check verifies that boot volumes are encrypted under a customer-managed Vault key rather than the Oracle-managed default that instances receive automatically.
 
-        A boot volume is created implicitly whenever an instance launches, and unless the launch request names a key it inherits Oracle-managed encryption without anyone deciding to accept it. That volume is not incidental storage: it holds the operating system, the application binaries, the configuration files, service account material dropped by configuration management, SSH host keys, and anything written outside the data volumes. You assign a key under Storage > Boot Volumes > Assign encryption key, with `oci bv boot-volume-kms-key update --boot-volume-id <id> --kms-key-id <ocid>`, or through `kms_key_id` on `oci_core_boot_volume` in Terraform.
+        A boot volume is created implicitly whenever an instance launches, and unless the launch request names a key it inherits Oracle-managed encryption without anyone deciding to accept it. That volume is not incidental storage: it holds the operating system, the application binaries, the configuration files, service account material dropped by configuration management, SSH host keys, and anything written outside the data volumes. You assign a key under Storage > Boot Volumes > Assign encryption key, with `oci bv boot-volume-kms-key update --boot-volume-id <id> --kms-key-id <ocid>`, or through `kms_key_id` on `oci_core_boot_volume` in Terraform. Boot volumes belong to the Block Volume service, so the assignment succeeds only once a policy grants that service use of the key, with a statement such as `allow service blockstorage to use keys in compartment KeyVault`.
 
         **Why this matters**
 
@@ -10964,23 +10998,53 @@ queries:
           desc: |
             To assign a customer-managed encryption key to a boot volume using the OCI Console:
 
-            1. Navigate to **Storage > Boot Volumes** and open the boot volume.
-            2. Select **Edit**.
-            3. Under **Encryption**, choose **Encrypt using customer-managed keys**.
-            4. Select the vault, master encryption key, and key version.
-            5. Select **Save Changes**.
+            1. Navigate to **Identity & Security > Policies**, select the compartment the policy belongs in, and select **Create Policy**. Add the statements below, replacing `KeyCompartment` with the name of the compartment that holds the key and `VolumeAdmins` with the group performing the assignment. Boot volumes are encrypted by the Block Volume service, so without the first statement that service cannot use the key, and without the second the group cannot delegate it:
+
+            ```text
+            Allow service blockstorage to use keys in compartment KeyCompartment
+            Allow group VolumeAdmins to use key-delegate in compartment KeyCompartment
+            ```
+
+            2. Navigate to **Storage > Boot Volumes** and open the boot volume.
+            3. Select **Edit**.
+            4. Under **Encryption**, choose **Encrypt using customer-managed keys**.
+            5. Select the vault, master encryption key, and key version.
+            6. Select **Save Changes**.
         - id: cli
           desc: |
             To assign a customer-managed encryption key to a boot volume using the OCI CLI:
+
+            1. Grant the Block Volume service use of the key and let the assigning group delegate it. Replace `<compartment-ocid>` with the compartment the policy belongs in, `KeyCompartment` with the name of the compartment that holds the key, and `VolumeAdmins` with the group performing the assignment:
+
+            ```bash
+            oci iam policy create \
+              --compartment-id <compartment-ocid> \
+              --name blockstorage-use-boot-volume-key \
+              --description "Allow Block Volume to encrypt boot volumes with a customer-managed key" \
+              --statements '["Allow service blockstorage to use keys in compartment KeyCompartment","Allow group VolumeAdmins to use key-delegate in compartment KeyCompartment"]'
+            ```
+
+            2. Assign the key to the boot volume:
 
             ```bash
             oci bv boot-volume-kms-key update --boot-volume-id <boot-volume-ocid> --kms-key-id <key-ocid>
             ```
         - id: terraform
           desc: |
-            To assign a customer-managed encryption key to a boot volume in Terraform, reference the key in the boot volume resource:
+            To assign a customer-managed encryption key to a boot volume in Terraform, grant the Block Volume service use of the key, then reference the key in the boot volume resource. The grant must exist before the boot volume is created, otherwise OCI rejects the `kms_key_id`:
 
             ```hcl
+            resource "oci_identity_policy" "blockstorage_boot_keys" {
+              compartment_id = var.compartment_ocid
+              name           = "blockstorage-use-boot-volume-key"
+              description    = "Allow Block Volume to encrypt boot volumes with a customer-managed key"
+
+              statements = [
+                "Allow service blockstorage to use keys in compartment id ${var.key_compartment_ocid}",
+                "Allow group VolumeAdmins to use key-delegate in compartment id ${var.key_compartment_ocid}",
+              ]
+            }
+
             resource "oci_core_boot_volume" "example" {
               compartment_id      = var.compartment_ocid
               availability_domain = var.availability_domain
@@ -10991,11 +11055,15 @@ queries:
                 type = "bootVolume"
                 id   = var.source_boot_volume_id
               }
+
+              depends_on = [oci_identity_policy.blockstorage_boot_keys]
             }
             ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Block/Concepts/bootvolumes.htm
         title: OCI Boot Volume documentation
+      - url: https://docs.oracle.com/en-us/iaas/Content/Identity/policiescommon/commonpolicies.htm
+        title: Policy Builder Policy Templates
   - uid: mondoo-oci-security-boot-volume-customer-managed-encryption-oci
     filters: asset.platform == 'oci'
     mql: |
@@ -11060,7 +11128,7 @@ queries:
       desc: |
         This check verifies that File Storage file systems are encrypted under a Vault key you administer rather than the Oracle-managed key applied by default.
 
-        File Storage differs from block storage in who touches the data. One file system is exported through mount targets and consumed concurrently by many instances, and often by many teams, so a single encryption boundary covers a shared namespace with a wide and changing set of readers. Under the Oracle-managed default, every file system in the tenancy sits behind service-owned key material with no per-file-system object you can govern. You assign a key under File Storage > File Systems > Assign encryption key, with `oci fs file-system update --file-system-id <id> --kms-key-id <ocid>`, or through `kms_key_id` on `oci_file_storage_file_system` in Terraform. The File Storage service principal must first be granted `use keys` on the compartment holding the vault, or the assignment is rejected.
+        File Storage differs from block storage in who touches the data. One file system is exported through mount targets and consumed concurrently by many instances, and often by many teams, so a single encryption boundary covers a shared namespace with a wide and changing set of readers. Under the Oracle-managed default, every file system in the tenancy sits behind service-owned key material with no per-file-system object you can govern. You assign a key under File Storage > File Systems > Assign encryption key, with `oci fs file-system update --file-system-id <id> --kms-key-id <ocid>`, or through `kms_key_id` on `oci_file_storage_file_system` in Terraform. Two grants must exist on the compartment holding the vault before the assignment is accepted: `use keys` for a dynamic group whose rule matches the file systems, `ALL { resource.type='filesystem', resource.compartment.id = '<file-system-compartment-ocid>' }`, and `use keys` for the File Storage service principal, named `FssOc<n>Prod` where `<n>` is your realm key number, or `fssocprod` in realms whose key number is above 10. Only symmetric AES keys are supported.
 
         **Why this matters**
 
@@ -11094,28 +11162,87 @@ queries:
           desc: |
             To assign a customer-managed encryption key to a file system using the OCI Console:
 
-            1. Navigate to **Storage > File Systems** and open the file system.
-            2. Select **Edit** next to **Encryption**.
-            3. Choose **Encrypt using customer-managed keys**.
-            4. Select the vault, master encryption key, and key version.
-            5. Select **Save Changes**.
+            1. Navigate to **Identity & Security > Domains**, open the domain that holds your users, and select **Dynamic groups > Create dynamic group**. Name it `fs-key-users` and enter the matching rule below, replacing `<file-system-compartment-ocid>` with the compartment that holds the file systems:
+
+            ```text
+            ALL { resource.type='filesystem', resource.compartment.id = '<file-system-compartment-ocid>' }
+            ```
+
+            2. Navigate to **Identity & Security > Policies**, select the compartment the policy belongs in, and select **Create Policy**. Add the statements below, replacing `KeyCompartment` with the name of the compartment that holds the key, `<n>` with your realm key number, and `FileAdmins` with the group performing the assignment. In realms whose key number is above 10, use `fssocprod` in place of `FssOc<n>Prod`. Without these grants the file system cannot unwrap the key and OCI rejects the assignment:
+
+            ```text
+            allow dynamic-group fs-key-users to use keys in compartment KeyCompartment
+            allow service FssOc<n>Prod to use keys in compartment KeyCompartment
+            allow group FileAdmins to use key-delegate in compartment KeyCompartment
+            ```
+
+            3. Navigate to **Storage > File Systems** and open the file system.
+            4. Select **Edit** next to **Encryption**.
+            5. Choose **Encrypt using customer-managed keys**.
+            6. Select the vault, master encryption key, and key version.
+            7. Select **Save Changes**.
+
+            Only symmetric AES keys can encrypt a file system.
         - id: cli
           desc: |
             To assign a customer-managed encryption key to a file system using the OCI CLI:
+
+            1. Create a dynamic group matching the file systems, replacing `<tenancy-ocid>` with your tenancy OCID and `<file-system-compartment-ocid>` with the compartment that holds the file systems:
+
+            ```bash
+            oci iam dynamic-group create \
+              --compartment-id <tenancy-ocid> \
+              --name fs-key-users \
+              --description "File systems that encrypt with a customer-managed key" \
+              --matching-rule "ALL { resource.type='filesystem', resource.compartment.id = '<file-system-compartment-ocid>' }"
+            ```
+
+            2. Grant that dynamic group and the File Storage service principal use of the key, and let the assigning group delegate it. Replace `<compartment-ocid>` with the compartment the policy belongs in, `KeyCompartment` with the name of the compartment that holds the key, `<n>` with your realm key number, and `FileAdmins` with the group performing the assignment. In realms whose key number is above 10, use `fssocprod` in place of `FssOc<n>Prod`:
+
+            ```bash
+            oci iam policy create \
+              --compartment-id <compartment-ocid> \
+              --name filestorage-use-file-system-key \
+              --description "Allow File Storage to encrypt with a customer-managed key" \
+              --statements '["allow dynamic-group fs-key-users to use keys in compartment KeyCompartment","allow service FssOc<n>Prod to use keys in compartment KeyCompartment","allow group FileAdmins to use key-delegate in compartment KeyCompartment"]'
+            ```
+
+            3. Assign the key to the file system. The key must be a symmetric AES key:
 
             ```bash
             oci fs file-system update --file-system-id <file-system-ocid> --kms-key-id <key-ocid>
             ```
         - id: terraform
           desc: |
-            To assign a customer-managed encryption key to a file system in Terraform, reference the key in the file system resource:
+            To assign a customer-managed encryption key to a file system in Terraform, create the dynamic group and the grants first, then reference the key in the file system resource. The grants must exist before the file system is created, otherwise OCI rejects the `kms_key_id`. Set `var.realm_key_number` to your realm key number, and use `fssocprod` in place of the `FssOc${var.realm_key_number}Prod` principal in realms whose key number is above 10:
 
             ```hcl
+            resource "oci_identity_dynamic_group" "fs_key_users" {
+              compartment_id = var.tenancy_ocid
+              name           = "fs-key-users"
+              description    = "File systems that encrypt with a customer-managed key"
+              matching_rule  = "ALL { resource.type='filesystem', resource.compartment.id = '${var.compartment_ocid}' }"
+            }
+
+            resource "oci_identity_policy" "filestorage_keys" {
+              compartment_id = var.compartment_ocid
+              name           = "filestorage-use-file-system-key"
+              description    = "Allow File Storage to encrypt with a customer-managed key"
+
+              statements = [
+                "allow dynamic-group ${oci_identity_dynamic_group.fs_key_users.name} to use keys in compartment id ${var.key_compartment_ocid}",
+                "allow service FssOc${var.realm_key_number}Prod to use keys in compartment id ${var.key_compartment_ocid}",
+                "allow group FileAdmins to use key-delegate in compartment id ${var.key_compartment_ocid}",
+              ]
+            }
+
             resource "oci_file_storage_file_system" "example" {
               compartment_id      = var.compartment_ocid
               availability_domain = var.availability_domain
               display_name        = "example-fs"
               kms_key_id          = oci_kms_key.example.id
+
+              depends_on = [oci_identity_policy.filestorage_keys]
             }
             ```
     refs:
