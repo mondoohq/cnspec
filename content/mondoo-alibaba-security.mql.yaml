@@ -3110,24 +3110,30 @@ queries:
         Broad delete permissions and automation multiply the exposure. A misfiring pipeline, a Terraform run against the wrong workspace, or an insider with routine administrative rights can remove a production instance in a single call unless something refuses the call. Release protection is that refusal, and clearing it deliberately gives an operator the moment needed to notice that the target is production.
 
         Short-lived instances created by tests or continuous integration are meant to be destroyed and should not carry the lock. This control guards the instance object, not the data inside it, so it is not a substitute for backups, retention settings, or restricting who holds delete permissions in the first place.
+
+        **Subscription instances are exempt**
+
+        On every RDS engine, release protection can be enabled only on pay-as-you-go and serverless instances. A subscription instance cannot hold the lock, and it does not need it: `DeleteDBInstance` refuses to release a subscription instance, so ending one early already takes a separate step, either an unsubscription or a conversion to pay-as-you-go. A subscription instance therefore passes this check without release protection. Once converted, it is a pay-as-you-go instance and has to carry the lock like any other.
+
+        Terraform can undo that exemption. Setting `force_delete` to `true` on a subscription `alicloud_db_instance` lets a single `terraform destroy` convert the instance and release it, and `deletion_protection` is never applied to a subscription instance, so it cannot stop that. The Terraform version of this check fails a subscription instance that sets `force_delete` to `true`.
       audit: |
         ### Audit via Console
 
         1. Sign in to the [ApsaraDB for RDS console](https://rdsnext.console.aliyun.com/).
-        2. Open each instance and review the **Basic Information** page for **Release Protection**.
-        3. Confirm that **Release Protection** is enabled.
+        2. Open each instance and review the **Basic Information** page for **Billing Method** and **Release Protection**.
+        3. For a pay-as-you-go or serverless instance, confirm that **Release Protection** is enabled.
 
-        A passing instance shows release protection enabled. A failing instance shows it disabled.
+        A subscription instance passes regardless of the release protection setting. A pay-as-you-go or serverless instance passes when release protection is enabled and fails when it is disabled.
 
         ### Audit via CLI
 
-        1. Describe each instance and inspect the deletion protection flag:
+        1. Describe each instance and inspect its billing method and deletion protection flag:
 
         ```bash
         aliyun rds DescribeDBInstanceAttribute --DBInstanceId <instance-id>
         ```
 
-        A passing instance reports `DeletionProtection` as `true`. A failing instance reports `false`.
+        An instance that reports `PayType` as `Prepaid` is a subscription instance and passes. Any other instance passes when it reports `DeletionProtection` as `true` and fails when it reports `false`.
       remediation:
         - id: console
           desc: |
@@ -3137,7 +3143,7 @@ queries:
             2. In the **Actions** column of the affected instance, choose **More** > **Modify Release Protection**.
             3. Turn on **Release Protection** and click **OK**.
 
-            Release protection is available only for instances billed as pay-as-you-go or serverless. A subscription instance cannot enable it.
+            Release protection is available only for instances billed as pay-as-you-go or serverless. A subscription instance cannot enable it and already passes this check, so do not change an instance's billing method to satisfy it.
         - id: cli
           desc: |
             To enable deletion protection on an RDS instance with the `aliyun` CLI:
@@ -3148,10 +3154,10 @@ queries:
               --DeletionProtection true
             ```
 
-            `true` is the value that resolves the finding. The call succeeds only for pay-as-you-go and serverless instances.
+            `true` is the value that resolves the finding. The call succeeds only for pay-as-you-go and serverless instances and returns `OperationDenied.PayType` for a subscription instance, which already passes this check and needs no change.
         - id: terraform
           desc: |
-            To enable deletion protection on an RDS instance in Terraform, set `deletion_protection` to `true`:
+            To enable deletion protection on a pay-as-you-go or serverless RDS instance in Terraform, set `deletion_protection` to `true`:
 
             ```hcl
             resource "alicloud_db_instance" "example" {
@@ -3164,6 +3170,8 @@ queries:
               deletion_protection = true
             }
             ```
+
+            A subscription instance with `instance_charge_type` set to `Prepaid` passes without `deletion_protection`, which has no effect on it. Remove `force_delete` from that resource or set it to `false`, so that `terraform destroy` leaves the instance in place instead of converting and releasing it.
     variants:
       - uid: mondoo-alibaba-security-rds-instance-deletion-protection-alicloud
       - uid: mondoo-alibaba-security-rds-instance-deletion-protection-terraform-hcl
@@ -3188,26 +3196,28 @@ queries:
   - uid: mondoo-alibaba-security-rds-instance-deletion-protection-alicloud
     filters: asset.platform == "alicloud-rds-instance"
     mql: |
-      alicloud.rds.instance.deletionProtection == true
+      alicloud.rds.instance.payType == "Prepaid" || alicloud.rds.instance.deletionProtection == true
 
   - uid: mondoo-alibaba-security-rds-instance-deletion-protection-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_db_instance")
     mql: |
-      terraform.resources("alicloud_db_instance").all(arguments["deletion_protection"] == true)
+      terraform.resources("alicloud_db_instance").all(
+        arguments["instance_charge_type"] == "Prepaid" && arguments["force_delete"] != true || arguments["instance_charge_type"] != "Prepaid" && arguments["deletion_protection"] == true
+      )
   - uid: mondoo-alibaba-security-rds-instance-deletion-protection-terraform-plan
     filters: |
       asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_db_instance")
     mql: |
       terraform.plan.resourceChanges.where(type == "alicloud_db_instance").all(
-        change.after["deletion_protection"] == true
+        change.after["instance_charge_type"] == "Prepaid" && change.after["force_delete"] != true || change.after["instance_charge_type"] != "Prepaid" && change.after["deletion_protection"] == true
       )
   - uid: mondoo-alibaba-security-rds-instance-deletion-protection-terraform-state
     filters: |
       asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_db_instance")
     mql: |
       terraform.state.resources.where(type == "alicloud_db_instance").all(
-        values["deletion_protection"] == true
+        values["instance_charge_type"] == "Prepaid" && values["force_delete"] != true || values["instance_charge_type"] != "Prepaid" && values["deletion_protection"] == true
       )
 
   # ===========================================================================
