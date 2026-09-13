@@ -3010,19 +3010,30 @@ queries:
     mql: |
       files.find(from: "/etc/pve/qemu-server", regex: "[0-9]+.conf$", type: "file").list.all(
         file(_.path).content.lines.any(
-          _ == /^cpu:.*[,=;]\+?(spec-ctrl|ssbd|ibpb|virt-ssbd|amd-ssbd)\b/
+          _ == /^cpu:\s*(cputype=)?(host|Cascadelake-Server|Cooperlake|Icelake-Client|Icelake-Server|SapphireRapids|GraniteRapids|SierraForest|ClearwaterForest|Denverton|Snowridge|Dhyana|EPYC-Rome|EPYC-Milan|EPYC-Genoa|EPYC-Turin|YongFeng|[A-Za-z0-9-]+-IBRS|[A-Za-z0-9-]+-IBPB)\b/ ||
+          _ == /^cpu:.*[,=;]\+?(spec-ctrl|ssbd|ibpb|virt-ssbd|amd-ssbd|amd-no-ssb)\b/
         )
       )
     docs:
       desc: |
         This check verifies that each VM's CPU configuration exposes the speculative-execution mitigation features the guest needs to defend itself.
 
-        The `cpu:` line of a VM configuration under `/etc/pve/qemu-server` carries the CPU model and any extra flags. This check requires every VM to have a `cpu:` line that enables at least one of the mitigation flags Proxmox VE documents:
+        The `cpu:` line of a VM configuration under `/etc/pve/qemu-server` carries the CPU model and any extra flags. Proxmox VE documents that these flags need to be set manually unless the selected CPU type of the VM already enables them by default, so this check passes a VM that satisfies either condition.
+
+        A VM passes when its `cpu:` line names at least one of the mitigation flags Proxmox VE documents:
 
         - Intel processors: `spec-ctrl` and `ssbd`
-        - AMD processors: `ibpb`, `virt-ssbd` and `amd-ssbd`
+        - AMD processors: `ibpb`, `virt-ssbd`, `amd-ssbd` and `amd-no-ssb`
 
-        A VM with no `cpu:` line at all fails, because Proxmox VE then starts it on the `kvm64` backend default, which enables none of these features.
+        A VM also passes when its CPU model already enables one of those features without an explicit flag:
+
+        - `host`, which gives the guest exactly the CPU flags of the node it runs on
+        - any model with an `-IBRS` or `-IBPB` suffix, such as `Broadwell-IBRS` or `EPYC-IBPB`
+        - the newer models QEMU defines with the features already on, such as `Cascadelake-Server`, `Icelake-Server`, `SapphireRapids`, `Denverton`, `EPYC-Rome` and `EPYC-Milan`
+
+        A VM fails when its model enables none of the features and its `cpu:` line names none, which covers `kvm64`, `qemu64`, the `x86-64-v2` through `x86-64-v4` models, the older Intel models without an `-IBRS` suffix such as `Broadwell` and `Skylake-Server`, and plain `EPYC`. A VM with no `cpu:` line at all fails as well, because Proxmox VE then starts it on the `kvm64` backend default, which enables none of these features.
+
+        A passing CPU model is necessary but not sufficient on its own. The node still has to run microcode that provides the feature, since the guest only ever sees what the host CPU offers. Keep the node's `intel-microcode` or `amd64-microcode` package current alongside this check.
 
         Set the flags from the VM's Hardware, then Processors entry, or with `qm set <vmid> --cpu '<existing-cpu-type>,flags=+spec-ctrl;+ssbd'` on an Intel host and `qm set <vmid> --cpu '<existing-cpu-type>,flags=+ibpb;+amd-ssbd'` on an AMD host. Read the VM's current CPU type first and keep it; the flags are additions, not a replacement, and the VM needs a clean shutdown and start rather than a reset to pick them up.
 
@@ -3032,7 +3043,7 @@ queries:
 
         Omit them and the guest kernel concludes the processor has no mitigation support and disables its own defenses. The workload then runs unprotected on hardware that is perfectly capable of protecting it, and neither the guest's administrator nor the platform's shows anything wrong. On a node hosting workloads from different teams or customers, the memory that can leak includes theirs.
 
-        On Intel hosts `+spec-ctrl` exposes the indirect branch controls and `+ssbd` the speculative store bypass disable. On AMD hosts the equivalents are `+ibpb` for Spectre v1 and v2, and `+virt-ssbd` or `+amd-ssbd` for Spectre v4, where `+amd-ssbd` is the faster of the two and `+virt-ssbd` the one that works on hosts whose CPU does not expose the native bit. A CPU model of `host` passes the host's features through implicitly, but an explicit model such as `x86-64-v2-AES` or `kvm64` does not.
+        On Intel hosts `+spec-ctrl` exposes the indirect branch controls and `+ssbd` the speculative store bypass disable. On AMD hosts the equivalents are `+ibpb` for Spectre v1 and v2, and `+virt-ssbd` or `+amd-ssbd` for Spectre v4, where `+amd-ssbd` is the faster of the two and `+virt-ssbd` the one that works on hosts whose CPU does not expose the native bit. `+amd-no-ssb` is the AMD flag that tells the guest the host is not vulnerable to Spectre v4 at all, so the guest can skip that mitigation. A CPU model of `host` passes the host's features through implicitly, and so do the models QEMU ships with the feature bits already set, but a legacy model such as `x86-64-v2-AES` or `kvm64` does not.
 
         Enabling mitigations costs measurable performance, which is exactly why they get left off. Take that trade-off deliberately, and where a workload cannot afford it, keep that VM off nodes that host anything it does not already trust.
       audit: |
@@ -3040,9 +3051,9 @@ queries:
 
         1. Sign in to the Proxmox VE web interface.
         2. Select a VM in the resource tree, then open its **Hardware** panel.
-        3. Open the **Processors** entry and review the configured CPU type and extra flags for `+spec-ctrl` or `+ssbd` on an Intel host, or `+ibpb`, `+virt-ssbd` or `+amd-ssbd` on an AMD host.
+        3. Open the **Processors** entry and review the configured CPU type and extra flags for `+spec-ctrl` or `+ssbd` on an Intel host, or `+ibpb`, `+virt-ssbd`, `+amd-ssbd` or `+amd-no-ssb` on an AMD host.
 
-        A passing result shows the CPU configuration including one of those mitigation flags; a failing result shows a CPU configuration with none of them.
+        A passing result shows either one of those mitigation flags or a CPU type that already enables one, such as `host`, a type with an `-IBRS` or `-IBPB` suffix, or a newer type such as `Cascadelake-Server` or `EPYC-Rome`. A failing result shows a legacy type such as `kvm64`, `qemu64`, `x86-64-v2-AES` or `Skylake-Server` with none of those flags set.
 
         ### Audit via CLI
 
@@ -3052,7 +3063,7 @@ queries:
         for c in /etc/pve/qemu-server/[0-9]*.conf; do echo "== $c =="; grep '^cpu:' "$c"; done
         ```
 
-        A passing result shows every VM printing a `cpu:` line that enables `+spec-ctrl`, `+ssbd`, `+ibpb`, `+virt-ssbd` or `+amd-ssbd`; a failing result shows a `cpu:` line with none of those flags, or a VM that prints no `cpu:` line at all and therefore runs on the `kvm64` backend default.
+        A passing result shows every VM printing a `cpu:` line that either enables `+spec-ctrl`, `+ssbd`, `+ibpb`, `+virt-ssbd`, `+amd-ssbd` or `+amd-no-ssb`, or names a CPU type that carries one of those features already. A failing result shows a `cpu:` line with a legacy type and none of those flags, or a VM that prints no `cpu:` line at all and therefore runs on the `kvm64` backend default.
       remediation:
         - id: cli
           desc: |
@@ -3066,8 +3077,11 @@ queries:
             `<existing-cpu-type>` below. Do not paste `kvm64` blindly; that would
             overwrite a `host` or custom CPU type the VM already uses. If the
             VM has no `cpu:` line it defaults to `kvm64`, so use `kvm64` only in
-            that case. Pick the flag set that matches the node's CPU vendor,
-            which `lscpu` reports:
+            that case. A VM already on `host`, on a type with an `-IBRS` or
+            `-IBPB` suffix, or on a newer type such as `Cascadelake-Server`,
+            `Icelake-Server`, `SapphireRapids`, `EPYC-Rome` or `EPYC-Milan`
+            carries the features already and needs no change. Pick the flag set
+            that matches the node's CPU vendor, which `lscpu` reports:
 
             ```bash
             # Read the VM's current CPU type and copy the value after "cpu:".
@@ -3095,7 +3109,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            Append the mitigation flags to every VM while preserving the configured CPU type. The script reads the node's CPU vendor and picks the Intel or the AMD flag set accordingly. A VM without a `cpu:` line runs as `kvm64`, so the script writes `kvm64` with the flags for those. The flags apply after each VM is shut down and started again.
+            Append the mitigation flags to every VM that needs them while preserving the configured CPU type. The script reads the node's CPU vendor and picks the Intel or the AMD flag set accordingly. It skips a VM that already names a mitigation flag and a VM on a CPU type that enables one by default, such as `host`, a type with an `-IBRS` or `-IBPB` suffix, or a newer type such as `Cascadelake-Server` or `EPYC-Rome`. A VM without a `cpu:` line runs as `kvm64`, so the script writes `kvm64` with the flags for those. The flags apply after each VM is shut down and started again.
 
             **A VM with a named CPU type does not start when the host lacks a flag it requests.** Proxmox VE documents `spec-ctrl` and `ssbd` for Intel processors and `ibpb`, `virt-ssbd` and `amd-ssbd` for AMD processors, and the host needs microcode that provides them, so test one VM on every node it can migrate to before running the script across the fleet.
 
@@ -3109,13 +3123,23 @@ queries:
               mitigations="+spec-ctrl;+ssbd"
             fi
 
+            # CPU types that already carry a mitigation feature without an explicit flag.
+            covered='host|.*-IBRS|.*-IBPB|Cascadelake-Server.*|Cooperlake|Icelake-.*'
+            covered="$covered|SapphireRapids|GraniteRapids|SierraForest|ClearwaterForest"
+            covered="$covered|Denverton|Snowridge|Dhyana|EPYC-Rome|EPYC-Milan"
+            covered="$covered|EPYC-Genoa|EPYC-Turin|YongFeng"
+
             shopt -s nullglob
             for conf in /etc/pve/qemu-server/[0-9]*.conf; do
               vmid=$(basename "$conf" .conf)
               cpu_spec=$(awk -F': ' '/^cpu:/ {print $2}' "$conf")
               case "$cpu_spec" in
-                *spec-ctrl*|*ssbd*|*ibpb*) continue ;;
+                *spec-ctrl*|*ssbd*|*ibpb*|*amd-no-ssb*) continue ;;
               esac
+              cpu_type=${cpu_spec%%,*}
+              if printf '%s\n' "${cpu_type#cputype=}" | grep -qE "^($covered)$"; then
+                continue
+              fi
               if [ -z "$cpu_spec" ]; then
                 new="kvm64,flags=$mitigations"
               elif [ "${cpu_spec#*flags=}" != "$cpu_spec" ]; then
@@ -3132,7 +3156,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to add the mitigation flags while keeping each VM's configured CPU type. The task reads the node's CPU vendor and picks the Intel or the AMD flag set accordingly. A running VM keeps its current CPU flags until it is shut down and started again with `qm shutdown <vmid>` and `qm start <vmid>`; a reboot from inside the guest is not enough.
+            Use this Ansible playbook to add the mitigation flags while keeping each VM's configured CPU type. The task reads the node's CPU vendor and picks the Intel or the AMD flag set accordingly, and it skips a VM that already names a mitigation flag or runs on a CPU type that enables one by default. A running VM keeps its current CPU flags until it is shut down and started again with `qm shutdown <vmid>` and `qm start <vmid>`; a reboot from inside the guest is not enough.
 
             **A VM with a named CPU type does not start when the host lacks a flag it requests.** Proxmox VE documents `spec-ctrl` and `ssbd` for Intel processors and `ibpb`, `virt-ssbd` and `amd-ssbd` for AMD processors, and the host needs microcode that provides them, so test one VM on every node it can migrate to first.
 
@@ -3157,11 +3181,19 @@ queries:
                     else
                       mitigations="+spec-ctrl;+ssbd"
                     fi
+                    covered='host|.*-IBRS|.*-IBPB|Cascadelake-Server.*|Cooperlake'
+                    covered="$covered|Icelake-.*|SapphireRapids|GraniteRapids"
+                    covered="$covered|SierraForest|ClearwaterForest|Denverton|Snowridge"
+                    covered="$covered|Dhyana|EPYC-Rome|EPYC-Milan|EPYC-Genoa|EPYC-Turin|YongFeng"
                     vmid=$(basename "{{ item.path }}" .conf)
                     cpu_spec=$(awk -F': ' '/^cpu:/ {print $2}' "{{ item.path }}")
                     case "$cpu_spec" in
-                      *spec-ctrl*|*ssbd*|*ibpb*) exit 0 ;;
+                      *spec-ctrl*|*ssbd*|*ibpb*|*amd-no-ssb*) exit 0 ;;
                     esac
+                    cpu_type=${cpu_spec%%,*}
+                    if printf '%s\n' "${cpu_type#cputype=}" | grep -qE "^($covered)$"; then
+                      exit 0
+                    fi
                     if [ -z "$cpu_spec" ]; then
                       new="kvm64,flags=$mitigations"
                     elif [ "${cpu_spec#*flags=}" != "$cpu_spec" ]; then
