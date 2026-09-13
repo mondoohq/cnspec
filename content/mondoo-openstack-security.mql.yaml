@@ -282,7 +282,7 @@ queries:
 
         A second factor breaks the chain at the point of authentication. The stolen password stops being sufficient on its own, and the attacker has to compromise a device the user physically holds rather than a string that may have been exposed years ago.
 
-        Machine identities that authenticate with application credentials do not pass through the interactive factor flow, so scope this to human accounts and control automation with credential expiry and role scoping instead.
+        Enabling this on an account does not exempt the application credentials that account owns. Keystone validates a user's MFA rules on every token request, and an application credential request presents `application_credential` as its only auth method, so a rule of `password,totp` rejects it with `InsufficientAuthMethods`. An account that automation reaches through application credentials needs a second rule listing `application_credential` on its own. That keeps the interactive path at two factors and leaves the credential usable, because a password alone still matches neither rule.
       audit: |
         ### Audit via Horizon
 
@@ -325,6 +325,17 @@ queries:
             - `<base32-secret>` is the TOTP seed generated for that user.
 
             **A user under this rule who has no working TOTP credential can no longer authenticate.** Complete step 2 before step 3, and check service accounts before enabling MFA on them, because a service signing in with only a password cannot supply a code.
+
+            The rules also cover application credential authentication, so any automation that authenticates as this user stops working once a `password,totp` rule is the only rule. Set both rules in one command, since `openstack user set` replaces the whole rule list:
+
+            ```bash
+            openstack user set <user> \
+              --enable-multi-factor-auth \
+              --multi-factor-auth-rule password,totp \
+              --multi-factor-auth-rule application_credential
+            ```
+
+            Each `--multi-factor-auth-rule` defines one rule, and Keystone issues a token as soon as one rule is satisfied by the methods used.
         - id: terraform
           desc: |
             Set `multi_factor_auth_enabled = true` and define `multi_factor_auth_rule` on the `openstack_identity_user_v3` resource. The same prerequisites as the CLI method apply: `totp` must be enabled in `[auth] methods`, and the user needs a TOTP credential before the rule is applied, or the user is locked out.
@@ -338,10 +349,16 @@ queries:
               multi_factor_auth_rule {
                 rule = ["password", "totp"]
               }
+
+              multi_factor_auth_rule {
+                rule = ["application_credential"]
+              }
             }
             ```
+
+            The second block is what keeps application credentials working. Keystone applies the rules to application credential authentication as well, and a credential presents `application_credential` as its only auth method. Drop that block only on accounts that own no application credentials.
     refs:
-      - url: https://docs.openstack.org/keystone/latest/admin/configure-mfa.html
+      - url: https://docs.openstack.org/keystone/latest/admin/multi-factor-authentication.html
         title: OpenStack Keystone multi-factor authentication
 
   - uid: mondoo-openstack-security-user-mfa-enabled-openstack
