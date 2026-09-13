@@ -39835,13 +39835,13 @@ queries:
 
         Detachment fails quietly. Publishers see no error and continue publishing successfully, so the delivery gap opens with no signal anywhere until an application failure eventually surfaces the missing data, often long after the fact.
 
-        Consumers behave the same way. An application reading from a detached subscription keeps processing its existing backlog normally, then falls silent once the backlog drains, with nothing to indicate that the source topic stopped feeding it rather than that publishers went quiet.
+        Consumers fail in ways that point away from the cause. `Pull` and `StreamingPull` requests against a detached subscription return `FAILED_PRECONDITION` rather than an empty result, so a pull subscriber reports an error whose text says nothing about the topic attachment. A push subscription sees no error at all because Pub/Sub simply stops delivering to the endpoint, so the consumer looks idle rather than broken.
 
-        Meanwhile the subscription continues to hold storage for whatever backlog it still has while serving no purpose, consuming resources without delivering anything.
+        Detachment also destroys the backlog. Once the detach completes, Pub/Sub deletes every message it still retained for the subscription, and those messages cannot be retrieved. The subscription itself survives and keeps counting against project quota while delivering nothing.
 
-        Investigate any detached subscription to determine whether it resulted from an accidental `seek` or a deliberate detachment, then either restore delivery or delete the subscription if it is genuinely no longer needed. Alerting on detachment events in Cloud Audit Logs surfaces this promptly rather than during an incident.
+        Investigate any detached subscription to find the detach call in Cloud Audit Logs and establish whether it was deliberate, then either recreate the subscription or leave it removed if it is genuinely no longer needed. Alerting on those audit log entries surfaces a detachment promptly rather than during an incident.
 
-        A detached subscription cannot be reattached. Recovery means deleting it and creating a replacement on the same topic with the same configuration and consumer permissions, and deleting a subscription permanently discards its entire unacknowledged backlog, so confirm consumers have drained it first.
+        A detached subscription cannot be reattached. Recovery means deleting it and creating a replacement on the same topic with the same configuration and consumer permissions. The replacement starts with no backlog and receives only messages published after it exists, so anything published while the topic had no attached subscription reaches the consumer only if publishers republish it.
       audit: |
         ### Audit via Console
 
@@ -39865,7 +39865,7 @@ queries:
       remediation:
         - id: console
           desc: |
-            A detached subscription cannot be directly reattached via the console. Deleting a subscription permanently discards its entire backlog of unacknowledged messages. Confirm that consumers have drained the backlog before you delete it. To remediate:
+            A detached subscription cannot be reattached from the console. Pub/Sub already deleted the messages it retained for the subscription when the detach completed, so there is no backlog left to drain before you delete it. The replacement subscription starts empty and receives only messages published after it is created. To remediate:
 
             1. Navigate to **Pub/Sub > Subscriptions** in the Google Cloud Console.
             2. Note the configuration of the detached subscription.
@@ -39873,7 +39873,7 @@ queries:
             4. Create a new subscription on the same topic with the same configuration and consumer permissions.
         - id: cli
           desc: |
-            A detached subscription cannot be reattached directly. Delete and recreate it. Deleting a subscription permanently discards its entire backlog of unacknowledged messages, so confirm that consumers have drained the backlog before you delete it:
+            A detached subscription cannot be reattached. Delete it and create a replacement on the same topic. Pub/Sub already deleted the messages it retained for the detached subscription, so deleting it loses nothing further, and the replacement receives only messages published after it is created:
 
             ```bash
             gcloud pubsub subscriptions delete SUBSCRIPTION_NAME
