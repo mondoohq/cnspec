@@ -1133,14 +1133,24 @@ queries:
             6. Select **Assign**.
         - id: cli
           desc: |
-            To assign a customer-managed encryption key to an Object Storage bucket using the OCI CLI, update the bucket with the KMS key OCID:
+            To assign a customer-managed encryption key to an Object Storage bucket using the OCI CLI:
+
+            1. Allow the Object Storage service in the bucket's region to use the key. Without this grant OCI rejects the key assignment, because Object Storage encrypts and decrypts through Vault as its own service principal. Add a statement such as the following to a policy in the key's compartment, replacing `us-ashburn-1` with the bucket's region identifier and `KeyCompartment` with the compartment that holds the key:
+
+            ```text
+            Allow service objectstorage-us-ashburn-1 to use keys in compartment KeyCompartment
+            ```
+
+            2. Assign the key to the bucket, replacing `<key-ocid>` with the OCID of the Vault master encryption key:
 
             ```bash
-            oci os bucket update --bucket-name BUCKET_NAME --kms-key-id KEY_OCID
+            oci os bucket update --bucket-name <bucket-name> --kms-key-id <key-ocid>
             ```
+
+            The key protects objects written after the change. Existing objects stay encrypted under the previous key until you re-encrypt the bucket with `oci os bucket reencrypt --bucket-name <bucket-name>`.
         - id: terraform
           desc: |
-            To assign a customer-managed encryption key to an Object Storage bucket in Terraform, create a vault and key, then reference the key in the bucket resource:
+            To assign a customer-managed encryption key to an Object Storage bucket in Terraform, create a vault and key, allow the Object Storage service in the bucket's region to use the key, then reference the key in the bucket resource. The service grant must exist before the bucket is created, otherwise OCI rejects the `kms_key_id`:
 
             ```hcl
             resource "oci_kms_vault" "example" {
@@ -1160,13 +1170,27 @@ queries:
               }
             }
 
+            resource "oci_identity_policy" "objectstorage_keys" {
+              compartment_id = var.compartment_ocid
+              name           = "objectstorage-use-bucket-key"
+              description    = "Allow Object Storage to encrypt with the bucket key"
+
+              statements = [
+                "Allow service objectstorage-${var.region} to use keys in compartment id ${var.compartment_ocid} where target.key.id = '${oci_kms_key.example.id}'",
+              ]
+            }
+
             resource "oci_objectstorage_bucket" "example" {
               compartment_id = var.compartment_ocid
               namespace      = var.namespace
               name           = "example-bucket"
               kms_key_id     = oci_kms_key.example.id
+
+              depends_on = [oci_identity_policy.objectstorage_keys]
             }
             ```
+
+            Set `var.region` to the bucket's region identifier, such as `us-ashburn-1`.
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/encryption.htm
         title: Object Storage Data Encryption
@@ -1711,28 +1735,32 @@ queries:
       remediation:
         - id: console
           desc: |
-            To identify and remediate stale active users using the OCI Console:
+            To deactivate stale active users using the OCI Console:
 
-            1. Navigate to **Identity & Security > Users**.
-            2. Review the **Last Sign-In** column for each active user.
-            3. For users who have not signed in within 90 days, select the user.
-            4. Select **Disable** or **Delete** depending on your organization's offboarding policy.
+            1. Navigate to **Identity & Security > Domains** and select the identity domain that holds the user.
+            2. Select **Users** and review the last sign-in date of each active user.
+            3. For each user who has not signed in within the last 90 days, open the **Actions** menu next to the user and select **Deactivate**, or delete the user if your offboarding policy calls for it.
+
+            The finding clears only when the account signs in again, is deactivated, or is deleted. Removing its API keys or auth tokens alone leaves an active account with an old sign-in date, so it keeps failing. A deactivated user can no longer sign in, so confirm with the account owner or their manager first.
         - id: cli
           desc: |
-            To identify stale active users using the OCI CLI, list users and filter by login activity:
+            To identify and delete stale active users using the OCI CLI, start by listing active users with their last sign-in time:
 
             ```bash
-            oci iam user list --compartment-id TENANCY_OCID --all --query "data[?\"lifecycle-state\"=='ACTIVE'].{Name:name, LastLogin:\"last-successful-login-time\"}" --output table
+            oci iam user list --compartment-id <tenancy-ocid> --all --query "data[?\"lifecycle-state\"=='ACTIVE'].{Name:name, Id:id, LastLogin:\"last-successful-login-time\"}" --output table
             ```
 
-            The OCI CLI does not support disabling a user directly. For each user whose last login exceeds 90 days, remove the credentials that grant access:
+            A user fails when `LastLogin` is more than 90 days ago. Deleting the user's API keys or auth tokens does not clear the finding, because the account stays active with the same sign-in date. The finding clears only when the user signs in again, the account is deactivated, or the account is deleted. The `oci iam user update-user-state` command can only unblock a user, so deactivate an account you want to keep through the Console.
+
+            To delete an account that is no longer needed, remove it from every group first, because OCI rejects deleting a user that still belongs to a group:
 
             ```bash
-            oci iam user api-key delete --user-id USER_OCID --fingerprint KEY_FINGERPRINT
-            oci iam auth-token delete --user-id USER_OCID --auth-token-id TOKEN_OCID
+            oci iam user list-groups --user-id <user-ocid> --query "data[].{Name:name, Id:id}" --output table
+            oci iam group remove-user --group-id <group-ocid> --user-id <user-ocid>
+            oci iam user delete --user-id <user-ocid>
             ```
 
-            Disable or delete the account itself through the OCI Console following your offboarding policy.
+            Deleting a user is permanent, so confirm with the account owner or their manager before you run it.
         # No Terraform remediation: last-login recency is runtime telemetry; the `oci_identity_user` Terraform resource has no field for `last-successful-login-time` and there is no HCL change that marks an account stale or active.
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managingusers.htm
@@ -1968,7 +1996,7 @@ queries:
       remediation:
         - id: console
           desc: |
-            Before creating a replication policy, two prerequisites must be in place or the policy creation fails: the destination bucket must already exist with object versioning enabled, and an IAM policy must grant the Object Storage service permission to manage objects in the destination compartment, for example `Allow service objectstorage-<region> to manage object-family in compartment <destination-compartment>`.
+            Before creating a replication policy, two prerequisites must be in place or the policy creation fails. First, the destination bucket must already exist in the destination region with versioning disabled and no retention rules, because OCI rejects a destination that has either. Second, an IAM policy must authorize the Object Storage service of the source region to manage objects in both the source and destination compartments, for example `Allow service objectstorage-us-ashburn-1 to manage object-family in tenancy` for a source bucket in `us-ashburn-1`.
 
             To enable replication on an Object Storage bucket using the OCI Console:
 
@@ -1978,48 +2006,56 @@ queries:
             4. Select **Create Policy**.
             5. Choose the destination region and destination bucket.
             6. Select **Create**.
+
+            Once the policy exists, the destination bucket becomes read-only and receives writes only through replication, and deletes in the source bucket are replicated to it.
         - id: cli
           desc: |
-            Before creating a replication policy, two prerequisites must be in place or the policy creation fails: the destination bucket must already exist with object versioning enabled, and an IAM policy must grant the Object Storage service permission to manage objects in the destination compartment, for example `Allow service objectstorage-<region> to manage object-family in compartment <destination-compartment>`.
+            Before creating a replication policy, two prerequisites must be in place or the policy creation fails. First, the destination bucket must already exist in the destination region with versioning disabled and no retention rules, because OCI rejects a destination that has either. Second, an IAM policy must authorize the Object Storage service of the source region to manage objects in both the source and destination compartments, for example `Allow service objectstorage-us-ashburn-1 to manage object-family in tenancy` for a source bucket in `us-ashburn-1`.
 
-            To enable replication on an Object Storage bucket using the OCI CLI, create a replication policy:
+            To enable replication on an Object Storage bucket using the OCI CLI, create a replication policy on the source bucket, setting `--destination-region` to the destination region identifier such as `us-phoenix-1`:
 
             ```bash
-            oci os replication create-replication-policy --bucket-name SOURCE_BUCKET_NAME \
-              --destination-bucket DESTINATION_BUCKET_NAME \
-              --destination-region DESTINATION_REGION \
+            oci os replication create-replication-policy --bucket-name <source-bucket-name> \
+              --destination-bucket <destination-bucket-name> \
+              --destination-region <destination-region> \
               --name "cross-region-replication"
             ```
+
+            Once the policy exists, the destination bucket becomes read-only and receives writes only through replication, and deletes in the source bucket are replicated to it.
         - id: terraform
           desc: |
-            To enable replication on an Object Storage bucket in Terraform, create a replication policy resource. The destination bucket must already exist with object versioning enabled, and an IAM policy must grant the Object Storage service permission to manage objects in the destination compartment, or the policy creation fails. The example below declares both prerequisites:
+            To enable replication on an Object Storage bucket in Terraform, create a replication policy resource. The destination bucket must already exist with versioning disabled and no retention rules, and an IAM policy must authorize the Object Storage service of the source region to manage objects in the source and destination compartments, or the policy creation fails. The example below declares both prerequisites, with `var.source_region` set to the source bucket's region identifier such as `us-ashburn-1`. The destination bucket uses a provider configuration aliased as `destination` whose `region` is the destination region, because a bucket is created in the region of the provider that manages it:
 
             ```hcl
             resource "oci_objectstorage_bucket" "destination" {
+              provider       = oci.destination
               compartment_id = var.destination_compartment_ocid
               namespace      = var.namespace
               name           = "backups-replica"
-              versioning     = "Enabled"
             }
 
             resource "oci_identity_policy" "replication" {
-              compartment_id = var.destination_compartment_ocid
+              compartment_id = var.tenancy_ocid
               name           = "objectstorage-replication"
-              description    = "Allow Object Storage to replicate into the destination compartment"
+              description    = "Allow Object Storage in the source region to replicate objects"
 
               statements = [
-                "Allow service objectstorage-${var.destination_region} to manage object-family in compartment id ${var.destination_compartment_ocid}",
+                "Allow service objectstorage-${var.source_region} to manage object-family in tenancy",
               ]
             }
 
             resource "oci_objectstorage_replication_policy" "example" {
-              bucket           = oci_objectstorage_bucket.source.name
-              namespace        = var.namespace
-              name             = "cross-region-replication"
-              destination_bucket_name   = oci_objectstorage_bucket.destination.name
-              destination_region_name   = var.destination_region
+              bucket                  = oci_objectstorage_bucket.source.name
+              namespace               = var.namespace
+              name                    = "cross-region-replication"
+              destination_bucket_name = oci_objectstorage_bucket.destination.name
+              destination_region_name = var.destination_region
+
+              depends_on = [oci_identity_policy.replication]
             }
             ```
+
+            Once the policy exists, the destination bucket becomes read-only and receives writes only through replication, and deletes in the source bucket are replicated to it.
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/usingreplication.htm
         title: OCI Object Storage replication documentation
@@ -2231,13 +2267,13 @@ queries:
         1. List all security lists in the VCN:
 
         ```bash
-        oci network security-list list --compartment-id <compartment-ocid> --vcn-id <vcn-ocid> --all --query 'data[*].{id: id, name: "display-name", ingress: "ingress-security-rules"[?source==`0.0.0.0/0` && protocol==`6`]}'
+        oci network security-list list --compartment-id <compartment-ocid> --vcn-id <vcn-ocid> --all --query 'data[*].{id: id, name: "display-name", ingress: "ingress-security-rules"[?source==`0.0.0.0/0` && protocol==`"6"`]}'
         ```
 
         2. For any returned security list, inspect whether the ingress rules for `0.0.0.0/0` TCP cover port 22:
 
         ```bash
-        oci network security-list get --security-list-id <security-list-ocid> --query 'data."ingress-security-rules"[?source==`0.0.0.0/0` && protocol==`6`]'
+        oci network security-list get --security-list-id <security-list-ocid> --query 'data."ingress-security-rules"[?source==`0.0.0.0/0` && protocol==`"6"`]'
         ```
 
         A passing security list returns no rules that include port 22 in the destination port range from `0.0.0.0/0`. A failing security list returns one or more rules where the destination port range covers port 22.
@@ -2401,13 +2437,13 @@ queries:
         1. List all security lists in the VCN:
 
         ```bash
-        oci network security-list list --compartment-id <compartment-ocid> --vcn-id <vcn-ocid> --all --query 'data[*].{id: id, name: "display-name", ingress: "ingress-security-rules"[?source==`0.0.0.0/0` && protocol==`6`]}'
+        oci network security-list list --compartment-id <compartment-ocid> --vcn-id <vcn-ocid> --all --query 'data[*].{id: id, name: "display-name", ingress: "ingress-security-rules"[?source==`0.0.0.0/0` && protocol==`"6"`]}'
         ```
 
         2. For any returned security list, inspect whether the ingress rules for `0.0.0.0/0` TCP cover port 3389:
 
         ```bash
-        oci network security-list get --security-list-id <security-list-ocid> --query 'data."ingress-security-rules"[?source==`0.0.0.0/0` && protocol==`6`]'
+        oci network security-list get --security-list-id <security-list-ocid> --query 'data."ingress-security-rules"[?source==`0.0.0.0/0` && protocol==`"6"`]'
         ```
 
         A passing security list returns no rules that include port 3389 in the destination port range from `0.0.0.0/0`. A failing security list returns one or more rules where the destination port range covers port 3389.
@@ -2571,7 +2607,7 @@ queries:
         1. Retrieve all ingress rules for a security list and filter for UDP rules from `0.0.0.0/0`:
 
         ```bash
-        oci network security-list get --security-list-id <security-list-ocid> --query 'data."ingress-security-rules"[?source==`0.0.0.0/0` && protocol==`17`]'
+        oci network security-list get --security-list-id <security-list-ocid> --query 'data."ingress-security-rules"[?source==`0.0.0.0/0` && protocol==`"17"`]'
         ```
 
         A passing security list returns no results, or returns only UDP rules that include a `udp-options` block with an explicit destination port range. A failing security list returns one or more UDP rules from `0.0.0.0/0` where `udp-options` is absent (all UDP ports allowed).
@@ -2870,7 +2906,7 @@ queries:
         1. Retrieve all egress rules for a security list and filter for unrestricted TCP egress:
 
         ```bash
-        oci network security-list get --security-list-id <security-list-ocid> --query 'data."egress-security-rules"[?destination==`0.0.0.0/0` && protocol==`6`]'
+        oci network security-list get --security-list-id <security-list-ocid> --query 'data."egress-security-rules"[?destination==`0.0.0.0/0` && protocol==`"6"`]'
         ```
 
         A passing security list returns no results, or returns only TCP egress rules that include a `tcp-options` block with an explicit destination port range. A failing security list returns one or more TCP egress rules to `0.0.0.0/0` where `tcp-options` is absent (all TCP ports allowed).
@@ -3155,25 +3191,35 @@ queries:
       remediation:
         - id: console
           desc: |
-            Revoke and reissue long-lived tokens:
+            To rotate auth tokens older than 90 days using the OCI Console:
 
             1. Open **Identity & Security** → **Users** → select the user → **Auth Tokens**.
-            2. Delete any token that was created more than 90 days ago or is no longer needed.
-            3. Generate a replacement token and record its creation date.
-            4. Distribute the new token to the owning system and verify it works, then schedule the next rotation within 90 days.
+            2. Generate a replacement token and copy its value, because OCI displays it only once.
+            3. Update every system that uses the old token and confirm it authenticates with the new one.
+            4. Delete every token that was created more than 90 days ago.
+
+            A user can hold at most two auth tokens, so if the user already has two, delete the one that is no longer in use before generating the replacement. Deleting a token that is still in use immediately breaks every client that authenticates with it, which is why the replacement is deployed before the old token is removed. The finding clears once no active token on the user is older than 90 days, so schedule the next rotation before the new token reaches that age.
         - id: cli
           desc: |
-            Delete long-lived auth tokens via the OCI CLI:
+            To rotate auth tokens older than 90 days using the OCI CLI, start by listing the user's tokens with their creation time:
+
+            ```bash
+            oci iam auth-token list --user-id <user-ocid> --query "data[].{Id:id, Created:\"time-created\", State:\"lifecycle-state\"}" --output table
+            ```
+
+            Issue the replacement first and save the `token` value from the output, because OCI shows it only once:
+
+            ```bash
+            oci iam auth-token create --user-id <user-ocid> --description "Rotated on $(date +%Y-%m-%d)"
+            ```
+
+            Update every system that uses the old token, then delete each token whose `Created` time is more than 90 days ago, passing its `Id` as `<token-ocid>`:
 
             ```bash
             oci iam auth-token delete --user-id <user-ocid> --auth-token-id <token-ocid>
             ```
 
-            Issue a replacement token and record its creation date so it can be rotated again within 90 days:
-
-            ```bash
-            oci iam auth-token create --user-id <user-ocid> --description "Rotated on $(date +%Y-%m-%d)"
-            ```
+            A user can hold at most two auth tokens, so if the user already has two, delete the one that is no longer in use before creating the replacement. Deleting a token that is still in use breaks every client that authenticates with it. The finding clears once no active token on the user is older than 90 days.
         # No Terraform remediation: auth token expiry and creation timestamps are runtime-only fields; the `oci_identity_auth_token` Terraform resource exposes neither `expires` nor `time_created` as configurable arguments.
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managingcredentials.htm
@@ -3256,19 +3302,29 @@ queries:
       remediation:
         - id: console
           desc: |
-            Trim the admin group to the minimum set of required members:
+            To trim an administrative group to five or fewer members using the OCI Console:
 
-            1. Open **Identity & Security** → **Groups** → select the flagged group.
+            1. Open **Identity & Security** → **Groups** → select the flagged group. A group counts as administrative when it is named like `Administrators` or `Admins`, or when a policy grants it `manage all-resources in tenancy`.
             2. Review each member against a documented list of personnel who require admin access.
-            3. **Remove user from group** for every member who no longer needs the privilege.
-            4. For users who only need occasional admin access, move them to a break-glass workflow (separate account activated only when needed).
+            3. **Remove user from group** for every member who no longer needs the privilege, until the group has five or fewer members.
+            4. For users who only need occasional admin access, move them to a break-glass workflow that uses a separate account activated only when needed.
+
+            Removing a member takes away their tenancy-wide access immediately, so confirm that each removed user keeps whatever narrower access their role still needs.
         - id: cli
           desc: |
-            Remove a user from an over-populated admin group:
+            To trim an administrative group to five or fewer members using the OCI CLI, start by listing its current members:
+
+            ```bash
+            oci iam group list-users --group-id <group-ocid> --all --query "data[].{Name:name, Id:id}" --output table
+            ```
+
+            Remove each member who no longer needs tenancy-wide access, passing the user's `Id` as `<user-ocid>`, until the group has five or fewer members:
 
             ```bash
             oci iam group remove-user --user-id <user-ocid> --group-id <group-ocid>
             ```
+
+            Removing a member takes away their administrative access immediately, so confirm that each removed user keeps whatever narrower access their role still needs.
         # No Terraform remediation: group membership count is cross-resource runtime state; Terraform resources for `oci_identity_user_group_membership` manage individual memberships and there is no HCL expression that enforces a maximum member count across all memberships referencing a group.
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managinggroups.htm
@@ -3359,13 +3415,21 @@ queries:
             4. For administrative access, route through OCI Bastion or an approved VPN instead of opening SSH/RDP to the world.
         - id: cli
           desc: |
-            Remove an over-permissive ingress rule from an NSG:
+            To remove an over-permissive ingress rule from an NSG using the OCI CLI, start by listing the NSG's ingress rules:
+
+            ```bash
+            oci network nsg rules list --nsg-id <nsg-ocid> --direction INGRESS --all
+            ```
+
+            A rule fails when its `source` is `0.0.0.0/0` or `::/0`, its `protocol` is `6`, and its `tcp-options` destination port range is missing or covers port 22 or 3389. Remove each such rule by passing its `id` as `<rule-id>`:
 
             ```bash
             oci network nsg rules remove \
               --nsg-id <nsg-ocid> \
               --security-rule-ids '["<rule-id>"]'
             ```
+
+            If administrators still need SSH or RDP, add a rule scoped to your bastion or VPN CIDR before removing the open one so their access is not cut off.
         - id: terraform
           desc: |
             Define NSG ingress rules with `tcp_options.destination_port_range` blocks that exclude SSH (22) and RDP (3389), or restrict the source to a trusted CIDR rather than `0.0.0.0/0` / `::/0`:
@@ -3555,19 +3619,21 @@ queries:
       remediation:
         - id: console
           desc: |
-            Attach an NSG to the flagged VNIC:
+            To gate a public VNIC with a restrictive network security group using the OCI Console:
 
             1. Open **Compute** → **Instances** → select the instance → **Attached VNICs** → select the VNIC.
             2. **Edit VNIC** → **Network Security Groups** → **Add Network Security Group**.
-            3. Pick an NSG whose ingress rules match the services the host should expose.
-            4. Save. If no appropriate NSG exists, create one first scoped to the workload.
+            3. Pick an NSG whose ingress rules admit only specific source CIDR blocks. The finding clears only when every NSG attached to the instance's public VNICs has no ingress rule, other than ICMP, from `0.0.0.0/0`, `::/0`, or another public range as wide as a /8, so an NSG that opens even one port to the whole internet keeps the instance failing.
+            4. Save. If no appropriate NSG exists, create one first scoped to the workload. Internet-facing services that must accept traffic from any address belong behind a load balancer rather than on a public instance VNIC.
         - id: cli
           desc: |
-            Attach an NSG to a VNIC:
+            To attach a restrictive network security group to a public VNIC using the OCI CLI, pass the NSG OCID in `--nsg-ids`:
 
             ```bash
             oci network vnic update --vnic-id <vnic-ocid> --nsg-ids '["<nsg-ocid>"]'
             ```
+
+            `--nsg-ids` replaces the VNIC's complete NSG list, so include every NSG already attached that you want to keep. The finding clears only when none of the attached NSGs has an ingress rule, other than ICMP, from `0.0.0.0/0`, `::/0`, or another public range as wide as a /8, so choose or create an NSG whose ingress sources are specific CIDR blocks.
         - id: terraform
           desc: |
             Whenever the instance assigns a public IP, populate `nsg_ids` on the `create_vnic_details` block:
@@ -3715,13 +3781,15 @@ queries:
             4. Save. The setting takes effect immediately. Once legacy IMDS is disabled, any application still calling IMDSv1 fails immediately, so update those applications to IMDSv2 (which sends a PUT request to obtain a session token and includes that token as a header on subsequent calls) before disabling, then restart those applications.
         - id: cli
           desc: |
-            Disable legacy IMDS endpoints via the OCI CLI:
+            To disable the legacy IMDS endpoints using the OCI CLI, set `areLegacyImdsEndpointsDisabled` to `true` in the instance options:
 
             ```bash
             oci compute instance update \
               --instance-id <instance-ocid> \
               --instance-options '{"areLegacyImdsEndpointsDisabled": true}'
             ```
+
+            The change takes effect immediately. Any agent or application on the instance that still calls the legacy IMDSv1 endpoints fails from that moment, so update those clients to IMDSv2, which sends the `Authorization: Bearer Oracle` header on every request, before running the command.
         - id: terraform
           desc: |
             Declare an `instance_options` block on every `oci_core_instance` and set `are_legacy_imds_endpoints_disabled = true`:
@@ -3864,11 +3932,15 @@ queries:
             4. Replace the usage with Vault-backed configuration or a resource principal, neither of which leaves values visible in `GetInstance`.
         - id: cli
           desc: |
-            Rotate any exposed credential first. Then retrieve the current metadata, remove only the credential keys, and write the remaining map back. The update must include the `ssh_authorized_keys` and `user_data` values exactly as launched, because OCI rejects any update that adds, changes, or removes those keys:
+            To remove credentials from instance metadata using the OCI CLI, rotate any exposed credential first, because it must be treated as compromised. Then export the current metadata to a file:
 
             ```bash
-            oci compute instance get --instance-id <instance-ocid> --query 'data.metadata'
+            oci compute instance get --instance-id <instance-ocid> --query 'data.metadata' > metadata-without-credentials.json
+            ```
 
+            Edit `metadata-without-credentials.json`, deleting only the credential keys and values. Keep `ssh_authorized_keys` and `user_data` exactly as exported, because OCI rejects any update that adds, changes, or removes those keys. Write the edited map back, which replaces the instance's whole metadata map:
+
+            ```bash
             oci compute instance update --instance-id <instance-ocid> \
               --metadata file://metadata-without-credentials.json
             ```
@@ -4050,29 +4122,31 @@ queries:
             4. Update. Existing connections finish, new connections are required to use TLS 1.2+.
         - id: cli
           desc: |
-            Update the listener's SSL configuration to TLS 1.2+:
+            To restrict a listener to TLS 1.2 and newer using the OCI CLI, update its SSL configuration so `--protocols` lists only `TLSv1.2` and `TLSv1.3`:
 
             ```bash
             oci lb listener update \
               --load-balancer-id <lb-ocid> \
               --listener-name <listener-name> \
-              --protocol HTTPS \
+              --protocol HTTP \
               --port 443 \
-              --default-backend-set-name <backend> \
-              --ssl-certificate-name <cert-name> \
+              --default-backend-set-name <backend-set-name> \
+              --ssl-certificate-name <certificate-name> \
               --cipher-suite-name oci-default-ssl-cipher-suite-v1 \
               --protocols '["TLSv1.2","TLSv1.3"]'
             ```
+
+            OCI has no separate HTTPS listener protocol. A TLS listener is an `HTTP` or `HTTP2` listener with an SSL configuration, so keep the listener's current protocol. The update replaces the listener's whole SSL configuration and requires the port and default backend set, so read the current values with `oci lb load-balancer get --load-balancer-id <lb-ocid> --query 'data.listeners'` and pass the same port, backend set, and certificate name. Clients that can only negotiate TLS 1.0 or 1.1 can no longer connect after the change.
         - id: terraform
           desc: |
-            Declare every HTTPS / HTTP2 listener with an `ssl_configuration` block whose `protocols` list is restricted to TLS 1.2 and 1.3:
+            Declare every TLS listener with an `ssl_configuration` block whose `protocols` list is restricted to TLS 1.2 and 1.3. OCI has no separate HTTPS listener protocol, so a TLS listener uses `protocol = "HTTP"` or `"HTTP2"` together with the `ssl_configuration` block:
 
             ```hcl
             resource "oci_load_balancer_listener" "https" {
               load_balancer_id         = oci_load_balancer_load_balancer.app.id
               name                     = "https"
               default_backend_set_name = oci_load_balancer_backend_set.app.name
-              protocol                 = "HTTPS"
+              protocol                 = "HTTP"
               port                     = 443
 
               ssl_configuration {
@@ -4210,33 +4284,35 @@ queries:
             Switch the listener to a modern cipher suite:
 
             1. Open **Networking** → **Load Balancers** → select the load balancer → **SSL Cipher Suites**.
-            2. Change the listener's cipher suite to `oci-modern-ssl-cipher-suite-v1` (or the appropriate `oci-tls-1-2-*` / `oci-tls-1-3-*` variant for your compliance context).
+            2. Change the listener's cipher suite to `oci-modern-ssl-cipher-suite-v1`, or to `oci-default-ssl-cipher-suite-v1` if some clients cannot negotiate the modern suite's ciphers.
             3. Test with a non-legacy client to confirm handshakes still succeed before rolling out broadly.
         - id: cli
           desc: |
-            Update a listener to use a modern cipher suite:
+            To switch a listener to a modern cipher suite using the OCI CLI, update its SSL configuration with an accepted suite name:
 
             ```bash
             oci lb listener update \
               --load-balancer-id <lb-ocid> \
               --listener-name <listener-name> \
-              --protocol HTTPS \
+              --protocol HTTP \
               --port 443 \
-              --default-backend-set-name <backend> \
-              --ssl-certificate-name <cert-name> \
+              --default-backend-set-name <backend-set-name> \
+              --ssl-certificate-name <certificate-name> \
               --cipher-suite-name oci-modern-ssl-cipher-suite-v1 \
               --protocols '["TLSv1.2","TLSv1.3"]'
             ```
+
+            The check accepts `oci-modern-ssl-cipher-suite-v1` and `oci-default-ssl-cipher-suite-v1`. OCI has no separate HTTPS listener protocol. A TLS listener is an `HTTP` or `HTTP2` listener with an SSL configuration, so keep the listener's current protocol. The update replaces the listener's whole SSL configuration and requires the port and default backend set, so read the current values with `oci lb load-balancer get --load-balancer-id <lb-ocid> --query 'data.listeners'` and pass the same port, backend set, and certificate name. Legacy clients that support only older ciphers can no longer connect after the change.
         - id: terraform
           desc: |
-            Set `cipher_suite_name` on every HTTPS / HTTP2 listener's `ssl_configuration` block to a modern Oracle-managed suite:
+            Set `cipher_suite_name` on every TLS listener's `ssl_configuration` block to a modern Oracle-managed suite. OCI has no separate HTTPS listener protocol, so a TLS listener uses `protocol = "HTTP"` or `"HTTP2"` together with the `ssl_configuration` block:
 
             ```hcl
             resource "oci_load_balancer_listener" "https" {
               load_balancer_id         = oci_load_balancer_load_balancer.app.id
               name                     = "https"
               default_backend_set_name = oci_load_balancer_backend_set.app.name
-              protocol                 = "HTTPS"
+              protocol                 = "HTTP"
               port                     = 443
 
               ssl_configuration {
@@ -4368,19 +4444,21 @@ queries:
             5. Route to the same backend set as the HTTP listener, or add an application-layer redirect to HTTPS.
         - id: cli
           desc: |
-            Create an HTTPS listener on the existing load balancer:
+            To add a TLS listener to the existing load balancer using the OCI CLI, create an `HTTP2` listener with an SSL configuration on port 443:
 
             ```bash
             oci lb listener create \
               --load-balancer-id <lb-ocid> \
               --name https-listener \
-              --protocol HTTPS \
+              --protocol HTTP2 \
               --port 443 \
-              --default-backend-set-name <backend> \
-              --ssl-certificate-name <cert-name> \
-              --cipher-suite-name oci-modern-ssl-cipher-suite-v1 \
+              --default-backend-set-name <backend-set-name> \
+              --ssl-certificate-name <certificate-name> \
+              --cipher-suite-name oci-default-http2-tls-12-13-ssl-cipher-suite-v1 \
               --protocols '["TLSv1.2","TLSv1.3"]'
             ```
+
+            OCI has no separate HTTPS listener protocol, and a TLS listener is an `HTTP` or `HTTP2` listener that carries an SSL configuration. Set `<backend-set-name>` to the backend set the HTTP listener already uses and `<certificate-name>` to a certificate bundle already uploaded to the load balancer. Clients keep reaching the HTTP listener until you redirect them or remove it.
         # No Terraform remediation: this check requires cross-resource correlation — grouping `oci_lb_listener` resources by their `load_balancer_id` and asserting that each group containing an HTTP listener also contains an HTTPS listener — which has no clean equivalent in HCL/plan/state without unsupported cross-resource graph traversal.
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Balance/Tasks/managinglisteners.htm
@@ -4601,11 +4679,19 @@ queries:
             4. Confirm the cluster is within two releases of the newest version OKE offers, which is what keeps it on a supported track.
         - id: cli
           desc: |
-            Upgrade the OKE control plane:
+            To upgrade an OKE control plane using the OCI CLI, start by listing the versions the cluster can move to:
+
+            ```bash
+            oci ce cluster get --cluster-id <cluster-ocid> --query 'data."available-kubernetes-upgrades"'
+            ```
+
+            Pick a version from that list for `<new-version>` and upgrade the control plane:
 
             ```bash
             oci ce cluster update --cluster-id <cluster-ocid> --kubernetes-version <new-version>
             ```
+
+            The finding clears once the cluster has fewer than three newer versions available, so repeat the upgrade until the list holds two versions or fewer. Upgrade each node pool afterward with `oci ce node-pool update --node-pool-id <node-pool-ocid> --kubernetes-version <new-version>`, then cordon, drain, and replace the existing worker nodes, which keep their old version until they are recreated.
         # No Terraform remediation: `availableKubernetesUpgrades` is runtime telemetry derived from Oracle's supported-version list at scan time; no `oci_containerengine_cluster` Terraform argument exposes the count of pending upgrades, so there is no static HCL change that resolves this finding.
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/ContEng/Tasks/contengupgradingk8smasternode.htm
@@ -5111,22 +5197,53 @@ queries:
           desc: |
             To create an OKE cluster that encrypts Kubernetes secrets with a customer-managed key using the OCI CLI:
 
+            1. Before creating the cluster, let clusters use the key. Create a dynamic group with the matching rule `ALL {resource.type = 'cluster', resource.compartment.id = '<cluster-compartment-ocid>'}`, then add this statement to a policy, replacing the placeholders with the dynamic group name, the key's compartment, and the key OCID:
+
+            ```text
+            Allow dynamic-group <dynamic-group-name> to use keys in compartment <key-compartment-name> where target.key.id = '<key-ocid>'
+            ```
+
+            2. Create the cluster with the key, setting `<version>` to a Kubernetes version OKE currently supports:
+
             ```bash
             oci ce cluster create --compartment-id <compartment-ocid> --name secure-cluster --vcn-id <vcn-ocid> --kubernetes-version <version> --kms-key-id <key-ocid>
             ```
+
+            The key can only be set when a cluster is created, so an existing cluster that fails this check must be replaced by a new cluster and its workloads migrated to it.
         - id: terraform
           desc: |
-            To encrypt Kubernetes secrets with a customer-managed key in Terraform, set `kms_key_id` on the cluster resource:
+            To encrypt Kubernetes secrets with a customer-managed key in Terraform, set `kms_key_id` on the cluster resource and declare the key-access policy the cluster needs, which must exist before the cluster is created:
 
             ```hcl
+            resource "oci_identity_dynamic_group" "oke_clusters" {
+              compartment_id = var.tenancy_ocid
+              name           = "oke-clusters"
+              description    = "OKE clusters that use the secrets encryption key"
+              matching_rule  = "ALL {resource.type = 'cluster', resource.compartment.id = '${var.compartment_ocid}'}"
+            }
+
+            resource "oci_identity_policy" "oke_keys" {
+              compartment_id = var.compartment_ocid
+              name           = "oke-use-secrets-key"
+              description    = "Allow OKE clusters to use the secrets encryption key"
+
+              statements = [
+                "Allow dynamic-group ${oci_identity_dynamic_group.oke_clusters.name} to use keys in compartment id ${var.compartment_ocid} where target.key.id = '${oci_kms_key.example.id}'",
+              ]
+            }
+
             resource "oci_containerengine_cluster" "example" {
               compartment_id     = var.compartment_ocid
               name               = "secure-cluster"
               vcn_id             = oci_core_vcn.example.id
-              kubernetes_version = "v1.29.1"
+              kubernetes_version = var.kubernetes_version # use a currently supported OKE version
               kms_key_id         = oci_kms_key.example.id
+
+              depends_on = [oci_identity_policy.oke_keys]
             }
             ```
+
+            Changing `kms_key_id` on an existing cluster forces Terraform to replace it, which destroys the cluster, so migrate workloads to the new cluster first.
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/ContEng/Tasks/contengencryptingdata.htm
         title: OCI - Encrypting Kubernetes Secrets at Rest in Etcd
@@ -5546,10 +5663,16 @@ queries:
               --shape <shape> \
               --hostname <hostname> \
               --cpu-core-count <count> \
-              --ssh-authorized-keys-file <public-key-file>
+              --ssh-authorized-keys-file <public-key-file> \
+              --database-edition <database-edition> \
+              --db-version <db-version> \
+              --db-name <db-name> \
+              --admin-password <admin-password>
             ```
 
-            Migrate data to the replacement via Data Pump, Data Guard, or RMAN, then terminate the DB system in the public subnet:
+            Set `--cidr-block` to an unused range inside the VCN. Match `<shape>`, `<database-edition>`, and `<db-version>` to the original DB system so the migration target is compatible, and list the versions available in the region with `oci db version list --compartment-id <compartment-ocid>`. `<db-name>` must start with a letter and hold at most eight alphanumeric characters. Supply the SYS password from a secrets manager rather than typing it into shell history.
+
+            Migrate data to the replacement via Data Pump, Data Guard, or RMAN, then terminate the DB system in the public subnet. Termination permanently deletes the original system and its local storage, so confirm the migration and backups first:
 
             ```bash
             oci db system terminate --db-system-id <old-db-system-ocid>
@@ -5651,7 +5774,7 @@ queries:
               --query 'data."route-rules"' > route-rules.json
             ```
 
-            2. Edit `route-rules.json`, deleting the rule whose destination is `0.0.0.0/0` and whose target is an internet gateway. Where the database still needs egress, replace it with a NAT or service gateway route such as `{"destination":"all-<region>-services-in-oracle-services-network","destinationType":"SERVICE_CIDR_BLOCK","networkEntityId":"<service-gateway-ocid>"}`. Resubmit the edited file so every route you kept is preserved:
+            2. Edit `route-rules.json`, deleting the rule whose destination is `0.0.0.0/0` and whose target is an internet gateway. Where the database still needs egress, replace it with a NAT or service gateway route such as `{"destination":"<service-cidr-label>","destinationType":"SERVICE_CIDR_BLOCK","networkEntityId":"<service-gateway-ocid>"}`. Take `<service-cidr-label>` from the `cidr-block` value that `oci network service list` returns for the service your gateway enables, which has the form `all-iad-services-in-oracle-services-network`. Resubmit the edited file so every route you kept is preserved:
 
             ```bash
             oci network route-table update \
@@ -5891,11 +6014,19 @@ queries:
             4. Verify consumers pick up the new version; update downstream systems that cache the old version.
         - id: cli
           desc: |
-            Rotate an expired Vault secret:
+            To replace an expired Vault secret version using the OCI CLI, rotate secrets that have a rotation target configured:
 
             ```bash
             oci vault secret rotate --secret-id <secret-ocid>
             ```
+
+            `rotate` works only when the secret has a function or Autonomous Database target in its rotation configuration. For a secret you manage by hand, create a new current version instead, setting `<base64-secret-value>` to the new secret value encoded in base64:
+
+            ```bash
+            oci vault secret update-base64 --secret-id <secret-ocid> --secret-content-content <base64-secret-value>
+            ```
+
+            The finding clears once the new version is current and its expiry lies in the future. Update every consumer that caches the old value, because the expired version stops being served as current.
         # No Terraform remediation: `timeOfCurrentVersionExpiry` is runtime telemetry on the active secret version; the `oci_vault_secret` Terraform resource has no field that exposes whether the current version is past its expiry, and there is no HCL change that resolves an expired version.
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/KeyManagement/Tasks/managingsecrets.htm
@@ -6187,9 +6318,10 @@ queries:
             3. Scan the mirrored image via OCIR's integrated vulnerability scanning.
             4. In the container instance spec, change the `imageUrl` to the OCIR path.
             5. Recreate the container instance with the updated spec.
+            6. After the replacement is running, delete the original container instance. The finding stays open while any instance still pulls from an outside registry.
         - id: cli
           desc: |
-            Recreate the container instance pointing at the OCIR copy:
+            To move a container instance to an image in the tenancy's OCIR registry using the OCI CLI, create a replacement pointing at the OCIR copy. Set `imageUrl` to the full OCIR path, where `<region>` is the region key such as `iad` and `<namespace>` is your Object Storage namespace:
 
             ```bash
             oci container-instances container-instance create \
@@ -6200,6 +6332,12 @@ queries:
               --shape-config '{"ocpus":1,"memoryInGBs":2}' \
               --vnics '[{"subnetId":"<subnet-ocid>"}]' \
               --containers '[{"displayName":"app","imageUrl":"<region>.ocir.io/<namespace>/<repo>:<tag>"}]'
+            ```
+
+            Once the replacement is running and serving traffic, delete the original instance. Container images cannot be changed on an existing instance, and the finding stays open while any instance still pulls from an outside registry:
+
+            ```bash
+            oci container-instances container-instance delete --container-instance-id <old-container-instance-ocid>
             ```
         - id: terraform
           desc: |
@@ -6350,22 +6488,22 @@ queries:
             Lock retention rules on every bucket that stores data with retention requirements:
 
             1. Open **Storage** → **Buckets** → select the bucket → **Retention Rules**.
-            2. For each unlocked rule, select **Edit** → set **Rule Locked Time** to a date no sooner than 14 days in the future (OCI enforces a 14-day grace period before the lock takes effect).
-            3. Save. After the grace period passes, the rule becomes non-deletable for the duration of its lifetime.
+            2. For each unlocked rule, select **Edit** → set **Rule Locked Time** to a date at least 14 days in the future, since OCI enforces a 14-day grace period before the lock takes effect. Choose a date close to that minimum, because the finding clears only after the lock time has passed and the rule stays deletable until then.
+            3. Save. After the lock time passes, the rule becomes non-deletable for the duration of its lifetime.
             4. Plan retention carefully. After the lock takes effect, the duration can only be increased, and the rule can only be removed by deleting the bucket.
         - id: cli
           desc: |
-            Lock an existing retention rule:
+            To lock an existing retention rule using the OCI CLI, set its lock time:
 
             ```bash
             oci os retention-rule update \
               --namespace-name <namespace> \
               --bucket-name <bucket> \
               --retention-rule-id <rule-ocid> \
-              --time-rule-locked 2099-01-01T00:00:00Z # set to a real future RFC 3339 timestamp ≥ 14 days from now
+              --time-rule-locked <lock-time>
             ```
 
-            Set the lock time to a real RFC 3339 timestamp at least 14 days in the future (OCI enforces a 14-day grace period before the lock takes effect). This is irreversible: once the lock takes effect the duration can only be increased, and the rule becomes non-deletable for the bucket's lifetime, so the only way to remove it is to delete the entire bucket. Plan the retention duration carefully before locking.
+            Set `<lock-time>` to an RFC 3339 timestamp in the form `YYYY-MM-DDThh:mm:ssZ` that is at least 14 days in the future, since OCI enforces a 14-day grace period before a lock. The finding clears only after the lock time has passed, so choose a date close to the 14-day minimum. A far-future date leaves the rule unlocked and deletable until that date arrives. This is irreversible: once the lock takes effect the duration can only be increased, and the rule becomes non-deletable for the bucket's lifetime, so the only way to remove it is to delete the entire bucket. Plan the retention duration carefully before locking.
         - id: terraform
           desc: |
             Set `time_rule_locked` on every `retention_rules` block to an RFC 3339 timestamp at least 14 days in the future so the rule transitions to a non-deletable lock. Use a fixed value committed in your repository. Do not use `timeadd(timestamp(), ...)` directly on this attribute, because `timestamp()` evaluates on every plan and would produce a perpetual diff. Update the value when you intentionally roll the lock, and add `lifecycle.ignore_changes = [retention_rules]` after the first apply if you want Terraform to stop tracking drift on the locked rule:
@@ -6978,7 +7116,7 @@ queries:
         ```bash
         oci network security-list get \
           --security-list-id <security-list-ocid> \
-          --query 'data."ingress-security-rules"[?source==`0.0.0.0/0` && protocol==`6`].{Source:source, MinPort:"tcp-options"."destination-port-range".min, MaxPort:"tcp-options"."destination-port-range".max}' \
+          --query 'data."ingress-security-rules"[?source==`0.0.0.0/0` && protocol==`"6"`].{Source:source, MinPort:"tcp-options"."destination-port-range".min, MaxPort:"tcp-options"."destination-port-range".max}' \
           --output table
         ```
 
@@ -7170,7 +7308,7 @@ queries:
         ```bash
         oci network security-list get \
           --security-list-id <security-list-ocid> \
-          --query 'data."ingress-security-rules"[?source==`0.0.0.0/0` && protocol==`6`].{Source:source, MinPort:"tcp-options"."destination-port-range".min, MaxPort:"tcp-options"."destination-port-range".max}' \
+          --query 'data."ingress-security-rules"[?source==`0.0.0.0/0` && protocol==`"6"`].{Source:source, MinPort:"tcp-options"."destination-port-range".min, MaxPort:"tcp-options"."destination-port-range".max}' \
           --output table
         ```
 
@@ -7359,7 +7497,7 @@ queries:
         ```bash
         oci network security-list get \
           --security-list-id <security-list-ocid> \
-          --query 'data."ingress-security-rules"[?source==`0.0.0.0/0` && (protocol==`1` || protocol==`58` || protocol==`all`)].{Source:source, Protocol:protocol, ICMPOptions:"icmp-options"}' \
+          --query 'data."ingress-security-rules"[?source==`0.0.0.0/0` && (protocol==`"1"` || protocol==`"58"` || protocol==`all`)].{Source:source, Protocol:protocol, ICMPOptions:"icmp-options"}' \
           --output json
         ```
 
@@ -7738,12 +7876,12 @@ queries:
             1. Open **Oracle Database** → **Autonomous Database** (or **DB Systems** → the database) → select the database.
             2. Under **Encryption**, select **Edit** and choose **Encrypt using a customer-managed key**.
             3. Select the vault and master encryption key, then save.
-            4. Subsequent automatic and on-demand backups inherit the new key. Existing backups remain encrypted with the previous key — re-create critical long-term backups after the rotation.
+            4. Subsequent automatic and on-demand backups inherit the new key. Existing backups stay encrypted with the previous key and keep failing until they are gone. Automatic backups age out at the end of their retention period, and full or long-term backups remain until you delete them from the database's **Backups** list. Take a new backup under the customer-managed key before deleting an old one, because a deleted backup cannot be restored.
         - id: cli
           desc: |
-            Re-keying the parent database only fixes backups taken after the change. Existing backups stay on the old key, so this finding persists for them until those backups are re-created. Plan to re-create any critical long-term backups you need to keep.
+            Re-keying the parent database only fixes backups taken after the change. Existing backups stay on the old key and keep this finding open until they are gone: automatic backups age out at the end of their retention period, and full or long-term backups remain until you delete them.
 
-            Switch the parent database to a customer-managed KMS key so subsequent backups inherit it.
+            1. Switch the parent database to a customer-managed KMS key so subsequent backups inherit it.
 
             For an Autonomous Database:
 
@@ -7763,7 +7901,12 @@ queries:
               --vault-id <vault-ocid>
             ```
 
-            Existing backups remain encrypted with the previous key. Re-create critical long-term backups after the migration.
+            2. Take a new backup of anything you still need, then delete the old full or long-term backups that report no KMS key. Deletion is permanent, so confirm each one is no longer needed for a restore:
+
+            ```bash
+            oci db backup delete --backup-id <old-backup-ocid>
+            oci db autonomous-database-backup delete --autonomous-database-backup-id <old-adb-backup-ocid>
+            ```
         - id: terraform
           desc: |
             Set `kms_key_id` (and `vault_id` for autonomous databases) on every database resource so its backups inherit customer-managed encryption:
@@ -8685,24 +8828,36 @@ queries:
           desc: |
             Issue a new version for each near-expiry or expired certificate:
 
-            1. Open **Identity & Security** → **Certificates** → **Certificates** → select the certificate.
-            2. Choose **Issue New Version**.
-            3. For internally issued certificates, enable a `CERTIFICATE_RENEWAL_RULE` so future versions auto-renew.
-            4. Trigger the new version, verify the consumers pick it up, and remove the old version once dependents have rotated.
+            1. Open **Identity & Security** → **Certificates** → **Certificates** and find the certificate.
+            2. For a certificate issued by an internal CA, select **Renew certificate** from its **Actions** menu. Leave **Not Valid Before** blank so the new version becomes current immediately, and set **Not Valid After** to a date more than 30 days away.
+            3. For an imported certificate, obtain a renewed certificate from the external CA and upload it as a new version of the same certificate, because the service cannot renew imported certificates.
+            4. For internally issued certificates, add a `CERTIFICATE_RENEWAL_RULE` so future versions renew automatically.
+            5. Verify the consumers pick up the new version, and remove the old version once dependents have rotated.
         - id: cli
           desc: |
             A renewal rule only governs future renewals, so a near-expiry certificate still expires this cycle unless you issue a new version now. Do both: issue a fresh version immediately, then add a renewal rule so this does not recur.
 
-            1. Issue a new version immediately so the certificate stops failing this cycle:
+            1. Issue a new version immediately so the certificate stops failing this cycle. Set `timeOfValidityNotAfter` to an RFC 3339 timestamp more than 30 days in the future and within the issuing CA's own validity:
 
             ```bash
             oci certs-mgmt certificate update-certificate-managed-internally \
               --certificate-id <certificate-ocid> \
-              --version-name <new-version-name> \
+              --validity '{"timeOfValidityNotAfter":"<not-after-timestamp>"}' \
               --force
             ```
 
-            2. Add or update a renewal rule so the next version is issued automatically before the current one expires:
+            For an imported certificate, the service cannot issue the version. Obtain the renewed certificate, chain, and private key from the external CA and upload them as a new version:
+
+            ```bash
+            oci certs-mgmt certificate update-certificate-by-importing-config-details \
+              --certificate-id <certificate-ocid> \
+              --certificate-pem "$(cat cert.pem)" \
+              --cert-chain-pem "$(cat chain.pem)" \
+              --private-key-pem "$(cat key.pem)" \
+              --force
+            ```
+
+            2. For an internally issued certificate, add or update a renewal rule so the next version is issued automatically before the current one expires. `renewalInterval` is how often a new version is issued and `advanceRenewalPeriod` is how far ahead of that renewal the process starts. Keep the interval short enough that the certificate never expires before it is renewed:
 
             ```bash
             oci certs-mgmt certificate update-certificate-managed-internally \
@@ -8792,12 +8947,14 @@ queries:
             Re-issue certificates with weak key algorithms using a strong key:
 
             1. Open **Identity & Security** → **Certificates** → **Certificates** → identify certificates with weak key algorithms.
-            2. For internally-issued certificates, choose **Issue New Version** and select **RSA2048**, **RSA4096**, **ECDSA_P256**, or **ECDSA_P384** as the key algorithm.
-            3. For imported certificates, regenerate the certificate externally with a strong key algorithm and re-import.
-            4. Update consumers to pick up the new version, then deprecate the old version.
+            2. For internally-issued certificates, create a replacement certificate with **RSA2048**, **RSA4096**, **ECDSA_P256**, or **ECDSA_P384** as the key algorithm. Renewing an existing certificate only changes its validity period, so it cannot fix the key algorithm.
+            3. For imported certificates, regenerate the certificate externally with a strong key algorithm and import it as a new certificate.
+            4. Move consumers to the replacement, then schedule the weak certificate for deletion. It stays active, and keeps failing, until deletion is scheduled.
         - id: cli
           desc: |
-            Key algorithms cannot be changed on an existing certificate. Issue a replacement internally-issued certificate with a strong key algorithm and migrate consumers:
+            Key algorithms cannot be changed on an existing certificate. Issue a replacement internally-issued certificate with a strong key algorithm, migrate consumers, then retire the weak certificate.
+
+            1. Create the replacement. `--key-algorithm` must be `RSA2048`, `RSA4096`, `ECDSA_P256`, or `ECDSA_P384`, and `--signature-algorithm` must suit the key type, such as `SHA256_WITH_RSA` for an RSA key. Set `commonName` to the name the certificate serves and `timeOfValidityNotAfter` to an expiry within the issuing CA's validity:
 
             ```bash
             oci certs-mgmt certificate create-certificate-issued-by-internal-ca \
@@ -8808,6 +8965,12 @@ queries:
               --signature-algorithm SHA256_WITH_RSA \
               --subject '{"commonName":"app.example.com"}' \
               --validity '{"timeOfValidityNotAfter":"2027-01-01T00:00:00Z"}'
+            ```
+
+            2. After every consumer uses the replacement, schedule the weak certificate for deletion. It remains `ACTIVE`, and keeps failing, until you do:
+
+            ```bash
+            oci certs-mgmt certificate schedule-deletion --certificate-id <weak-certificate-ocid>
             ```
         - id: terraform
           desc: |
@@ -8960,11 +9123,14 @@ queries:
             Re-issue certificates with weak signatures using a SHA-2 algorithm:
 
             1. Open **Identity & Security** → **Certificates** → **Certificates** → identify certificates with weak signature algorithms.
-            2. For internally-issued certificates, choose **Issue New Version** and pick a `SHA256_WITH_*`, `SHA384_WITH_*`, or `SHA512_WITH_*` signature algorithm.
-            3. For imported certificates, re-issue them externally using a SHA-2 signature and re-import.
+            2. For internally-issued certificates, create a replacement certificate with a `SHA256_WITH_*`, `SHA384_WITH_*`, or `SHA512_WITH_*` signature algorithm. Renewing an existing certificate only changes its validity period, so it cannot fix the signature algorithm.
+            3. For imported certificates, re-issue them externally using a SHA-2 signature and import them as new certificates.
+            4. Move consumers to the replacement, then schedule the weak certificate for deletion. It stays active, and keeps failing, until deletion is scheduled.
         - id: cli
           desc: |
-            Signature algorithms cannot be changed on an existing certificate. Issue a replacement internally-issued certificate with a SHA-2 signature algorithm and migrate consumers:
+            Signature algorithms cannot be changed on an existing certificate. Issue a replacement internally-issued certificate with a SHA-2 signature algorithm, migrate consumers, then retire the weak certificate.
+
+            1. Create the replacement. `--signature-algorithm` must be `SHA256_WITH_RSA`, `SHA384_WITH_RSA`, or `SHA512_WITH_RSA` for an RSA key, or the matching `_WITH_ECDSA` value for an ECDSA key. Set `commonName` to the name the certificate serves and `timeOfValidityNotAfter` to an expiry within the issuing CA's validity:
 
             ```bash
             oci certs-mgmt certificate create-certificate-issued-by-internal-ca \
@@ -8975,6 +9141,12 @@ queries:
               --signature-algorithm SHA256_WITH_RSA \
               --subject '{"commonName":"app.example.com"}' \
               --validity '{"timeOfValidityNotAfter":"2027-01-01T00:00:00Z"}'
+            ```
+
+            2. After every consumer uses the replacement, schedule the weak certificate for deletion. It remains `ACTIVE`, and keeps failing, until you do:
+
+            ```bash
+            oci certs-mgmt certificate schedule-deletion --certificate-id <weak-certificate-ocid>
             ```
         - id: terraform
           desc: |
@@ -9308,7 +9480,9 @@ queries:
             3. To replace: create a new CA in **Create Certificate Authority** with **KMS Vault** and **KMS Key** set to a customer-managed key, re-issue subordinate CAs and certificates from the new root, then schedule deletion of the old CA.
         - id: cli
           desc: |
-            Create a replacement root CA backed by a customer-managed KMS key. (CA encryption keys are set at create time; existing CAs without a CMK must be replaced.)
+            CA encryption keys are set at create time, so a CA without a customer-managed key must be replaced rather than updated.
+
+            1. Create a replacement root CA. `<kms-key-ocid>` must be an HSM-protected asymmetric Vault key, RSA 2048 or 4096 bits or ECDSA NIST_P384, because the Certificates service does not accept software-protected or symmetric keys. Choose a `--signing-algorithm` that suits the key type, such as `SHA256_WITH_RSA` for an RSA key:
 
             ```bash
             oci certs-mgmt certificate-authority create-root-ca-by-generating-config-details \
@@ -9318,6 +9492,12 @@ queries:
               --signing-algorithm SHA256_WITH_RSA \
               --subject '{"commonName":"Internal Root CA"}' \
               --validity '{"timeOfValidityNotAfter":"2031-01-01T00:00:00Z"}'
+            ```
+
+            2. Re-issue subordinate CAs and certificates from the new CA and move consumers to them, then schedule the old CA for deletion. It remains `ACTIVE`, and keeps failing, until you do, and it can issue nothing once deleted, so finish the migration first:
+
+            ```bash
+            oci certs-mgmt certificate-authority schedule-deletion --certificate-authority-id <old-ca-ocid>
             ```
         - id: terraform
           desc: |
@@ -9465,14 +9645,20 @@ queries:
             4. Update application connection strings to the new cluster endpoint, then delete the old cluster.
         - id: cli
           desc: |
-            Take a backup, then recreate the cluster from the backup in a private subnet:
+            The subnet is fixed when a cluster is created, so the cluster is rebuilt in a private subnet from a backup. The old cluster keeps failing for as long as it exists.
+
+            1. Back up the existing cluster:
 
             ```bash
             oci redis oci-cache-backup oci-cache-backup create \
               --compartment-id <compartment-ocid> \
               --source-cluster-id <old-cluster-ocid> \
               --display-name pre-migration
+            ```
 
+            2. Create the replacement from that backup. `<private-subnet-ocid>` must be a subnet with `prohibit-public-ip-on-vnic` set to `true`, `<backup-ocid>` is the backup from step 1, and `--node-count` and `--node-memory-in-gbs` should match the old cluster so the restored data fits:
+
+            ```bash
             oci redis redis-cluster redis-cluster create \
               --compartment-id <compartment-ocid> \
               --display-name <name> \
@@ -9481,6 +9667,12 @@ queries:
               --software-version VALKEY_8_1 \
               --subnet-id <private-subnet-ocid> \
               --backup-id <backup-ocid>
+            ```
+
+            3. Point application connection strings at the new cluster endpoint, then delete the old cluster. Deletion is permanent and loses anything written to the old cluster after the backup:
+
+            ```bash
+            oci redis redis-cluster redis-cluster delete --redis-cluster-id <old-cluster-ocid>
             ```
         - id: terraform
           desc: |
@@ -9852,7 +10044,17 @@ queries:
             3. Build a custom recipe only when a specific policy must be relaxed; document the deviation.
         - id: cli
           desc: |
-            Create a security zone bound to a target compartment:
+            Create a security zone bound to a target compartment. Cloud Guard must already be enabled in the tenancy.
+
+            1. Find the OCID of the recipe to enforce. The Oracle-managed recipe is named **Maximum Security Recipe**:
+
+            ```bash
+            oci cloud-guard security-recipe-collection list-security-recipes \
+              --compartment-id <tenancy-ocid> \
+              --query 'data.items[].{name:"display-name",id:id}'
+            ```
+
+            2. Create the zone. `<compartment-ocid>` is the compartment the zone protects, and `<recipe-ocid>` is the recipe OCID from step 1:
 
             ```bash
             oci cloud-guard security-zone create \
@@ -10078,8 +10280,8 @@ queries:
           desc: |
             To strengthen the password policy using the OCI Console:
 
-            1. Navigate to **Identity & Security > Domains**, select the default domain, then open **Settings > Password policy**.
-            2. Set the minimum length to **14**.
+            1. Navigate to **Identity & Security > Domains**, select the default domain, then open **Settings > Password policy** and select the policy.
+            2. Select **Edit password rules** and choose **Custom**, since the individual criteria can only be edited on a custom policy. Set the minimum length to **14**.
             3. Require **uppercase**, **lowercase**, **numeric**, and **special** characters.
             4. Disable **Allow username in password**.
             5. Select **Save changes**.
@@ -10095,14 +10297,14 @@ queries:
               --password-policy '{"minimumPasswordLength": 14, "isUppercaseCharactersRequired": true, "isLowercaseCharactersRequired": true, "isNumericCharactersRequired": true, "isSpecialCharactersRequired": true, "isUsernameContainmentAllowed": false}'
             ```
 
-            2. Update the password policy in each identity domain, using that domain's own endpoint:
+            2. Update the password policy in each identity domain, using that domain's own endpoint. `<domain-url>` is the host name from the domain URL shown on the domain's details page, such as `idcs-0123456789abcdef.identity.oraclecloud.com`, and `oci identity-domains password-policies list --endpoint https://<domain-url>` returns the `<password-policy-id>` values. The first operation switches the policy to `Custom` strength, because the individual rules only apply to a custom policy:
 
             ```bash
             oci identity-domains password-policy patch \
               --endpoint https://<domain-url> \
               --password-policy-id <password-policy-id> \
               --schemas '["urn:ietf:params:scim:api:messages:2.0:PatchOp"]' \
-              --operations '[{"op":"replace","path":"minLength","value":14},{"op":"replace","path":"minUpperCase","value":1},{"op":"replace","path":"minLowerCase","value":1},{"op":"replace","path":"minNumerals","value":1},{"op":"replace","path":"minSpecialChars","value":1},{"op":"replace","path":"userNameDisallowed","value":true}]'
+              --operations '[{"op":"replace","path":"passwordStrength","value":"Custom"},{"op":"replace","path":"minLength","value":14},{"op":"replace","path":"minUpperCase","value":1},{"op":"replace","path":"minLowerCase","value":1},{"op":"replace","path":"minNumerals","value":1},{"op":"replace","path":"minSpecialChars","value":1},{"op":"replace","path":"userNameDisallowed","value":true}]'
             ```
         - id: terraform
           desc: |
@@ -10252,10 +10454,20 @@ queries:
             4. **Delete** the old API key once the new key is confirmed working.
         - id: cli
           desc: |
-            To rotate an API signing key using the OCI CLI, upload a replacement public key and delete the old one:
+            To rotate an API signing key using the OCI CLI, add the replacement before removing the old key so the consuming system never loses access. A user can hold at most three API keys, so delete an unused key first if the user is already at the limit.
+
+            1. Generate a new key pair and upload its public half:
 
             ```bash
-            oci iam user api-key upload --user-id <user-ocid> --key-file ./new_public_key.pem
+            oci setup keys --key-name new_api_key --output-dir ~/.oci
+            oci iam user api-key upload --user-id <user-ocid> --key-file ~/.oci/new_api_key_public.pem
+            ```
+
+            2. Point the consuming system at the new private key and the fingerprint the upload returned, such as the `key_file` and `fingerprint` entries in its OCI config file, and confirm it can still make API calls.
+
+            3. Delete the old key. `oci iam user api-key list --user-id <user-ocid>` shows each key's fingerprint and creation time, and the check keeps failing while any active key is older than 90 days:
+
+            ```bash
             oci iam user api-key delete --user-id <user-ocid> --fingerprint <old-key-fingerprint>
             ```
         # No Terraform remediation: API key creation timestamps are runtime-only; the `oci_identity_api_key` Terraform resource has no field that controls or evidences rotation age.
@@ -10338,9 +10550,12 @@ queries:
             3. For **Protection Mode**, choose **HSM**.
             4. Complete the key shape and name, then select **Create Key**.
             5. Re-assign the new HSM key to the resources that previously used a software key.
+            6. Disable the software key once nothing uses it. Enabled software keys keep failing, and data still encrypted only under a disabled key cannot be decrypted.
         - id: cli
           desc: |
-            To create an HSM-protected master encryption key using the OCI CLI:
+            Protection mode is fixed when a key is created, so a software key is replaced rather than converted.
+
+            1. Create an HSM-protected master encryption key. `<vault-management-endpoint>` is the vault's management endpoint, and an AES key shape with a `length` of 32 bytes is a 256-bit key:
 
             ```bash
             oci kms management key create --compartment-id <compartment-ocid> \
@@ -10348,6 +10563,14 @@ queries:
               --key-shape '{"algorithm": "AES", "length": 32}' \
               --protection-mode HSM \
               --endpoint <vault-management-endpoint>
+            ```
+
+            2. Move every resource that uses the software key, such as volumes, buckets, and databases, onto the new key.
+
+            3. Disable the software key once nothing depends on it. The check evaluates every enabled key, so the software key keeps failing until it is disabled. Data still encrypted only under a disabled key cannot be decrypted, so finish step 2 first:
+
+            ```bash
+            oci kms management key disable --key-id <software-key-ocid> --endpoint <vault-management-endpoint>
             ```
         - id: terraform
           desc: |
@@ -10470,11 +10693,11 @@ queries:
             1. Navigate to **Identity & Security > Vault** and open the vault.
             2. Open the master encryption key.
             3. Select **Edit** and enable **Automatic key rotation**.
-            4. Set the rotation interval.
+            4. Set the rotation interval to a value between 60 and 365 days. The option is available only for keys in a virtual private vault.
             5. Select **Save Changes**.
         - id: cli
           desc: |
-            To enable automatic key rotation using the OCI CLI, update the key with both the rotation flag and the rotation schedule details:
+            To enable automatic key rotation using the OCI CLI, update the key with both the rotation flag and the rotation schedule details. Automatic rotation is available only for keys in a virtual private vault, which is billed separately from a default vault, so a key in a default vault has to be recreated in a `VIRTUAL_PRIVATE` vault before it can pass. `rotationIntervalInDays` accepts 60 to 365, and 90 rotates the key quarterly:
 
             ```bash
             oci kms management key update --key-id <key-ocid> \
@@ -10484,9 +10707,15 @@ queries:
             ```
         - id: terraform
           desc: |
-            To enable automatic key rotation in Terraform, set `is_auto_rotation_enabled = true` and configure the `auto_key_rotation_details` block on the key:
+            To enable automatic key rotation in Terraform, set `is_auto_rotation_enabled = true` and configure the `auto_key_rotation_details` block on the key. Automatic rotation is available only for keys in a virtual private vault, and `rotation_interval_in_days` accepts 60 to 365:
 
             ```hcl
+            resource "oci_kms_vault" "example" {
+              compartment_id = var.compartment_ocid
+              display_name   = "example-vault"
+              vault_type     = "VIRTUAL_PRIVATE"
+            }
+
             resource "oci_kms_key" "example" {
               compartment_id      = var.compartment_ocid
               display_name        = "example-key"
@@ -11261,9 +11490,10 @@ queries:
             3. For **Service**, choose **Flow Logs**; for **Resource**, select the subnet.
             4. Choose the log group and set a log name.
             5. Select **Enable Log**.
+            6. Repeat for every subnet in the VCN, because the VCN keeps failing while any subnet has no enabled flow log.
         - id: cli
           desc: |
-            To enable a flow log for a subnet using the OCI CLI:
+            To enable a flow log for a subnet using the OCI CLI, run the command once for every subnet in the VCN. A log on one subnet covers only that subnet, and the VCN keeps failing while any subnet has none:
 
             ```bash
             oci logging log create --log-group-id <log-group-ocid> \
@@ -11382,7 +11612,7 @@ queries:
             4. Select **Save changes** and confirm the customer-premises equipment is configured for IKEv2.
         - id: cli
           desc: |
-            To set an IPSec tunnel to IKEv2 using the OCI CLI:
+            To set an IPSec tunnel to IKEv2 using the OCI CLI, run the command for both tunnels of the connection, whose OCIDs `oci network ip-sec-tunnel list --ipsc-id <ipsec-connection-ocid>` returns. A tunnel stays down until the customer-premises equipment also negotiates IKEv2, so change the device in the same maintenance window:
 
             ```bash
             oci network ip-sec-tunnel update --ipsc-id <ipsec-connection-ocid> --tunnel-id <tunnel-ocid> --ike-version V2
@@ -11715,11 +11945,11 @@ queries:
             3. Save and update client connections to use the private endpoint or an allowed source.
         - id: cli
           desc: |
-            Scope the public listener to a known network by enabling an access control list:
+            Scope the public listener to known networks by setting an access control list. List public clients by public IP or CIDR, such as the documentation range `203.0.113.0/24`, and tie private ranges to their VCN as `<vcn-ocid>;<cidr>`, because a bare private CIDR is not accepted. Leave out `0.0.0.0/0`, since an entry admitting any address still counts as reachable:
 
             ```bash
             oci db autonomous-database update --autonomous-database-id <adb-ocid> \
-              --whitelisted-ips '["10.0.0.0/16"]'
+              --whitelisted-ips '["203.0.113.0/24","<vcn-ocid>;10.0.0.0/16"]'
             ```
         # No Terraform remediation: internetReachable is a runtime verdict derived from the private-endpoint, access-control, and allowlist state; the configuration that drives it is remediated in Terraform by mondoo-oci-security-adb-mtls-or-restricted.
     refs:
@@ -11793,7 +12023,7 @@ queries:
             3. Save the change.
         - id: cli
           desc: |
-            Configure the standby to reuse the primary's allowlist so it inherits the same restrictions:
+            Configure the standby to reuse the primary's allowlist so it inherits the same restrictions. This closes the finding only when the primary's own list, returned by `oci db autonomous-database get --autonomous-database-id <adb-ocid> --query 'data."whitelisted-ips"'`, has no `0.0.0.0/0`, `0.0.0.0`, or `::/0` entry, so remove those from the primary first:
 
             ```bash
             oci db autonomous-database update --autonomous-database-id <adb-ocid> \
@@ -12005,11 +12235,11 @@ queries:
             3. Save the change.
         - id: cli
           desc: |
-            Enable prompt injection detection on an existing endpoint:
+            Enable prompt injection detection on an existing endpoint. `isEnabled` turns the guardrail on and is required in the payload, and `mode` set to `BLOCK` rejects flagged content instead of only recording it:
 
             ```bash
             oci generative-ai endpoint update --endpoint-id <endpoint-ocid> \
-              --prompt-injection-config '{"mode": "BLOCK"}'
+              --prompt-injection-config '{"isEnabled": true, "mode": "BLOCK"}'
             ```
         # No Terraform remediation: the endpoint's prompt-injection guardrail is a service-side setting with no verified Terraform resource argument; manage it through the console or CLI.
     refs:
@@ -12083,11 +12313,11 @@ queries:
             3. Save the change.
         - id: cli
           desc: |
-            Enable PII detection on an existing endpoint:
+            Enable PII detection on an existing endpoint. `isEnabled` turns the guardrail on and is required in the payload, and `mode` set to `BLOCK` rejects flagged content instead of only recording it:
 
             ```bash
             oci generative-ai endpoint update --endpoint-id <endpoint-ocid> \
-              --pii-detection-config '{"mode": "BLOCK"}'
+              --pii-detection-config '{"isEnabled": true, "mode": "BLOCK"}'
             ```
         # No Terraform remediation: the endpoint's PII-detection guardrail is a service-side setting with no verified Terraform resource argument; manage it through the console or CLI.
     refs:
@@ -12161,11 +12391,11 @@ queries:
             3. Save the change.
         - id: cli
           desc: |
-            Enable content moderation on an existing endpoint:
+            Enable content moderation on an existing endpoint. `isEnabled` turns the guardrail on and is required in the payload, and `mode` set to `BLOCK` rejects flagged content instead of only recording it:
 
             ```bash
             oci generative-ai endpoint update --endpoint-id <endpoint-ocid> \
-              --content-moderation-config '{"mode": "BLOCK"}'
+              --content-moderation-config '{"isEnabled": true, "mode": "BLOCK"}'
             ```
         # No Terraform remediation: the endpoint's content-moderation guardrail is a service-side setting with no verified Terraform resource argument; manage it through the console or CLI.
     refs:
@@ -12314,15 +12544,23 @@ queries:
 
             1. Under **Analytics & AI > Data Science**, create a Data Science private endpoint in the target VCN.
             2. Create notebook sessions with the private endpoint selected under **Networking**, since the association is set at creation.
-            3. Recreate existing sessions that lack a private endpoint.
+            3. Recreate existing sessions that lack a private endpoint, save their notebooks and data, then delete the old sessions, which keep failing while they exist.
         - id: cli
           desc: |
-            Create a notebook session bound to a Data Science private endpoint by supplying it in the configuration details:
+            The private endpoint can only be set when a notebook session is created, so each session without one is replaced.
+
+            1. Create a notebook session bound to a Data Science private endpoint by supplying it in the configuration details:
 
             ```bash
             oci data-science notebook-session create --project-id <project-ocid> \
               --compartment-id <compartment-ocid> \
               --config-details '{"privateEndpointId": "<private-endpoint-ocid>", "shape": "VM.Standard2.1", "blockStorageSizeInGBs": 50, "subnetId": "<subnet-ocid>"}'
+            ```
+
+            2. Copy any notebooks and data you need out of the old session, then delete it. The old session keeps failing for as long as it exists, and deleting it permanently removes its storage:
+
+            ```bash
+            oci data-science notebook-session delete --notebook-session-id <old-notebook-session-ocid>
             ```
         # No Terraform remediation: the notebook session's private endpoint is set at creation and is not verified against a Terraform resource argument here; manage it through the console or CLI.
     refs:
@@ -12411,7 +12649,7 @@ queries:
             4. Select **Save changes** and apply the policy.
         - id: cli
           desc: |
-            To harden a decryption profile using the OCI CLI:
+            To harden a decryption profile using the OCI CLI, keep `--type` set to the profile's existing type. The example is a forward-proxy profile. For an `SSL_INBOUND_INSPECTION` profile, pass only `isUnsupportedCipherBlocked`, `isUnsupportedVersionBlocked`, and `isOutOfCapacityBlocked`, because the certificate settings exist only on forward-proxy profiles:
 
             ```bash
             oci network-firewall decryption-profile update \
@@ -12584,6 +12822,14 @@ queries:
           desc: |
             To scope an allow rule using the OCI CLI:
 
+            1. Read the rule's current condition. `--condition` replaces the whole condition, so any `application`, `service`, or `url` list you leave out stops restricting the rule:
+
+            ```bash
+            oci network-firewall security-rule get --network-firewall-policy-id <policy-ocid> --security-rule-name <rule-name>
+            ```
+
+            2. Resubmit the full condition with `sourceAddress` added. Its values are names of address lists defined in the policy, not CIDRs, so `corporate-ranges` and `app-tier` stand for your own list names:
+
             ```bash
             oci network-firewall security-rule update --network-firewall-policy-id <policy-ocid> \
               --security-rule-name <rule-name> --action ALLOW \
@@ -12591,14 +12837,13 @@ queries:
             ```
         - id: terraform
           desc: |
-            To scope an allow rule in Terraform, name a source address list in the `condition` block:
+            To scope an allow rule in Terraform, name a source address list in the `condition` block. Rules are evaluated in order and the first match wins, so place the allow rule before any catch-all drop rule:
 
             ```hcl
             resource "oci_network_firewall_network_firewall_policy_security_rule" "example" {
               name                       = "allow-partner-api"
               network_firewall_policy_id = oci_network_firewall_network_firewall_policy.example.id
               action                     = "ALLOW"
-              inspection                 = "INTRUSION_PREVENTION"
 
               condition {
                 source_address      = ["corporate-ranges"]
@@ -12606,7 +12851,7 @@ queries:
               }
 
               position {
-                after_rule = "deny-all"
+                before_rule = "deny-all"
               }
             }
             ```
@@ -12734,7 +12979,7 @@ queries:
             3. Select **Save changes**.
         - id: cli
           desc: |
-            To narrow a bastion's allow list using the OCI CLI:
+            To narrow a bastion's allow list using the OCI CLI, pass every range operators connect from, such as corporate egress addresses and VPN pools. `--client-cidr-list` replaces the whole list, so leave out `0.0.0.0/0` and `::/0`, and replace the documentation range `203.0.113.0/24` with your own:
 
             ```bash
             oci bastion bastion update --bastion-id <bastion-ocid> \
@@ -13002,11 +13247,24 @@ queries:
           desc: |
             To enable DNSSEC on a zone using the OCI CLI:
 
+            1. Turn on signing:
+
             ```bash
             oci dns zone update --zone-name-or-id <zone-name> --scope GLOBAL --dnssec-state ENABLED
             ```
 
-            Then publish the resulting DS record at the parent zone or registrar.
+            2. Read the zone OCID and the key signing key's `uuid` and DS data:
+
+            ```bash
+            oci dns zone get --zone-name-or-id <zone-name> --scope GLOBAL \
+              --query 'data.{id:id,ksk:"dnssec-config"."ksk-dnssec-key-versions"[].{uuid:uuid,dsData:"ds-data"}}'
+            ```
+
+            3. Publish a DS record built from `dsData` at the parent zone or registrar. Once it is live, promote the key signing key so OCI knows the chain of trust is in place and its key management can proceed:
+
+            ```bash
+            oci dns zone promote-zone-dnssec-key-version --zone-id <zone-ocid> --dnssec-key-version-uuid <ksk-uuid> --scope GLOBAL
+            ```
         - id: terraform
           desc: |
             To enable DNSSEC in Terraform, set `dnssec_state` to `ENABLED`:
@@ -13135,12 +13393,12 @@ queries:
             4. Select **Save changes** and apply the matching proposal on the customer-premises equipment.
         - id: cli
           desc: |
-            To raise a tunnel's Diffie-Hellman group using the OCI CLI:
+            To raise a tunnel's Diffie-Hellman group using the OCI CLI, set a custom proposal on both phases. Phase 1 takes the group as `diffieHelmanGroup`, spelled as the API spells it, and phase 2 applies its group through perfect forward secrecy as `pfsDhGroup`. Use `GROUP14` or a stronger group such as `GROUP19` or `GROUP20`, and apply the same proposal on the customer-premises equipment, or the tunnel will not re-establish:
 
             ```bash
             oci network ip-sec-tunnel update --ipsc-id <ipsec-connection-ocid> --tunnel-id <tunnel-ocid> \
-              --phase-one-config '{"isCustomPhaseOneConfig":true,"customDhGroup":"GROUP14"}' \
-              --phase-two-config '{"isCustomPhaseTwoConfig":true,"dhGroup":"GROUP14"}'
+              --phase-one-config '{"isCustomPhaseOneConfig":true,"diffieHelmanGroup":"GROUP14"}' \
+              --phase-two-config '{"isCustomPhaseTwoConfig":true,"isPfsEnabled":true,"pfsDhGroup":"GROUP14"}'
             ```
         - id: terraform
           desc: |
@@ -13329,11 +13587,11 @@ queries:
             4. Select **Save changes** and apply the matching setting on the customer-premises equipment.
         - id: cli
           desc: |
-            To enable perfect forward secrecy using the OCI CLI:
+            To enable perfect forward secrecy using the OCI CLI, turn on `isPfsEnabled` and set `pfsDhGroup` to `GROUP14` or stronger. Apply the matching setting on the customer-premises equipment in the same window, because the tunnel will not re-establish until both sides agree:
 
             ```bash
             oci network ip-sec-tunnel update --ipsc-id <ipsec-connection-ocid> --tunnel-id <tunnel-ocid> \
-              --phase-two-config '{"isCustomPhaseTwoConfig":true,"isPfsEnabled":true,"dhGroup":"GROUP14"}'
+              --phase-two-config '{"isCustomPhaseTwoConfig":true,"isPfsEnabled":true,"pfsDhGroup":"GROUP14"}'
             ```
         - id: terraform
           desc: |
@@ -13471,11 +13729,12 @@ queries:
             3. Terminate the peering, then remove the route rules that pointed at it.
         - id: cli
           desc: |
-            To remove an unintended cross-tenancy peering using the OCI CLI:
+            To remove an unintended cross-tenancy peering using the OCI CLI, delete whichever construct carries it: a local peering gateway, a remote peering connection, or a DRG attachment. Deletion cuts off all traffic across that path at once, so confirm with the network owner first:
 
             ```bash
             oci network local-peering-gateway delete --local-peering-gateway-id <lpg-ocid>
             oci network remote-peering-connection delete --remote-peering-connection-id <rpc-ocid>
+            oci network drg-attachment delete --drg-attachment-id <drg-attachment-ocid>
             ```
         - id: terraform
           desc: |
@@ -13753,9 +14012,17 @@ queries:
           desc: |
             To narrow the ingress rules that make the load balancer reachable using the OCI CLI:
 
+            1. List the ingress rules on the load balancer's network security group and note the `id` of each rule whose source is `0.0.0.0/0`:
+
+            ```bash
+            oci network nsg rules list --nsg-id <nsg-ocid> --direction INGRESS
+            ```
+
+            2. Update each of those rules by `id`, replacing the any-address source with the range that should reach the load balancer and limiting it to the listener port. `203.0.113.0/24` and port 443 are examples to replace with your own values:
+
             ```bash
             oci network nsg rules update --nsg-id <nsg-ocid> \
-              --security-rules '[{"direction":"INGRESS","protocol":"6","source":"203.0.113.0/24","sourceType":"CIDR_BLOCK"}]'
+              --security-rules '[{"id":"<rule-id>","direction":"INGRESS","protocol":"6","source":"203.0.113.0/24","sourceType":"CIDR_BLOCK","tcpOptions":{"destinationPortRange":{"min":443,"max":443}}}]'
             ```
         # No Terraform remediation: the fix is to change whichever of the three inputs makes
         # the load balancer reachable, and which one applies depends on the deployment. The
