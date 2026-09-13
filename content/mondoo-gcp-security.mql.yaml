@@ -6763,6 +6763,10 @@ queries:
 
             1. Go to `Cloud DNS` by navigating to [https://console.cloud.google.com/net-services/dns/zones](https://console.cloud.google.com/net-services/dns/zones).
             2. For each zone of `Type` `Public`, switch `DNSSEC` to `On`.
+            3. Select the zone name, then select **Registrar Setup** in the upper-right corner of the **Zone details** page and copy the DS record it shows for the zone's key-signing key.
+            4. Create that DS record for the domain at your registrar. Every registrar has its own form for this, so follow the registrar's own instructions. Resolvers can validate the signed answers only once the DS record is published in the parent zone, so a zone left at step 2 is signed but still unvalidated.
+
+            **A DS record that does not match the zone's key-signing key makes every validating resolver reject the domain.** Copy the value exactly as the **Registrar Setup** page prints it, and allow up to 24 hours for it to propagate.
         - id: cli
           desc: |
             To ensure That DNSSEC Is Enabled for Cloud DNS using the Google Cloud CLI, use the below command to enable `DNSSEC` for Cloud DNS Zone Name:
@@ -6802,6 +6806,8 @@ queries:
     refs:
       - url: https://docs.cloud.google.com/dns/docs/dnssec
         title: Cloud DNS DNSSEC
+      - url: https://docs.cloud.google.com/dns/docs/registrars
+        title: Activate DNSSEC
   - uid: mondoo-gcp-security-cloud-dns-dnssec-enabled-gcp
     filters: |
       asset.platform == "gcp-dns-zone"
@@ -7041,7 +7047,9 @@ queries:
       desc: |
         This check verifies that the key signing the individual records in a public Cloud DNS zone uses an algorithm that resists forgery.
 
-        The zone must have DNSSEC enabled and its zone-signing key (ZSK) must use something other than `rsasha1`. RSASHA1 is deprecated by Google, NIST, and the IETF, and a weak ZSK undermines record integrity even when the key-signing key is strong. Check the current value with `gcloud dns managed-zones describe ZONE_NAME --format="json(dnsName,dnssecConfig.state,dnssecConfig.defaultKeySpecs)"`.
+        The zone must have DNSSEC enabled, and every zone-signing key published for it must use something other than `rsasha1`. RSASHA1 is deprecated by Google, NIST, and the IETF, and a weak zone-signing key undermines record integrity even when the key-signing key is strong. List the keys the zone is signed with today using `gcloud dns dns-keys list --zone=ZONE_NAME --filter='type=zoneSigning'`.
+
+        The keys themselves are what this check reads, not the zone's default key specs. Those specs govern the keys Cloud DNS generates next, so a zone that was created with RSASHA1 and later rolled onto RSASHA256 still reports RSASHA1 in its specs, and a zone rolled the other way reports a strong algorithm while signing with a weak one. Inactive keys are read too, because Cloud DNS keeps them in the DNSKEY record set so resolvers can validate signatures that were already made with them.
 
         **Why this matters**
 
@@ -7055,10 +7063,16 @@ queries:
       audit: |
         **Using Google Cloud CLI**
 
-        Ensure the property algorithm for keyType zoneSigning is not using `RSASHA1`:
+        1. Confirm that the zone is signed. A value other than `on` fails, because an unsigned zone has no zone-signing key at all:
 
         ```bash
-        gcloud dns managed-zones describe ZONE_NAME --format="json(dnsName,dnssecConfig.state,dnssecConfig.defaultKeySpecs)"
+        gcloud dns managed-zones describe ZONE_NAME --format="value(dnssecConfig.state)"
+        ```
+
+        2. List the zone-signing keys the zone publishes and make sure no `ALGORITHM` value is `rsasha1`. Inactive keys count, because they stay in the DNSKEY record set and resolvers still validate existing signatures against them:
+
+        ```bash
+        gcloud dns dns-keys list --zone=ZONE_NAME --filter='type=zoneSigning' --format='table(id,algorithm,keyLength,isActive)'
         ```
       remediation:
         - id: console
@@ -7132,7 +7146,11 @@ queries:
       gcp.project.dnsService.managedzone.visibility != "private"
     mql: |
       gcp.dns.managedzone.dnssecEnabled == true
-      gcp.dns.managedzone.dnssecConfig.defaultKeySpecs.where(keyType == 'zoneSigning').all(algorithm != 'rsasha1')
+      # dnsKeys are the keys the zone is signed with today. dnssecConfig.defaultKeySpecs
+      # only describes how new keys are generated, so a zone rolled onto or off RSASHA1
+      # is audited against the wrong data there. Inactive keys count: they stay in the
+      # DNSKEY record set and resolvers still validate existing signatures against them.
+      gcp.dns.managedzone.dnsKeys.where(type == 'zoneSigning').all(algorithm != 'rsasha1' && algorithm != 'rsasha1-nsec3-sha1')
   - uid: mondoo-gcp-security-cloud-dns-rsasha1-zsk-not-used-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' &&
