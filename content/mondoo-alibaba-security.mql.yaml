@@ -3081,21 +3081,21 @@ queries:
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_db_instance")
     mql: |
       terraform.resources("alicloud_db_instance").all(
-        arguments["security_ips"] == empty || arguments["security_ips"].none(_.contains("/0"))
+        arguments["security_ips"] == empty || arguments["security_ips"].none(_ == "0.0.0.0" || _.contains("/0"))
       )
   - uid: mondoo-alibaba-security-rds-instance-restrict-security-ip-list-terraform-plan
     filters: |
       asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_db_instance")
     mql: |
       terraform.plan.resourceChanges.where(type == "alicloud_db_instance").all(
-        change.after["security_ips"] == empty || change.after["security_ips"].none(_.contains("/0"))
+        change.after["security_ips"] == empty || change.after["security_ips"].none(_ == "0.0.0.0" || _.contains("/0"))
       )
   - uid: mondoo-alibaba-security-rds-instance-restrict-security-ip-list-terraform-state
     filters: |
       asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_db_instance")
     mql: |
       terraform.state.resources.where(type == "alicloud_db_instance").all(
-        values["security_ips"] == empty || values["security_ips"].none(_.contains("/0"))
+        values["security_ips"] == empty || values["security_ips"].none(_ == "0.0.0.0" || _.contains("/0"))
       )
 
   - uid: mondoo-alibaba-security-rds-instance-deletion-protection
@@ -3356,7 +3356,7 @@ queries:
       desc: |
         This check verifies that an ApsaraDB for PolarDB cluster admits connections only from source addresses you deliberately permitted.
 
-        A PolarDB cluster holds its permitted sources in named IP array groups rather than a single flat list, and every group is consulted when a client connects. You edit them in the ApsaraDB for PolarDB console under Settings and Management on the Whitelists page, or with the `ModifyDBClusterAccessWhitelist` API action, which takes the group name through `--DBClusterIPArrayName` alongside the addresses. In Terraform the same groups appear as `db_cluster_ip_array` blocks carrying a `security_ips` list. The check examines every group and fails the cluster if any of them contains `0.0.0.0/0`, a bare `0.0.0.0`, or any other range with a `/0` prefix length.
+        A PolarDB cluster holds its permitted sources in named IP array groups rather than a single flat list, and every group is consulted when a client connects. You edit them in the ApsaraDB for PolarDB console under Settings and Management on the Whitelists page, or with the `ModifyDBClusterAccessWhitelist` API action, which takes the group name through `--DBClusterIPArrayName` alongside the addresses. In Terraform the same groups appear as `db_cluster_ip_array` blocks carrying a `security_ips` list, and the deprecated top-level `security_ips` argument still writes the `default` group. The check examines every group and the top-level argument, and fails the cluster if any of them contains `0.0.0.0/0`, a bare `0.0.0.0`, or any other range with a `/0` prefix length.
 
         **Why this matters**
 
@@ -3414,7 +3414,7 @@ queries:
             **Clients whose address is not in the new list lose access immediately.** Collect the application source ranges before you replace the list.
         - id: terraform
           desc: |
-            To scope the PolarDB allowlist in Terraform, set the `security_ips` of each `db_cluster_ip_array` block to specific trusted ranges instead of `0.0.0.0/0`:
+            To scope the PolarDB allowlist in Terraform, set the `security_ips` of each `db_cluster_ip_array` block to specific trusted ranges instead of `0.0.0.0/0`. If the cluster still sets the deprecated top-level `security_ips` argument, scope it the same way or move its entries into a `db_cluster_ip_array` block:
 
             ```hcl
             resource "alicloud_polardb_cluster" "example" {
@@ -3462,8 +3462,11 @@ queries:
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_polardb_cluster")
     mql: |
       terraform.resources("alicloud_polardb_cluster").all(
+        arguments["security_ips"] == empty || arguments["security_ips"].none(_ == "0.0.0.0" || _.contains("/0"))
+      )
+      terraform.resources("alicloud_polardb_cluster").all(
         blocks.where(type == "db_cluster_ip_array").all(
-          arguments["security_ips"] == empty || arguments["security_ips"].none(_.contains("/0"))
+          arguments["security_ips"] == empty || arguments["security_ips"].none(_ == "0.0.0.0" || _.contains("/0"))
         )
       )
   - uid: mondoo-alibaba-security-polardb-cluster-restrict-access-whitelist-terraform-plan
@@ -3471,9 +3474,12 @@ queries:
       asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_polardb_cluster")
     mql: |
       terraform.plan.resourceChanges.where(type == "alicloud_polardb_cluster").all(
+        change.after["security_ips"] == empty || change.after["security_ips"].none(_ == "0.0.0.0" || _.contains("/0"))
+      )
+      terraform.plan.resourceChanges.where(type == "alicloud_polardb_cluster").all(
         change.after["db_cluster_ip_array"] == empty ||
         change.after["db_cluster_ip_array"].all(
-          _["security_ips"] == empty || _["security_ips"].none(_.contains("/0"))
+          _["security_ips"] == empty || _["security_ips"].none(_ == "0.0.0.0" || _.contains("/0"))
         )
       )
   - uid: mondoo-alibaba-security-polardb-cluster-restrict-access-whitelist-terraform-state
@@ -3481,9 +3487,12 @@ queries:
       asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_polardb_cluster")
     mql: |
       terraform.state.resources.where(type == "alicloud_polardb_cluster").all(
+        values["security_ips"] == empty || values["security_ips"].none(_ == "0.0.0.0" || _.contains("/0"))
+      )
+      terraform.state.resources.where(type == "alicloud_polardb_cluster").all(
         values["db_cluster_ip_array"] == empty ||
         values["db_cluster_ip_array"].all(
-          _["security_ips"] == empty || _["security_ips"].none(_.contains("/0"))
+          _["security_ips"] == empty || _["security_ips"].none(_ == "0.0.0.0" || _.contains("/0"))
         )
       )
 
@@ -4112,7 +4121,7 @@ queries:
       desc: |
         This check verifies that an ApsaraDB for MongoDB instance accepts connections only from source addresses you explicitly permitted.
 
-        Each instance carries whitelist groups naming the addresses and CIDR blocks allowed to reach the database port. You edit them in the ApsaraDB for MongoDB console on the Data Security page under Whitelist Settings, or with the `ModifySecurityIps` API action, and in Terraform through the `security_ip_list` argument on the instance. The check fails an instance whose whitelist contains the open block `0.0.0.0/0`, and when reading a live instance it also rejects a bare `0.0.0.0` entry and any other range with a `/0` prefix length.
+        Each instance carries whitelist groups naming the addresses and CIDR blocks allowed to reach the database port. You edit them in the ApsaraDB for MongoDB console on the Data Security page under Whitelist Settings, or with the `ModifySecurityIps` API action, and in Terraform through the `security_ip_list` argument for the `default` group and `security_ip_groups` blocks for named groups. The check examines every group and fails an instance whose whitelist contains the open block `0.0.0.0/0`, a bare `0.0.0.0` entry, or any other range with a `/0` prefix length.
 
         **Why this matters**
 
@@ -4169,7 +4178,7 @@ queries:
             **Clients whose address is not in the new list lose access immediately.** Collect the application source ranges before you replace the list.
         - id: terraform
           desc: |
-            To scope a MongoDB instance whitelist in Terraform, set `security_ip_list` to specific CIDR blocks instead of `0.0.0.0/0`:
+            To scope a MongoDB instance whitelist in Terraform, set `security_ip_list` to specific CIDR blocks instead of `0.0.0.0/0`. Scope the comma-separated `security_ip_list` of every `security_ip_groups` block the same way:
 
             ```hcl
             resource "alicloud_mongodb_instance" "example" {
@@ -4213,21 +4222,38 @@ queries:
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_mongodb_instance")
     mql: |
       terraform.resources("alicloud_mongodb_instance").all(
-        arguments["security_ip_list"] == empty || arguments["security_ip_list"].none(_ == "0.0.0.0/0")
+        arguments["security_ip_list"] == empty || arguments["security_ip_list"].none(_ == "0.0.0.0" || _.contains("/0"))
+      )
+      terraform.resources("alicloud_mongodb_instance").all(
+        blocks.where(type == "security_ip_groups").all(
+          arguments["security_ip_list"] == empty || arguments["security_ip_list"].split(",").map(_.trim).none(_ == "0.0.0.0" || _.contains("/0"))
+        )
       )
   - uid: mondoo-alibaba-security-mongodb-instance-restrict-security-ip-list-terraform-plan
     filters: |
       asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_mongodb_instance")
     mql: |
       terraform.plan.resourceChanges.where(type == "alicloud_mongodb_instance").all(
-        change.after["security_ip_list"] == empty || change.after["security_ip_list"].none(_ == "0.0.0.0/0")
+        change.after["security_ip_list"] == empty || change.after["security_ip_list"].none(_ == "0.0.0.0" || _.contains("/0"))
+      )
+      terraform.plan.resourceChanges.where(type == "alicloud_mongodb_instance").all(
+        change.after["security_ip_groups"] == empty ||
+        change.after["security_ip_groups"].all(
+          _["security_ip_list"] == empty || _["security_ip_list"].split(",").map(_.trim).none(_ == "0.0.0.0" || _.contains("/0"))
+        )
       )
   - uid: mondoo-alibaba-security-mongodb-instance-restrict-security-ip-list-terraform-state
     filters: |
       asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_mongodb_instance")
     mql: |
       terraform.state.resources.where(type == "alicloud_mongodb_instance").all(
-        values["security_ip_list"] == empty || values["security_ip_list"].none(_ == "0.0.0.0/0")
+        values["security_ip_list"] == empty || values["security_ip_list"].none(_ == "0.0.0.0" || _.contains("/0"))
+      )
+      terraform.state.resources.where(type == "alicloud_mongodb_instance").all(
+        values["security_ip_groups"] == empty ||
+        values["security_ip_groups"].all(
+          _["security_ip_list"] == empty || _["security_ip_list"].split(",").map(_.trim).none(_ == "0.0.0.0" || _.contains("/0"))
+        )
       )
 
   - uid: mondoo-alibaba-security-kms-key-rotation-enabled
