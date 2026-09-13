@@ -3314,7 +3314,7 @@ queries:
       desc: |
         This check verifies that users have a self-service path to recover a forgotten password through their verified email address.
 
-        Recovery factors are set per policy in the Admin Console under Security > Authentication, where a password policy lists which methods a user may use to reset a forgotten password. This check requires the email recovery factor to be active in every policy.
+        Where a password policy keeps its recovery methods depends on the org. Okta Classic Engine keeps them in the policy settings, and this check requires the email recovery factor to be active in every such policy. Okta Identity Engine keeps them in the rules of the policy, and there this check requires every rule that allows self-service password reset to offer email as a way to start recovery. A rule that defers its recovery requirements to the Okta account management policy carries no methods of its own, so this check does not score it.
 
         **Why this matters**
 
@@ -3328,22 +3328,32 @@ queries:
       audit: |
         ### Audit via Admin Console
 
+        On Okta Classic Engine orgs:
+
         1. In the Admin Console, go to **Security > Authentication**.
         2. Open the **Password** tab and select the password policy to review.
         3. Under **Recovery settings**, confirm that **Email** is enabled as a recovery factor.
 
-        A passing result shows email recovery active for every policy; a failing result shows it inactive.
+        On Okta Identity Engine orgs:
+
+        1. In the Admin Console, go to **Security > Authenticators** and open the **Password** authenticator's policies.
+        2. Select the password policy to review, then open each of its rules.
+        3. On every rule that allows password reset, confirm that **Users can initiate recovery with** includes **Email**.
+
+        A passing result shows email recovery offered by every policy; a failing result shows a policy or a rule that omits it.
 
         ### Audit via API
 
-        Query the Okta API and inspect the result:
+        List the password policies, then list the rules of each policy:
 
         ```bash
         curl -s -H "Authorization: SSWS $OKTA_API_TOKEN" \
           "https://$OKTA_ORG.okta.com/api/v1/policies?type=PASSWORD"
+        curl -s -H "Authorization: SSWS $OKTA_API_TOKEN" \
+          "https://$OKTA_ORG.okta.com/api/v1/policies/$POLICY_ID/rules"
         ```
 
-        A passing response has `settings.recovery.factors.okta_email.status` set to `ACTIVE` for every policy; a failing response shows it as `INACTIVE`.
+        A policy with at least one rule that carries `actions.selfServicePasswordReset.requirement` is read from its rules. A passing response lists `email` in `requirement.primary.methods` on every such rule whose `actions.selfServicePasswordReset.access` is `ALLOW`. Any other policy is read from its settings, where a passing response has `settings.recovery.factors.okta_email.status` set to `ACTIVE`.
       remediation:
         - id: console
           desc: |
@@ -3381,7 +3391,8 @@ queries:
   - uid: mondoo-okta-security-password-settings-password-email-recovery-api
     filters: asset.platform == "okta-org"
     mql: |
-      okta.policies.password.all( settings['recovery']['factors']['okta_email']['status'] == "ACTIVE" )
+      okta.policies.password.where( rules.none( actions['selfServicePasswordReset']['requirement'] != empty ) ).all( settings['recovery']['factors']['okta_email']['status'] == "ACTIVE" )
+      okta.policies.password.all( rules.where( actions['selfServicePasswordReset']['access'] == "ALLOW" && actions['selfServicePasswordReset']['requirement']['primary'] != empty ).all( actions['selfServicePasswordReset']['requirement']['primary']['methods'].contains("email") ) )
   - uid: mondoo-okta-security-password-settings-password-email-recovery-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.providers.any( nameLabel == "okta" )
     mql: |
@@ -3437,7 +3448,7 @@ queries:
       desc: |
         This check verifies that text messages cannot be used to recover a forgotten password.
 
-        Recovery factors are set per policy in the Admin Console under Security > Authentication, where a password policy lists which methods a user may use to reset a forgotten password. This check requires the SMS recovery factor to be inactive in every policy.
+        Where a password policy keeps its recovery methods depends on the org. Okta Classic Engine keeps them in the policy settings, and this check requires the SMS recovery factor to be inactive in every such policy. Okta Identity Engine keeps them in the rules of the policy, and there this check requires that no rule allowing self-service password reset offers SMS as a way to start recovery. A rule that defers its recovery requirements to the Okta account management policy carries no methods of its own, so this check does not score it.
 
         **Why this matters**
 
@@ -3451,22 +3462,32 @@ queries:
       audit: |
         ### Audit via Admin Console
 
+        On Okta Classic Engine orgs:
+
         1. In the Admin Console, go to **Security > Authentication**.
         2. Open the **Password** tab and select the password policy to review.
         3. Under **Recovery settings**, confirm that **SMS** is not enabled as a recovery factor.
 
-        A passing result shows SMS recovery inactive for every policy; a failing result shows it active.
+        On Okta Identity Engine orgs:
+
+        1. In the Admin Console, go to **Security > Authenticators** and open the **Password** authenticator's policies.
+        2. Select the password policy to review, then open each of its rules.
+        3. On every rule that allows password reset, confirm that **Users can initiate recovery with** does not include the SMS option of **Phone**.
+
+        A passing result shows SMS recovery offered by no policy; a failing result shows a policy or a rule that offers it.
 
         ### Audit via API
 
-        Query the Okta API and inspect the result:
+        List the password policies, then list the rules of each policy:
 
         ```bash
         curl -s -H "Authorization: SSWS $OKTA_API_TOKEN" \
           "https://$OKTA_ORG.okta.com/api/v1/policies?type=PASSWORD"
+        curl -s -H "Authorization: SSWS $OKTA_API_TOKEN" \
+          "https://$OKTA_ORG.okta.com/api/v1/policies/$POLICY_ID/rules"
         ```
 
-        A passing response has `settings.recovery.factors.okta_sms.status` set to `INACTIVE` for every policy; a failing response shows it as `ACTIVE`.
+        A policy with at least one rule that carries `actions.selfServicePasswordReset.requirement` is read from its rules. A passing response omits `sms` from `requirement.primary.methods` on every such rule whose `actions.selfServicePasswordReset.access` is `ALLOW`. Any other policy is read from its settings, where a passing response has `settings.recovery.factors.okta_sms.status` set to `INACTIVE`.
       remediation:
         - id: console
           desc: |
@@ -3507,7 +3528,8 @@ queries:
   - uid: mondoo-okta-security-password-settings-password-sms-recovery-api
     filters: asset.platform == "okta-org"
     mql: |
-      okta.policies.password.all( settings['recovery']['factors']['okta_sms']['status'] == "INACTIVE" )
+      okta.policies.password.where( rules.none( actions['selfServicePasswordReset']['requirement'] != empty ) ).all( settings['recovery']['factors']['okta_sms']['status'] == "INACTIVE" )
+      okta.policies.password.all( rules.where( actions['selfServicePasswordReset']['access'] == "ALLOW" && actions['selfServicePasswordReset']['requirement']['primary'] != empty ).none( actions['selfServicePasswordReset']['requirement']['primary']['methods'].contains("sms") ) )
   - uid: mondoo-okta-security-password-settings-password-sms-recovery-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.providers.any( nameLabel == "okta" )
     mql: |
@@ -3563,7 +3585,7 @@ queries:
       desc: |
         This check verifies that security questions cannot be used to recover a forgotten password.
 
-        Recovery factors are set per policy in the Admin Console under Security > Authentication, where a password policy lists which methods a user may use to reset a forgotten password. This check requires the security question factor to be inactive in every policy.
+        Where a password policy keeps its recovery methods depends on the org. Okta Classic Engine keeps them in the policy settings, and this check requires the security question factor to be inactive in every such policy. Okta Identity Engine keeps them in the rules of the policy, and there this check requires that no rule allowing self-service password reset asks for a security question as its additional verification. A rule that defers its recovery requirements to the Okta account management policy carries no methods of its own, so this check does not score it.
 
         **Why this matters**
 
@@ -3577,22 +3599,32 @@ queries:
       audit: |
         ### Audit via Admin Console
 
+        On Okta Classic Engine orgs:
+
         1. In the Admin Console, go to **Security > Authentication**.
         2. Open the **Password** tab and select the password policy to review.
         3. Under **Recovery settings**, confirm that **Security Question** is not enabled as a recovery factor.
 
-        A passing result shows security question recovery inactive for every policy; a failing result shows it active.
+        On Okta Identity Engine orgs:
+
+        1. In the Admin Console, go to **Security > Authenticators** and open the **Password** authenticator's policies.
+        2. Select the password policy to review, then open each of its rules.
+        3. On every rule that allows password reset, confirm that **Additional verification is** does not require a security question.
+
+        A passing result shows security question recovery used by no policy; a failing result shows a policy or a rule that uses it.
 
         ### Audit via API
 
-        Query the Okta API and inspect the result:
+        List the password policies, then list the rules of each policy:
 
         ```bash
         curl -s -H "Authorization: SSWS $OKTA_API_TOKEN" \
           "https://$OKTA_ORG.okta.com/api/v1/policies?type=PASSWORD"
+        curl -s -H "Authorization: SSWS $OKTA_API_TOKEN" \
+          "https://$OKTA_ORG.okta.com/api/v1/policies/$POLICY_ID/rules"
         ```
 
-        A passing response has `settings.recovery.factors.recovery_question.status` set to `INACTIVE` for every policy; a failing response shows it as `ACTIVE`.
+        A policy with at least one rule that carries `actions.selfServicePasswordReset.requirement` is read from its rules. A passing response omits `security_question` from `requirement.stepUp.methods` on every such rule whose `actions.selfServicePasswordReset.access` is `ALLOW`. Any other policy is read from its settings, where a passing response has `settings.recovery.factors.recovery_question.status` set to `INACTIVE`.
       remediation:
         - id: console
           desc: |
@@ -3633,7 +3665,8 @@ queries:
   - uid: mondoo-okta-security-password-settings-password-question-recovery-api
     filters: asset.platform == "okta-org"
     mql: |
-      okta.policies.password.all( settings['recovery']['factors']['recovery_question']['status'] == "INACTIVE" )
+      okta.policies.password.where( rules.none( actions['selfServicePasswordReset']['requirement'] != empty ) ).all( settings['recovery']['factors']['recovery_question']['status'] == "INACTIVE" )
+      okta.policies.password.all( rules.where( actions['selfServicePasswordReset']['access'] == "ALLOW" && actions['selfServicePasswordReset']['requirement']['stepUp'] != empty ).none( actions['selfServicePasswordReset']['requirement']['stepUp']['methods'].contains("security_question") ) )
   - uid: mondoo-okta-security-password-settings-password-question-recovery-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.providers.any( nameLabel == "okta" )
     mql: |
