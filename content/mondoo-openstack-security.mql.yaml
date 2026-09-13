@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-openstack-security
     name: Mondoo OpenStack Security
-    version: 1.5.3
+    version: 1.5.4
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -167,18 +167,33 @@ queries:
       remediation:
         - id: console
           desc: |
+            An application credential cannot be edited after creation, so the fix is a restricted replacement. Keystone only lets a user create application credentials for themselves, so sign in to Horizon as the user who owns the flagged credential.
+
             1. Navigate to **Identity → Application Credentials** in Horizon.
-            2. Create a replacement credential and leave **Unrestricted** unchecked.
-            3. Update every automation consumer to use the replacement credential.
+            2. Create a replacement credential and leave **Unrestricted (dangerous)** unchecked.
+            3. Copy the ID and secret from the confirmation dialog, since Keystone never displays the secret again, and update every automation consumer to use them.
             4. Delete the unrestricted credential once nothing depends on it.
         - id: cli
           desc: |
+            Create a restricted replacement, move consumers to it, then delete the unrestricted credential. A credential created without `--unrestricted` is restricted, which is the state the check requires. Keystone only lets a user create application credentials for themselves, so run these commands authenticated as the user who owns the flagged credential.
+
             ```bash
             # Create a restricted replacement first, cut consumers over, then revoke the old credential
             openstack application credential create automation-job \
               --role member --expiration 2026-12-31T00:00:00
             openstack application credential delete old-automation-job
             ```
+
+            Replace the example values:
+
+            - `automation-job` is the name of the new credential. Names must be unique among the user's application credentials, so choose one the user does not already have.
+            - `member` is a role the user holds on the current project. Repeat `--role` for each role the automation needs.
+            - `2026-12-31T00:00:00` is the expiry in `YYYY-mm-ddTHH:MM:SS` form and must be in the future.
+            - `old-automation-job` is the name or ID of the unrestricted credential, as shown by `openstack application credential list`.
+
+            Record the `id` and `secret` printed by the create command, because Keystone never displays the secret again.
+
+            **Deleting the old credential immediately breaks every consumer still using it.** Run the delete only after all of them authenticate with the replacement.
         - id: terraform
           desc: |
             Never set `unrestricted = true` on an `openstack_identity_application_credential_v3` resource. Either omit the argument (the default is `false`) or set it explicitly:
@@ -289,21 +304,30 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Navigate to **Identity → Users** in Horizon as an administrator.
-            2. Edit each user and enable multi-factor authentication.
-            3. Configure the required authentication rules and confirm the user can still authenticate with the second factor before relying on the change.
+            Horizon cannot make this change. Its user edit form offers no multi-factor authentication options, so use the CLI method.
         - id: cli
           desc: |
-            Enable MFA on the user and define the rule set that the user must satisfy. The rule below requires a password plus a TOTP code:
+            Keystone enforces MFA through two user options. `multi_factor_auth_enabled` is the flag the check reads, and `multi_factor_auth_rules` lists the auth methods that must all succeed before a token is issued. Enabling the flag without a rule enforces nothing, so set both.
+
+            1. Confirm `totp` is listed in `[auth] methods` in `keystone.conf` on every Keystone node. Keystone ignores rule entries for methods that are not enabled, so without `totp` the rule reduces to `password` and the password alone still issues a token.
+            2. Register a TOTP secret for the user and load the same secret into the user's authenticator app. The secret is a base32 string encoding at least 16 bytes.
+            3. Enable MFA with a rule that requires both the password and a TOTP code.
+            4. Confirm the user can obtain a token with the password and a TOTP code before relying on the change.
 
             ```bash
+            openstack credential create --type totp <user> <base32-secret>
             openstack user set <user> \
               --enable-multi-factor-auth \
               --multi-factor-auth-rule password,totp
             ```
+
+            - `<user>` is the name or ID of the flagged user.
+            - `<base32-secret>` is the TOTP seed generated for that user.
+
+            **A user under this rule who has no working TOTP credential can no longer authenticate.** Complete step 2 before step 3, and check service accounts before enabling MFA on them, because a service signing in with only a password cannot supply a code.
         - id: terraform
           desc: |
-            Set `multi_factor_auth_enabled = true` and define `multi_factor_auth_rule` on the `openstack_identity_user_v3` resource:
+            Set `multi_factor_auth_enabled = true` and define `multi_factor_auth_rule` on the `openstack_identity_user_v3` resource. The same prerequisites as the CLI method apply: `totp` must be enabled in `[auth] methods`, and the user needs a TOTP credential before the rule is applied, or the user is locked out.
 
             ```hcl
             resource "openstack_identity_user_v3" "operator" {
@@ -414,16 +438,18 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Navigate to **Identity → Users** in Horizon as an administrator.
-            2. Edit each affected user and clear the lockout-exemption option so standard account-lockout applies.
-            3. Confirm the lockout policy is configured at the domain or deployment level so the account is now protected.
+            Horizon cannot make this change. Its user edit form offers no lockout exemption option, so use the CLI method.
         - id: cli
           desc: |
-            Clear the exemption so the user is subject to the configured lockout policy:
+            Clear the `ignore_lockout_failure_attempts` user option so the user is counted against the lockout threshold again. `<user>` is the name or ID of the flagged user.
 
             ```bash
             openstack user set <user> --no-ignore-lockout-failure-attempts
             ```
+
+            Lockout only protects the account if the deployment enables it. Keystone leaves it off by default, so confirm `keystone.conf` sets `[security_compliance] lockout_failure_attempts` to the number of failures allowed and `lockout_duration` to the lockout period in seconds.
+
+            **The account can now be locked out.** If the exemption was added because a misconfigured client kept failing to authenticate, fix that client first, or the account locks itself out as soon as the option is cleared.
         - id: terraform
           desc: |
             Either omit `ignore_lockout_failure_attempts` on the `openstack_identity_user_v3` resource (the default is `false`) or set it explicitly:
@@ -533,18 +559,33 @@ queries:
       remediation:
         - id: console
           desc: |
+            An application credential's expiration cannot be changed after creation, so the fix is a replacement that expires. Keystone only lets a user create application credentials for themselves, so sign in to Horizon as the user who owns the flagged credential.
+
             1. Navigate to **Identity → Application Credentials** in Horizon.
-            2. Create a replacement credential with an **Expiration** value that matches your rotation policy.
-            3. Update every automation consumer to use the replacement credential.
+            2. Create a replacement credential with **Expiration Date** and **Expiration Time** set to a future point that matches your rotation policy.
+            3. Copy the ID and secret from the confirmation dialog, since Keystone never displays the secret again, and update every automation consumer to use them.
             4. Delete the non-expiring credential once nothing depends on it.
         - id: cli
           desc: |
+            Create a replacement that carries an expiration, move consumers to it, then delete the credential that never expires. Keystone only lets a user create application credentials for themselves, so run these commands authenticated as the user who owns the flagged credential.
+
             ```bash
             # Re-issue with an explicit expiration, cut consumers over, then revoke the old credential
             openstack application credential create automation-job \
               --role member --expiration 2026-12-31T00:00:00
             openstack application credential delete old-automation-job
             ```
+
+            Replace the example values:
+
+            - `automation-job` is the name of the new credential. Names must be unique among the user's application credentials, so choose one the user does not already have.
+            - `member` is a role the user holds on the current project. Repeat `--role` for each role the automation needs.
+            - `2026-12-31T00:00:00` is the expiry in `YYYY-mm-ddTHH:MM:SS` form. Any future timestamp satisfies the check, so pick the shortest interval your rotation process can renew within.
+            - `old-automation-job` is the name or ID of the non-expiring credential, as shown by `openstack application credential list`.
+
+            Record the `id` and `secret` printed by the create command, because Keystone never displays the secret again.
+
+            **Deleting the old credential immediately breaks every consumer still using it.** Run the delete only after all of them authenticate with the replacement.
         - id: terraform
           desc: |
             Always set `expires_at` on an `openstack_identity_application_credential_v3` resource:
@@ -660,7 +701,11 @@ queries:
             4. Delete the original instance only after SSH access to the replacement is verified. Deleting it first risks locking you out if the new keypair was not injected correctly. The check keeps failing while the keyless server exists.
         - id: cli
           desc: |
+            Nova injects the keypair when it builds a server, so launch a replacement with `--key-name`, move the workload to it, and delete the keyless server. The check keeps failing while the keyless server exists.
+
             ```bash
+            # Upload the public key once; keypairs belong to the user who creates them
+            openstack keypair create --public-key ~/.ssh/id_ed25519.pub ops-key
             # Boot a replacement instance with a keypair injected at launch
             openstack server create replacement \
               --image ubuntu-24.04 --flavor m1.small --network app-net \
@@ -669,6 +714,14 @@ queries:
             # replacement with the new keypair before deleting the original
             openstack server delete original-server
             ```
+
+            Replace the example values:
+
+            - `ops-key` is the keypair name. Nova looks keypairs up for the user making the request, so create the server as the same user who owns the keypair.
+            - `ubuntu-24.04`, `m1.small`, and `app-net` are the image, flavor, and network. Use the ones the original server runs on, as shown by `openstack server show original-server`.
+            - `replacement` and `original-server` are the new and existing server names or IDs.
+
+            **Deleting the original server destroys its root disk and any ephemeral disk.** Copy any data held there to the replacement or to a volume before running the delete.
         - id: terraform
           desc: |
             Always set `key_pair` on `openstack_compute_instance_v2`:
@@ -791,12 +844,22 @@ queries:
             3. Add the security group that matches the instance's role and save.
         - id: cli
           desc: |
+            Attach a security group to the server. `web-01` is the server name or ID, and `app-sg` is a security group whose rules open only the ports the server's role needs.
+
             ```bash
             openstack server add security group web-01 app-sg
             ```
+
+            Neutron refuses to apply a security group to a port that has port security disabled, and a server with no group often has exactly that. If the command is rejected, enable port security on the server's ports first. `openstack port list --server web-01` lists them.
+
+            ```bash
+            openstack port set --enable-port-security --security-group app-sg <port-id>
+            ```
+
+            **Filtering starts as soon as the group applies.** Traffic the group does not allow is dropped, so confirm the group admits the traffic the server serves before attaching it.
         - id: terraform
           desc: |
-            Always set `security_groups` on `openstack_compute_instance_v2`, or attach security groups via `openstack_networking_port_v2` and reference that port from the instance:
+            Always set `security_groups` on `openstack_compute_instance_v2`. The Terraform version of this check reads that argument on the instance, so security groups attached only through an `openstack_networking_port_v2` resource leave it failing:
 
             ```hcl
             resource "openstack_networking_secgroup_v2" "web" {
@@ -906,7 +969,17 @@ queries:
             3. If the server does not need a public edge at all, navigate to **Compute → Instances**, open the instance, and disassociate its floating IP under the action menu.
         - id: cli
           desc: |
+            A server is reachable when it has a public edge and one of its security groups admits inbound traffic from a public source. Removing either side closes the finding.
+
+            A public source is any of the following, on any port:
+
+            - `0.0.0.0/0`, `::/0`, or another public prefix of `/8` or wider
+            - no remote at all, which Neutron treats as any source
+            - a remote address group that contains such a range
+
             ```bash
+            # Find the open ingress rules on each group the server uses
+            openstack security group rule list app-sg --ingress
             # Scope the world-open ingress rule to a trusted CIDR
             openstack security group rule create app-sg \
               --ingress --protocol tcp --dst-port 443 --remote-ip 203.0.113.0/24
@@ -914,6 +987,17 @@ queries:
             # Or, if the server needs no public edge, remove its floating IP
             openstack server remove floating ip web-01 203.0.113.50
             ```
+
+            Replace the example values:
+
+            - `app-sg` is a security group attached to the server, as listed by `openstack server show web-01`.
+            - `443` is the port the service listens on, and `203.0.113.0/24` is the client network that needs it. Any private range, or a public range narrower than `/8`, is not treated as a public source.
+            - `4a4ee176-43e6-4b48-8bcf-5acd1c403fbf` is the ID of the open rule, from the `ID` column of the rule list.
+            - `web-01` is the server, and `203.0.113.50` is its floating IP.
+
+            Removing the floating IP does not help a server whose port sits directly on an external network. Replace that interface with one on a tenant network, or tighten its security groups.
+
+            **Deleting the open rule or the floating IP drops every client connection that relied on it.** Add the scoped rule and confirm legitimate clients still connect before removing access.
     refs:
       - url: https://docs.openstack.org/security-guide/networking.html
         title: OpenStack Neutron security groups
@@ -998,13 +1082,23 @@ queries:
             3. Confirm you can still reach the affected instances from the trusted range, then delete the rule open to `0.0.0.0/0` or `::/0`. Removing the open rule drops live SSH sessions that arrived through it.
         - id: cli
           desc: |
+            Replace each open rule that reaches port 22 with one scoped to a trusted source. A rule is open when its remote is `0.0.0.0/0`, `::/0`, another public prefix of `/8` or wider, a remote address group holding such a range, or no remote at all. A rule reaches port 22 when its protocol is `tcp` or any and its port range includes 22.
+
             ```bash
+            # List the ingress rules to find the open ones and their IDs
+            openstack security group rule list web-sg --ingress
             # Add the scoped rule first so management access survives the change
             openstack security group rule create web-sg \
               --ingress --protocol tcp --dst-port 22 --remote-ip 203.0.113.0/24
             # Then remove the world-open rule; live sessions through it are dropped
             openstack security group rule delete 4a4ee176-43e6-4b48-8bcf-5acd1c403fbf
             ```
+
+            Replace the example values:
+
+            - `web-sg` is the flagged security group.
+            - `203.0.113.0/24` is the bastion or VPN network administrators connect from. A private range, or a public range narrower than `/8`, satisfies the check.
+            - `4a4ee176-43e6-4b48-8bcf-5acd1c403fbf` is the ID of an open rule from the `ID` column of the rule list. Delete every open rule that reaches port 22, including an IPv6 rule open to `::/0`.
         - id: terraform
           desc: |
             Scope inbound SSH `remote_ip_prefix` to a specific trusted CIDR, never `0.0.0.0/0` or `::/0`:
@@ -1261,13 +1355,23 @@ queries:
             3. Confirm RDP still works from the trusted range, then delete the rule open to `0.0.0.0/0` or `::/0`. Removing the open rule drops live RDP sessions that arrived through it.
         - id: cli
           desc: |
+            Replace each open rule that reaches port 3389 with one scoped to a trusted source. A rule is open when its remote is `0.0.0.0/0`, `::/0`, another public prefix of `/8` or wider, a remote address group holding such a range, or no remote at all. A rule reaches port 3389 when its protocol is `tcp` or any and its port range includes 3389.
+
             ```bash
+            # List the ingress rules to find the open ones and their IDs
+            openstack security group rule list windows-sg --ingress
             # Add the scoped rule first so management access survives the change
             openstack security group rule create windows-sg \
               --ingress --protocol tcp --dst-port 3389 --remote-ip 203.0.113.0/24
             # Then remove the world-open rule; live sessions through it are dropped
             openstack security group rule delete 4a4ee176-43e6-4b48-8bcf-5acd1c403fbf
             ```
+
+            Replace the example values:
+
+            - `windows-sg` is the flagged security group.
+            - `203.0.113.0/24` is the VPN or remote desktop gateway network users connect from. A private range, or a public range narrower than `/8`, satisfies the check.
+            - `4a4ee176-43e6-4b48-8bcf-5acd1c403fbf` is the ID of an open rule from the `ID` column of the rule list. Delete every open rule that reaches port 3389, including an IPv6 rule open to `::/0`.
         - id: terraform
           desc: |
             Scope inbound RDP `remote_ip_prefix` to a specific trusted CIDR, never `0.0.0.0/0` or `::/0`:
@@ -1400,13 +1504,23 @@ queries:
             3. Confirm WinRM still works from the trusted range, then delete the rule open to `0.0.0.0/0` or `::/0`. Removing the open rule drops live WinRM sessions that arrived through it.
         - id: cli
           desc: |
+            Replace each open rule that reaches port 5985 or 5986 with one scoped to a trusted source. A rule is open when its remote is `0.0.0.0/0`, `::/0`, another public prefix of `/8` or wider, a remote address group holding such a range, or no remote at all. A rule reaches WinRM when its protocol is `tcp` or any and its port range includes 5985 or 5986.
+
             ```bash
+            # List the ingress rules to find the open ones and their IDs
+            openstack security group rule list windows-sg --ingress
             # Add the scoped rule first so management access survives the change
             openstack security group rule create windows-sg \
               --ingress --protocol tcp --dst-port 5985:5986 --remote-ip 203.0.113.0/24
             # Then remove the world-open rule; live sessions through it are dropped
             openstack security group rule delete 4a4ee176-43e6-4b48-8bcf-5acd1c403fbf
             ```
+
+            Replace the example values:
+
+            - `windows-sg` is the flagged security group.
+            - `203.0.113.0/24` is the configuration management host or bastion network. A private range, or a public range narrower than `/8`, satisfies the check.
+            - `4a4ee176-43e6-4b48-8bcf-5acd1c403fbf` is the ID of an open rule from the `ID` column of the rule list. Delete every open rule that reaches either port, including an IPv6 rule open to `::/0`.
         - id: terraform
           desc: |
             Scope inbound WinRM `remote_ip_prefix` to a specific trusted CIDR, never `0.0.0.0/0` or `::/0`:
@@ -1544,13 +1658,23 @@ queries:
             3. Confirm the application tier can still reach the database, then delete the rule open to `0.0.0.0/0` or `::/0`. Removing the open rule drops connections established through it.
         - id: cli
           desc: |
+            Replace each open rule that reaches a database port with one scoped to the application tier. A rule is open when its remote is `0.0.0.0/0`, `::/0`, another public prefix of `/8` or wider, a remote address group holding such a range, or no remote at all. A rule reaches a database port when its protocol is `tcp` or any and its port range includes 3306, 5432, 27017, 6379, 11211, 9200, 1433, or 1521.
+
             ```bash
+            # List the ingress rules to find the open ones and their IDs
+            openstack security group rule list db-sg --ingress
             # Add the scoped rule first so the application tier keeps its database access
             openstack security group rule create db-sg \
               --ingress --protocol tcp --dst-port 3306 --remote-group app-sg
             # Then remove the world-open rule; connections established through it are dropped
             openstack security group rule delete 4a4ee176-43e6-4b48-8bcf-5acd1c403fbf
             ```
+
+            Replace the example values:
+
+            - `db-sg` is the flagged security group, and `3306` is the port the database listens on.
+            - `app-sg` is the security group of the servers that query the database. A remote security group is never treated as a public source.
+            - `4a4ee176-43e6-4b48-8bcf-5acd1c403fbf` is the ID of an open rule from the `ID` column of the rule list. Delete every open rule that reaches a database port, including an IPv6 rule open to `::/0`.
         - id: terraform
           desc: |
             Constrain database ingress with `remote_group_id` or a private `remote_ip_prefix`:
@@ -1718,13 +1842,23 @@ queries:
             3. Confirm cluster nodes and operators can still reach the control plane, then delete the rule open to `0.0.0.0/0` or `::/0`. Removing the open rule drops connections established through it.
         - id: cli
           desc: |
+            Replace each open rule that reaches an orchestration port with one scoped to a trusted source. A rule is open when its remote is `0.0.0.0/0`, `::/0`, another public prefix of `/8` or wider, a remote address group holding such a range, or no remote at all. A rule reaches an orchestration port when its protocol is `tcp` or any and its port range includes 6443, 10250, 2379, 2380, 2375, or 2376.
+
             ```bash
+            # List the ingress rules to find the open ones and their IDs
+            openstack security group rule list k8s-sg --ingress
             # Add the scoped rule first so the cluster keeps control-plane access
             openstack security group rule create k8s-sg \
               --ingress --protocol tcp --dst-port 6443 --remote-ip 203.0.113.0/24
             # Then remove the world-open rule; connections established through it are dropped
             openstack security group rule delete 4a4ee176-43e6-4b48-8bcf-5acd1c403fbf
             ```
+
+            Replace the example values:
+
+            - `k8s-sg` is the flagged security group, and `6443` is the port being scoped. Repeat the create command for each orchestration port the cluster needs.
+            - `203.0.113.0/24` is the operator or VPN network. A private range, a public range narrower than `/8`, or `--remote-group` naming the cluster's own security group satisfies the check.
+            - `4a4ee176-43e6-4b48-8bcf-5acd1c403fbf` is the ID of an open rule from the `ID` column of the rule list. Delete every open rule that reaches an orchestration port, including an IPv6 rule open to `::/0`.
         - id: terraform
           desc: |
             Constrain orchestration ingress with `remote_group_id` or a private `remote_ip_prefix`, never `0.0.0.0/0` or `::/0`:
@@ -1884,7 +2018,11 @@ queries:
             3. Confirm the services and your management path still work, then delete the allow-all rule. Removing it drops every connection that was admitted through it.
         - id: cli
           desc: |
+            Replace each allow-all rule with rules naming the ports the workload serves. A rule allows all ports when it sets no port range or a range spanning 1 through 65535, and it fails when its remote is `0.0.0.0/0`, `::/0`, another public prefix of `/8` or wider, a remote address group holding such a range, or no remote at all.
+
             ```bash
+            # List the ingress rules to find the allow-all ones and their IDs
+            openstack security group rule list web-sg --ingress
             # Add the narrow per-service rules first
             openstack security group rule create web-sg \
               --ingress --protocol tcp --dst-port 443 --remote-ip 0.0.0.0/0
@@ -1893,6 +2031,12 @@ queries:
             # Then remove the allow-all rule; connections admitted through it are dropped
             openstack security group rule delete 4a4ee176-43e6-4b48-8bcf-5acd1c403fbf
             ```
+
+            Replace the example values:
+
+            - `web-sg` is the flagged security group.
+            - `443` is a public service port and `22` is the management port, scoped to the administrators' network `203.0.113.0/24`. Add one rule per port the workload actually serves.
+            - `4a4ee176-43e6-4b48-8bcf-5acd1c403fbf` is the ID of the allow-all rule from the `ID` column of the rule list. Delete every such rule, including an IPv6 rule open to `::/0`.
         - id: terraform
           desc: |
             Never declare a security group rule whose ingress range covers all ports from `0.0.0.0/0` or `::/0`. Use narrow per-service rules:
@@ -2031,6 +2175,13 @@ queries:
             # a port with port security on and no security group drops all traffic
             openstack port set --security-group app-sg --enable-port-security 9c4ad8a0-2b7e-4d61-b8a4-3f1e5c6d7a8b
             ```
+
+            Replace the example values:
+
+            - `9c4ad8a0-2b7e-4d61-b8a4-3f1e5c6d7a8b` is the ID of the flagged port. `openstack port list --server <server>` lists the ports of an instance.
+            - `app-sg` is a security group whose rules admit the traffic the instance serves. Repeat `--security-group` to attach more than one.
+
+            **Filtering starts immediately.** Traffic the attached groups do not allow is dropped, and so is traffic the instance sends from addresses other than its own, so add allowed address pairs for any virtual IP the workload uses before re-enabling port security.
         - id: terraform
           desc: |
             Either omit `port_security_enabled` on `openstack_networking_port_v2` (the default is `true`) or set it explicitly, and always pair it with the security groups the port needs:
@@ -2125,21 +2276,24 @@ queries:
         openstack volume show <id>
         ```
 
-        A passing result shows `encrypted` set to `True`; a failing result shows `encrypted` set to `False`. Volume types backed by encryption can be confirmed with `openstack volume type list --long`.
+        A passing result shows `encrypted` set to `True`; a failing result shows `encrypted` set to `False`. Volume types backed by encryption can be confirmed by an administrator with `openstack volume type list --encryption-type`.
       remediation:
         - id: console
           desc: |
             Encryption can only be applied by moving the volume onto an encryption-capable volume type, because the type is what binds the volume to a key. The retype copies the data to encrypted storage, so plan for the volume to be offline during the migration.
 
             1. Confirm with your cloud administrator which volume types provide encryption.
-            2. Navigate to **Volumes → Volumes** in Horizon and detach the volume from its server if it is attached.
-            3. From the volume's action menu, select **Change Volume Type**, choose the encrypted type, and set **Migration Policy** to **On Demand**.
-            4. Reattach the volume once the retype completes.
+            2. Stop the applications using the volume and unmount it inside the guest.
+            3. Navigate to **Volumes → Volumes** in Horizon and detach the volume from its server if it is attached.
+            4. From the volume's action menu, select **Change Volume Type**, choose the encrypted type, and set **Migration Policy** to **On Demand**.
+            5. Reattach the volume once the retype completes.
+
+            **A boot volume cannot be detached from its server.** An unencrypted boot volume needs a replacement server built from a volume on the encrypted type.
         - id: cli
           desc: |
             ```bash
-            # Confirm which volume types are encrypted
-            openstack volume type list --long
+            # Confirm which volume types are encrypted (admin only)
+            openstack volume type list --encryption-type
 
             # Detach if needed, then retype the volume onto an encrypted type with data migration
             openstack server remove volume web-01 data-volume
@@ -2147,11 +2301,22 @@ queries:
             openstack server add volume web-01 data-volume
             ```
 
+            Replace the example values:
+
+            - `encrypted-lvm` is a volume type with a populated `Encryption` column in `openstack volume type list --encryption-type`. That listing requires the admin role, so ask the cloud administrator which type to use if you cannot run it.
+            - `data-volume` is the flagged volume, and `web-01` is the server it is attached to.
+
+            **Detaching removes the disk from the running server.** Stop the applications that use it and unmount the filesystem inside the guest before `openstack server remove volume`, and expect the volume to stay offline until the retype finishes.
+
+            **A boot volume cannot be detached from its server.** An unencrypted boot volume needs a replacement server built from a volume on the encrypted type.
+
             If the backend rejects the retype, migrate the data manually. Treat this as a data-loss-prone operation and keep the original intact until the copy is verified:
 
             ```bash
-            # 1. Create a new, empty volume of the same size on the encrypted type
-            openstack volume create --type encrypted-lvm --size 50 data-volume-enc
+            # 1. Create a new, empty volume on the encrypted type. Encryption stores
+            #    its header on the volume, so the usable size is slightly smaller
+            #    than the size requested; make it larger than the source.
+            openstack volume create --type encrypted-lvm --size 51 data-volume-enc
 
             # 2. Stop writes to the source so the copy is consistent, then attach both
             #    volumes to a helper instance
@@ -2162,7 +2327,9 @@ queries:
             #    for example `dd` or `rsync` between the two block devices
             ```
 
-            After the copy completes, mount the encrypted volume and verify the data is complete and readable. Delete the unencrypted original only after this verification succeeds; if anything looks wrong, keep the original and retry the copy.
+            `51` is one GiB more than the 50 GiB source, and `helper-01` is any server that can attach both volumes.
+
+            After the copy completes, mount the encrypted volume and verify the data is complete and readable. Delete the unencrypted original only after this verification succeeds, because the check keeps failing while it exists. If anything looks wrong, keep the original and retry the copy.
     refs:
       - url: https://docs.openstack.org/cinder/latest/configuration/block-storage/volume-encryption.html
         title: OpenStack Cinder volume encryption
@@ -2239,10 +2406,12 @@ queries:
         - id: console
           desc: |
             1. Navigate to **Compute → Images** in Horizon.
-            2. Open the affected image and change **Visibility** to **Private** (or **Shared** with explicit member projects).
+            2. Open the affected image and change **Visibility** to **Private**, or to **Shared** if specific projects still need it.
             3. If the image was already downloaded by other tenants, rotate the secret material it carries.
         - id: cli
           desc: |
+            Set the image visibility to `private`, or to `shared` when named projects still need it. Both values pass the check.
+
             ```bash
             openstack image set --private <image>
             # or, to share with a specific project:
@@ -2250,7 +2419,12 @@ queries:
             openstack image add project <image> <member-project>
             ```
 
-            Making the image private stops new downloads but does not recall copies already taken. While it was public, any other tenant could have downloaded or cached it, so rotate any secret material the image carries (embedded credentials, keys, tokens) after restricting visibility.
+            - `<image>` is the name or ID of the flagged image.
+            - `<member-project>` is the name or ID of a project that needs the image. That project then accepts the membership with `openstack image set --accept <image>` before the image appears in its listing.
+
+            **Other projects can no longer launch servers from the image once it is private.** Add any project that still needs it as a member of a shared image before switching visibility.
+
+            Making the image private stops new downloads but does not recall copies already taken. While it was public, any other tenant could have downloaded or cached it, so rotate any embedded credentials, keys, and tokens the image carries after restricting visibility.
         - id: terraform
           desc: |
             Either omit `visibility` on `openstack_images_image_v2` (the default is `private`) or set it explicitly to `private` or `shared`:
@@ -2398,6 +2572,15 @@ queries:
               --property img_signature_certificate_uuid="<barbican-cert-uuid>"
             ```
 
+            Replace the example values:
+
+            - `golden-app.qcow2` is a local copy of the exact image data stored in Glance. Nova hashes the data it downloads, so a signature made over any other file fails verification at boot. `openstack image save --file golden-app.qcow2 <image>` downloads it.
+            - `<image>` is the name or ID of the flagged image.
+            - `<barbican-cert-uuid>` is the UUID at the end of the `Secret href` returned in step 2.
+            - `SHA-256` and `RSA-PSS` must match the `-sha256` digest and PSS padding used in step 3.
+
+            Any non-empty `img_signature` satisfies the check, but only a signature that verifies protects the image.
+
             See the Glance image signature verification docs for the full procedure, including how to enable signature verification in Nova so the attached signature is enforced at boot.
         - id: terraform
           desc: |
@@ -2523,12 +2706,19 @@ queries:
             2. Select the affected container and clear the **Public Access** checkbox.
         - id: cli
           desc: |
+            Remove the `.r:*` entry from the container's read ACL with the `swift` client from `python-swiftclient`, since `openstack container set` cannot change ACLs. `swift post -r` replaces the whole read ACL with the value given, so an empty value leaves only the owning project with access.
+
             ```bash
             # Clear the read ACL entirely
             swift post backups -r ""
             # Or restrict to the project's authenticated users only
             swift post backups -r "f47ac10b58cc4372a5670e02b2c3d479:*"
             ```
+
+            - `backups` is the name of the flagged container.
+            - `f47ac10b58cc4372a5670e02b2c3d479` is the ID of the project whose users may read the container, as shown by `openstack project show <project> -f value -c id`. The `<project-id>:*` form grants read to that project's users only, which satisfies the check.
+
+            **Anonymous clients lose access immediately.** Any website, download link, or integration fetching objects without a token starts failing, and replacing the ACL also removes any other read grants it held, so include every principal that still needs access in the new value.
         - id: terraform
           desc: |
             Never set `container_read = ".r:*"` on `openstack_objectstorage_container_v1`. Omit `container_read` to keep the container private, or scope it to the project:
@@ -2640,10 +2830,16 @@ queries:
             The Horizon load balancer panels expose the TLS cipher string but not the allowed TLS protocol versions; use the CLI to restrict TLS versions.
         - id: cli
           desc: |
+            Set the listener's `tls_versions` list to the modern versions only. The list given replaces the existing one, so SSLv2, SSLv3, TLSv1.0, and TLSv1.1 are removed.
+
             ```bash
             openstack loadbalancer listener set https-listener \
               --tls-version TLSv1.2 --tls-version TLSv1.3
             ```
+
+            `https-listener` is the name or ID of the flagged `TERMINATED_HTTPS` listener. Any list without SSLv2, SSLv3, TLSv1.0, and TLSv1.1 satisfies the check.
+
+            **Clients that only speak TLSv1.0 or TLSv1.1 can no longer connect.** Confirm the client population before applying the change.
         - id: terraform
           desc: |
             Set `tls_versions` explicitly on every `openstack_lb_listener_v2` whose `protocol` is `TERMINATED_HTTPS`:
@@ -2764,17 +2960,27 @@ queries:
           desc: |
             1. Open **Network → Load Balancers** in Horizon and select the internet-facing load balancer.
             2. On the **Listeners** tab, replace each plaintext listener with a `TERMINATED_HTTPS` listener and an attached TLS certificate, or move the service behind an HTTPS listener.
-            3. Where an HTTP listener must remain for redirects, configure it to redirect to the HTTPS listener rather than serving content.
+            3. Delete the plaintext listener once clients use the encrypted one.
+
+            **Every listener on the load balancer must use `HTTPS` or `TERMINATED_HTTPS` for the check to pass.** An `HTTP` listener kept only to redirect clients to HTTPS still counts as plaintext, so either remove it or record the load balancer as an accepted exception.
         - id: cli
           desc: |
-            Create an encrypted listener and remove the plaintext one. The TLS material is referenced from a Barbican container:
+            Create an encrypted listener, give it the backend pool, and remove the plaintext listener. Only `HTTPS` and `TERMINATED_HTTPS` listeners count as encrypted, so a `TCP` listener in front of a TLS backend still fails and needs replacing with an `HTTPS` listener.
 
             ```bash
             openstack loadbalancer listener create <lb> \
               --name https --protocol TERMINATED_HTTPS --protocol-port 443 \
-              --default-tls-container-ref <barbican-container-ref>
+              --default-tls-container-ref <barbican-container-ref> \
+              --default-pool <pool>
             openstack loadbalancer listener delete <plaintext-listener>
             ```
+
+            - `<lb>` is the name or ID of the flagged load balancer.
+            - `<barbican-container-ref>` is the Barbican href of the certificate and key, such as a PKCS12 secret stored with `openstack secret store`.
+            - `<pool>` is the pool the plaintext listener sends traffic to, from `openstack loadbalancer listener show <plaintext-listener>`. Without a default pool the new listener has no backend to forward requests to.
+            - `<plaintext-listener>` is the name or ID of each `HTTP`, `TCP`, `UDP`, `SCTP`, or `PROMETHEUS` listener on the load balancer.
+
+            **Deleting the plaintext listener breaks every client still connecting to its port.** Move clients to the HTTPS endpoint first, and note that an `HTTP` listener kept only for redirects still fails the check.
         # No Terraform remediation: the internet-facing determination is a runtime correlation of
         # the VIP's external-network or floating-IP placement with its open listeners and has no
         # single configuration analog. Use the listener-modern-tls Terraform remediation to define
@@ -2866,17 +3072,24 @@ queries:
               --allowed-cidr 203.0.113.0/24 \
               --allowed-cidr 198.51.100.0/24
             ```
+
+            - `<listener>` is the name or ID of the flagged listener.
+            - `203.0.113.0/24` and `198.51.100.0/24` are the client networks that need the service. The list must not be empty, and every entry must be a private range or a public range narrower than `/8`, so `0.0.0.0/0`, `::/0`, and other broad public ranges fail.
+
+            **Clients outside the listed ranges are refused as soon as the change applies.** Confirm every legitimate client network is in the list first.
         - id: terraform
           desc: |
-            Set `allowed_cidrs` on the `openstack_lb_listener_v2` resource to the trusted client networks, never `0.0.0.0/0` or `::/0`:
+            Set `allowed_cidrs` on the `openstack_lb_listener_v2` resource to the trusted client networks, never `0.0.0.0/0` or `::/0`. Octavia requires a certificate reference on a `TERMINATED_HTTPS` listener, so the example also sets `default_tls_container_ref` and restricts `tls_versions`:
 
             ```hcl
             resource "openstack_lb_listener_v2" "api" {
-              name            = "api"
-              protocol        = "TERMINATED_HTTPS"
-              protocol_port   = 443
-              loadbalancer_id = openstack_lb_loadbalancer_v2.web.id
-              allowed_cidrs   = ["203.0.113.0/24", "198.51.100.0/24"]
+              name                      = "api"
+              protocol                  = "TERMINATED_HTTPS"
+              protocol_port             = 443
+              loadbalancer_id           = openstack_lb_loadbalancer_v2.web.id
+              default_tls_container_ref = openstack_keymanager_container_v1.tls.container_ref
+              tls_versions              = ["TLSv1.2", "TLSv1.3"]
+              allowed_cidrs             = ["203.0.113.0/24", "198.51.100.0/24"]
             }
             ```
     refs:
@@ -2970,6 +3183,8 @@ queries:
             Horizon does not expose trust management; use the CLI to create the replacement trust with an expiration before deleting the old one.
         - id: cli
           desc: |
+            A trust's expiration cannot be changed, so create a replacement that expires, move its consumers over, and delete the trust that never expires. A replacement created without `--impersonate` also satisfies the check, and is the better choice when the trustee does not need to act in the trustor's name.
+
             ```bash
             # Trusts are immutable; create the replacement first, then delete the old trust.
             # Run the create command as the trustor, since Keystone only lets a user
@@ -2980,6 +3195,15 @@ queries:
             # Update consumers to the new trust ID, then remove the non-expiring trust
             openstack trust delete 9d3b2c1a-5f6e-4d7c-8b9a-0e1f2a3b4c5d
             ```
+
+            Replace the example values:
+
+            - `alice` is the trustor and `deploy-bot` is the trustee, both from `openstack trust show` on the old trust.
+            - `web-project` and `member` are the project and roles the old trust delegates. Repeat `--role` for each role, and delegate no more than the trustee uses.
+            - `2026-12-31T00:00:00` is the expiry in `YYYY-mm-ddTHH:MM:SS` form and must be in the future.
+            - `9d3b2c1a-5f6e-4d7c-8b9a-0e1f2a3b4c5d` is the ID of the non-expiring trust, from `openstack trust list`.
+
+            **Deleting the old trust revokes the tokens issued through it.** Services such as Heat that hold the trust ID stop working until they use the replacement.
         # No Terraform remediation: terraform-provider-openstack has no Keystone trust resource (see the note above the check). Trusts are managed only through the CLI/API.
     refs:
       - url: https://docs.openstack.org/keystone/latest/user/trusts.html
@@ -3057,12 +3281,16 @@ queries:
         - id: console
           desc: |
             1. Navigate to **Share → Shares** in Horizon.
-            2. Open the affected share's **Edit Share** dialog and clear the **Public** setting.
+            2. Open the affected share's **Edit Share** dialog, clear **Make visible to users from all projects**, and save.
         - id: cli
           desc: |
+            Set the share's `is_public` attribute to false so only the owning project can list it. `data-share` is the name or ID of the flagged share.
+
             ```bash
             openstack share set --public false data-share
             ```
+
+            **Other projects that mounted the share through its access rules keep that access.** Visibility only controls who can list the share, so review the share's access rules as well.
         - id: terraform
           desc: |
             Either omit `is_public` on `openstack_sharedfilesystem_share_v2` (the default is `false`) or set it explicitly:
@@ -3185,6 +3413,15 @@ queries:
             # Then remove the world-open rule
             openstack share access delete data-share 4a4ee176-43e6-4b48-8bcf-5acd1c403fbf
             ```
+
+            Replace the example values:
+
+            - `data-share` is the name or ID of the flagged share.
+            - `203.0.113.0/24` is the client network that mounts the share. Any value other than `0.0.0.0/0` or `::/0` satisfies the check, so use the narrowest range that covers the clients.
+            - `rw` is the access level. Use `ro` for clients that only read.
+            - `4a4ee176-43e6-4b48-8bcf-5acd1c403fbf` is the ID of the world-open rule, from `openstack share access list data-share`.
+
+            **Clients outside the new range lose their mounts when the open rule is deleted.**
         - id: terraform
           desc: |
             Scope `access_to` on `openstack_sharedfilesystem_share_access_v2` to a specific trusted CIDR, never `0.0.0.0/0` or `::/0`:
@@ -3297,29 +3534,39 @@ queries:
       remediation:
         - id: console
           desc: |
+            Magnum refuses to change a cluster template while any cluster references it, so the path depends on whether clusters were built from the template.
+
             1. Open **Container Infra → Cluster Templates** in Horizon.
-            2. If no cluster references the template, fix it in place with the CLI, since Horizon does not expose template patching.
-            3. If clusters reference the template, create a replacement template with **Disable TLS** left unset. Existing clusters cannot switch templates: rebuild each cluster from the new template, move its workloads, then delete the old cluster and template.
+            2. If no cluster references the template, select **Update Cluster Template** from its action menu, clear **Disable TLS**, and save.
+            3. If clusters reference the template, create a replacement template with **Disable TLS** cleared and **Floating IP** cleared.
+
+            **Existing clusters cannot switch templates, and correcting the template does not change clusters already built from it.** Rebuild each cluster from the corrected template, move its workloads, then delete the old cluster and template.
         - id: cli
           desc: |
-            Magnum locks a cluster template once any cluster references it: a referenced template cannot be updated or deleted until every cluster built from it is gone. In-place patching therefore only works on templates that no cluster references yet. Even then, the docs do not enumerate which attributes accept a patch, so a `tls_disabled` update may be rejected; if it is, fall back to creating a replacement template.
+            Magnum locks a cluster template once any cluster references it: a referenced template cannot be updated or deleted until every cluster built from it is gone, and an update attempt fails with a `ClusterTemplateReferenced` error. In-place updates therefore only work on templates that no cluster references yet.
 
             ```bash
-            # Confirm no cluster references the template before attempting a patch
-            openstack coe cluster list
+            # Update the template in place while no cluster references it
+            openstack coe cluster template update secure-template --tls-enabled
 
-            # Patch the template in place only while it is unreferenced; this may be
-            # rejected if Magnum treats tls_disabled as non-updatable
-            openstack coe cluster template update secure-template replace tls_disabled=false
-
-            # If clusters reference it (or the patch is rejected), create a
-            # TLS-enabled replacement (tls_disabled defaults to false) and rebuild
+            # If clusters reference it, create a TLS-enabled replacement and rebuild
             # clusters from it, then retire the old clusters and template
             openstack coe cluster template create secure-template-v2 \
-              --image fedora-coreos-38 --keypair ops-key \
+              --image <image> --keypair ops-key \
               --external-network public --coe kubernetes \
-              --flavor m1.small --docker-volume-size 10
+              --flavor m1.small --docker-volume-size 10 \
+              --floating-ip-disabled
             ```
+
+            The `--tls-enabled` flag needs python-magnumclient 5.0.0 or later. Older clients take the JSON Patch form `openstack coe cluster template update secure-template replace tls_disabled=false` instead.
+
+            Replace the example values:
+
+            - `secure-template` is the flagged template, and `secure-template-v2` is a new, unused template name.
+            - `<image>`, `ops-key`, `public`, and `m1.small` are the image, keypair, external network, and flavor. Copy them from `openstack coe cluster template show secure-template`.
+            - `--tls-disabled` is left off, which creates the template with TLS enabled. `--floating-ip-disabled` is passed because Magnum otherwise enables floating IPs on new templates, which publishes every node.
+
+            **Clusters built from the old template keep TLS disabled.** Create a new cluster from the corrected template for each of them, move its workloads, and only then delete the old cluster, which destroys its nodes.
         - id: terraform
           desc: |
             Either omit `tls_disabled` on `openstack_containerinfra_clustertemplate_v1` (the default is `false`) or set it explicitly:
@@ -3431,23 +3678,38 @@ queries:
       remediation:
         - id: console
           desc: |
+            Magnum refuses to change a cluster template while any cluster references it, so the path depends on whether clusters were built from the template.
+
             1. Open **Container Infra → Cluster Templates** in Horizon.
-            2. If no cluster references the template, fix it with the CLI, since Horizon does not expose template patching.
-            3. If clusters reference the template, create a replacement template with **Enable Floating IP** left unset, rebuild each cluster from it, move workloads, then delete the old clusters and template.
+            2. If no cluster references the template, select **Update Cluster Template** from its action menu, clear **Floating IP**, and save.
+            3. If clusters reference the template, create a replacement template and clear **Floating IP**, which the create form checks by default.
+
+            **Existing clusters cannot switch templates, and correcting the template does not change clusters already built from it.** Rebuild each cluster from the corrected template, move its workloads, then delete the old cluster and template.
         - id: cli
           desc: |
-            Magnum locks a cluster template once any cluster references it, so a referenced template cannot be changed in place. Create a replacement template with floating IPs disabled and rebuild clusters from it:
+            Magnum locks a cluster template once any cluster references it, and an update attempt fails with a `ClusterTemplateReferenced` error. Update the template in place while it is unreferenced, and otherwise create a replacement with floating IPs disabled and rebuild clusters from it. Magnum enables floating IPs on a new template unless `--floating-ip-disabled` is passed.
 
             ```bash
-            # A referenced template cannot be patched; create a replacement with floating IPs disabled
+            # Update the template in place while no cluster references it
+            openstack coe cluster template update secure-template --floating-ip-disabled
+
+            # A referenced template cannot be changed; create a replacement with floating IPs disabled
             openstack coe cluster template create secure-template-v2 \
-              --image fedora-coreos-38 --keypair ops-key \
+              --image <image> --keypair ops-key \
               --external-network public --coe kubernetes \
               --flavor m1.small --docker-volume-size 10 \
               --master-lb-enabled --floating-ip-disabled
             ```
 
-            Rebuild clusters from the new template, move workloads, then retire the old clusters and template.
+            The update flags need python-magnumclient 5.0.0 or later. Older clients take the JSON Patch form `openstack coe cluster template update secure-template replace floating_ip_enabled=false` instead.
+
+            Replace the example values:
+
+            - `secure-template` is the flagged template, and `secure-template-v2` is a new, unused template name.
+            - `<image>`, `ops-key`, `public`, and `m1.small` are the image, keypair, external network, and flavor. Copy them from `openstack coe cluster template show secure-template`.
+            - `--master-lb-enabled` puts a load balancer in front of the API servers, so clients can still reach the control plane without public addresses on the nodes.
+
+            **Clusters built from the old template keep their public node addresses.** Create a new cluster from the corrected template for each of them, move its workloads, and only then delete the old cluster, which destroys its nodes.
         - id: terraform
           desc: |
             Either omit `floating_ip_enabled` on `openstack_containerinfra_clustertemplate_v1` (the default is `false`) or set it explicitly, and front the API server with a load balancer:
@@ -3560,22 +3822,38 @@ queries:
       remediation:
         - id: console
           desc: |
+            Magnum refuses to change a cluster template while any cluster references it, so the path depends on whether clusters were built from the template.
+
             1. Open **Container Infra → Cluster Templates** in Horizon.
-            2. If no cluster references the template, fix it in place with the CLI, since Horizon does not expose template patching.
-            3. If clusters reference the template, create a replacement template with **Insecure Registry** left empty. Existing clusters cannot switch templates: rebuild each cluster from the new template, move its workloads, then delete the old cluster and template.
+            2. If no cluster references the template, select **Update Cluster Template** from its action menu, empty the **Insecure Registry** field, and save.
+            3. If clusters reference the template, create a replacement template with **Insecure Registry** left empty and **Floating IP** cleared.
+
+            **Existing clusters cannot switch templates, and correcting the template does not change clusters already built from it.** Rebuild each cluster from the corrected template, move its workloads, then delete the old cluster and template.
         - id: cli
           desc: |
-            ```bash
-            # Fix the template in place while no clusters reference it
-            openstack coe cluster template update secure-template remove insecure_registry
+            Clearing `insecure_registry` needs a JSON Patch `remove` operation. `openstack coe cluster template update` in python-magnumclient 5.0.0 and later has no option that sends one, so create a replacement template without `--insecure-registry`, move clusters to it, and delete the old template.
 
-            # If clusters reference it, create a replacement that omits --insecure-registry
-            # and rebuild clusters from it
-            openstack coe cluster template create secure-template \
-              --image fedora-coreos-38 --keypair ops-key \
+            ```bash
+            # Create a replacement that omits --insecure-registry
+            openstack coe cluster template create secure-template-v2 \
+              --image <image> --keypair ops-key \
               --external-network public --coe kubernetes \
-              --flavor m1.small --docker-volume-size 10
+              --flavor m1.small --docker-volume-size 10 \
+              --floating-ip-disabled
+
+            # Delete the old template once no cluster references it
+            openstack coe cluster template delete secure-template
             ```
+
+            With a python-magnumclient release older than 5.0.0, an unreferenced template can be fixed in place with `openstack coe cluster template update secure-template remove insecure_registry`.
+
+            Replace the example values:
+
+            - `secure-template` is the flagged template, and `secure-template-v2` is a new, unused template name.
+            - `<image>`, `ops-key`, `public`, and `m1.small` are the image, keypair, external network, and flavor. Copy them from `openstack coe cluster template show secure-template`.
+            - `--floating-ip-disabled` is passed because Magnum otherwise enables floating IPs on new templates, which publishes every node.
+
+            **Magnum rejects deleting a template that clusters still reference.** Create a new cluster from the replacement template for each of them, move its workloads, and delete the old cluster, which destroys its nodes, before deleting the old template.
         - id: terraform
           desc: |
             Do not set `insecure_registry` on `openstack_containerinfra_clustertemplate_v1`; rely on a TLS-protected registry instead:
@@ -3679,19 +3957,31 @@ queries:
             The Horizon database panel does not expose the instance access setting; use the CLI.
         - id: cli
           desc: |
+            Trove reports a floating IP on the instance's port as a `public` address. Setting the instance private makes Trove delete the floating IPs on its ports, which is what the check requires. `db-instance-1` is the name or ID of the flagged instance.
+
             ```bash
             # Remove public access in place; Trove releases the public address
             openstack database instance update db-instance-1 --is-private
             ```
 
-            If the instance was built directly on an external network rather than made public by Trove, launch a replacement on a private network, migrate the data, and delete the original:
+            **Clients connecting through the public address lose access.** Point them at the instance's private address, or at an application tier or bastion on the tenant network, before making the change.
+
+            Trove reports a fixed IP as `private` even when the port sits directly on an external network, so such an instance passes the check while its listener is still routable. Launch a replacement on a tenant network, migrate the data, and delete the original:
 
             ```bash
             openstack database instance create db-private \
               --flavor m1.small --size 10 \
-              --datastore mysql --datastore-version 8.0 \
+              --datastore mysql --datastore-version 8.4 \
               --nic net-id=6f2c1b3a-7e8d-4a5b-9c0d-1e2f3a4b5c6d
             ```
+
+            Replace the example values:
+
+            - `db-private` is the new instance name.
+            - `m1.small`, `10`, `mysql`, and `8.4` are the flavor, volume size in GB, datastore, and datastore version. Match the original instance, as shown by `openstack database instance show`, and pick a version from `openstack datastore version list <datastore>`.
+            - `6f2c1b3a-7e8d-4a5b-9c0d-1e2f3a4b5c6d` is the ID of a tenant network that is not external, from `openstack network list --internal`.
+
+            **Deleting the original instance destroys its data.** Verify the migrated data on the replacement first.
         # No Terraform remediation: see the note above the check — the public/private posture is a property of the network the instance attaches to, not a setting on the openstack_db_instance_v1 resource itself.
     refs:
       - url: https://docs.openstack.org/trove/latest/user/index.html
@@ -3761,24 +4051,42 @@ queries:
       remediation:
         - id: console
           desc: |
-            Trove does not perform an in-place major-version upgrade through Horizon. Create a replacement instance on a supported datastore version and migrate the data:
+            Trove refuses an in-place upgrade that changes the first number of the version, such as MySQL 5.7 to 8.4 or PostgreSQL 13 to 16. For those, create a replacement instance on a supported datastore version and migrate the data:
 
             1. Open **Database → Instances** and note the datastore type, version, flavor, and network of the affected instance.
             2. Launch a new instance on a supported datastore version with the same flavor and network.
             3. Migrate the data with the engine's native tools, repoint applications, and delete the original instance once verified.
+
+            A MariaDB 10.x instance can move to a supported 10.x version in place with **Upgrade Instance** from the instance's action menu, provided the deployment offers that version.
+
+            **An in-place upgrade takes the database offline while the engine is replaced.** Take a backup first and schedule downtime.
         - id: cli
           desc: |
-            Create a replacement instance on a supported datastore version and migrate the data, since Trove does not perform an in-place major-version upgrade:
+            Trove refuses an in-place upgrade that changes the first number of the version, so moving MySQL 5.x to 8.4 or PostgreSQL 13 to a later major release means creating a replacement instance and migrating the data:
 
             ```bash
             openstack datastore version list mysql
             openstack database instance create db-upgraded \
               --flavor m1.small --size 10 \
-              --datastore mysql --datastore-version 8.0 \
+              --datastore mysql --datastore-version 8.4 \
               --nic net-id=6f2c1b3a-7e8d-4a5b-9c0d-1e2f3a4b5c6d
             ```
 
+            Replace the example values:
+
+            - `mysql` and `8.4` are the datastore and a version from `openstack datastore version list` that is still supported upstream.
+            - `db-upgraded` is the new instance name.
+            - `m1.small`, `10`, and `6f2c1b3a-7e8d-4a5b-9c0d-1e2f3a4b5c6d` are the flavor, volume size in GB, and network ID of the original instance, from `openstack database instance show`.
+
             Migrate the data with the engine's native tools, repoint applications, then delete the original instance.
+
+            A MariaDB 10.x instance can instead move to a supported 10.x version in place, where `<instance>` is the flagged instance and `<datastore-version>` is the target version's name or ID:
+
+            ```bash
+            openstack database instance upgrade <instance> <datastore-version>
+            ```
+
+            **Both paths take the database offline.** An in-place upgrade stops the engine while it is replaced, and deleting the original instance after a migration destroys its data, so take a backup and verify the result before either final step.
         # No Terraform remediation: Trove does not support an in-place major-version upgrade, and the
         # supported version set is deployment-specific, so the fix is a data migration to a new
         # instance rather than a Terraform field change.
@@ -3857,20 +4165,25 @@ queries:
       remediation:
         - id: console
           desc: |
-            In the OpenStack Horizon dashboard, open the container and edit its access settings so the write ACL lists only the specific project principals that need write access, removing any `*` / `*:*` entry.
+            Horizon cannot make this change. Its container panel only toggles public read access and has no write ACL setting, so use the CLI method.
         - id: cli
           desc: |
-            Replace a wildcard write ACL with a scoped one using the `swift` client:
+            Replace the wildcard write ACL with named principals using the `swift` client from `python-swiftclient`, since `openstack container set` cannot change ACLs. `swift post -w` replaces the whole write ACL with the value given. The check fails on any entry containing `*`, including a `<project-id>:*` grant to every user in a project, so each entry must name a specific user.
 
             ```bash
             # Clear the write ACL entirely
             swift post <container> -w ""
-            # Or restrict write to the project's authenticated users only
-            swift post <container> -w "<project-id>:*"
+            # Or restrict write to one named user in the project
+            swift post <container> -w "<project-id>:<user-id>"
             ```
+
+            - `<container>` is the name of the flagged container.
+            - `<project-id>` and `<user-id>` are the IDs of the project and the user that need write access, from `openstack project show` and `openstack user show`. Separate several principals with commas.
+
+            **Writers not named in the new ACL lose upload and delete access immediately.** Collect every legitimate writer before replacing the ACL.
         - id: terraform
           desc: |
-            Never set `container_write = "*"` (or `"*:*"`) on `openstack_objectstorage_container_v1`. Scope it to specific principals, or omit it to keep the container non-writable by others:
+            Never set `container_write` to a value containing `*`, such as `"*"` or `"*:*"`, on `openstack_objectstorage_container_v1`. Scope it to specific principals, or omit it to keep the container non-writable by others:
 
             ```hcl
             resource "openstack_objectstorage_container_v1" "backups" {
@@ -3956,16 +4269,25 @@ queries:
       remediation:
         - id: console
           desc: |
-            In the OpenStack Horizon admin dashboard, open **Admin** > **System** > **System Information** > **Services** and update each service's endpoints so their URLs use `https://` backed by a trusted certificate. Endpoint management is an operator task.
+            Horizon cannot make this change. **Admin** > **System** > **System Information** lists the service catalog read-only and offers no way to edit endpoints, so use the CLI method.
         - id: cli
           desc: |
-            Update each catalog endpoint to an HTTPS URL with the `openstack` client:
+            Update each catalog endpoint to an HTTPS URL with the `openstack` client. Changing a catalog entry requires the admin role.
+
+            1. Make the service answer on HTTPS first, either natively or through a TLS-terminating proxy, with a certificate that clients trust.
+            2. List the endpoints and note the ID of every one whose URL starts with `http://`.
+            3. Set each of those endpoints to its HTTPS URL.
+            4. Repeat for the public, internal, and admin interfaces of each service.
 
             ```bash
+            openstack endpoint list
             openstack endpoint set --url https://service.example.com:9292 <endpoint-id>
             ```
 
-            Repeat for the public, internal, and admin interfaces of each service.
+            - `<endpoint-id>` is the ID from the `ID` column of `openstack endpoint list`.
+            - `https://service.example.com:9292` is the HTTPS URL at which that service now listens. `9292` is the Glance port and changes per service.
+
+            **Clients follow the catalog immediately.** If the service is not yet serving TLS at the new URL, every client that discovers it through Keystone fails to connect, and a broken Keystone identity endpoint can lock out the command needed to revert it, so change the identity endpoints last.
         # No Terraform remediation: the Keystone service catalog is operator
         # infrastructure with no tenant-facing Terraform resource; endpoints are
         # managed through the openstack client or Horizon admin dashboard.
@@ -4036,17 +4358,28 @@ queries:
       remediation:
         - id: console
           desc: |
-            Application credential roles cannot be changed after creation. In Horizon, delete the credential that carries `admin` and create a replacement scoped to only the non-admin roles the workload needs, then update the consumer with the new secret.
+            Application credential roles cannot be changed after creation, so the fix is a replacement scoped to non-admin roles. Keystone only lets a user create application credentials for themselves, so sign in to Horizon as the user who owns the flagged credential.
+
+            1. Navigate to **Identity → Application Credentials** in Horizon.
+            2. Create a replacement credential with a new name, and under **Roles** select only the non-admin roles the workload needs. Leaving **Roles** empty grants every role the user holds on the project, which includes `admin` when the user has it.
+            3. Copy the ID and secret from the confirmation dialog, since Keystone never displays the secret again, and update the consumer to use them.
+            4. Delete the credential that carries `admin` once nothing depends on it.
         - id: cli
           desc: |
-            Recreate the credential with only the required non-admin roles using the `openstack` client:
+            Create a replacement with only the required non-admin roles, move the consumer to it, then delete the credential that carries `admin`. Keystone only lets a user create application credentials for themselves, so run these commands authenticated as the user who owns the flagged credential.
 
             ```bash
+            openstack application credential create <new-name> --role <non-admin-role>
             openstack application credential delete <name>
-            openstack application credential create <name> --role <non-admin-role>
             ```
 
-            Update the automation that consumes the credential with the new secret.
+            - `<new-name>` is a name the user does not already use, because application credential names must be unique per user.
+            - `<non-admin-role>` is a role such as `member` or `reader` that the user holds on the current project. Repeat `--role` for each role the workload needs. Omitting `--role` grants every role the user holds, which includes `admin` when the user has it.
+            - `<name>` is the name or ID of the credential that carries `admin`, as shown by `openstack application credential list`.
+
+            Record the `id` and `secret` printed by the create command, because Keystone never displays the secret again.
+
+            **Deleting the old credential immediately breaks every consumer still using it.** Run the delete only after the automation authenticates with the replacement.
         - id: terraform
           desc: |
             Set `roles` explicitly on `openstack_identity_application_credential_v3` to the required non-admin roles, and never include `admin`. Omitting `roles` inherits all of the owning user's roles, which may include `admin`:
@@ -4146,17 +4479,47 @@ queries:
       remediation:
         - id: console
           desc: |
-            In the OpenStack Horizon dashboard, open **Project** > **Network** > **VPN** > **IPsec Policies**, edit the policy, and set the transform protocol to `esp` (or `ah-esp`), then re-establish affected connections.
+            Neutron refuses to edit an IPsec policy that any IPsec site connection uses, and a connection cannot be switched to a different policy, so an in-use policy is fixed by replacing both.
+
+            1. In the OpenStack Horizon dashboard, open **Project** > **Network** > **VPN** > **IPsec Policies**.
+            2. If no connection uses the policy, edit it, set the transform protocol to `esp` or `ah-esp`, and save.
+            3. Otherwise, create a new IPsec policy with the transform protocol set to `esp` and the other settings copied from the old policy.
+            4. Recreate each IPsec site connection that used the old policy with the new policy selected, then delete the old connection and the old policy.
+
+            **Recreating a site connection drops the tunnel until both ends negotiate again.** Agree a window with the remote site, whose configuration must match the new policy.
         - id: cli
           desc: |
-            Set the transform protocol to `esp` with the `openstack` client:
+            Neutron refuses to update an IPsec policy that any IPsec site connection uses, and a connection's `ipsecpolicy_id` cannot be changed. If no connection uses the policy, set the transform protocol in place:
 
             ```bash
             openstack vpn ipsec policy set --transform-protocol esp <ipsec-policy>
             ```
+
+            If connections use it, create a replacement policy, recreate each connection against it, and delete the old connection and policy:
+
+            ```bash
+            openstack vpn ipsec policy create --transform-protocol esp \
+              --encryption-algorithm aes-256 --auth-algorithm sha256 ipsec-policy-esp
+            openstack vpn ipsec site connection show <connection>
+            openstack vpn ipsec site connection delete <connection>
+            openstack vpn ipsec site connection create <connection> \
+              --vpnservice <vpn-service> --ikepolicy <ike-policy> \
+              --ipsecpolicy ipsec-policy-esp \
+              --peer-address <peer-address> --peer-id <peer-id> \
+              --peer-cidr <peer-cidr> --psk <psk>
+            openstack vpn ipsec policy delete <ipsec-policy>
+            ```
+
+            - `<ipsec-policy>` is the name or ID of the flagged policy, and `ipsec-policy-esp` is the name of its replacement. `esp` and `ah-esp` both satisfy the check.
+            - `aes-256` and `sha256` stand in for the old policy's settings, from `openstack vpn ipsec policy show <ipsec-policy>`, and must match the remote site.
+            - `<connection>` and the remaining placeholders are the values `openstack vpn ipsec site connection show` reports for the existing connection. A connection built on endpoint groups takes `--local-endpoint-group` and `--peer-endpoint-group` in place of `--peer-cidr`.
+
+            **Deleting the site connection drops the tunnel until the new one negotiates.** Agree a window with the remote site, whose configuration must match the new policy.
         - id: terraform
           desc: |
-            Set `transform_protocol = "esp"` on `openstack_vpnaas_ipsec_policy_v2` (this is also the default; never set it to `ah`):
+            Set `transform_protocol = "esp"` on `openstack_vpnaas_ipsec_policy_v2`. `esp` is also the value Neutron uses when the argument is omitted, and `ah` must never be set.
+
+            Neutron rejects changing a policy that a site connection uses, so for an in-use policy declare a new `openstack_vpnaas_ipsec_policy_v2` resource and point the connection's `ipsecpolicy_id` at it. Changing `ipsecpolicy_id` replaces the `openstack_vpnaas_site_connection_v2`, which drops the tunnel until it negotiates again.
 
             ```hcl
             resource "openstack_vpnaas_ipsec_policy_v2" "policy" {
@@ -4254,18 +4617,51 @@ queries:
       remediation:
         - id: console
           desc: |
-            In the OpenStack Horizon dashboard, open **Project** > **Network** > **VPN**, edit each IKE and IPsec policy, set the encryption algorithm to a strong AES cipher such as `aes-256`, then re-establish affected connections.
+            Neutron refuses to edit an IKE or IPsec policy that any IPsec site connection uses, and a connection cannot be switched to a different policy, so an in-use policy is fixed by replacing both.
+
+            1. In the OpenStack Horizon dashboard, open **Project** > **Network** > **VPN**.
+            2. Edit each flagged IKE and IPsec policy that no connection uses, and set the encryption algorithm to an AES cipher such as `aes-256`.
+            3. For a policy that a connection uses, create a new policy with an AES encryption algorithm and the other settings copied from the old one.
+            4. Recreate each IPsec site connection that used an old policy with the new policies selected, then delete the old connection and the old policies.
+
+            **Recreating a site connection drops the tunnel until both ends negotiate again.** Change the remote site to the same algorithm in the same window, since the two ends must match.
         - id: cli
           desc: |
-            Set a strong encryption algorithm on the IKE and IPsec policies with the `openstack` client:
+            Neutron refuses to update an IKE or IPsec policy that any IPsec site connection uses, and a connection's `ikepolicy_id` and `ipsecpolicy_id` cannot be changed. If no connection uses a policy, set a strong algorithm in place:
 
             ```bash
             openstack vpn ike policy set --encryption-algorithm aes-256 <ike-policy>
             openstack vpn ipsec policy set --encryption-algorithm aes-256 <ipsec-policy>
             ```
+
+            If connections use them, create replacement policies, recreate each connection against them, and delete the old connection and policies:
+
+            ```bash
+            openstack vpn ike policy create --encryption-algorithm aes-256 \
+              --auth-algorithm sha256 --ike-version v2 ike-policy-aes
+            openstack vpn ipsec policy create --encryption-algorithm aes-256 \
+              --auth-algorithm sha256 ipsec-policy-aes
+            openstack vpn ipsec site connection show <connection>
+            openstack vpn ipsec site connection delete <connection>
+            openstack vpn ipsec site connection create <connection> \
+              --vpnservice <vpn-service> \
+              --ikepolicy ike-policy-aes --ipsecpolicy ipsec-policy-aes \
+              --peer-address <peer-address> --peer-id <peer-id> \
+              --peer-cidr <peer-cidr> --psk <psk>
+            openstack vpn ike policy delete <ike-policy>
+            openstack vpn ipsec policy delete <ipsec-policy>
+            ```
+
+            - `<ike-policy>` and `<ipsec-policy>` are the flagged policies. Any algorithm other than `des` or `3des` satisfies the check. Use `aes-256` where the remote site supports it.
+            - `sha256` and `v2` stand in for the old policies' other settings, from `openstack vpn ike policy show` and `openstack vpn ipsec policy show`, and must match the remote site.
+            - `<connection>` and the remaining placeholders are the values `openstack vpn ipsec site connection show` reports for the existing connection. A connection built on endpoint groups takes `--local-endpoint-group` and `--peer-endpoint-group` in place of `--peer-cidr`.
+
+            **Deleting the site connection drops the tunnel until the new one negotiates.** Change the remote site to the same algorithm in the same window, since the two ends must match.
         - id: terraform
           desc: |
-            Set `encryption_algorithm` to a strong cipher on both `openstack_vpnaas_ike_policy_v2` and `openstack_vpnaas_ipsec_policy_v2`; never use `des` or `3des`:
+            Set `encryption_algorithm` to a strong cipher on both `openstack_vpnaas_ike_policy_v2` and `openstack_vpnaas_ipsec_policy_v2`, and never use `des` or `3des`.
+
+            Neutron rejects changing a policy that a site connection uses, so for an in-use policy declare new policy resources and point the connection's `ikepolicy_id` and `ipsecpolicy_id` at them. Changing either argument replaces the `openstack_vpnaas_site_connection_v2`, which drops the tunnel until it negotiates again.
 
             ```hcl
             resource "openstack_vpnaas_ike_policy_v2" "ike" {
@@ -4378,15 +4774,28 @@ queries:
       remediation:
         - id: console
           desc: |
-            In the OpenStack Horizon dashboard, open **Project** > **Network** > **Networks** > (network) > **Ports**, edit the port, and replace any `0.0.0.0/0` / `::/0` allowed address pair with the specific address or narrow CIDR the workload needs.
+            Allowed address pairs cannot be edited in place in Horizon, so add the scoped pair and delete the wide one.
+
+            1. In the OpenStack Horizon dashboard, open **Project** > **Network** > **Networks**, select the port's network, open the **Ports** tab, and select the port.
+            2. On the **Allowed Address Pairs** tab, select **Add Allowed Address Pair** and enter the specific address or narrow CIDR the workload needs, such as its virtual IP.
+            3. Delete every pair whose address ends in `/0`, such as `0.0.0.0/0` or `::/0`.
+
+            **The port stops sending traffic from addresses that are no longer paired.** Confirm the virtual IP or failover address still works after the change.
         - id: cli
           desc: |
-            Remove the wide allowed address pair and add a scoped one with the `openstack` client:
+            Add a scoped allowed address pair, then remove the wide one with the `openstack` client. Neutron stores every pair with a MAC address, filling in the port's own MAC when none was given, and `openstack port unset` only removes a pair when both the IP and MAC match, so read the stored MAC first.
 
             ```bash
-            openstack port unset --allowed-address ip-address=0.0.0.0/0 <port>
+            openstack port show <port> -c allowed_address_pairs
             openstack port set --allowed-address ip-address=192.0.2.10 <port>
+            openstack port unset --allowed-address ip-address=0.0.0.0/0,mac-address=fa:16:3e:12:34:56 <port>
             ```
+
+            - `<port>` is the name or ID of the flagged port.
+            - `192.0.2.10` is the virtual IP or failover address the workload sends from. Any address or CIDR without a `/0` prefix satisfies the check, so use the narrowest one that works.
+            - `0.0.0.0/0` and `fa:16:3e:12:34:56` are the IP and MAC of the wide pair exactly as `openstack port show` lists them. Repeat the unset for a `::/0` pair.
+
+            **The port stops sending traffic from addresses that are no longer paired.** Confirm the virtual IP or failover address still works after the change.
         - id: terraform
           desc: |
             Scope each `allowed_address_pairs` block on `openstack_networking_port_v2` to a specific address; never use a `/0` CIDR:
