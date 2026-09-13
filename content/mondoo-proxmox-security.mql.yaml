@@ -2801,7 +2801,7 @@ queries:
             ```
 
   - uid: mondoo-proxmox-security-ct-memory-limit-is-set
-    title: Ensure all containers have a memory limit
+    title: Ensure all containers have an explicitly sized memory limit
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
@@ -2821,23 +2821,23 @@ queries:
     refs:
       - title: CWE-400 Uncontrolled Resource Consumption
         url: https://cwe.mitre.org/data/definitions/400.html
+      - title: pct.conf(5)
+        url: https://pve.proxmox.com/pve-docs/pct.conf.5.html
     mql: |
       files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
         file(_.path).content.lines.any(_ == /^memory:/)
       )
     docs:
       desc: |
-        This check verifies that every LXC container has an explicit memory cap.
+        This check verifies that every LXC container config under `/etc/pve/lxc` carries a `memory:` line, the memory ceiling in MiB. It is set from the container's Resources panel or with `pct set <ctid> --memory 1024`.
 
-        The cap is the `memory:` line, expressed in MiB, in the container's configuration under `/etc/pve/lxc`. It is set from the container's Resources panel or with `pct set <ctid> --memory 1024`. A container whose config carries no such line has no limit of its own and can allocate until the host runs out.
+        A container whose config carries no `memory:` line is not uncapped. Proxmox VE substitutes the schema default of 512 MiB and writes it into the container's cgroup as `memory.max`, so such a container is limited, at a value nobody chose for it. This check fails that container because the ceiling was never a decision, not because the ceiling is missing.
 
         **Why this matters**
 
-        Memory on a hypervisor is a shared, finite resource with no natural backstop. An uncapped container that leaks or is deliberately driven to allocate consumes the node's free memory, and once it is exhausted the kernel out-of-memory killer starts choosing victims. It does not choose the container that caused the problem; it chooses by a score that frequently lands on large, well-behaved neighbors. A single misbehaving guest can therefore take down the QEMU process of an unrelated VM, or a cluster service on the node, without ever escaping its own container.
+        Memory on a hypervisor is a shared, finite resource, and each guest's share of it is a capacity decision. A container running on the implicit default is one whose share was never decided. Nothing in its config records what the workload needs, the value holds only for as long as the Proxmox VE default does, and a reviewer reading the config cannot tell a deliberate 512 MiB allocation from an omission.
 
-        That is availability damage that a guest can inflict from inside its own boundary. When the workloads on a node belong to different teams or tenants, it is also a denial of service that one of them can aim at the others, deliberately or not, with nothing more than a memory allocation loop.
-
-        The node's own management path degrades in the same event. When memory pressure reaches the host, the tools you need to diagnose and stop the offender are competing for the memory it is consuming.
+        The damage is to availability, and it runs in both directions. 512 MiB is far below what most workloads need, so a container left on the default meets the out-of-memory killer inside its own cgroup as soon as it carries real load, and the operator diagnosing that outage has no configured value to reason about. In the other direction, raising a limit without measuring the workload hands one guest headroom that its neighbors and the node's own cluster services were relying on. When memory pressure reaches the host, the tools you need to diagnose and stop the offender compete for the memory it is consuming.
 
         Size the limit from the workload's real usage with headroom, not from what is available, and set a swap value deliberately as well. A cap that is too tight relocates the out-of-memory kill inside the container, which is the correct place for it but still an outage for that workload.
       audit: |
@@ -2845,25 +2845,26 @@ queries:
 
         1. Sign in to the Proxmox VE web interface.
         2. Select a container in the resource tree, then open its **Resources** panel.
-        3. Confirm the **Memory** entry shows a defined value rather than being unset.
+        3. Confirm the **Memory** entry shows a value that was sized for this workload.
 
-        A passing result shows a configured memory value for every container; a failing result shows a container with no memory limit assigned.
+        The panel reports an effective ceiling either way, because a container with no `memory:` line still runs under the Proxmox VE default of 512 MiB. Read the config file itself to tell a deliberate setting from an omission.
 
         ### Audit via CLI
 
         Run the command on a cluster node:
 
         ```bash
-        for c in /etc/pve/lxc/[0-9]*.conf; do grep -q '^memory:' "$c" || echo "no memory limit: $c"; done
+        for c in /etc/pve/lxc/[0-9]*.conf; do grep -q '^memory:' "$c" || echo "no explicit memory limit: $c"; done
         ```
 
-        A passing result returns no output; a failing result lists container config files that lack a `memory:` directive.
+        A passing result returns no output; a failing result lists container config files that lack a `memory:` directive and therefore run under the 512 MiB default.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            Set an appropriate memory limit per container (in MiB):
+            Set a memory ceiling in MiB, sized from the container's measured
+            usage plus headroom:
 
             ```bash
             pct set <ctid> --memory 1024
@@ -2872,8 +2873,10 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            Apply a default memory cap of 1 GiB to every container that has no
-            limit configured:
+            Write an explicit 1 GiB ceiling into every container that has no
+            `memory:` line of its own, replacing the Proxmox VE default of
+            512 MiB. Pass a different value as the first argument, or revisit
+            each container afterwards and size it from its real usage:
 
             ```bash
             #!/bin/bash
@@ -2894,8 +2897,8 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to apply a default memory limit to any
-            container that does not have one:
+            Use this Ansible playbook to write an explicit memory ceiling into
+            any container whose config has no `memory:` line:
 
             ```yaml
             ---
