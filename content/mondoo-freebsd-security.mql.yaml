@@ -3475,37 +3475,62 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
       sshd.config.kexs != empty
-      sshd.config.kexs.containsOnly(["sntrup761x25519-sha512@openssh.com","curve25519-sha256@libssh.org","curve25519-sha256","diffie-hellman-group18-sha512","diffie-hellman-group16-sha512"])
+      sshd.config.kexs.containsOnly(["mlkem768x25519-sha256","sntrup761x25519-sha512","sntrup761x25519-sha512@openssh.com","curve25519-sha256@libssh.org","curve25519-sha256","diffie-hellman-group18-sha512","diffie-hellman-group16-sha512"])
     docs:
       refs:
         - url: https://man.openbsd.org/sshd_config
           title: OpenSSH sshd_config(5)
+        - url: https://www.openssh.org/txt/release-9.9
+          title: OpenSSH 9.9 release notes
       desc: |
         This check verifies that the SSH server uses only strong key exchange algorithms and that weak algorithms such as diffie-hellman-group1-sha1 and diffie-hellman-group14-sha1 are not permitted.
 
         **Why this matters**
 
-        The key exchange algorithm determines the shared secret used to encrypt the SSH session. Weak key exchange algorithms may be vulnerable to eavesdropping or man-in-the-middle attacks. Only modern, strong algorithms based on Curve25519 or large Diffie-Hellman groups with SHA-512 should be used.
+        The key exchange algorithm determines the shared secret used to encrypt the SSH session. Weak key exchange algorithms may be vulnerable to eavesdropping or man-in-the-middle attacks. Only modern, strong algorithms should be used:
+
+        - The post-quantum hybrids `mlkem768x25519-sha256` and `sntrup761x25519-sha512`, which OpenSSH 9.9 and later provide. FreeBSD 13.5 and 14.3 ship OpenSSH 9.9, and FreeBSD 14.4 and 15.0 ship OpenSSH 10.0, where `mlkem768x25519-sha256` is the default. `sntrup761x25519-sha512@openssh.com` is the pre-9.9 spelling of the Streamlined NTRU Prime hybrid and remains accepted.
+        - Curve25519 elliptic curve Diffie-Hellman.
+        - Diffie-Hellman groups 16 and 18 with SHA-512.
       audit: |
-        To verify the SSH key exchange algorithms in effect, run the following command:
+        To verify the SSH key exchange algorithms, inspect the SSH server configuration file:
 
         ```bash
-        sshd -T | grep -i '^kexalgorithms'
+        grep -i '^[[:space:]]*KexAlgorithms' /etc/ssh/sshd_config
         ```
 
-        If only strong algorithms based on Curve25519 or large Diffie-Hellman groups with SHA-512 are listed, the check passes. If a weak algorithm such as `diffie-hellman-group1-sha1` or `diffie-hellman-group14-sha1` appears, the check fails.
+        If a `KexAlgorithms` line is returned and every algorithm on it is one of `mlkem768x25519-sha256`, `sntrup761x25519-sha512`, `sntrup761x25519-sha512@openssh.com`, `curve25519-sha256@libssh.org`, `curve25519-sha256`, `diffie-hellman-group18-sha512`, or `diffie-hellman-group16-sha512`, the check passes. If any other algorithm appears, such as `diffie-hellman-group1-sha1` or `diffie-hellman-group14-sha1`, or no line is returned, the check fails.
+
+        Do not audit this with `sshd -T`. The check reads the configuration file, so a missing `KexAlgorithms` line fails even though `sshd -T` prints the default list.
+
+        To list the algorithm names the installed `sshd` accepts, run `ssh -Q kex`. The first two names on the list above need OpenSSH 9.9 or later.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            Edit `/etc/ssh/sshd_config` and set:
+            **`sshd` refuses to start when `KexAlgorithms` names an algorithm it does not implement.** The post-quantum hybrids `mlkem768x25519-sha256` and `sntrup761x25519-sha512` arrived in OpenSSH 9.9, so write the list that matches the OpenSSH release in the base system. List what the installed `sshd` accepts:
 
-            ```text
-            KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,curve25519-sha256,diffie-hellman-group18-sha512,diffie-hellman-group16-sha512
+            ```bash
+            ssh -V
+            ssh -Q kex
             ```
 
-            The check accepts only the five algorithms on this line. You can remove algorithms from the list, but adding any other one fails the check. OpenSSH's default list includes the NIST `ecdh-sha2` curves, so leaving the directive out fails as well.
+            1. On FreeBSD 13.5, 14.3, and every later release, where OpenSSH is 9.9 or newer, edit `/etc/ssh/sshd_config` and set:
+
+               ```text
+               KexAlgorithms mlkem768x25519-sha256,sntrup761x25519-sha512,sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,curve25519-sha256,diffie-hellman-group18-sha512,diffie-hellman-group16-sha512
+               ```
+
+            2. On an older release, where OpenSSH is 9.8 or earlier and `ssh -Q kex` lists neither hybrid, drop the first two names and set:
+
+               ```text
+               KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,curve25519-sha256,diffie-hellman-group18-sha512,diffie-hellman-group16-sha512
+               ```
+
+               Keep only the names `ssh -Q kex` prints. OpenSSH releases before 8.5 have no Streamlined NTRU Prime hybrid under this name either, so on those hosts the directive keeps the Curve25519 and Diffie-Hellman entries only.
+
+            The check accepts only the seven algorithms on the first line, so either list passes. You can remove algorithms from the list, but adding any other one fails the check. OpenSSH's default list includes the NIST `ecdh-sha2` curves, so leaving the directive out fails as well.
 
             Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
@@ -3523,7 +3548,30 @@ queries:
             set -e
 
             SSHD_CONFIG="/etc/ssh/sshd_config"
-            KEXS="sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,curve25519-sha256,diffie-hellman-group18-sha512,diffie-hellman-group16-sha512"
+
+            # Keep only the algorithms this sshd implements. Naming one it does
+            # not know stops sshd from starting, and the post-quantum hybrids
+            # mlkem768x25519-sha256 and sntrup761x25519-sha512 arrived in
+            # OpenSSH 9.9, which FreeBSD 13.5 and 14.3 were the first to ship.
+            SUPPORTED="$(ssh -Q kex)"
+            KEXS=""
+            for kex in mlkem768x25519-sha256 sntrup761x25519-sha512 \
+              sntrup761x25519-sha512@openssh.com curve25519-sha256@libssh.org \
+              curve25519-sha256 diffie-hellman-group18-sha512 \
+              diffie-hellman-group16-sha512; do
+              if echo "$SUPPORTED" | grep -qx -- "$kex"; then
+                if [ -z "$KEXS" ]; then
+                  KEXS="$kex"
+                else
+                  KEXS="${KEXS},${kex}"
+                fi
+              fi
+            done
+
+            if [ -z "$KEXS" ]; then
+              echo "ssh -Q kex listed none of the expected algorithms. Nothing was changed." >&2
+              exit 1
+            fi
 
             echo "Configuring strong SSH key exchange algorithms..."
             cp -p "$SSHD_CONFIG" "${SSHD_CONFIG}.bak"
@@ -3549,8 +3597,10 @@ queries:
           desc: |
             To restrict SSH to strong key exchange algorithms using Ansible:
 
-            1. Add the following task to a playbook targeting the FreeBSD host.
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
             2. Run the playbook.
+
+            The first task reads `ssh -Q kex` so that the directive names only algorithms the host's OpenSSH release implements. The post-quantum hybrids `mlkem768x25519-sha256` and `sntrup761x25519-sha512` arrived in OpenSSH 9.9, which FreeBSD 13.5 and 14.3 were the first to ship, and an older `sshd` refuses to start when the directive names one of them.
 
             The `validate` option runs `sshd -t` against the edited copy of `sshd_config`, and Ansible writes the file only if that copy passes. A configuration `sshd` cannot parse would otherwise stop the service from starting again and lock out new SSH logins.
 
@@ -3562,6 +3612,8 @@ queries:
 
               vars:
                 ssh_kex_algorithms:
+                  - mlkem768x25519-sha256
+                  - sntrup761x25519-sha512
                   - sntrup761x25519-sha512@openssh.com
                   - curve25519-sha256@libssh.org
                   - curve25519-sha256
@@ -3569,11 +3621,16 @@ queries:
                   - diffie-hellman-group16-sha512
 
               tasks:
+                - name: Read the key exchange algorithms this OpenSSH release implements
+                  ansible.builtin.command: ssh -Q kex
+                  changed_when: false
+                  register: ssh_supported_kex
+
                 - name: Configure strong SSH key exchange algorithms
                   ansible.builtin.lineinfile:
                     path: /etc/ssh/sshd_config
                     regexp: '^#?KexAlgorithms'
-                    line: "KexAlgorithms {{ ssh_kex_algorithms | join(',') }}"
+                    line: "KexAlgorithms {{ ssh_kex_algorithms | select('in', ssh_supported_kex.stdout_lines) | join(',') }}"
                     validate: /usr/sbin/sshd -t -f %s
                   notify: Restart sshd
 
@@ -3589,17 +3646,30 @@ queries:
 
             **An invalid SSH server configuration locks out remote access.** The `verify` property runs `sshd -t` against the edited copy of `sshd_config`, and Chef writes the file only if that copy passes. The `only_if` guard on the service runs `sshd -t` again before the restart and skips it if the complete configuration fails.
 
+            The recipe intersects the wanted list with `ssh -Q kex` so that the directive names only algorithms the host's OpenSSH release implements. The post-quantum hybrids `mlkem768x25519-sha256` and `sntrup761x25519-sha512` arrived in OpenSSH 9.9, which FreeBSD 13.5 and 14.3 were the first to ship, and an older `sshd` refuses to start when the directive names one of them.
+
             Use this Chef Infra recipe code to restrict SSH to strong key exchange algorithms:
 
             ```ruby
             sshd_config = '/etc/ssh/sshd_config'
+
+            wanted_kex = %w(
+              mlkem768x25519-sha256
+              sntrup761x25519-sha512
+              sntrup761x25519-sha512@openssh.com
+              curve25519-sha256@libssh.org
+              curve25519-sha256
+              diffie-hellman-group18-sha512
+              diffie-hellman-group16-sha512
+            )
+            supported_kex = shell_out!('ssh -Q kex').stdout.split("\n")
 
             service 'sshd' do
               action :nothing
               only_if '/usr/sbin/sshd -t'
             end
 
-            { 'KexAlgorithms' => 'sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,curve25519-sha256,diffie-hellman-group18-sha512,diffie-hellman-group16-sha512' }.each do |keyword, value|
+            { 'KexAlgorithms' => (wanted_kex & supported_kex).join(',') }.each do |keyword, value|
               file "set #{keyword} in sshd_config" do
                 path sshd_config
                 content(lazy do
