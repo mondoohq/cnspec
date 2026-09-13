@@ -2670,7 +2670,7 @@ queries:
       desc: |
         This check verifies that object storage containers do not serve their contents to unauthenticated callers.
 
-        Swift grants anonymous read access through a container read ACL containing `.r:*`, which lets anyone fetch objects over HTTP without presenting a token. The ACL is set with `openstack container set --read-acl` or the `container_read` argument on the `openstack_objectstorage_container_v1` Terraform resource, and removing the wildcard restores the requirement to authenticate.
+        Swift grants anonymous read access through a container read ACL containing `.r:*`, which lets anyone fetch objects over HTTP without presenting a token. The ACL lives in the container's `X-Container-Read` header, set with `swift post --read-acl` from python-swiftclient or with the `container_read` argument on the `openstack_objectstorage_container_v1` Terraform resource. OpenStackClient cannot change it, because `openstack container set` writes only `X-Container-Meta-*` properties. Removing the wildcard restores the requirement to authenticate.
 
         **Why this matters**
 
@@ -2692,13 +2692,15 @@ queries:
 
         ### Audit via CLI
 
-        Run the OpenStack CLI and inspect the result:
+        1. Show the container and inspect its read ACL:
 
         ```bash
-        openstack container show <name>
+        openstack container show <container>
         ```
 
-        A passing result shows no `.r:*` entry in the container read ACL; a failing result shows `.r:*` in the read ACL, which can also be confirmed with `swift stat <container>`.
+        `openstack container show` reports the `X-Container-Read` header as a `read_acl` field and omits that field entirely when the container has no read ACL. The `swift` client from python-swiftclient reports the same value as `Read ACL` in `swift stat <container>`.
+
+        A passing container has no `read_acl` field, or a `read_acl` without a `.r:*` entry. A failing container lists `.r:*` in its read ACL.
       remediation:
         - id: console
           desc: |
@@ -2706,7 +2708,7 @@ queries:
             2. Select the affected container and clear the **Public Access** checkbox.
         - id: cli
           desc: |
-            Remove the `.r:*` entry from the container's read ACL with the `swift` client from `python-swiftclient`, since `openstack container set` cannot change ACLs. `swift post -r` replaces the whole read ACL with the value given, so an empty value leaves only the owning project with access.
+            Remove the `.r:*` entry from the container's read ACL with the `swift` client from `python-swiftclient`, since `openstack container set` writes only `X-Container-Meta-*` properties and cannot change ACLs. `swift post -r` replaces the whole read ACL with the value given, so an empty value leaves only the owning project with access.
 
             ```bash
             # Clear the read ACL entirely
@@ -4133,7 +4135,7 @@ queries:
       desc: |
         This check verifies that write access to object storage containers is granted only to named principals.
 
-        A Swift container write ACL lists the accounts and users allowed to upload, overwrite, and delete objects. A wildcard entry such as `*` or `*:*` extends that to every authenticated identity in the deployment. The list is set with `openstack container set --write-acl` or the `container_write` argument on the `openstack_objectstorage_container_v1` Terraform resource.
+        A Swift container write ACL lists the accounts and users allowed to upload, overwrite, and delete objects. A wildcard entry such as `*` or `*:*` extends that to every authenticated identity in the deployment. The list lives in the container's `X-Container-Write` header, set with `swift post --write-acl` from python-swiftclient or with the `container_write` argument on the `openstack_objectstorage_container_v1` Terraform resource. OpenStackClient cannot change it, because `openstack container set` writes only `X-Container-Meta-*` properties.
 
         **Why this matters**
 
@@ -4155,20 +4157,26 @@ queries:
 
         ### Audit via CLI
 
-        1. Show each container's write ACL:
+        1. Show each container's write ACL with the `swift` client from python-swiftclient:
 
         ```bash
         swift stat <container>
         ```
 
-        A passing container shows a `Write ACL` restricted to named principals. A failing container shows `*` or `*:*` in the `Write ACL`.
+        2. Or read the same header through OpenStackClient, which reports it as a `write_acl` field and omits that field when the container has no write ACL:
+
+        ```bash
+        openstack container show <container>
+        ```
+
+        A passing container shows a write ACL restricted to named principals, or no write ACL at all. A failing container shows `*` or `*:*` in its write ACL.
       remediation:
         - id: console
           desc: |
             Horizon cannot make this change. Its container panel only toggles public read access and has no write ACL setting, so use the CLI method.
         - id: cli
           desc: |
-            Replace the wildcard write ACL with named principals using the `swift` client from `python-swiftclient`, since `openstack container set` cannot change ACLs. `swift post -w` replaces the whole write ACL with the value given. The check fails on any entry containing `*`, including a `<project-id>:*` grant to every user in a project, so each entry must name a specific user.
+            Replace the wildcard write ACL with named principals using the `swift` client from `python-swiftclient`, since `openstack container set` writes only `X-Container-Meta-*` properties and cannot change ACLs. `swift post -w` replaces the whole write ACL with the value given. The check fails on any entry containing `*`, including a `<project-id>:*` grant to every user in a project, so each entry must name a specific user.
 
             ```bash
             # Clear the write ACL entirely
