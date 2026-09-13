@@ -1062,7 +1062,7 @@ queries:
       desc: |
         This check verifies that remote shell access over SSH is confined to known source networks.
 
-        A Neutron security group rule opens a port to a source range, and this check looks for ingress rules reaching TCP port 22 from a public source. A source counts as public when it is a broad prefix such as `0.0.0.0/0` or `::/0`, when it is a remote address group holding such a range, or when the rule names no remote at all, which Neutron treats as any source. Rules are managed with `openstack security group rule create` or the `openstack_networking_secgroup_rule_v2` Terraform resource.
+        A Neutron security group rule opens a port to a source range, and this check looks for ingress rules reaching TCP port 22 from a public source. A source counts as public when it is a broad prefix such as `0.0.0.0/0` or `::/0`, when it is a remote address group holding such a range, or when the rule names no remote at all, which Neutron treats as any source. A rule that carries no port range reaches port 22 as well, because Neutron matches every port when `port_range_min` and `port_range_max` are unset. Rules are managed with `openstack security group rule create` or the `openstack_networking_secgroup_rule_v2` Terraform resource.
 
         **Why this matters**
 
@@ -1090,7 +1090,7 @@ queries:
         openstack security group rule list <group>
         ```
 
-        A passing result shows no ingress TCP rule covering port 22 with a remote IP prefix of `0.0.0.0/0` or `::/0`; a failing result shows one.
+        A passing result shows no ingress TCP rule covering port 22 with a remote IP prefix of `0.0.0.0/0` or `::/0`; a failing result shows one. A rule whose `Port Range` column is empty covers every port, so it counts as covering 22.
       remediation:
         - id: console
           desc: |
@@ -1099,7 +1099,7 @@ queries:
             3. Confirm you can still reach the affected instances from the trusted range, then delete the rule open to `0.0.0.0/0` or `::/0`. Removing the open rule drops live SSH sessions that arrived through it.
         - id: cli
           desc: |
-            Replace each open rule that reaches port 22 with one scoped to a trusted source. A rule is open when its remote is `0.0.0.0/0`, `::/0`, another public prefix of `/8` or wider, a remote address group holding such a range, or no remote at all. A rule reaches port 22 when its protocol is `tcp` or any and its port range includes 22.
+            Replace each open rule that reaches port 22 with one scoped to a trusted source. A rule is open when its remote is `0.0.0.0/0`, `::/0`, another public prefix of `/8` or wider, a remote address group holding such a range, or no remote at all. A rule reaches port 22 when its protocol is `tcp` or any and its port range includes 22 or is unset, since an unset range means every port.
 
             ```bash
             # List the ingress rules to find the open ones and their IDs
@@ -1140,6 +1140,7 @@ queries:
     mql: |
       openstack.securityGroups.all(
         rules.where(direction == "ingress").where(includesPublicSource).where(protocol == "tcp" || protocol == "").none(
+          portRangeMin == 0 && portRangeMax == 0 ||
           portRangeMin <= 22 && portRangeMax >= 22
         )
       )
@@ -1147,24 +1148,31 @@ queries:
     filters: asset.platform == "openstack-security-group"
     mql: |
       openstack.securityGroup.rules.where(direction == "ingress").where(includesPublicSource).where(protocol == "tcp" || protocol == "").none(
+        portRangeMin == 0 && portRangeMax == 0 ||
         portRangeMin <= 22 && portRangeMax >= 22
       )
   - uid: mondoo-openstack-security-no-unrestricted-ssh-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_networking_secgroup_rule_v2")
     mql: |
       terraform.resources("openstack_networking_secgroup_rule_v2").where(arguments['direction'] == "ingress").where(arguments['remote_ip_prefix'] == "0.0.0.0/0" || arguments['remote_ip_prefix'] == "::/0" || arguments['remote_ip_prefix'] == empty && arguments['remote_group_id'] == empty && arguments['remote_address_group_id'] == empty).where(arguments['protocol'] == "tcp" || arguments['protocol'] == "").none(
+        arguments['port_range_min'] == null && arguments['port_range_max'] == null ||
+        arguments['port_range_min'] == 0 && arguments['port_range_max'] == 0 ||
         arguments['port_range_min'] <= 22 && arguments['port_range_max'] >= 22
       )
   - uid: mondoo-openstack-security-no-unrestricted-ssh-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "openstack_networking_secgroup_rule_v2")
     mql: |
       terraform.plan.resourceChanges.where(type == "openstack_networking_secgroup_rule_v2").where(change.after.direction == "ingress").where(change.after.remote_ip_prefix == "0.0.0.0/0" || change.after.remote_ip_prefix == "::/0" || change.after.remote_ip_prefix == empty && change.after.remote_group_id == empty && change.after.remote_address_group_id == empty).where(change.after.protocol == "tcp" || change.after.protocol == "").none(
+        change.after.port_range_min == null && change.after.port_range_max == null ||
+        change.after.port_range_min == 0 && change.after.port_range_max == 0 ||
         change.after.port_range_min <= 22 && change.after.port_range_max >= 22
       )
   - uid: mondoo-openstack-security-no-unrestricted-ssh-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "openstack_networking_secgroup_rule_v2")
     mql: |
       terraform.state.resources.where(type == "openstack_networking_secgroup_rule_v2").where(values.direction == "ingress").where(values.remote_ip_prefix == "0.0.0.0/0" || values.remote_ip_prefix == "::/0" || values.remote_ip_prefix == empty && values.remote_group_id == empty && values.remote_address_group_id == empty).where(values.protocol == "tcp" || values.protocol == "").none(
+        values.port_range_min == null && values.port_range_max == null ||
+        values.port_range_min == 0 && values.port_range_max == 0 ||
         values.port_range_min <= 22 && values.port_range_max >= 22
       )
 
@@ -1335,7 +1343,7 @@ queries:
       desc: |
         This check verifies that Windows remote desktop access is confined to known source networks.
 
-        This check looks for Neutron ingress rules reaching TCP port 3389, the Remote Desktop Protocol listener, from a public source. A source counts as public when it is a broad prefix such as `0.0.0.0/0` or `::/0`, when it is a remote address group holding such a range, or when the rule names no remote, which Neutron treats as any source. Rules are managed with `openstack security group rule create` or the `openstack_networking_secgroup_rule_v2` Terraform resource.
+        This check looks for Neutron ingress rules reaching TCP port 3389, the Remote Desktop Protocol listener, from a public source. A source counts as public when it is a broad prefix such as `0.0.0.0/0` or `::/0`, when it is a remote address group holding such a range, or when the rule names no remote, which Neutron treats as any source. A rule that carries no port range reaches port 3389 as well, because Neutron matches every port when `port_range_min` and `port_range_max` are unset. Rules are managed with `openstack security group rule create` or the `openstack_networking_secgroup_rule_v2` Terraform resource.
 
         **Why this matters**
 
@@ -1363,7 +1371,7 @@ queries:
         openstack security group rule list <group>
         ```
 
-        A passing result shows no ingress TCP rule covering port 3389 with a remote IP prefix of `0.0.0.0/0` or `::/0`; a failing result shows one.
+        A passing result shows no ingress TCP rule covering port 3389 with a remote IP prefix of `0.0.0.0/0` or `::/0`; a failing result shows one. A rule whose `Port Range` column is empty covers every port, so it counts as covering 3389.
       remediation:
         - id: console
           desc: |
@@ -1372,7 +1380,7 @@ queries:
             3. Confirm RDP still works from the trusted range, then delete the rule open to `0.0.0.0/0` or `::/0`. Removing the open rule drops live RDP sessions that arrived through it.
         - id: cli
           desc: |
-            Replace each open rule that reaches port 3389 with one scoped to a trusted source. A rule is open when its remote is `0.0.0.0/0`, `::/0`, another public prefix of `/8` or wider, a remote address group holding such a range, or no remote at all. A rule reaches port 3389 when its protocol is `tcp` or any and its port range includes 3389.
+            Replace each open rule that reaches port 3389 with one scoped to a trusted source. A rule is open when its remote is `0.0.0.0/0`, `::/0`, another public prefix of `/8` or wider, a remote address group holding such a range, or no remote at all. A rule reaches port 3389 when its protocol is `tcp` or any and its port range includes 3389 or is unset, since an unset range means every port.
 
             ```bash
             # List the ingress rules to find the open ones and their IDs
@@ -1413,6 +1421,7 @@ queries:
     mql: |
       openstack.securityGroups.all(
         rules.where(direction == "ingress").where(includesPublicSource).where(protocol == "tcp" || protocol == "").none(
+          portRangeMin == 0 && portRangeMax == 0 ||
           portRangeMin <= 3389 && portRangeMax >= 3389
         )
       )
@@ -1420,24 +1429,31 @@ queries:
     filters: asset.platform == "openstack-security-group"
     mql: |
       openstack.securityGroup.rules.where(direction == "ingress").where(includesPublicSource).where(protocol == "tcp" || protocol == "").none(
+        portRangeMin == 0 && portRangeMax == 0 ||
         portRangeMin <= 3389 && portRangeMax >= 3389
       )
   - uid: mondoo-openstack-security-no-unrestricted-rdp-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_networking_secgroup_rule_v2")
     mql: |
       terraform.resources("openstack_networking_secgroup_rule_v2").where(arguments['direction'] == "ingress").where(arguments['remote_ip_prefix'] == "0.0.0.0/0" || arguments['remote_ip_prefix'] == "::/0" || arguments['remote_ip_prefix'] == empty && arguments['remote_group_id'] == empty && arguments['remote_address_group_id'] == empty).where(arguments['protocol'] == "tcp" || arguments['protocol'] == "").none(
+        arguments['port_range_min'] == null && arguments['port_range_max'] == null ||
+        arguments['port_range_min'] == 0 && arguments['port_range_max'] == 0 ||
         arguments['port_range_min'] <= 3389 && arguments['port_range_max'] >= 3389
       )
   - uid: mondoo-openstack-security-no-unrestricted-rdp-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "openstack_networking_secgroup_rule_v2")
     mql: |
       terraform.plan.resourceChanges.where(type == "openstack_networking_secgroup_rule_v2").where(change.after.direction == "ingress").where(change.after.remote_ip_prefix == "0.0.0.0/0" || change.after.remote_ip_prefix == "::/0" || change.after.remote_ip_prefix == empty && change.after.remote_group_id == empty && change.after.remote_address_group_id == empty).where(change.after.protocol == "tcp" || change.after.protocol == "").none(
+        change.after.port_range_min == null && change.after.port_range_max == null ||
+        change.after.port_range_min == 0 && change.after.port_range_max == 0 ||
         change.after.port_range_min <= 3389 && change.after.port_range_max >= 3389
       )
   - uid: mondoo-openstack-security-no-unrestricted-rdp-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "openstack_networking_secgroup_rule_v2")
     mql: |
       terraform.state.resources.where(type == "openstack_networking_secgroup_rule_v2").where(values.direction == "ingress").where(values.remote_ip_prefix == "0.0.0.0/0" || values.remote_ip_prefix == "::/0" || values.remote_ip_prefix == empty && values.remote_group_id == empty && values.remote_address_group_id == empty).where(values.protocol == "tcp" || values.protocol == "").none(
+        values.port_range_min == null && values.port_range_max == null ||
+        values.port_range_min == 0 && values.port_range_max == 0 ||
         values.port_range_min <= 3389 && values.port_range_max >= 3389
       )
 
@@ -1484,7 +1500,7 @@ queries:
       desc: |
         This check verifies that the Windows remote management channel is confined to known source networks.
 
-        Windows Remote Management carries PowerShell Remoting and the tooling built on it, listening on TCP port 5985 for the plaintext transport and 5986 for the TLS one. This check looks for Neutron ingress rules reaching either port from a public source, meaning a broad prefix such as `0.0.0.0/0` or `::/0`, a remote address group holding such a range, or a rule naming no remote at all, which Neutron treats as any source. Rules are managed with `openstack security group rule create` or the `openstack_networking_secgroup_rule_v2` Terraform resource.
+        Windows Remote Management carries PowerShell Remoting and the tooling built on it, listening on TCP port 5985 for the plaintext transport and 5986 for the TLS one. This check looks for Neutron ingress rules reaching either port from a public source, meaning a broad prefix such as `0.0.0.0/0` or `::/0`, a remote address group holding such a range, or a rule naming no remote at all, which Neutron treats as any source. A rule that carries no port range reaches both ports as well, because Neutron matches every port when `port_range_min` and `port_range_max` are unset. Rules are managed with `openstack security group rule create` or the `openstack_networking_secgroup_rule_v2` Terraform resource.
 
         **Why this matters**
 
@@ -1512,7 +1528,7 @@ queries:
         openstack security group rule list <group>
         ```
 
-        A passing result shows no ingress TCP rule covering port 5985 or 5986 with a remote IP prefix of `0.0.0.0/0` or `::/0`; a failing result shows one.
+        A passing result shows no ingress TCP rule covering port 5985 or 5986 with a remote IP prefix of `0.0.0.0/0` or `::/0`; a failing result shows one. A rule whose `Port Range` column is empty covers every port, so it counts as covering both.
       remediation:
         - id: console
           desc: |
@@ -1521,7 +1537,7 @@ queries:
             3. Confirm WinRM still works from the trusted range, then delete the rule open to `0.0.0.0/0` or `::/0`. Removing the open rule drops live WinRM sessions that arrived through it.
         - id: cli
           desc: |
-            Replace each open rule that reaches port 5985 or 5986 with one scoped to a trusted source. A rule is open when its remote is `0.0.0.0/0`, `::/0`, another public prefix of `/8` or wider, a remote address group holding such a range, or no remote at all. A rule reaches WinRM when its protocol is `tcp` or any and its port range includes 5985 or 5986.
+            Replace each open rule that reaches port 5985 or 5986 with one scoped to a trusted source. A rule is open when its remote is `0.0.0.0/0`, `::/0`, another public prefix of `/8` or wider, a remote address group holding such a range, or no remote at all. A rule reaches WinRM when its protocol is `tcp` or any and its port range includes 5985 or 5986 or is unset, since an unset range means every port.
 
             ```bash
             # List the ingress rules to find the open ones and their IDs
@@ -1562,6 +1578,7 @@ queries:
     mql: |
       openstack.securityGroups.all(
         rules.where(direction == "ingress").where(includesPublicSource).where(protocol == "tcp" || protocol == "").none(
+          portRangeMin == 0 && portRangeMax == 0 ||
           portRangeMin <= 5985 && portRangeMax >= 5985 ||
           portRangeMin <= 5986 && portRangeMax >= 5986
         )
@@ -1570,6 +1587,7 @@ queries:
     filters: asset.platform == "openstack-security-group"
     mql: |
       openstack.securityGroup.rules.where(direction == "ingress").where(includesPublicSource).where(protocol == "tcp" || protocol == "").none(
+        portRangeMin == 0 && portRangeMax == 0 ||
         portRangeMin <= 5985 && portRangeMax >= 5985 ||
         portRangeMin <= 5986 && portRangeMax >= 5986
       )
@@ -1577,6 +1595,8 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_networking_secgroup_rule_v2")
     mql: |
       terraform.resources("openstack_networking_secgroup_rule_v2").where(arguments['direction'] == "ingress").where(arguments['remote_ip_prefix'] == "0.0.0.0/0" || arguments['remote_ip_prefix'] == "::/0" || arguments['remote_ip_prefix'] == empty && arguments['remote_group_id'] == empty && arguments['remote_address_group_id'] == empty).where(arguments['protocol'] == "tcp" || arguments['protocol'] == "").none(
+        arguments['port_range_min'] == null && arguments['port_range_max'] == null ||
+        arguments['port_range_min'] == 0 && arguments['port_range_max'] == 0 ||
         arguments['port_range_min'] <= 5985 && arguments['port_range_max'] >= 5985 ||
         arguments['port_range_min'] <= 5986 && arguments['port_range_max'] >= 5986
       )
@@ -1584,6 +1604,8 @@ queries:
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "openstack_networking_secgroup_rule_v2")
     mql: |
       terraform.plan.resourceChanges.where(type == "openstack_networking_secgroup_rule_v2").where(change.after.direction == "ingress").where(change.after.remote_ip_prefix == "0.0.0.0/0" || change.after.remote_ip_prefix == "::/0" || change.after.remote_ip_prefix == empty && change.after.remote_group_id == empty && change.after.remote_address_group_id == empty).where(change.after.protocol == "tcp" || change.after.protocol == "").none(
+        change.after.port_range_min == null && change.after.port_range_max == null ||
+        change.after.port_range_min == 0 && change.after.port_range_max == 0 ||
         change.after.port_range_min <= 5985 && change.after.port_range_max >= 5985 ||
         change.after.port_range_min <= 5986 && change.after.port_range_max >= 5986
       )
@@ -1591,6 +1613,8 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "openstack_networking_secgroup_rule_v2")
     mql: |
       terraform.state.resources.where(type == "openstack_networking_secgroup_rule_v2").where(values.direction == "ingress").where(values.remote_ip_prefix == "0.0.0.0/0" || values.remote_ip_prefix == "::/0" || values.remote_ip_prefix == empty && values.remote_group_id == empty && values.remote_address_group_id == empty).where(values.protocol == "tcp" || values.protocol == "").none(
+        values.port_range_min == null && values.port_range_max == null ||
+        values.port_range_min == 0 && values.port_range_max == 0 ||
         values.port_range_min <= 5985 && values.port_range_max >= 5985 ||
         values.port_range_min <= 5986 && values.port_range_max >= 5986
       )
@@ -1638,7 +1662,7 @@ queries:
       desc: |
         This check verifies that database listeners are not reachable from the public internet.
 
-        This check looks for Neutron ingress rules reaching common database ports from a public source: 3306 for MySQL and MariaDB, 5432 for PostgreSQL, 27017 for MongoDB, 6379 for Redis, 11211 for Memcached, 9200 for Elasticsearch, 1433 for Microsoft SQL Server, and 1521 for Oracle. A source counts as public when it is a broad prefix such as `0.0.0.0/0` or `::/0`, a remote address group holding such a range, or a rule naming no remote at all, which Neutron treats as any source. Rules are managed with `openstack security group rule create` or the `openstack_networking_secgroup_rule_v2` Terraform resource.
+        This check looks for Neutron ingress rules reaching common database ports from a public source: 3306 for MySQL and MariaDB, 5432 for PostgreSQL, 27017 for MongoDB, 6379 for Redis, 11211 for Memcached, 9200 for Elasticsearch, 1433 for Microsoft SQL Server, and 1521 for Oracle. A source counts as public when it is a broad prefix such as `0.0.0.0/0` or `::/0`, a remote address group holding such a range, or a rule naming no remote at all, which Neutron treats as any source. A rule that carries no port range reaches every one of these ports, because Neutron matches every port when `port_range_min` and `port_range_max` are unset. Rules are managed with `openstack security group rule create` or the `openstack_networking_secgroup_rule_v2` Terraform resource.
 
         **Why this matters**
 
@@ -1666,7 +1690,7 @@ queries:
         openstack security group rule list <group>
         ```
 
-        A passing result shows no ingress rule covering a common database port with a remote IP prefix of `0.0.0.0/0` or `::/0`; a failing result shows one.
+        A passing result shows no ingress rule covering a common database port with a remote IP prefix of `0.0.0.0/0` or `::/0`; a failing result shows one. A rule whose `Port Range` column is empty covers every port, so it counts as covering the database ports.
       remediation:
         - id: console
           desc: |
@@ -1675,7 +1699,7 @@ queries:
             3. Confirm the application tier can still reach the database, then delete the rule open to `0.0.0.0/0` or `::/0`. Removing the open rule drops connections established through it.
         - id: cli
           desc: |
-            Replace each open rule that reaches a database port with one scoped to the application tier. A rule is open when its remote is `0.0.0.0/0`, `::/0`, another public prefix of `/8` or wider, a remote address group holding such a range, or no remote at all. A rule reaches a database port when its protocol is `tcp` or any and its port range includes 3306, 5432, 27017, 6379, 11211, 9200, 1433, or 1521.
+            Replace each open rule that reaches a database port with one scoped to the application tier. A rule is open when its remote is `0.0.0.0/0`, `::/0`, another public prefix of `/8` or wider, a remote address group holding such a range, or no remote at all. A rule reaches a database port when its protocol is `tcp` or any and its port range includes 3306, 5432, 27017, 6379, 11211, 9200, 1433, or 1521, or is unset, since an unset range means every port.
 
             ```bash
             # List the ingress rules to find the open ones and their IDs
@@ -1716,6 +1740,7 @@ queries:
     mql: |
       openstack.securityGroups.all(
         rules.where(direction == "ingress").where(includesPublicSource).where(protocol == "tcp" || protocol == "").none(
+          portRangeMin == 0 && portRangeMax == 0 ||
           portRangeMin <= 3306 && portRangeMax >= 3306 ||
           portRangeMin <= 5432 && portRangeMax >= 5432 ||
           portRangeMin <= 27017 && portRangeMax >= 27017 ||
@@ -1730,6 +1755,7 @@ queries:
     filters: asset.platform == "openstack-security-group"
     mql: |
       openstack.securityGroup.rules.where(direction == "ingress").where(includesPublicSource).where(protocol == "tcp" || protocol == "").none(
+        portRangeMin == 0 && portRangeMax == 0 ||
         portRangeMin <= 3306 && portRangeMax >= 3306 ||
         portRangeMin <= 5432 && portRangeMax >= 5432 ||
         portRangeMin <= 27017 && portRangeMax >= 27017 ||
@@ -1743,6 +1769,8 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_networking_secgroup_rule_v2")
     mql: |
       terraform.resources("openstack_networking_secgroup_rule_v2").where(arguments['direction'] == "ingress").where(arguments['remote_ip_prefix'] == "0.0.0.0/0" || arguments['remote_ip_prefix'] == "::/0" || arguments['remote_ip_prefix'] == empty && arguments['remote_group_id'] == empty && arguments['remote_address_group_id'] == empty).where(arguments['protocol'] == "tcp" || arguments['protocol'] == "").none(
+        arguments['port_range_min'] == null && arguments['port_range_max'] == null ||
+        arguments['port_range_min'] == 0 && arguments['port_range_max'] == 0 ||
         arguments['port_range_min'] <= 3306 && arguments['port_range_max'] >= 3306 ||
         arguments['port_range_min'] <= 5432 && arguments['port_range_max'] >= 5432 ||
         arguments['port_range_min'] <= 27017 && arguments['port_range_max'] >= 27017 ||
@@ -1756,6 +1784,8 @@ queries:
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "openstack_networking_secgroup_rule_v2")
     mql: |
       terraform.plan.resourceChanges.where(type == "openstack_networking_secgroup_rule_v2").where(change.after.direction == "ingress").where(change.after.remote_ip_prefix == "0.0.0.0/0" || change.after.remote_ip_prefix == "::/0" || change.after.remote_ip_prefix == empty && change.after.remote_group_id == empty && change.after.remote_address_group_id == empty).where(change.after.protocol == "tcp" || change.after.protocol == "").none(
+        change.after.port_range_min == null && change.after.port_range_max == null ||
+        change.after.port_range_min == 0 && change.after.port_range_max == 0 ||
         change.after.port_range_min <= 3306 && change.after.port_range_max >= 3306 ||
         change.after.port_range_min <= 5432 && change.after.port_range_max >= 5432 ||
         change.after.port_range_min <= 27017 && change.after.port_range_max >= 27017 ||
@@ -1769,6 +1799,8 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "openstack_networking_secgroup_rule_v2")
     mql: |
       terraform.state.resources.where(type == "openstack_networking_secgroup_rule_v2").where(values.direction == "ingress").where(values.remote_ip_prefix == "0.0.0.0/0" || values.remote_ip_prefix == "::/0" || values.remote_ip_prefix == empty && values.remote_group_id == empty && values.remote_address_group_id == empty).where(values.protocol == "tcp" || values.protocol == "").none(
+        values.port_range_min == null && values.port_range_max == null ||
+        values.port_range_min == 0 && values.port_range_max == 0 ||
         values.port_range_min <= 3306 && values.port_range_max >= 3306 ||
         values.port_range_min <= 5432 && values.port_range_max >= 5432 ||
         values.port_range_min <= 27017 && values.port_range_max >= 27017 ||
@@ -1822,7 +1854,7 @@ queries:
       desc: |
         This check verifies that container and cluster control plane endpoints are not reachable from the public internet.
 
-        This check looks for Neutron ingress rules reaching orchestration control ports from a public source: 6443 for the Kubernetes API server, 10250 for the kubelet API, 2379 and 2380 for etcd client and peer traffic, and 2375 and 2376 for the Docker daemon. A source counts as public when it is a broad prefix such as `0.0.0.0/0` or `::/0`, a remote address group holding such a range, or a rule naming no remote, which Neutron treats as any source. Rules are managed with `openstack security group rule create` or the `openstack_networking_secgroup_rule_v2` Terraform resource.
+        This check looks for Neutron ingress rules reaching orchestration control ports from a public source: 6443 for the Kubernetes API server, 10250 for the kubelet API, 2379 and 2380 for etcd client and peer traffic, and 2375 and 2376 for the Docker daemon. A source counts as public when it is a broad prefix such as `0.0.0.0/0` or `::/0`, a remote address group holding such a range, or a rule naming no remote, which Neutron treats as any source. A rule that carries no port range reaches every one of these ports, because Neutron matches every port when `port_range_min` and `port_range_max` are unset. Rules are managed with `openstack security group rule create` or the `openstack_networking_secgroup_rule_v2` Terraform resource.
 
         **Why this matters**
 
@@ -1850,7 +1882,7 @@ queries:
         openstack security group rule list <group>
         ```
 
-        A passing result shows no ingress rule covering an orchestration control-plane port with a remote IP prefix of `0.0.0.0/0` or `::/0`; a failing result shows one.
+        A passing result shows no ingress rule covering an orchestration control-plane port with a remote IP prefix of `0.0.0.0/0` or `::/0`; a failing result shows one. A rule whose `Port Range` column is empty covers every port, so it counts as covering the orchestration ports.
       remediation:
         - id: console
           desc: |
@@ -1859,7 +1891,7 @@ queries:
             3. Confirm cluster nodes and operators can still reach the control plane, then delete the rule open to `0.0.0.0/0` or `::/0`. Removing the open rule drops connections established through it.
         - id: cli
           desc: |
-            Replace each open rule that reaches an orchestration port with one scoped to a trusted source. A rule is open when its remote is `0.0.0.0/0`, `::/0`, another public prefix of `/8` or wider, a remote address group holding such a range, or no remote at all. A rule reaches an orchestration port when its protocol is `tcp` or any and its port range includes 6443, 10250, 2379, 2380, 2375, or 2376.
+            Replace each open rule that reaches an orchestration port with one scoped to a trusted source. A rule is open when its remote is `0.0.0.0/0`, `::/0`, another public prefix of `/8` or wider, a remote address group holding such a range, or no remote at all. A rule reaches an orchestration port when its protocol is `tcp` or any and its port range includes 6443, 10250, 2379, 2380, 2375, or 2376, or is unset, since an unset range means every port.
 
             ```bash
             # List the ingress rules to find the open ones and their IDs
@@ -1902,6 +1934,7 @@ queries:
     mql: |
       openstack.securityGroups.all(
         rules.where(direction == "ingress").where(includesPublicSource).where(protocol == "tcp" || protocol == "").none(
+          portRangeMin == 0 && portRangeMax == 0 ||
           portRangeMin <= 6443 && portRangeMax >= 6443 ||
           portRangeMin <= 10250 && portRangeMax >= 10250 ||
           portRangeMin <= 2379 && portRangeMax >= 2379 ||
@@ -1914,6 +1947,7 @@ queries:
     filters: asset.platform == "openstack-security-group"
     mql: |
       openstack.securityGroup.rules.where(direction == "ingress").where(includesPublicSource).where(protocol == "tcp" || protocol == "").none(
+        portRangeMin == 0 && portRangeMax == 0 ||
         portRangeMin <= 6443 && portRangeMax >= 6443 ||
         portRangeMin <= 10250 && portRangeMax >= 10250 ||
         portRangeMin <= 2379 && portRangeMax >= 2379 ||
@@ -1925,6 +1959,8 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_networking_secgroup_rule_v2")
     mql: |
       terraform.resources("openstack_networking_secgroup_rule_v2").where(arguments['direction'] == "ingress").where(arguments['remote_ip_prefix'] == "0.0.0.0/0" || arguments['remote_ip_prefix'] == "::/0" || arguments['remote_ip_prefix'] == empty && arguments['remote_group_id'] == empty && arguments['remote_address_group_id'] == empty).where(arguments['protocol'] == "tcp" || arguments['protocol'] == "").none(
+        arguments['port_range_min'] == null && arguments['port_range_max'] == null ||
+        arguments['port_range_min'] == 0 && arguments['port_range_max'] == 0 ||
         arguments['port_range_min'] <= 6443 && arguments['port_range_max'] >= 6443 ||
         arguments['port_range_min'] <= 10250 && arguments['port_range_max'] >= 10250 ||
         arguments['port_range_min'] <= 2379 && arguments['port_range_max'] >= 2379 ||
@@ -1936,6 +1972,8 @@ queries:
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "openstack_networking_secgroup_rule_v2")
     mql: |
       terraform.plan.resourceChanges.where(type == "openstack_networking_secgroup_rule_v2").where(change.after.direction == "ingress").where(change.after.remote_ip_prefix == "0.0.0.0/0" || change.after.remote_ip_prefix == "::/0" || change.after.remote_ip_prefix == empty && change.after.remote_group_id == empty && change.after.remote_address_group_id == empty).where(change.after.protocol == "tcp" || change.after.protocol == "").none(
+        change.after.port_range_min == null && change.after.port_range_max == null ||
+        change.after.port_range_min == 0 && change.after.port_range_max == 0 ||
         change.after.port_range_min <= 6443 && change.after.port_range_max >= 6443 ||
         change.after.port_range_min <= 10250 && change.after.port_range_max >= 10250 ||
         change.after.port_range_min <= 2379 && change.after.port_range_max >= 2379 ||
@@ -1947,6 +1985,8 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "openstack_networking_secgroup_rule_v2")
     mql: |
       terraform.state.resources.where(type == "openstack_networking_secgroup_rule_v2").where(values.direction == "ingress").where(values.remote_ip_prefix == "0.0.0.0/0" || values.remote_ip_prefix == "::/0" || values.remote_ip_prefix == empty && values.remote_group_id == empty && values.remote_address_group_id == empty).where(values.protocol == "tcp" || values.protocol == "").none(
+        values.port_range_min == null && values.port_range_max == null ||
+        values.port_range_min == 0 && values.port_range_max == 0 ||
         values.port_range_min <= 6443 && values.port_range_max >= 6443 ||
         values.port_range_min <= 10250 && values.port_range_max >= 10250 ||
         values.port_range_min <= 2379 && values.port_range_max >= 2379 ||
