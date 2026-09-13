@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-alibaba-security
     name: Mondoo Alibaba Cloud Security
-    version: 1.2.1
+    version: 1.2.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -178,16 +178,29 @@ queries:
             1. Sign in to the [RAM console](https://ram.console.aliyun.com/).
             2. Navigate to **Identities** > **Users** and open the affected user.
             3. On the **Authentication** tab, select **Virtual MFA Device** or **U2F Security Key** and complete the binding.
-            4. Enforce MFA at sign-in by attaching an MFA-required condition through the account's security settings.
+
+            A user who has a logon profile but never signs in to the console does not need one. Deleting that user's logon profile also resolves the finding, because only users with console access are evaluated.
         - id: cli
           desc: |
-            To bind a virtual MFA device to a RAM user with the `aliyun` CLI, create the device, then bind it after the user enrolls the generated secret in an authenticator app:
+            To bind a virtual MFA device to a RAM user with the `aliyun` CLI:
+
+            1. Create the device. The response carries the device `SerialNumber` and a `Base32StringSeed` secret.
+            2. Have the user add that secret to an authenticator app.
+            3. Bind the device with two consecutive codes from the app.
 
             ```bash
             aliyun ram CreateVirtualMFADevice --VirtualMFADeviceName <device-name>
             aliyun ram BindMFADevice --SerialNumber <mfa-serial> --UserName <user-name> \
               --AuthenticationCode1 <code1> --AuthenticationCode2 <code2>
             ```
+
+            Replace the placeholders as follows:
+
+            - `<device-name>` is any name for the device, usually the user name.
+            - `<mfa-serial>` is the `SerialNumber` returned by `CreateVirtualMFADevice`.
+            - `<code1>` and `<code2>` are two consecutive six-digit codes shown by the authenticator app.
+
+            To make a user who has no device bind one at their next console sign-in instead, run `aliyun ram UpdateLoginProfile --UserName <user-name> --MFABindRequired true`. The finding clears once that binding happens.
         # No Terraform remediation: MFA device enrollment is an interactive runtime action (the user must register the device secret in an authenticator); the alicloud provider exposes no resource that binds and activates an MFA device for a user.
     variants:
       - uid: mondoo-alibaba-security-ram-user-mfa-enabled-alicloud
@@ -266,6 +279,8 @@ queries:
             ```bash
             aliyun oss bucket-encryption --method put oss://<bucket-name> --sse-algorithm KMS
             ```
+
+            `--sse-algorithm` accepts `KMS`, `AES256` or `SM4`, and any of them resolves the finding. `KMS` without `--kms-masterkey-id` uses the OSS-managed KMS key. Add `--kms-masterkey-id <cmk-id>` to use a customer master key, which the stricter KMS encryption check requires. The rule applies to objects written after it is set.
         - id: terraform
           desc: |
             To enforce default encryption on an OSS bucket in Terraform, declare a `server_side_encryption_rule` block:
@@ -382,7 +397,12 @@ queries:
             3. On the **Authentication** tab, create a new **AccessKey**, update the applications that use the old key, then set the old key to **Disabled** and delete it once traffic has moved.
         - id: cli
           desc: |
-            To rotate a RAM user access key with the `aliyun` CLI, create a new key, migrate consumers to it, then disable and delete the old key:
+            To rotate a RAM user access key with the `aliyun` CLI:
+
+            1. Create a new key. The response is the only time the `AccessKeySecret` is shown, so store it straight away.
+            2. Move every application and pipeline that uses the old key onto the new one.
+            3. Disable the old key and watch for failures.
+            4. Delete the old key once nothing depends on it.
 
             ```bash
             aliyun ram CreateAccessKey --UserName <user-name>
@@ -391,6 +411,10 @@ queries:
             aliyun ram DeleteAccessKey --UserName <user-name> \
               --UserAccessKeyId <old-access-key-id>
             ```
+
+            `<old-access-key-id>` is the `AccessKeyId` of the key older than 90 days, as listed by `aliyun ram ListAccessKeys --UserName <user-name>`.
+
+            **Disabling or deleting the old key breaks every client still using it.** Run the last two commands only after step 2 is complete. A RAM user can hold at most two access keys, so if the user already has two, delete an unused one before creating the replacement.
         # No Terraform remediation: key rotation is an operational lifecycle action on an already-issued credential; the alicloud provider exposes no resource attribute that enforces the age of an access key.
     variants:
       - uid: mondoo-alibaba-security-ram-access-key-rotation-90-days-alicloud
@@ -463,9 +487,17 @@ queries:
           desc: |
             To set the minimum password length with the `aliyun` CLI:
 
+            1. Read the current policy with `aliyun ram GetPasswordPolicy` and note every value.
+            2. Set `MinimumPasswordLength` to 14 or greater, passing the rest of the policy in the same call.
+
             ```bash
-            aliyun ram SetPasswordPolicy --MinimumPasswordLength 14
+            aliyun ram SetPasswordPolicy --MinimumPasswordLength 14 \
+              --RequireUppercaseCharacters true --RequireLowercaseCharacters true \
+              --RequireNumbers true --RequireSymbols true \
+              --MaxLoginAttemps 5
             ```
+
+            **Pass the whole policy, not only the setting you are changing.** The API documents defaults for parameters left out of the call, such as a minimum length of 8, so a call that sets one value can reset the others. The example also keeps all four character classes required and the lockout at 5 attempts. Add `--MaxPasswordAge`, `--PasswordReusePrevention` and `--HardExpiry` with the values `GetPasswordPolicy` returned if the account uses them. `MaxLoginAttemps` is spelled that way in the API.
         - id: terraform
           desc: |
             To enforce the minimum password length in Terraform, set `minimum_password_length` on the account password policy:
@@ -570,13 +602,19 @@ queries:
           desc: |
             To require all character classes with the `aliyun` CLI:
 
+            1. Read the current policy with `aliyun ram GetPasswordPolicy` and note every value.
+            2. Set all four `Require*` parameters to `true`, passing the rest of the policy in the same call.
+
             ```bash
             aliyun ram SetPasswordPolicy \
               --RequireUppercaseCharacters true \
               --RequireLowercaseCharacters true \
               --RequireNumbers true \
-              --RequireSymbols true
+              --RequireSymbols true \
+              --MinimumPasswordLength 14 --MaxLoginAttemps 5
             ```
+
+            **Pass the whole policy, not only the setting you are changing.** The API documents defaults for parameters left out of the call, such as a minimum length of 8, so a call that sets only the character classes can shorten the minimum length. The example keeps the length at 14 and the lockout at 5 attempts. Add `--MaxPasswordAge`, `--PasswordReusePrevention` and `--HardExpiry` with the values `GetPasswordPolicy` returned if the account uses them.
         - id: terraform
           desc: |
             To enforce mixed character types in Terraform, set the four complexity attributes on the account password policy:
@@ -696,9 +734,17 @@ queries:
           desc: |
             To set the maximum login attempts with the `aliyun` CLI:
 
+            1. Read the current policy with `aliyun ram GetPasswordPolicy` and note every value.
+            2. Set `MaxLoginAttemps` to a value from 1 to 5, passing the rest of the policy in the same call. The parameter is spelled `MaxLoginAttemps` in the API.
+
             ```bash
-            aliyun ram SetPasswordPolicy --MaxLoginAttemps 5
+            aliyun ram SetPasswordPolicy --MaxLoginAttemps 5 \
+              --MinimumPasswordLength 14 \
+              --RequireUppercaseCharacters true --RequireLowercaseCharacters true \
+              --RequireNumbers true --RequireSymbols true
             ```
+
+            **Pass the whole policy, not only the setting you are changing.** The API documents defaults for parameters left out of the call, such as a minimum length of 8, so a call that sets only the lockout can weaken the rest of the policy. `0` disables the lockout and fails the check, as does any value above 5. Add `--MaxPasswordAge`, `--PasswordReusePrevention` and `--HardExpiry` with the values `GetPasswordPolicy` returned if the account uses them.
         - id: terraform
           desc: |
             To enforce a login attempt lockout in Terraform, set `max_login_attempts` on the account password policy:
@@ -810,13 +856,23 @@ queries:
             3. Edit the policy document to replace the wildcard `Action` and `Resource` with the specific actions and resource ARNs the identity actually requires, then save a new version.
         - id: cli
           desc: |
-            To replace a wildcard custom policy with a scoped document using the `aliyun` CLI, create a new policy version that lists only the required actions and resources:
+            To replace a wildcard custom policy with a scoped document using the `aliyun` CLI, create a new policy version that lists only the required actions and resources and make it the default version:
 
             ```bash
             aliyun ram CreatePolicyVersion --PolicyName <policy-name> \
               --SetAsDefault true \
+              --RotateStrategy DeleteOldestNonDefaultVersionWhenLimitExceeded \
               --PolicyDocument '{"Version":"1","Statement":[{"Effect":"Allow","Action":["oss:GetObject"],"Resource":["acs:oss:*:*:example-bucket/*"]}]}'
             ```
+
+            Replace the values as follows:
+
+            - `<policy-name>` is the custom policy that grants `*` on `*`.
+            - The `PolicyDocument` shown is only an example. List the actions and resource ARNs the attached identities actually use, and include no `Allow` statement whose `Action` and `Resource` are both `*`.
+            - `--SetAsDefault true` makes the new version the one RAM enforces. Without it the wildcard version stays in force.
+            - `--RotateStrategy DeleteOldestNonDefaultVersionWhenLimitExceeded` removes the oldest non-default version when the policy already holds the maximum number of versions, which would otherwise make the call fail.
+
+            **Identities that relied on the wildcard lose every permission the new document omits.** Review what the attached users, groups and roles call before switching the default version.
         # No Terraform remediation: this check evaluates the resolved JSON policy document of existing custom policies; the alicloud_ram_policy document is an opaque JSON string in HCL, so the wildcard-grant condition cannot be reliably asserted through a Terraform resource attribute.
     variants:
       - uid: mondoo-alibaba-security-ram-policy-no-full-admin-alicloud
@@ -890,12 +946,28 @@ queries:
             3. If the access is no longer required, delete the user's logon profile to remove console access, or delete the user entirely once dependencies are cleared.
         - id: cli
           desc: |
-            To remove console access from an inactive user with the `aliyun` CLI, delete the logon profile, or delete the user once its credentials and attachments are removed:
+            To remove console access from an inactive user with the `aliyun` CLI, choose one of the following. Either one resolves the finding, because only users with a logon profile are evaluated.
 
-            ```bash
-            aliyun ram DeleteLoginProfile --UserName <user-name>
-            aliyun ram DeleteUser --UserName <user-name>
-            ```
+            1. To keep the user for programmatic access, delete only its logon profile:
+
+               ```bash
+               aliyun ram DeleteLoginProfile --UserName <user-name>
+               ```
+
+            2. To remove the user entirely, first detach its policies and remove it from its groups, since RAM refuses to delete a user that still holds permissions or group memberships. Then delete it:
+
+               ```bash
+               aliyun ram ListPoliciesForUser --UserName <user-name>
+               aliyun ram DetachPolicyFromUser --UserName <user-name> \
+                 --PolicyType <policy-type> --PolicyName <policy-name>
+               aliyun ram ListGroupsForUser --UserName <user-name>
+               aliyun ram RemoveUserFromGroup --UserName <user-name> --GroupName <group-name>
+               aliyun ram DeleteUser --UserName <user-name>
+               ```
+
+            `<user-name>` is the user whose `LastLoginDate` is older than 90 days or empty. `<policy-type>` is `System` or `Custom`, as returned by `ListPoliciesForUser`.
+
+            **Deleting a user cannot be undone.** Confirm that no person or automation still signs in or calls APIs as the user before you choose the second option.
         # No Terraform remediation: inactivity is observed from runtime login history; the alicloud provider exposes no resource attribute that deprovisions a user based on how recently they authenticated.
     variants:
       - uid: mondoo-alibaba-security-ram-user-inactive-credentials-alicloud
@@ -974,9 +1046,13 @@ queries:
             ```bash
             aliyun oss set-acl oss://<bucket-name> private -b
             ```
+
+            The `-b` flag applies the ACL to the bucket itself rather than to an object. `private` is the only value that resolves the finding.
+
+            **Anonymous clients stop receiving objects as soon as the ACL changes.** If some content must stay reachable, hand it out through signed URLs before you make the bucket private.
         - id: terraform
           desc: |
-            To enforce a private ACL on an OSS bucket in Terraform, use the `alicloud_oss_bucket_acl` resource:
+            To enforce a private ACL on an OSS bucket in Terraform, use the `alicloud_oss_bucket_acl` resource and remove the deprecated `acl` argument from the `alicloud_oss_bucket` resource:
 
             ```hcl
             resource "alicloud_oss_bucket" "example" {
@@ -988,6 +1064,8 @@ queries:
               acl    = "private"
             }
             ```
+
+            An `acl = "public-read"` or `acl = "public-read-write"` argument left on the bucket resource keeps the Terraform finding open even after the separate ACL resource is added, so delete it rather than leaving both in place.
     variants:
       - uid: mondoo-alibaba-security-oss-bucket-no-public-acl-alicloud
       - uid: mondoo-alibaba-security-oss-bucket-no-public-acl-terraform-hcl
@@ -1071,6 +1149,8 @@ queries:
             1. Sign in to the [OSS console](https://oss.console.aliyun.com/).
             2. Open the bucket and go to **Access Control** > **Block Public Access**.
             3. Turn on **Block Public Access** and save.
+
+            **Every public ACL and public bucket policy grant on the bucket stops working at once.** Anonymous clients, including a static website served from the bucket, lose access immediately.
         # No CLI remediation: the embedded ossutil (aliyun oss) has no Block Public Access command; it is configured through the console or Terraform.
         - id: terraform
           desc: |
@@ -1177,11 +1257,30 @@ queries:
             3. Edit or delete any statement whose `Principal` is `*`, restricting access to specific RAM identities, and save.
         - id: cli
           desc: |
-            To replace a bucket policy with one that names specific principals instead of `*` with the `aliyun` CLI:
+            To remove anonymous access from a bucket policy with the `aliyun` CLI:
 
-            ```bash
-            aliyun oss bucket-policy --method put oss://<bucket-name> ./bucket-policy.json
-            ```
+            1. Save the current policy to a file:
+
+               ```bash
+               aliyun oss bucket-policy --method get oss://<bucket-name> ./bucket-policy.json
+               ```
+
+            2. Edit `./bucket-policy.json`. In every statement whose `Principal` is `*`, replace `*` with the IDs of the RAM users or roles that need the access, or delete the statement.
+            3. Upload the edited policy:
+
+               ```bash
+               aliyun oss bucket-policy --method put oss://<bucket-name> ./bucket-policy.json
+               ```
+
+               If no statement is left, delete the policy instead:
+
+               ```bash
+               aliyun oss bucket-policy --method delete oss://<bucket-name>
+               ```
+
+            The finding follows OSS's own verdict on whether the policy is public, which a statement granting `*` triggers. Enabling Block Public Access on the bucket also resolves it.
+
+            **Anonymous callers that relied on the removed statements lose access immediately.**
         # No Terraform remediation: the bucket policy is an opaque JSON document and this control is not evaluated against Terraform sources.
     variants:
       - uid: mondoo-alibaba-security-oss-bucket-policy-no-anonymous-alicloud
@@ -1258,6 +1357,8 @@ queries:
             ```bash
             aliyun oss bucket-encryption --method put oss://<bucket-name> --sse-algorithm KMS --kms-masterkey-id <cmk-id>
             ```
+
+            `<cmk-id>` is the ID of the customer master key to use, as listed by `aliyun kms ListKeys`. Both `--sse-algorithm KMS` and a key ID are required, because a bucket on `AES256`, or on `KMS` without a recorded key, still fails. The rule applies to objects written after it is set.
         - id: terraform
           desc: |
             To enforce KMS default encryption on an OSS bucket in Terraform, declare a `server_side_encryption_rule` block with a KMS master key:
@@ -1606,12 +1707,24 @@ queries:
             3. Delete or edit the rule allowing `0.0.0.0/0` to port 22, restricting the source to a trusted CIDR or bastion address.
         - id: cli
           desc: |
-            To revoke a world-open SSH rule with the `aliyun` CLI:
+            To replace a world-open SSH rule with the `aliyun` CLI:
+
+            1. List the inbound rules and note the `SecurityGroupRuleId` of every `Accept` rule whose source is `0.0.0.0/0`, or a prefix list containing it, and whose port range spans 22. That includes `-1/-1`, ranges such as `1/1024`, and rules with protocol `ALL`.
+            2. Add a rule that admits SSH only from the trusted range, so administration keeps working.
+            3. Revoke the world-open rules by ID.
 
             ```bash
+            aliyun ecs DescribeSecurityGroupAttribute --SecurityGroupId <sg-id> --Direction ingress
+            aliyun ecs AuthorizeSecurityGroup --SecurityGroupId <sg-id> \
+              --Permissions.1.IpProtocol TCP --Permissions.1.PortRange 22/22 \
+              --Permissions.1.SourceCidrIp <trusted-cidr>
             aliyun ecs RevokeSecurityGroup --SecurityGroupId <sg-id> \
-              --IpProtocol tcp --PortRange 22/22 --SourceCidrIp 0.0.0.0/0
+              --SecurityGroupRuleId.1 <rule-id>
             ```
+
+            `<trusted-cidr>` is the bastion address or internal range that needs SSH, for example `10.0.0.0/8`. It must not be `0.0.0.0/0`. Repeat `--SecurityGroupRuleId.N` for each rule from step 1. Revoking by rule ID removes the rule whatever range it was written with, whereas revoking by protocol, port and source only matches a rule written exactly that way.
+
+            **Revoking the rule cuts off SSH from every address outside the trusted range, including yours if you connect from elsewhere.** Add the trusted rule first and confirm you can still connect through it.
         - id: terraform
           desc: |
             To scope SSH access in Terraform, set a trusted `cidr_ip` instead of `0.0.0.0/0`:
@@ -1726,12 +1839,24 @@ queries:
             3. Delete or edit the rule allowing `0.0.0.0/0` to port 3389, restricting the source to a trusted CIDR or bastion address.
         - id: cli
           desc: |
-            To revoke a world-open RDP rule with the `aliyun` CLI:
+            To replace a world-open RDP rule with the `aliyun` CLI:
+
+            1. List the inbound rules and note the `SecurityGroupRuleId` of every `Accept` rule whose source is `0.0.0.0/0`, or a prefix list containing it, and whose port range spans 3389. That includes `-1/-1`, ranges such as `1/65535`, and rules with protocol `ALL`.
+            2. Add a rule that admits RDP only from the trusted range, so administration keeps working.
+            3. Revoke the world-open rules by ID.
 
             ```bash
+            aliyun ecs DescribeSecurityGroupAttribute --SecurityGroupId <sg-id> --Direction ingress
+            aliyun ecs AuthorizeSecurityGroup --SecurityGroupId <sg-id> \
+              --Permissions.1.IpProtocol TCP --Permissions.1.PortRange 3389/3389 \
+              --Permissions.1.SourceCidrIp <trusted-cidr>
             aliyun ecs RevokeSecurityGroup --SecurityGroupId <sg-id> \
-              --IpProtocol tcp --PortRange 3389/3389 --SourceCidrIp 0.0.0.0/0
+              --SecurityGroupRuleId.1 <rule-id>
             ```
+
+            `<trusted-cidr>` is the bastion address or VPN range that needs RDP, for example `10.0.0.0/8`. It must not be `0.0.0.0/0`. Repeat `--SecurityGroupRuleId.N` for each rule from step 1. Revoking by rule ID removes the rule whatever range it was written with, whereas revoking by protocol, port and source only matches a rule written exactly that way.
+
+            **Revoking the rule cuts off RDP from every address outside the trusted range, including yours if you connect from elsewhere.** Add the trusted rule first and confirm you can still connect through it.
         - id: terraform
           desc: |
             To scope RDP access in Terraform, set a trusted `cidr_ip` instead of `0.0.0.0/0`:
@@ -1846,12 +1971,24 @@ queries:
             3. Delete the `0.0.0.0/0` all-ports or all-protocol rule and add specific rules for the ports actually required.
         - id: cli
           desc: |
-            To revoke an unrestricted ingress rule with the `aliyun` CLI:
+            To replace an unrestricted ingress rule with the `aliyun` CLI:
+
+            1. List the inbound rules and note the `SecurityGroupRuleId` of every `Accept` rule whose source is `0.0.0.0/0`, or a prefix list containing it, and whose protocol is `ALL` or whose port range is `-1/-1` or `1/65535`.
+            2. Add a rule for each port the instances actually serve.
+            3. Revoke the unrestricted rules by ID.
 
             ```bash
+            aliyun ecs DescribeSecurityGroupAttribute --SecurityGroupId <sg-id> --Direction ingress
+            aliyun ecs AuthorizeSecurityGroup --SecurityGroupId <sg-id> \
+              --Permissions.1.IpProtocol TCP --Permissions.1.PortRange 443/443 \
+              --Permissions.1.SourceCidrIp <source-cidr>
             aliyun ecs RevokeSecurityGroup --SecurityGroupId <sg-id> \
-              --IpProtocol all --PortRange -1/-1 --SourceCidrIp 0.0.0.0/0
+              --SecurityGroupRuleId.1 <rule-id>
             ```
+
+            Replace `443/443` with each port the workload serves, and `<source-cidr>` with the range that should reach it. A single published port may use `0.0.0.0/0`; every port and every protocol together may not. Repeat `--SecurityGroupRuleId.N` for each rule from step 1. Revoking by rule ID removes the rule whatever protocol and range it was written with, whereas revoking by protocol, port and source only matches a rule written exactly that way.
+
+            **Traffic to any port you do not add back in step 2 is dropped as soon as the rule is revoked.** Check what the instances listen on before you revoke.
         - id: terraform
           desc: |
             To replace an unrestricted rule in Terraform, scope the protocol, port range, and source:
@@ -1963,12 +2100,24 @@ queries:
             3. Delete or edit the `::/0` rule covering port 22 or 3389, restricting the source to a trusted IPv6 range.
         - id: cli
           desc: |
-            To revoke a world-open IPv6 admin rule with the `aliyun` CLI:
+            To replace world-open IPv6 admin rules with the `aliyun` CLI:
+
+            1. List the inbound rules and note the `SecurityGroupRuleId` of every `Accept` rule whose IPv6 source is `::/0`, or a prefix list containing it, and whose port range spans port 22 or port 3389. That includes `-1/-1`, wide ranges, and rules with protocol `ALL`.
+            2. Add a rule for each admin port that admits only the trusted IPv6 range.
+            3. Revoke the world-open rules by ID.
 
             ```bash
+            aliyun ecs DescribeSecurityGroupAttribute --SecurityGroupId <sg-id> --Direction ingress
+            aliyun ecs AuthorizeSecurityGroup --SecurityGroupId <sg-id> \
+              --Permissions.1.IpProtocol TCP --Permissions.1.PortRange 22/22 \
+              --Permissions.1.Ipv6SourceCidrIp <trusted-ipv6-cidr>
             aliyun ecs RevokeSecurityGroup --SecurityGroupId <sg-id> \
-              --IpProtocol tcp --PortRange 22/22 --Ipv6SourceCidrIp ::/0
+              --SecurityGroupRuleId.1 <rule-id>
             ```
+
+            `<trusted-ipv6-cidr>` is the IPv6 prefix administrators connect from, for example `fd00::/8`. It must not be `::/0`. Use `3389/3389` in a second rule if the instances accept RDP. Repeat `--SecurityGroupRuleId.N` for each rule from step 1, covering both ports. Revoking by rule ID removes the rule whatever range it was written with.
+
+            **Revoking the rules cuts off SSH and RDP over IPv6 from every address outside the trusted prefix.** Add the trusted rules first and confirm you can still connect through them.
         - id: terraform
           desc: |
             To scope IPv6 admin access in Terraform, set a trusted `ipv6_cidr_ip` instead of `::/0`:
@@ -2080,19 +2229,30 @@ queries:
       remediation:
         - id: console
           desc: |
-            To remove direct internet exposure in the ECS console:
+            An instance is flagged whenever it carries a public IP address or an elastic IP address, whatever its security groups allow, so the fix is to remove the address. To do that in the ECS console:
 
-            1. Sign in to the [ECS console](https://ecs.console.aliyun.com/).
-            2. Unbind the elastic IP from the instance, or release its public IP, and place the instance behind a load balancer or NAT gateway.
-            3. Tighten the attached security groups so no administrative ports are open to `0.0.0.0/0`.
+            1. Place the workload behind a load balancer for inbound traffic, or a NAT gateway for outbound traffic, so it no longer needs its own address.
+            2. Sign in to the [ECS console](https://ecs.console.aliyun.com/) and open the instance.
+            3. If it has an elastic IP address, unbind the elastic IP address from the instance.
+            4. If it has a public IP address assigned at creation, convert the public IP address to an elastic IP address, then unbind that elastic IP address.
+
+            **Connections that reach the instance through its public address stop working once the address is removed.** Release an unbound elastic IP address in the VPC console if you no longer need it, since it is billed while it is allocated.
         - id: cli
           desc: |
-            To unbind an elastic IP from an instance with the `aliyun` CLI:
+            To remove an instance's public address with the `aliyun` CLI:
+
+            1. If the instance has a public IP address assigned at creation, convert it to an elastic IP address first, because a public IP address cannot be unbound on its own.
+            2. Unbind the elastic IP address from the instance.
 
             ```bash
+            aliyun ecs ConvertNatPublicIpToEip --InstanceId <instance-id>
             aliyun vpc UnassociateEipAddress --AllocationId <eip-alloc-id> \
               --InstanceId <instance-id> --InstanceType EcsInstance
             ```
+
+            `<eip-alloc-id>` is the `AllocationId` in the instance's `EipAddress` field from `aliyun ecs DescribeInstances --InstanceIds '["<instance-id>"]'`. Skip the first command for an instance that only has an elastic IP address.
+
+            **Connections that reach the instance through its public address stop working once the address is unbound.** The converted elastic IP address is billed separately while it stays allocated, so release it with `aliyun vpc ReleaseEipAddress --AllocationId <eip-alloc-id>` if nothing else needs it.
         # No Terraform remediation: removing computed inbound reachability spans elastic IP association, public IP assignment, and security-group rules across multiple resources rather than one alicloud_instance attribute.
     variants:
       - uid: mondoo-alibaba-security-ecs-instance-no-public-ip-alicloud
@@ -2161,18 +2321,48 @@ queries:
             Disk encryption is set at creation and cannot be toggled on an existing disk. To fix this in the ECS console, create an encrypted copy and replace the disk:
 
             1. Sign in to the [ECS console](https://ecs.console.aliyun.com/).
-            2. Take a snapshot of the disk, create a new **encrypted** disk from that snapshot, and attach it in place of the unencrypted disk.
+            2. Take a snapshot of the unencrypted disk.
+            3. Create a new disk from that snapshot with **Encryption** selected, in the same zone as the instance.
+            4. Stop the instance, detach the unencrypted disk, attach the encrypted disk in its place, and start the instance.
+            5. Once the data is confirmed on the new disk, release the unencrypted disk. It keeps failing the check for as long as it exists.
+
+            **The instance is unavailable while it is stopped, and releasing the old disk deletes its data.** Keep the snapshot until the replacement is verified.
         - id: cli
           desc: |
-            To create an encrypted disk from a snapshot with the `aliyun` CLI:
+            To replace an unencrypted data disk with an encrypted copy using the `aliyun` CLI:
 
             ```bash
+            aliyun ecs CreateSnapshot --DiskId <old-disk-id>
             aliyun ecs CreateDisk --RegionId <region> --ZoneId <zone> \
               --SnapshotId <snapshot-id> --Encrypted true
+            aliyun ecs StopInstance --InstanceId <instance-id>
+            aliyun ecs DetachDisk --InstanceId <instance-id> --DiskId <old-disk-id>
+            aliyun ecs AttachDisk --InstanceId <instance-id> --DiskId <new-disk-id>
+            aliyun ecs StartInstance --InstanceId <instance-id>
+            aliyun ecs DeleteDisk --DiskId <old-disk-id>
             ```
+
+            Replace the placeholders as follows:
+
+            - `<old-disk-id>` is the disk reporting `Encrypted` as `false`.
+            - `<snapshot-id>` is the `SnapshotId` returned by `CreateSnapshot`. Wait for the snapshot to finish before creating the disk.
+            - `<zone>` is the instance's zone, and `<new-disk-id>` is the `DiskId` returned by `CreateDisk`.
+
+            Without `--KMSKeyId` the new disk is encrypted with the default key. Pass `--KMSKeyId <kms-key-id>` to encrypt it with a customer master key instead. The old disk keeps failing the check until `DeleteDisk` removes it.
+
+            **The instance is unavailable between `StopInstance` and `StartInstance`, and `DeleteDisk` destroys the old disk's data.** Keep the snapshot until the replacement is verified.
+
+            A system disk cannot be detached and swapped. Create a custom image from the instance, stop the instance, and replace the system disk from that image with encryption turned on:
+
+            ```bash
+            aliyun ecs ReplaceSystemDisk --InstanceId <instance-id> \
+              --ImageId <image-id> --Encrypted true
+            ```
+
+            **Replacing the system disk erases everything on it that the image does not contain.**
         - id: terraform
           desc: |
-            To require encryption on an ECS disk in Terraform, set `encrypted`:
+            To require encryption on an ECS disk in Terraform, set `encrypted`. The attribute forces replacement, so changing it on an existing `alicloud_ecs_disk` destroys that disk and creates an empty one; migrate the data first.
 
             ```hcl
             resource "alicloud_ecs_disk" "example" {
@@ -2264,18 +2454,47 @@ queries:
             The KMS key is set at disk creation. To fix this in the ECS console, recreate the disk with a customer master key:
 
             1. Sign in to the [ECS console](https://ecs.console.aliyun.com/).
-            2. Take a snapshot, create a new disk from it with encryption enabled and a specific **KMS Key**, and attach it in place of the original.
+            2. Take a snapshot of the disk.
+            3. Create a new disk from the snapshot with encryption enabled and a specific **KMS Key**, in the same zone as the instance.
+            4. Stop the instance, detach the original disk, attach the new disk in its place, and start the instance.
+            5. Once the data is confirmed on the new disk, release the original disk. It keeps failing the check for as long as it exists.
+
+            **The instance is unavailable while it is stopped, and releasing the original disk deletes its data.** Keep the snapshot until the replacement is verified.
         - id: cli
           desc: |
-            To create a disk encrypted with a specific KMS key using the `aliyun` CLI:
+            To replace a data disk with a copy encrypted under a specific KMS key using the `aliyun` CLI:
 
             ```bash
+            aliyun ecs CreateSnapshot --DiskId <old-disk-id>
             aliyun ecs CreateDisk --RegionId <region> --ZoneId <zone> \
               --SnapshotId <snapshot-id> --Encrypted true --KMSKeyId <kms-key-id>
+            aliyun ecs StopInstance --InstanceId <instance-id>
+            aliyun ecs DetachDisk --InstanceId <instance-id> --DiskId <old-disk-id>
+            aliyun ecs AttachDisk --InstanceId <instance-id> --DiskId <new-disk-id>
+            aliyun ecs StartInstance --InstanceId <instance-id>
+            aliyun ecs DeleteDisk --DiskId <old-disk-id>
             ```
+
+            Replace the placeholders as follows:
+
+            - `<old-disk-id>` is the encrypted disk that reports no `KMSKeyId`.
+            - `<snapshot-id>` is the `SnapshotId` returned by `CreateSnapshot`. Wait for the snapshot to finish before creating the disk.
+            - `<kms-key-id>` is an enabled KMS key in the same region, as listed by `aliyun kms ListKeys`.
+            - `<zone>` is the instance's zone, and `<new-disk-id>` is the `DiskId` returned by `CreateDisk`.
+
+            **The instance is unavailable between `StopInstance` and `StartInstance`, and `DeleteDisk` destroys the old disk's data.** Keep the snapshot until the replacement is verified.
+
+            A system disk cannot be detached and swapped. Create a custom image from the instance, stop the instance, and replace the system disk from that image with the key:
+
+            ```bash
+            aliyun ecs ReplaceSystemDisk --InstanceId <instance-id> \
+              --ImageId <image-id> --Encrypted true --KMSKeyId <kms-key-id>
+            ```
+
+            **Replacing the system disk erases everything on it that the image does not contain.**
         - id: terraform
           desc: |
-            To encrypt an ECS disk with a customer master key in Terraform, set `kms_key_id`:
+            To encrypt an ECS disk with a customer master key in Terraform, set `kms_key_id`. The attribute forces replacement, so changing it on an existing `alicloud_ecs_disk` destroys that disk and creates an empty one; migrate the data first.
 
             ```hcl
             resource "alicloud_ecs_disk" "example" {
@@ -2367,9 +2586,11 @@ queries:
           desc: |
             To require a metadata token on an ECS instance in the console:
 
-            1. Sign in to the [ECS console](https://ecs.console.aliyun.com/).
-            2. Open the instance and go to its instance metadata / security settings.
-            3. Set the instance metadata access mode to require a token (the hardened mode) and save.
+            1. Sign in to the [ECS console](https://ecs.console.aliyun.com/) and go to the **Instances** page.
+            2. In the **Actions** column of the instance, choose **Modify Instance Metadata Access Information**.
+            3. Keep **Enable Instance Metadata Access Channel** turned on, set **Instance Metadata Access Mode** to **Security Hardening Mode**, and click **OK**.
+
+            **Code that reads metadata with a plain request stops working in security hardening mode.** Update applications, scripts and agents on the instance to request a metadata token first, and test them before switching production instances.
         - id: cli
           desc: |
             To require a metadata token on an instance with the `aliyun` CLI:
@@ -2379,7 +2600,9 @@ queries:
               --HttpEndpoint enabled --HttpTokens required
             ```
 
-            `HttpEndpoint` is mandatory on this call, and passing `enabled` keeps the metadata service reachable while the token requirement is added.
+            `HttpEndpoint` is mandatory on this call, and passing `enabled` keeps the metadata service reachable while the token requirement is added. `--HttpTokens required` is the only value that resolves the finding.
+
+            **Code that reads metadata with a plain request stops working once tokens are required.** Update applications, scripts and agents on the instance to request a metadata token first, and test them before switching production instances.
         - id: terraform
           desc: |
             To require a metadata token in Terraform, set `http_tokens` to `required` on the instance:
@@ -2500,10 +2723,15 @@ queries:
             To release the public connection string of an RDS instance with the `aliyun` CLI:
 
             ```bash
+            aliyun rds DescribeDBInstanceNetInfo --DBInstanceId <instance-id>
             aliyun rds ReleaseInstancePublicConnection \
               --DBInstanceId <instance-id> \
               --CurrentConnectionString <public-connection-string>
             ```
+
+            `<public-connection-string>` is the `ConnectionString` of the entry whose `IPType` is `Public` in the `DescribeDBInstanceNetInfo` output.
+
+            **Clients that connect through the public endpoint lose access as soon as it is released.** Move them to the internal endpoint, or to a VPN or leased line into the VPC, first.
         # No Terraform remediation: the public endpoint is created and released through the separate alicloud_db_connection resource and runtime connection APIs; alicloud_db_instance has no attribute that controls the instance network type.
     variants:
       - uid: mondoo-alibaba-security-rds-instance-no-public-network-alicloud
@@ -2574,6 +2802,8 @@ queries:
             2. Open the affected instance and go to **Data Security** > **SSL**.
             3. Turn on **SSL**, select the endpoint to protect, and download the CA certificate for clients.
             4. Update client connection strings to require SSL and trust the CA certificate.
+
+            **Enabling SSL on RDS MySQL restarts the instance and triggers a primary/secondary switchover.** Run it during off-peak hours and make sure applications reconnect automatically.
         - id: cli
           desc: |
             To enable SSL on an RDS instance with the `aliyun` CLI:
@@ -2582,8 +2812,18 @@ queries:
             aliyun rds ModifyDBInstanceSSL \
               --DBInstanceId <instance-id> \
               --ConnectionString <connection-string> \
-              --SSLEnabled 1
+              --SSLEnabled 1 --CAType aliyun
             ```
+
+            Replace the values as follows:
+
+            - `<connection-string>` is the internal or public endpoint to protect, as returned in `ConnectionString` by `aliyun rds DescribeDBInstanceNetInfo`.
+            - `--SSLEnabled 1` turns SSL on. `0` turns it off and fails the check.
+            - `--CAType aliyun` uses an Alibaba Cloud issued server certificate. The API requires a `CAType` when enabling SSL on MySQL and PostgreSQL cloud disk instances; use `custom` with `--ServerCert` and `--ServerKey` to supply your own.
+
+            After the call, download the CA certificate from the **SSL** tab and configure clients to require SSL and trust it.
+
+            **Enabling SSL on RDS MySQL restarts the instance and triggers a primary/secondary switchover.** Run it during off-peak hours and make sure applications reconnect automatically.
         # No Terraform remediation: alicloud_db_instance exposes only the imperative ssl_action attribute (Open/Close/Update); SSL is a runtime connection state managed through the RDS SSL APIs rather than a declarative Terraform attribute.
     variants:
       - uid: mondoo-alibaba-security-rds-instance-ssl-enabled-alicloud
@@ -2651,7 +2891,9 @@ queries:
 
             1. Sign in to the [ApsaraDB for RDS console](https://rdsnext.console.aliyun.com/).
             2. Open the affected instance and go to **Data Security** > **TDE**.
-            3. Enable **TDE** and select a KMS key (or the service-managed key) to protect the data.
+            3. Enable **TDE**, authorize RDS to access Key Management Service if prompted, and select either a KMS key or the service-managed key to protect the data.
+
+            **TDE cannot be turned off once it is enabled, and enabling it restarts the instance.** RDS MySQL switches over and is unavailable for about 15 seconds, and CPU usage rises noticeably afterwards. Test on a non-production instance first.
         - id: cli
           desc: |
             To enable TDE on an RDS instance with the `aliyun` CLI:
@@ -2661,9 +2903,13 @@ queries:
               --DBInstanceId <instance-id> \
               --TDEStatus Enabled
             ```
+
+            `Enabled` is the value that resolves the finding. Without `--EncryptionKey` the service-managed key is used; on MySQL and PostgreSQL pass `--EncryptionKey <kms-key-id>` and `--RoleArn <role-arn>` to use your own KMS key. Key Management Service must be activated and RDS authorized to use it before the call succeeds.
+
+            **TDE cannot be turned off once it is enabled, and enabling it restarts the instance.** RDS MySQL switches over and is unavailable for about 15 seconds, and CPU usage rises noticeably afterwards. Test on a non-production instance first.
         - id: terraform
           desc: |
-            To enable TDE on an RDS instance in Terraform, set `tde_status` to `Enabled`:
+            To enable TDE on an RDS instance in Terraform, set `tde_status` to `Enabled`. Applying the change restarts the instance, and TDE cannot be turned off afterwards:
 
             ```hcl
             resource "alicloud_db_instance" "example" {
@@ -2770,10 +3016,19 @@ queries:
             To replace an open allowlist with specific addresses using the `aliyun` CLI:
 
             ```bash
+            aliyun rds DescribeDBInstanceIPArrayList --DBInstanceId <instance-id>
             aliyun rds ModifySecurityIps \
               --DBInstanceId <instance-id> \
+              --DBInstanceIPArrayName <group-name> \
               --SecurityIps <comma-separated-trusted-cidrs>
             ```
+
+            Replace the values as follows:
+
+            - `<group-name>` is a whitelist group that contains `0.0.0.0/0`, a bare `0.0.0.0`, or any other `/0` range, as listed in `DBInstanceIPArrayName` by `DescribeDBInstanceIPArrayList`. The call changes only the `default` group when this flag is omitted, and every group is evaluated, so run it once per offending group.
+            - `<comma-separated-trusted-cidrs>` is the complete new list for that group, such as `10.0.0.0/24,10.0.1.0/24`, with no spaces. The call replaces the group's existing entries.
+
+            **Clients whose address is not in the new list lose access immediately.** Collect the application source ranges before you replace the list.
         - id: terraform
           desc: |
             To scope the RDS allowlist in Terraform, set `security_ips` to specific trusted ranges instead of `0.0.0.0/0`:
@@ -2878,9 +3133,11 @@ queries:
           desc: |
             To enable release protection on an RDS instance in the console:
 
-            1. Sign in to the [ApsaraDB for RDS console](https://rdsnext.console.aliyun.com/).
-            2. Open the affected instance and go to **Basic Information**.
-            3. Enable **Release Protection** and save.
+            1. Sign in to the [ApsaraDB for RDS console](https://rdsnext.console.aliyun.com/) and open the **Instances** page for the instance's region.
+            2. In the **Actions** column of the affected instance, choose **More** > **Modify Release Protection**.
+            3. Turn on **Release Protection** and click **OK**.
+
+            Release protection is available only for instances billed as pay-as-you-go or serverless. A subscription instance cannot enable it.
         - id: cli
           desc: |
             To enable deletion protection on an RDS instance with the `aliyun` CLI:
@@ -2890,6 +3147,8 @@ queries:
               --DBInstanceId <instance-id> \
               --DeletionProtection true
             ```
+
+            `true` is the value that resolves the finding. The call succeeds only for pay-as-you-go and serverless instances.
         - id: terraform
           desc: |
             To enable deletion protection on an RDS instance in Terraform, set `deletion_protection` to `true`:
@@ -2997,7 +3256,9 @@ queries:
 
             1. Sign in to the [ApsaraDB for PolarDB console](https://polardb.console.aliyun.com/).
             2. Open the affected cluster and go to **Settings and Management** > **TDE**.
-            3. Enable **TDE** and select a KMS key (or the service-managed key) to protect the data.
+            3. Enable **TDE** and select either a KMS key or the service-managed key to protect the data.
+
+            **TDE cannot be turned off once it is enabled.** Key Management Service must be activated first. Test on a non-production cluster before enabling it in production.
         - id: cli
           desc: |
             To enable TDE on a PolarDB cluster with the `aliyun` CLI:
@@ -3008,7 +3269,9 @@ queries:
               --TDEStatus Enable
             ```
 
-            The value this call accepts is `Enable`, while the cluster reports its state back as `Enabled`.
+            The value this call accepts is `Enable`, while the cluster reports its state back as `Enabled`. Pass `--EncryptionKey <kms-key-id>` and `--RoleArn <role-arn>` to use your own KMS key rather than the service-managed key.
+
+            **TDE cannot be turned off once it is enabled.** Key Management Service must be activated first. Test on a non-production cluster before enabling it in production.
         - id: terraform
           desc: |
             To enable TDE on a PolarDB cluster in Terraform, set `tde_status` to `Enabled`:
@@ -3119,12 +3382,20 @@ queries:
             To replace an open allowlist with specific addresses using the `aliyun` CLI:
 
             ```bash
+            aliyun polardb DescribeDBClusterAccessWhitelist --DBClusterId <cluster-id>
             aliyun polardb ModifyDBClusterAccessWhitelist \
               --DBClusterId <cluster-id> \
               --WhiteListType IP \
-              --DBClusterIPArrayName default \
+              --DBClusterIPArrayName <group-name> \
               --SecurityIps <comma-separated-trusted-cidrs>
             ```
+
+            Replace the values as follows:
+
+            - `<group-name>` is a whitelist group that contains `0.0.0.0/0`, a bare `0.0.0.0`, or any other `/0` range, as listed by `DescribeDBClusterAccessWhitelist`. Every group is evaluated, so run the command once per offending group, not only for `default`.
+            - `<comma-separated-trusted-cidrs>` is the complete new list for that group, such as `10.0.0.0/24,10.0.1.0/24`. The call replaces the group's existing entries.
+
+            **Clients whose address is not in the new list lose access immediately.** Collect the application source ranges before you replace the list.
         - id: terraform
           desc: |
             To scope the PolarDB allowlist in Terraform, set the `security_ips` of each `db_cluster_ip_array` block to specific trusted ranges instead of `0.0.0.0/0`:
@@ -3247,6 +3518,8 @@ queries:
             1. Sign in to the [ApsaraDB for Redis console](https://kvstore.console.aliyun.com/).
             2. Open the affected instance and go to **Instance Information**.
             3. Turn off **Password-free Access** so clients must authenticate, then reset the instance password if needed.
+
+            **Clients that connect without a password are rejected once authentication is required.** Add the password to every client configuration before you turn password-free access off.
         - id: cli
           desc: |
             To enforce password authentication with the `aliyun` CLI, set the VPC authentication mode to `Open`:
@@ -3254,6 +3527,10 @@ queries:
             ```bash
             aliyun r-kvstore ModifyInstanceVpcAuthMode --InstanceId <instance-id> --VpcAuthMode Open
             ```
+
+            `Open` requires a password and resolves the finding. `Close` is password-free access and fails it.
+
+            **Clients that connect without a password are rejected once authentication is required.** Set the instance password and add it to every client configuration before you run the command.
         - id: terraform
           desc: |
             To enforce password authentication on a Redis (Tair) instance in Terraform, set `vpc_auth_mode` to `Open`:
@@ -3361,20 +3638,29 @@ queries:
             To enforce TLS and a VPC deployment on a Redis instance in the console:
 
             1. Sign in to the [ApsaraDB for Redis console](https://kvstore.console.aliyun.com/).
-            2. Open the instance and enable **SSL/TLS Encryption** under **SSL Settings**.
+            2. Open the instance, choose **TLS Settings (SSL)** in the left-side navigation pane, and click **Enable**.
             3. For a classic-network instance, migrate it to a VPC through **Switch to VPC**.
+
+            **Enabling TLS restarts the instance, with a transient disconnection of a few seconds.** Run it during off-peak hours and make sure clients reconnect automatically. Switching to a VPC changes the connection endpoint that clients must use.
         - id: cli
           desc: |
-            To enable TLS with the `aliyun` CLI:
+            To enable TLS and move a classic-network instance into a VPC with the `aliyun` CLI:
 
             ```bash
             aliyun r-kvstore ModifyInstanceSSL --InstanceId <instance-id> --SSLEnabled Enable
+            aliyun r-kvstore SwitchNetwork --InstanceId <instance-id> \
+              --TargetNetworkType VPC --VpcId <vpc-id> --VSwitchId <vswitch-id>
             ```
 
-            Migrating a classic-network instance to a VPC is a separate operation performed with `SwitchNetwork`.
+            Replace the values as follows:
+
+            - `--SSLEnabled Enable` turns TLS on. `Disable` fails the check.
+            - Run `SwitchNetwork` only for an instance whose `NetworkType` is `CLASSIC`. `<vpc-id>` must be in the instance's region and `<vswitch-id>` in the instance's zone.
+
+            **Enabling TLS restarts the instance, with a transient disconnection of a few seconds.** Run it during off-peak hours and make sure clients reconnect automatically. After `SwitchNetwork`, clients must use the VPC endpoint; add `--RetainClassic True --ClassicExpiredDays 14` to keep the classic endpoint working while they move.
         - id: terraform
           desc: |
-            To enforce TLS on a Redis (Tair) instance in Terraform, set `ssl_enable` to `Enable` and place the instance in a VPC by assigning `vswitch_id`:
+            To enforce TLS on a Redis (Tair) instance in Terraform, set `ssl_enable` to `Enable` and place the instance in a VPC by assigning `vswitch_id`. Turning TLS on restarts the instance briefly:
 
             ```hcl
             resource "alicloud_kvstore_instance" "example" {
@@ -3477,6 +3763,8 @@ queries:
             1. Sign in to the [ApsaraDB for Redis console](https://kvstore.console.aliyun.com/).
             2. Open the affected instance and go to **Data Security** > **TDE**.
             3. Enable TDE and select or create the KMS key to use.
+
+            **TDE cannot be turned off once it is enabled.** Evaluate the impact on a non-production instance first.
         - id: cli
           desc: |
             To enable TDE with the `aliyun` CLI:
@@ -3484,9 +3772,13 @@ queries:
             ```bash
             aliyun r-kvstore ModifyInstanceTDE --InstanceId <instance-id> --TDEStatus Enabled
             ```
+
+            `Enabled` is the only value the call accepts. Without `--EncryptionKey`, Key Management Service generates the key; pass `--EncryptionKey <kms-key-id>` and `--RoleArn acs:ram::<account-id>:role/AliyunRdsInstanceEncryptionDefaultRole` to use your own.
+
+            **TDE cannot be turned off once it is enabled.** Evaluate the impact on a non-production instance first.
         - id: terraform
           desc: |
-            To enable TDE on a Redis (Tair) instance in Terraform, set `tde_status` to `Enabled`:
+            To enable TDE on a Redis (Tair) instance in Terraform, set `tde_status` to `Enabled`. TDE cannot be turned off afterwards:
 
             ```hcl
             resource "alicloud_kvstore_instance" "example" {
@@ -3591,6 +3883,8 @@ queries:
             1. Sign in to the [ApsaraDB for MongoDB console](https://mongodb.console.aliyun.com/).
             2. Open the affected instance and go to **Data Security** > **TDE**.
             3. Enable TDE and select the KMS key to use.
+
+            **TDE cannot be turned off once it is enabled.** Evaluate the impact on a non-production instance first.
         - id: cli
           desc: |
             To enable TDE with the `aliyun` CLI:
@@ -3598,9 +3892,13 @@ queries:
             ```bash
             aliyun dds ModifyDBInstanceTDE --DBInstanceId <instance-id> --TDEStatus enabled
             ```
+
+            `enabled`, in lowercase, is the only value the call accepts. Pass `--EncryptionKey <kms-key-id>` and `--RoleARN <role-arn>` to use your own KMS key, and `--SwitchMode 1` to apply the change in the maintenance window rather than immediately.
+
+            **TDE cannot be turned off once it is enabled.** Evaluate the impact on a non-production instance first.
         - id: terraform
           desc: |
-            To enable TDE on a MongoDB instance in Terraform, set `tde_status` to `enabled`:
+            To enable TDE on a MongoDB instance in Terraform, set `tde_status` to `enabled`. TDE cannot be turned off afterwards:
 
             ```hcl
             resource "alicloud_mongodb_instance" "example" {
@@ -3706,14 +4004,25 @@ queries:
             1. Sign in to the [ApsaraDB for MongoDB console](https://mongodb.console.aliyun.com/).
             2. Open the instance and enable **SSL/TLS** under **Data Security** > **SSL**.
             3. Enable the **Audit Log** feature under **Data Security** > **Audit Log**.
+
+            **Enabling SSL restarts the instance once.** Run it during off-peak hours.
         - id: cli
           desc: |
             To enable TLS and audit logging with the `aliyun` CLI:
 
             ```bash
             aliyun dds ModifyDBInstanceSSL --DBInstanceId <instance-id> --SSLAction Open
-            aliyun dds ModifyAuditPolicy --DBInstanceId <instance-id> --AuditStatus enable
+            aliyun dds ModifyAuditPolicy --DBInstanceId <instance-id> --AuditStatus enable \
+              --ServiceType <audit-edition>
             ```
+
+            Replace the values as follows:
+
+            - `--SSLAction Open` turns SSL on. `Close` fails the check.
+            - `--AuditStatus enable` turns audit logging on.
+            - `<audit-edition>` is `V2_Standard` where the DAS Enterprise audit log edition is offered in the region, otherwise `Standard`. Without `--ServiceType` the call requests the free `Trial` edition, which is no longer available for new requests.
+
+            **Enabling SSL restarts the instance once.** Run it during off-peak hours, or add `--SwitchMode 1` to apply it in the maintenance window.
         - id: terraform
           desc: |
             To enforce TLS on a MongoDB instance in Terraform, set `ssl_action` to `Open`, and enable audit logging through the `alicloud_mongodb_audit_policy` resource:
@@ -3829,9 +4138,19 @@ queries:
             To replace an open whitelist with scoped addresses using the `aliyun` CLI:
 
             ```bash
+            aliyun dds DescribeSecurityIps --DBInstanceId <instance-id>
             aliyun dds ModifySecurityIps --DBInstanceId <instance-id> \
+              --SecurityIpGroupName <group-name> --ModifyMode Cover \
               --SecurityIps 10.0.0.0/24,10.0.1.0/24
             ```
+
+            Replace the values as follows:
+
+            - `<group-name>` is a whitelist group that contains `0.0.0.0/0`, a bare `0.0.0.0`, or any other `/0` range, as listed by `DescribeSecurityIps`. The call changes only the `default` group when this flag is omitted, so run it once per offending group.
+            - `--ModifyMode Cover` replaces the group's entries with the list you pass.
+            - `10.0.0.0/24,10.0.1.0/24` is an example. Pass the application CIDR blocks that need access, comma separated with no spaces.
+
+            **Clients whose address is not in the new list lose access immediately.** Collect the application source ranges before you replace the list.
         - id: terraform
           desc: |
             To scope a MongoDB instance whitelist in Terraform, set `security_ip_list` to specific CIDR blocks instead of `0.0.0.0/0`:
@@ -3946,6 +4265,10 @@ queries:
             aliyun kms UpdateRotationPolicy --KeyId <key-id> \
               --EnableAutomaticRotation true --RotationInterval 31536000s
             ```
+
+            `--RotationInterval` is required when rotation is enabled. `31536000s` is 365 days, the longest interval the companion rotation-period check accepts. A default key accepts only 365 days, and a software key accepts any interval from `604800s`, which is 7 days, to `31536000s`.
+
+            Only enabled symmetric keys whose key material KMS generated can rotate. Rotating a default key is a separately billed feature, and each new version of a software key consumes key quota in its KMS instance.
         - id: terraform
           desc: |
             To enable automatic rotation in Terraform, set `automatic_rotation` on the key:
@@ -4055,6 +4378,8 @@ queries:
             aliyun kms UpdateRotationPolicy --KeyId <key-id> \
               --EnableAutomaticRotation true --RotationInterval 31536000s
             ```
+
+            Any interval up to `31536000s`, which is 365 days, resolves the finding. A default key accepts only 365 days, and a software key accepts any interval from `604800s`, which is 7 days, to `31536000s`. Shorter intervals create key versions more often, and each software key version consumes key quota in its KMS instance.
         - id: terraform
           desc: |
             To bound the rotation interval in Terraform, set `rotation_interval` to 365 days or less:
@@ -4141,7 +4466,7 @@ queries:
 
             1. Sign in to the [ActionTrail console](https://actiontrail.console.aliyun.com/).
             2. Navigate to **Trails** and choose **Create Trail**.
-            3. Select a delivery destination (an OSS bucket and/or a Simple Log Service project), set **Event Type** to **All**, and complete the wizard.
+            3. Select at least one delivery destination, such as an OSS bucket or a Simple Log Service project, set **Event Type** to **All**, and complete the wizard.
             4. Confirm the new trail's status is **Enabled** and that it is logging.
         - id: cli
           desc: |
@@ -4152,6 +4477,14 @@ queries:
               --OssBucketName <bucket-name> --EventRW All
             aliyun actiontrail StartLogging --Name <trail-name>
             ```
+
+            Replace the values as follows:
+
+            - `<trail-name>` is 6 to 36 characters, starts with a lowercase letter, and contains only lowercase letters, digits, hyphens and underscores.
+            - `<bucket-name>` is an existing OSS bucket that receives the logs. Use `--SlsProjectArn` instead to deliver to Simple Log Service.
+            - `--EventRW All` records both read and write events, which the check requires.
+
+            A trail created through the API starts with logging turned off, which is why `StartLogging` is needed. If a trail already exists but records only `Read` or `Write` events, fix it instead with `aliyun actiontrail UpdateTrail --Name <trail-name> --EventRW All`. Always pass `--EventRW All` to `UpdateTrail`, since the call defaults it to `Write`.
         - id: terraform
           desc: |
             To declare an enabled ActionTrail trail in Terraform, set `status` to `Enable` and `event_rw` to `All`:
@@ -4259,7 +4592,7 @@ queries:
 
             1. Sign in to the [VPC console](https://vpc.console.aliyun.com/).
             2. Navigate to **Flow Log** and choose **Create Flow Log**.
-            3. Select the resource to capture, choose **All** traffic, pick a Simple Log Service project and Logstore, and create the flow log.
+            3. Set the resource type to **VPC** and select the affected VPC, choose **All** traffic, pick a Simple Log Service project and Logstore, and create the flow log. A flow log on a vSwitch or an elastic network interface does not resolve the finding, because only flow logs whose resource is the VPC itself are counted.
             4. Confirm the flow log status is **Active**.
         - id: cli
           desc: |
@@ -4270,6 +4603,14 @@ queries:
               --ResourceId <vpc-id> --TrafficType All \
               --ProjectName <sls-project> --LogStoreName <sls-logstore>
             ```
+
+            Replace the values as follows:
+
+            - `<vpc-id>` is the VPC that has no active flow log. Keep `--ResourceType VPC`, because a flow log on a vSwitch or an elastic network interface does not resolve the finding.
+            - `--TrafficType All` records both allowed and denied traffic, which the check requires.
+            - `<sls-project>` and `<sls-logstore>` are an existing Simple Log Service project and Logstore in the same region.
+
+            The flow log reports `Activating` while it is created and `Active` once it is running.
         - id: terraform
           desc: |
             To declare an active VPC flow log in Terraform, set `status` to `Active` and `traffic_type` to `All`:
@@ -4374,21 +4715,29 @@ queries:
       remediation:
         - id: console
           desc: |
-            The public API server endpoint is set when the cluster is created and cannot be removed on an existing cluster from the console. To bind API server access to the VPC:
+            On ACK managed and ACK Serverless clusters the public API server endpoint is an elastic IP address that can be unbound. To remove it in the console:
 
-            1. Sign in to the [Container Service console](https://cs.console.aliyun.com/).
-            2. Restrict the API server security group and use the intranet endpoint for administration.
-            3. For a permanently private control plane, create a replacement cluster with the internet API Server load balancer disabled and migrate workloads.
+            1. Sign in to the [Container Service console](https://cs.console.aliyun.com/) and open **Clusters**.
+            2. Click the cluster name and choose **Cluster Information**.
+            3. On the **Basic Information** tab, in the **Network** section, click **Unbind** next to **API server Public Endpoint**.
+
+            **kubectl, CI pipelines and any other client that reaches the API server over the internet lose access once the endpoint is unbound.** Move them to the internal endpoint through the VPC, a bastion or a VPN first.
+
+            Unbind the endpoint here rather than releasing the elastic IP address directly. An ACK dedicated cluster does not support unbinding, so replace it with a cluster created without a public endpoint and migrate the workloads.
         - id: cli
           desc: |
-            Create clusters with the internet API server load balancer disabled. When creating a managed cluster with the `aliyun` CLI, set `endpoint_public_access` off in the request body:
+            To unbind the public API server endpoint from an existing ACK managed cluster with the `aliyun` CLI, set `api_server_eip` to `false`:
 
             ```bash
-            aliyun cs POST /clusters --body '{"name":"<cluster-name>","cluster_type":"ManagedKubernetes","endpoint_public_access":false}'
+            aliyun cs PUT /api/v2/clusters/<cluster-id> --body '{"api_server_eip":false}'
             ```
+
+            `<cluster-id>` is the cluster whose `api_server_endpoint` is populated.
+
+            **kubectl, CI pipelines and any other client that reaches the API server over the internet lose access once the endpoint is unbound.** Move them to the internal endpoint first.
         - id: terraform
           desc: |
-            To keep the API server private in Terraform, disable the internet load balancer for the API server by setting `slb_internet_enabled` to `false`:
+            To keep the API server private in Terraform, disable the internet load balancer for the API server by setting `slb_internet_enabled` to `false`. The provider applies this argument only when it creates the cluster, so changing it on an existing cluster does not remove its public endpoint; unbind that endpoint with the console or CLI steps above:
 
             ```hcl
             resource "alicloud_cs_managed_kubernetes" "example" {
@@ -4494,9 +4843,11 @@ queries:
             To enable control-plane audit logging with the `aliyun` CLI, install or update the log collection for the cluster and include the `audit` component:
 
             ```bash
-            aliyun cs POST /clusters/<cluster-id>/controlplanelog \
+            aliyun cs PUT /clusters/<cluster-id>/controlplanelog \
               --body '{"components":["audit","apiserver"],"aliuid":"<uid>"}'
             ```
+
+            `<uid>` is the Alibaba Cloud account ID that owns the cluster. `components` is the full list of components to collect, so include any component already enabled that you want to keep. Without `log_project` the logs go to the `k8s-log-<cluster-id>` Simple Log Service project, and without `log_ttl` they are kept for 30 days.
         # No Terraform remediation: The runtime signal reflects the control-plane "audit" log component reported by the ACK CheckControlPlaneLogEnable API; the Terraform control_plane_log_components attribute does not document an "audit" value, and the separate audit_log_config block targets an independent Log Service Logstore, so there is no Terraform attribute that enables this exact signal.
     variants:
       - uid: mondoo-alibaba-security-cs-cluster-audit-log-enabled-alicloud
@@ -4564,14 +4915,17 @@ queries:
 
             1. Sign in to the [Container Service console](https://cs.console.aliyun.com/).
             2. Open the cluster and go to **Cluster Information** > **Basic Information**.
-            3. Enable **RRSA**, then bind service accounts to scoped RAM roles as required by your workloads.
+            3. In the **Security and Auditing** section, click **Enable** next to **RRSA OIDC** and confirm.
+            4. Wait for the cluster status to return from **Updating** to **Running**, then bind service accounts to scoped RAM roles as required by your workloads.
         - id: cli
           desc: |
-            To enable RRSA on an existing cluster with the `aliyun` CLI:
+            To enable RRSA on an existing ACK managed cluster with the `aliyun` CLI, set `enable_rrsa` through the cluster modification API:
 
             ```bash
-            aliyun cs POST /clusters/<cluster-id>/rrsa/enable
+            aliyun cs PUT /api/v2/clusters/<cluster-id> --body '{"enable_rrsa":true}'
             ```
+
+            `<cluster-id>` is the cluster that reports RRSA disabled. The cluster must run Kubernetes 1.22 or later. Enabling RRSA only creates the OIDC issuer and identity provider; pods keep using the worker node RAM role until their service accounts are bound to scoped RAM roles.
         - id: terraform
           desc: |
             To enable RRSA in Terraform, set `enable_rrsa` to `true` on the managed cluster. Once enabled, RRSA cannot be turned off:
@@ -4686,6 +5040,17 @@ queries:
             aliyun nas ModifyAccessRule --AccessGroupName <access-group-name> \
               --AccessRuleId <rule-id> --SourceCidrIp 10.0.0.0/8 --RWAccessType RDONLY
             ```
+
+            Replace the values as follows:
+
+            - `<access-group-name>` and `<rule-id>` identify an `RDWR` rule whose `SourceCidrIp` is `0.0.0.0/0` in the `DescribeAccessRules` output.
+            - `10.0.0.0/8` is an example. Use the VPC or client range that actually mounts the file system. Changing the source alone resolves the finding.
+            - `--RWAccessType RDONLY` also resolves it on its own. Drop the flag to keep `RDWR` for clients that must write, as long as the source is no longer `0.0.0.0/0`.
+            - For a rule with an IPv6 source of `::/0`, pass `--Ipv6SourceCidrIp` instead of `--SourceCidrIp`.
+
+            Rules in the default permission group `DEFAULT_VPC_GROUP_NAME` cannot be modified. Attach a custom permission group to the mount target instead.
+
+            **Clients outside the new source range can no longer mount the file system, and a read-only rule makes writes fail.**
         - id: terraform
           desc: |
             To declare a scoped NAS access rule in Terraform, set a specific `source_cidr_ip` and an appropriate `rw_access_type`:
@@ -4797,12 +5162,33 @@ queries:
             3. Define control policies for internet, VPC, and internal boundaries to enforce the intended traffic policy.
         - id: cli
           desc: |
-            Cloud Firewall is enabled by purchasing and activating an edition. After it is active, confirm the account status with the `aliyun` CLI:
+            Cloud Firewall is enabled by purchasing an edition, which the `cloudfw` API does not do. After buying it in the console or with Terraform, confirm the account status with the `aliyun` CLI:
 
             ```bash
             aliyun cloudfw DescribeUserBuyVersion
             ```
-        # No Terraform remediation: enabling Cloud Firewall is a subscription/activation action against the account, not the declaration of an alicloud_* resource, so there is no Terraform resource that provisions and switches on the service.
+
+            The finding is resolved once `UserStatus` is `true`, meaning the account holds a valid Cloud Firewall instance.
+        - id: terraform
+          desc: |
+            To provision Cloud Firewall in Terraform, declare an `alicloud_cloud_firewall_instance_v2` resource:
+
+            ```hcl
+            resource "alicloud_cloud_firewall_instance_v2" "example" {
+              payment_type = "PayAsYouGo"
+              product_code = "cfw"
+              product_type = "cfw_elasticity_public_intl"
+              spec         = "payg_version"
+            }
+            ```
+
+            Replace the values as follows:
+
+            - `payment_type` is `PayAsYouGo` or `Subscription`. A subscription also needs `period`.
+            - `product_type` is `cfw_elasticity_public_intl` for pay-as-you-go on the international site, or `cfw_elasticity_public_cn` on the China site. Subscriptions use `cfw_sub_public_intl` or `cfw_sub_public_cn`.
+            - `spec` is `payg_version` for pay-as-you-go, or `premium_version`, `enterprise_version` or `ultimate_version` for a subscription edition.
+
+            **Applying this resource purchases a billed Cloud Firewall instance.** The instance still needs its protection switched on and control policies defined in the console.
     variants:
       - uid: mondoo-alibaba-security-cloudfirewall-enabled-alicloud
     tags:
@@ -4869,18 +5255,23 @@ queries:
       remediation:
         - id: console
           desc: |
-            To activate protection on an Anti-DDoS instance in the console:
+            An instance reports `Enabled` as `0` when it has stopped forwarding service traffic, as happens once a subscription has been expired for more than seven days. To restore protection in the console:
 
             1. Sign in to the [Anti-DDoS console](https://yundun.console.aliyun.com/?p=ddoscoo).
-            2. Open **Assets** > **Instances** and select the instance that is not enabled.
-            3. Associate the protected object and enable the instance so its mitigation is in force.
+            2. Open **Assets** > **Instances** and find the instance that is not forwarding traffic.
+            3. Renew the instance. Forwarding resumes after the renewal is paid, provided the instance has not yet been released.
+            4. If the protection is no longer needed, point the service DNS records back to the origin instead. The expired instance is released 30 days after expiry, which also clears the finding.
+
+            **Services whose DNS points at an instance that has stopped forwarding are unreachable until it is renewed.** An instance expired for more than 30 days is released with its configuration and cannot be recovered.
         - id: cli
           desc: |
-            After associating a protected object, confirm the instance is enabled with the `aliyun` CLI:
+            Renewal is a billing operation that the `ddoscoo` API does not perform. After renewing the instance in the console, confirm it is forwarding traffic again with the `aliyun` CLI:
 
             ```bash
             aliyun ddoscoo DescribeInstances
             ```
+
+            The finding is resolved once every instance returns `Enabled` of `1`. `Status` of `2` means the instance has expired.
         # No Terraform remediation: enabling protection on a provisioned Anti-DDoS instance is an operational action tied to associating protected objects; the alicloud provider exposes no resource attribute that toggles an instance's active protection state.
     variants:
       - uid: mondoo-alibaba-security-antiddos-instance-protection-active-alicloud
@@ -4953,17 +5344,37 @@ queries:
 
             1. Sign in to the [SLB console](https://slb.console.aliyun.com/).
             2. Open the internet-facing load balancer and go to the **Listeners** tab.
-            3. Add an **HTTPS** listener with a server certificate, migrate clients to it, then delete the **HTTP** listener (or configure it to redirect to HTTPS).
+            3. Add an **HTTPS** listener with a server certificate and make sure it is running.
+            4. Migrate clients to the HTTPS listener, then delete the **HTTP** listener.
+
+            A listener kept only to redirect HTTP to HTTPS still uses the `HTTP` protocol and still fails the check, so delete it rather than converting it.
+
+            **Clients that still use `http://` URLs get connection errors once the HTTP listener is deleted.**
         - id: cli
           desc: |
             To create an HTTPS listener and remove the plaintext one with the `aliyun` CLI:
 
             ```bash
             aliyun slb CreateLoadBalancerHTTPSListener --LoadBalancerId <lb-id> \
-              --ListenerPort 443 --ServerCertificateId <cert-id> --Bandwidth -1 \
-              --HealthCheck on
-            aliyun slb DeleteLoadBalancerListener --LoadBalancerId <lb-id> --ListenerPort 80
+              --ListenerPort 443 --BackendServerPort <backend-port> \
+              --ServerCertificateId <cert-id> --Bandwidth -1 \
+              --HealthCheck on --StickySession off
+            aliyun slb StartLoadBalancerListener --LoadBalancerId <lb-id> --ListenerPort 443
+            aliyun slb DeleteLoadBalancerListener --LoadBalancerId <lb-id> \
+              --ListenerPort <http-port> --ListenerProtocol http
             ```
+
+            Replace the values as follows:
+
+            - `<lb-id>` is the internet-facing load balancer with an `http` listener.
+            - `<backend-port>` is the port the backend servers listen on. Pass `--VServerGroupId <vserver-group-id>` instead if the load balancer uses a server group.
+            - `<cert-id>` is a server certificate uploaded to SLB or Certificate Management Service.
+            - `--Bandwidth -1` leaves the listener bandwidth uncapped, which applies to pay-by-traffic instances. Pass a value from 1 to 5120 Mbps for a pay-by-bandwidth instance.
+            - `<http-port>` is the port of the `http` listener, usually `80`, from `aliyun slb DescribeLoadBalancerListeners --LoadBalancerId <lb-id>`.
+
+            A new listener is created in the `stopped` state and forwards nothing until `StartLoadBalancerListener` runs.
+
+            **Clients that still use `http://` URLs get connection errors once the HTTP listener is deleted.** Confirm the HTTPS listener serves traffic before you run the last command.
         # No Terraform remediation: SLB listeners are modeled as standalone alicloud_slb_listener resources decoupled from their load balancer's address type, so this posture is asserted against the running configuration rather than a single Terraform attribute.
     variants:
       - uid: mondoo-alibaba-security-slb-listener-not-plaintext-alicloud
@@ -5022,7 +5433,9 @@ queries:
 
             1. Sign in to the [WAF console](https://yundun.console.aliyun.com/?p=waf).
             2. Open **Website Configuration** and edit the HTTPS settings of the affected domain.
-            3. Set the **TLS Version** to TLS 1.2 (or higher) and save.
+            3. Set the **TLS Version** to TLS 1.2 or higher and save.
+
+            **Clients that support only TLS 1.0 or TLS 1.1 can no longer connect to the domain.**
         # No CLI remediation: the domain TLS-version floor is a WAF 3.0 listen setting that is not exposed by the default waf-openapi API version, so it is configured through the WAF console.
         # No Terraform remediation: the served minimum TLS version is a runtime listen property of the WAF domain; the alicloud provider exposes no stable resource attribute that pins the TLS version floor.
     variants:
@@ -6123,6 +6536,8 @@ queries:
             1. Sign in to the [Function Compute console](https://fcnext.console.aliyun.com/).
             2. Open the function, select the **Configuration** tab, and select **Modify** next to **Advanced Settings**.
             3. In the **Network** section set **Allow Default ENI to Access the Internet** to disabled, then deploy the change.
+
+            **The function can no longer reach public endpoints through its default network interface.** Calls to external APIs or public package registries fail unless the function is attached to a VPC with a NAT gateway or a VPC endpoint for those services.
         - id: cli
           desc: |
             To turn off internet egress with the `aliyun` CLI:
@@ -6131,6 +6546,10 @@ queries:
             aliyun fc UpdateFunction --functionName <function-name> \
               --body '{"internetAccess":false}'
             ```
+
+            `false` is the value that resolves the finding.
+
+            **The function can no longer reach public endpoints through its default network interface.** Calls to external APIs, public package registries or public service endpoints fail unless the function is attached to a VPC with a NAT gateway or a VPC endpoint for those services.
         - id: terraform
           desc: |
             To turn off internet egress in Terraform, set `internet_access` to `false`:
@@ -6242,12 +6661,26 @@ queries:
           desc: |
             To replace an inline credential with a secret reference using the `aliyun` CLI:
 
+            1. Read the function's current `environmentVariables` with `aliyun fc GetFunction --functionName <function-name>`.
+            2. Store the credential in Secrets Manager.
+            3. Update the function with the full variable map, replacing the credential with the secret name.
+            4. Grant the function's RAM role `kms:GetSecretValue` on the secret, change the code to fetch the value at startup, and rotate the exposed credential.
+
             ```bash
             aliyun kms CreateSecret --SecretName example-db-password \
-              --SecretData '<value>' --VersionId v1
+              --SecretData '<value>' --VersionId v1 --EncryptionKeyId <kms-key-id>
             aliyun fc UpdateFunction --functionName <function-name> \
-              --body '{"environmentVariables":{"DB_PASSWORD_SECRET":"example-db-password"}}'
+              --body '{"environmentVariables":{"DB_PASSWORD_SECRET":"example-db-password","<other-variable>":"<other-value>"}}'
             ```
+
+            Replace the values as follows:
+
+            - `example-db-password` is the secret name. Use a name that says what the secret holds.
+            - `<value>` is the credential being moved. Enter it from a file or prompt rather than typing it into shell history.
+            - `<kms-key-id>` is a symmetric key in the same KMS instance, which KMS 3.0 requires.
+            - `<other-variable>` and `<other-value>` stand for every variable from step 1 that is not a credential. `environmentVariables` is an object field on the function, so send the complete map to avoid dropping variables the function still needs.
+
+            The finding clears once no variable name matches a credential name and no value looks like an access key, private key or token.
         - id: terraform
           desc: |
             To keep credentials out of the function definition in Terraform, pass the name of a secret rather than its value:
@@ -6405,9 +6838,19 @@ queries:
             To move a connection onto AES with the `aliyun` CLI:
 
             ```bash
-            aliyun vpc ModifyVpnConnectionAttribute --VpnConnectionId <connection-id> \
-              --IkeConfig '{"IkeEncAlg":"aes256"}' --IpsecConfig '{"IpsecEncAlg":"aes256"}'
+            aliyun vpc ModifyVpnConnectionAttribute --RegionId <region-id> \
+              --VpnConnectionId <connection-id> \
+              --IkeConfig '{"IkeEncAlg":"aes256","IkePfs":"group14"}' \
+              --IpsecConfig '{"IpsecEncAlg":"aes256","IpsecPfs":"group14"}'
             ```
+
+            Replace the values as follows:
+
+            - `IkeEncAlg` and `IpsecEncAlg` accept `aes`, `aes192` or `aes256`, and any of them resolves the finding. `des` and `3des` fail it.
+            - `IkePfs` and `IpsecPfs` are set to `group14` in the same call so the Diffie-Hellman groups stay at a strong value while the configuration is rewritten.
+            - `IkeConfig` and `IpsecConfig` apply to single-tunnel connections. A dual-tunnel connection takes the same settings per tunnel through the `TunnelOptionsSpecification` parameters instead.
+
+            **The tunnel renegotiates and drops until the customer gateway uses matching algorithms.** Change the customer gateway in the same maintenance window. The call is asynchronous; the VPN gateway shows `updating` until the change is applied.
         - id: terraform
           desc: |
             To pin the algorithms in Terraform, set them in the `ike_config` and `ipsec_config` blocks:
@@ -6552,9 +6995,19 @@ queries:
             To raise the Diffie-Hellman group with the `aliyun` CLI:
 
             ```bash
-            aliyun vpc ModifyVpnConnectionAttribute --VpnConnectionId <connection-id> \
-              --IkeConfig '{"IkePfs":"group14"}' --IpsecConfig '{"IpsecPfs":"group14"}'
+            aliyun vpc ModifyVpnConnectionAttribute --RegionId <region-id> \
+              --VpnConnectionId <connection-id> \
+              --IkeConfig '{"IkePfs":"group14","IkeEncAlg":"aes256"}' \
+              --IpsecConfig '{"IpsecPfs":"group14","IpsecEncAlg":"aes256"}'
             ```
+
+            Replace the values as follows:
+
+            - `IkePfs` and `IpsecPfs` must be `group14`, the strongest group the API offers. `group1`, `group2`, `group5` and `disabled` fail the check.
+            - `IkeEncAlg` and `IpsecEncAlg` are set to `aes256` in the same call so the ciphers stay strong while the configuration is rewritten.
+            - `IkeConfig` and `IpsecConfig` apply to single-tunnel connections. A dual-tunnel connection takes the same settings per tunnel through the `TunnelOptionsSpecification` parameters instead.
+
+            **The tunnel renegotiates and drops until the customer gateway uses the matching group.** Change the customer gateway in the same maintenance window. The call is asynchronous; the VPN gateway shows `updating` until the change is applied.
         - id: terraform
           desc: |
             To pin the Diffie-Hellman group in Terraform, set `ike_pfs` and `ipsec_pfs`:
@@ -6740,13 +7193,26 @@ queries:
             To replace the inbound entries with a scoped set using the `aliyun` CLI:
 
             ```bash
+            aliyun vpc DescribeNetworkAclAttributes --NetworkAclId <acl-id>
             aliyun vpc UpdateNetworkAclEntries --NetworkAclId <acl-id> \
               --UpdateIngressAclEntries true \
               --IngressAclEntries.1.Policy accept \
               --IngressAclEntries.1.Protocol tcp \
               --IngressAclEntries.1.Port 22/22 \
-              --IngressAclEntries.1.SourceCidrIp 203.0.113.0/24
+              --IngressAclEntries.1.SourceCidrIp 203.0.113.0/24 \
+              --IngressAclEntries.2.Policy accept \
+              --IngressAclEntries.2.Protocol tcp \
+              --IngressAclEntries.2.Port 443/443 \
+              --IngressAclEntries.2.SourceCidrIp 0.0.0.0/0
             ```
+
+            **This call replaces every inbound entry on the ACL with the list you pass.** An entry you leave out is deleted, so first read the current entries with `DescribeNetworkAclAttributes` and pass every one you want to keep, changing only the offending entries.
+
+            Replace the values as follows:
+
+            - Entry 1 shows an admin port scoped to a trusted range. `203.0.113.0/24` is an example; use the office, bastion or VPN range that needs SSH or RDP.
+            - Entry 2 shows a published service port that may stay open to `0.0.0.0/0`. Keep or drop it to match what the vSwitches actually serve.
+            - No accepting entry from `0.0.0.0/0` may use protocol `all`, port `-1/-1`, or a TCP range that spans port 22 or port 3389.
         - id: terraform
           desc: |
             To scope the inbound entries in Terraform, name the source range each entry accepts:
@@ -6898,27 +7364,42 @@ queries:
             1. Sign in to the [KMS console](https://kms.console.aliyun.com/).
             2. Go to **Resource** > **Secrets** and open the secret.
             3. Select **Configure Rotation**, turn on **Automatic Rotation**, set a rotation interval, and confirm.
+
+            Automatic rotation is available for managed secrets: RDS, PolarDB, Redis, RAM and ECS secrets. A generic secret cannot enable it. Rotate a generic secret by storing a new version with `PutSecretValue`, or convert the credential into the matching managed secret type so the service can rotate it.
+
+            **Rotation changes the credential the secret manages.** Applications must read the secret at use rather than caching the value, or they fail after the first rotation.
         - id: cli
           desc: |
-            To enable automatic rotation with the `aliyun` CLI:
+            To enable automatic rotation on a managed secret with the `aliyun` CLI:
 
             ```bash
             aliyun kms UpdateSecretRotationPolicy --SecretName <secret-name> \
               --EnableAutomaticRotation true --RotationInterval 2592000s
             ```
+
+            Replace the values as follows:
+
+            - `<secret-name>` is an RDS, PolarDB, Redis, RAM or ECS secret. The call does not support generic secrets.
+            - `--RotationInterval` is required when rotation is enabled and accepts 7 to 365 days. `2592000s` is 30 days; choose an interval that matches the sensitivity of the credential.
+
+            **Rotation changes the credential the secret manages.** Applications must read the secret at use rather than caching the value, or they fail after the first rotation.
         - id: terraform
           desc: |
-            To enable automatic rotation in Terraform, set `enable_automatic_rotation` and a `rotation_interval`:
+            To enable automatic rotation in Terraform, declare a managed secret type and set `enable_automatic_rotation` and a `rotation_interval`. A generic secret, the default `secret_type`, cannot rotate automatically:
 
             ```hcl
             resource "alicloud_kms_secret" "example" {
-              secret_name               = "example-secret"
-              secret_data               = var.example_secret_value
+              secret_name               = "example-rds-secret"
+              secret_type               = "Rds"
+              secret_data               = jsonencode({ Accounts = [{ AccountName = "app", AccountPassword = var.example_db_password }] })
+              extended_config           = jsonencode({ SecretSubType = "SingleUser", DBInstanceId = "rm-example" })
               version_id                = "v1"
               enable_automatic_rotation = true
               rotation_interval         = "2592000s"
             }
             ```
+
+            `extended_config` names the RDS instance and account whose password the secret rotates. `SingleUser` resets that account's password to a new random value on each rotation.
     variants:
       - uid: mondoo-alibaba-security-kms-secret-rotation-enabled-alicloud
       - uid: mondoo-alibaba-security-kms-secret-rotation-enabled-terraform-hcl
@@ -7012,12 +7493,26 @@ queries:
             3. Point consumers at the new secret, then delete the old one and rotate the value.
         - id: cli
           desc: |
-            To create a replacement secret under a customer master key with the `aliyun` CLI:
+            To replace a secret with one encrypted under a customer master key using the `aliyun` CLI:
+
+            1. Create the replacement secret under the key.
+            2. Point every consumer at the new secret name.
+            3. Delete the original secret, which keeps failing the check for as long as it exists.
 
             ```bash
-            aliyun kms CreateSecret --SecretName <secret-name> \
+            aliyun kms CreateSecret --SecretName <new-secret-name> \
               --SecretData '<value>' --VersionId v1 --EncryptionKeyId <cmk-id>
+            aliyun kms DeleteSecret --SecretName <old-secret-name> --RecoveryWindowInDays 7
             ```
+
+            Replace the values as follows:
+
+            - `<new-secret-name>` must differ from `<old-secret-name>`, because secret names are unique within a region.
+            - `<value>` is the secret value, ideally a newly rotated one. Enter it from a file or prompt rather than typing it into shell history.
+            - `<cmk-id>` is a symmetric key in the same KMS instance as the secret.
+            - `--RecoveryWindowInDays 7` schedules deletion with a 7 day window in which the old secret can still be restored.
+
+            **Consumers still reading the old secret fail once its deletion completes.**
         - id: terraform
           desc: |
             To bind a secret to a customer master key in Terraform, set `encryption_key_id`:
@@ -7122,13 +7617,26 @@ queries:
             3. Copy the contents across, repoint the mount targets, and delete the old file system.
         - id: cli
           desc: |
-            To create an encrypted replacement file system with the `aliyun` CLI:
+            To replace an unencrypted file system with the `aliyun` CLI:
+
+            1. Create an encrypted file system and a mount target for it.
+            2. Copy the data across and repoint every client to the new mount target.
+            3. Delete the unencrypted file system, which keeps failing the check for as long as it exists.
 
             ```bash
             aliyun nas CreateFileSystem --FileSystemType standard \
               --ProtocolType NFS --StorageType Performance \
               --ZoneId <zone-id> --EncryptType 1
+            aliyun nas DeleteFileSystem --FileSystemId <old-file-system-id>
             ```
+
+            Replace the values as follows:
+
+            - `--EncryptType 1` encrypts with a NAS-managed key. Use `--EncryptType 2 --KmsKeyId <kms-key-id>` to encrypt with your own KMS key. `0` is unencrypted and fails the check.
+            - `--ProtocolType` and `--StorageType` should match the file system being replaced.
+            - `<old-file-system-id>` is the file system reporting `EncryptType` `0`. Delete its mount targets first.
+
+            **Deleting the old file system destroys its data.** Verify the copy and move every client before you run `DeleteFileSystem`.
         - id: terraform
           desc: |
             To declare an encrypted file system in Terraform, set `encrypt_type` to a non-zero value:
