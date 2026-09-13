@@ -3520,7 +3520,7 @@ queries:
       )
 
   - uid: mondoo-digitalocean-security-spaces-key-has-scoped-grants
-    title: Ensure Spaces access keys are scoped with bucket grants
+    title: Ensure Spaces access keys are scoped to specific buckets
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
@@ -3556,13 +3556,18 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that every Spaces access key is scoped by at least one bucket grant.
+        This check verifies that every Spaces access key is limited to named buckets, and that none of its grants confers account-wide access.
 
-        A Spaces access key can be issued with grants naming the specific buckets and operations it may use. A key created with no grants carries unrestricted account-level access to every Spaces bucket in the account. Grants are set when the key is created, under Spaces Keys in the API section of the DigitalOcean Cloud Control Panel.
+        A Spaces access key carries a list of grants, each pairing a bucket with a permission. A grant fails this check when it takes either of the two account-wide forms:
+
+        - **An empty bucket name.** The grant applies to every bucket in the account rather than one named bucket.
+        - **The `fullaccess` permission.** It allows every supported S3 API on every bucket, including bucket creation and configuration.
+
+        A key with no grants at all fails as well, since it is not scoped to anything. Grants are set when the key is created, under Spaces Keys in the API section of the DigitalOcean Cloud Control Panel, and a passing key names each bucket it may touch with the `read` or `readwrite` permission.
 
         **Why this matters**
 
-        An unscoped key that leaks provides full read and write access to every bucket in the account, so a single exposed string is a complete object-storage compromise. A grant-scoped key limits the damage to exactly the bucket and permissions it was issued for.
+        An account-wide key that leaks provides read and write access to every bucket in the account, so a single exposed string is a complete object-storage compromise. A bucket-scoped key limits the damage to exactly the bucket and permission it was issued for.
 
         Keys leak in predictable ways: committed to source control, written to application logs, embedded in a shipped binary, captured in a CI job's environment. Scoping decides in advance how much any of those incidents is worth, which is the only decision still available once the key is already out.
 
@@ -3574,51 +3579,61 @@ queries:
 
         1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
         2. Navigate to **API** > **Spaces Keys**.
-        3. Review each access key and check whether it has bucket grants listed under its permissions.
+        3. Review each access key and check the permissions listed under it.
 
-        A passing Spaces key shows one or more bucket-level grants. A failing Spaces key shows no grants, indicating full account-level access to all buckets.
+        A passing Spaces key shows limited access with one or more named buckets, each set to Read or Read/Write/Delete. A failing Spaces key shows full access, or shows no buckets at all.
 
         ### Audit via CLI
 
         1. List all Spaces keys and inspect their grants:
 
         ```bash
-        doctl spaces keys list
+        doctl spaces keys list --format Name,AccessKey,Grants
         ```
 
-        A passing key returns one or more entries in its `Grants` field. A failing key returns an empty `Grants` field.
+        Each grant renders as `bucket=<name>;permission=<level>`. A passing key names a bucket in every grant and uses only the `read` and `readwrite` permissions, such as `bucket=app-uploads;permission=readwrite`. A key fails when any grant has an empty bucket name or the `fullaccess` permission, such as `bucket=;permission=fullaccess`, and when the `Grants` field is empty.
       remediation:
         - id: console
           desc: |
-            **Deleting the unscoped key immediately breaks every application still using it.** Move each application to its replacement key before the final step.
+            **Narrowing a key takes effect immediately and any bucket you leave out becomes inaccessible to it.** Establish which buckets each application actually reads and writes before you save the new permissions.
 
             To fix this in the DigitalOcean Cloud Control Panel:
 
             1. Navigate to **API** > **Spaces Keys**.
-            2. Create a replacement key with specific bucket grants, for example read-only access to a single bucket.
-            3. Update every application that used the unscoped key to use the new scoped key.
-            4. Delete the unscoped key.
+            2. Open the key's actions menu and choose to edit its permissions.
+            3. Switch the key from full access to limited access, then add one entry per bucket the key needs, set to Read or Read/Write/Delete.
+            4. Save the permissions and confirm the key now lists named buckets rather than full access.
+
+            Keys shared by several applications are better replaced than narrowed, because no single bucket list fits all of their callers. Create one limited-access key per application, move each application to its own key, then delete the shared key.
         - id: cli
           desc: |
-            **Deleting the unscoped key immediately breaks every application still using it.** Move each application to its replacement key before deleting the old one.
+            **Narrowing a key takes effect immediately and any bucket you leave out becomes inaccessible to it.** Establish which buckets each application actually reads and writes before you run the update.
 
-            To fix this on the command line using the `doctl` CLI, create a scoped replacement key first:
+            To fix this on the command line using the `doctl` CLI, replace the key's grants with one grant per bucket it needs. The access key ID and secret stay the same, so applications keep working as long as they only touch the buckets you list:
+
+            ```bash
+            doctl spaces keys update "<access-key-id>" \
+              --name "<key-name>" \
+              --grants "bucket=<bucket-name>;permission=read"
+            ```
+
+            `<bucket-name>` is a bucket the application uses, and `permission` is `read` or `readwrite`, whichever the application needs. Add more grants separated by commas, such as `bucket=logs;permission=read,bucket=uploads;permission=readwrite`. Never use an empty bucket name or `permission=fullaccess`, which grant access to every bucket in the account.
+
+            For a key shared by several applications, create one limited-access key per application instead:
 
             ```bash
             doctl spaces keys create "<new-name>" \
               --grants "bucket=<bucket-name>;permission=read"
             ```
 
-            `<bucket-name>` is the one bucket the application uses, and `permission` is `read` or `readwrite`, whichever the application needs. Add more grants separated by commas, such as `bucket=logs;permission=read,bucket=uploads;permission=readwrite`. Never use an empty bucket name or `permission=fullaccess`, which grant access to every bucket in the account.
-
-            Update every application that used the unscoped key, then delete it by its access key ID:
+            Move every application onto its own key, then delete the shared one by its access key ID:
 
             ```bash
             doctl spaces keys delete "<old-access-key-id>"
             ```
         - id: terraform
           desc: |
-            To scope a Spaces access key in Terraform, declare one or more `grant` blocks on the `digitalocean_spaces_key` resource, each naming a specific bucket and permission:
+            To scope a Spaces access key in Terraform, declare one `grant` block per bucket on the `digitalocean_spaces_key` resource, each naming that bucket and the permission the key needs:
 
             ```hcl
             resource "digitalocean_spaces_key" "example" {
@@ -3630,6 +3645,8 @@ queries:
               }
             }
             ```
+
+            `permission` accepts `read`, `readwrite`, and `fullaccess`. Use only `read` or `readwrite`, and always set `bucket` to a real bucket name. A `grant` block with `permission = "fullaccess"`, or with `bucket = ""`, gives the key every bucket in the account and fails this check.
     refs:
       - url: https://docs.digitalocean.com/products/spaces/how-to/manage-access/
         title: Manage Spaces access keys and grants
@@ -3637,19 +3654,19 @@ queries:
   - uid: mondoo-digitalocean-security-spaces-key-has-scoped-grants-digitalocean
     filters: asset.platform == "digitalocean"
     mql: |
-      digitalocean.spacesKeys.all(grants != empty)
+      digitalocean.spacesKeys.all(bucketGrants != empty && bucketGrants.none(allBuckets || permission == "fullaccess"))
   - uid: mondoo-digitalocean-security-spaces-key-has-scoped-grants-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_spaces_key")
     mql: |
-      terraform.resources("digitalocean_spaces_key").all(blocks.where(type == "grant") != empty)
+      terraform.resources("digitalocean_spaces_key").all(blocks.where(type == "grant") != empty && blocks.where(type == "grant").none(arguments["bucket"] == empty || arguments["permission"] == "fullaccess"))
   - uid: mondoo-digitalocean-security-spaces-key-has-scoped-grants-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_spaces_key")
     mql: |
-      terraform.plan.resourceChanges.where(type == "digitalocean_spaces_key").all(change.after["grant"] != empty)
+      terraform.plan.resourceChanges.where(type == "digitalocean_spaces_key").all(change.after["grant"] != empty && change.after["grant"].none(_["bucket"] == empty || _["permission"] == "fullaccess"))
   - uid: mondoo-digitalocean-security-spaces-key-has-scoped-grants-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_spaces_key")
     mql: |
-      terraform.state.resources.where(type == "digitalocean_spaces_key").all(values["grant"] != empty)
+      terraform.state.resources.where(type == "digitalocean_spaces_key").all(values["grant"] != empty && values["grant"].none(_["bucket"] == empty || _["permission"] == "fullaccess"))
 
   - uid: mondoo-digitalocean-security-spaces-bucket-not-publicly-readable
     title: Ensure Spaces buckets do not grant anonymous read access
