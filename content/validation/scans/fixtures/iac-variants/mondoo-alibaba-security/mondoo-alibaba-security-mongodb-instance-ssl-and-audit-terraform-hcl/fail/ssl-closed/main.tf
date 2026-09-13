@@ -7,3 +7,8 @@ resource "alicloud_mongodb_instance" "prod" {
   vswitch_id          = alicloud_vswitch.db.id
   ssl_action          = "Close"
 }
+
+resource "alicloud_mongodb_audit_policy" "prod" {
+  db_instance_id = alicloud_mongodb_instance.prod.id
+  audit_status   = "enable"
+}

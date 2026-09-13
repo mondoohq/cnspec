@@ -3612,7 +3612,7 @@ queries:
 
         Applied together the two settings cover different halves of the same problem: the VPC decides who can reach the port, and TLS decides what they learn if they do.
 
-        Network type is fixed at creation and changed only by migrating the instance, so this is a planned operation rather than a toggle. The Terraform-declared form asserts only `ssl_enable`, since a configuration that assigns a `vswitch_id` is already placing the instance in a VPC.
+        Network type is fixed at creation and changed only by migrating the instance, so this is a planned operation rather than a toggle. In Terraform the check requires `ssl_enable` set to `Enable` and a non-empty `vswitch_id`. The `alicloud_kvstore_instance` resource has no network type argument: the provider requests a VPC deployment when `vswitch_id` is set and the classic network when it is left out.
       audit: |
         ### Audit via Console
 
@@ -3660,7 +3660,7 @@ queries:
             **Enabling TLS restarts the instance, with a transient disconnection of a few seconds.** Run it during off-peak hours and make sure clients reconnect automatically. After `SwitchNetwork`, clients must use the VPC endpoint; add `--RetainClassic True --ClassicExpiredDays 14` to keep the classic endpoint working while they move.
         - id: terraform
           desc: |
-            To enforce TLS on a Redis (Tair) instance in Terraform, set `ssl_enable` to `Enable` and place the instance in a VPC by assigning `vswitch_id`. Turning TLS on restarts the instance briefly:
+            To enforce TLS on a Redis (Tair) instance in Terraform, set `ssl_enable` to `Enable` and place the instance in a VPC by assigning `vswitch_id`. Without `vswitch_id` the provider creates the instance on the classic network, which fails the check. Turning TLS on restarts the instance briefly:
 
             ```hcl
             resource "alicloud_kvstore_instance" "example" {
@@ -3704,6 +3704,7 @@ queries:
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_kvstore_instance")
     mql: |
       terraform.resources("alicloud_kvstore_instance").all(arguments["ssl_enable"] == "Enable")
+      terraform.resources("alicloud_kvstore_instance").all(arguments["vswitch_id"] != empty)
   - uid: mondoo-alibaba-security-redis-instance-ssl-and-private-terraform-plan
     filters: |
       asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_kvstore_instance")
@@ -3711,12 +3712,18 @@ queries:
       terraform.plan.resourceChanges.where(type == "alicloud_kvstore_instance").all(
         change.after["ssl_enable"] == "Enable"
       )
+      terraform.plan.resourceChanges.where(type == "alicloud_kvstore_instance").all(
+        change.after["vswitch_id"] != empty || change.afterUnknown["vswitch_id"] == true
+      )
   - uid: mondoo-alibaba-security-redis-instance-ssl-and-private-terraform-state
     filters: |
       asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_kvstore_instance")
     mql: |
       terraform.state.resources.where(type == "alicloud_kvstore_instance").all(
         values["ssl_enable"] == "Enable"
+      )
+      terraform.state.resources.where(type == "alicloud_kvstore_instance").all(
+        values["vswitch_id"] != empty
       )
 
   - uid: mondoo-alibaba-security-redis-instance-tde-enabled
@@ -3976,7 +3983,7 @@ queries:
 
         Auditing also supplies attribution. Tying an operation to a source and an account is what makes an investigation possible at all, and it is the evidence compliance regimes expect when they require accountability for access to stored data.
 
-        The two controls answer different questions, which is why the check requires both: TLS decides whether an outsider on the network learns anything, and the audit trail decides whether you can tell what an insider or a credential thief did. The Terraform-declared form asserts only `ssl_action`, because the audit policy is a resource of its own rather than an argument on the instance.
+        The two controls answer different questions, which is why the check requires both: TLS decides whether an outsider on the network learns anything, and the audit trail decides whether you can tell what an insider or a credential thief did. In Terraform the check requires `ssl_action` set to `Open` on the instance and an `alicloud_mongodb_audit_policy` resource with `audit_status` set to `enable` whose `db_instance_id` points at that instance.
       audit: |
         ### Audit via Console
 
@@ -4025,7 +4032,7 @@ queries:
             **Enabling SSL restarts the instance once.** Run it during off-peak hours, or add `--SwitchMode 1` to apply it in the maintenance window.
         - id: terraform
           desc: |
-            To enforce TLS on a MongoDB instance in Terraform, set `ssl_action` to `Open`, and enable audit logging through the `alicloud_mongodb_audit_policy` resource:
+            To enforce TLS on a MongoDB instance in Terraform, set `ssl_action` to `Open`, and enable audit logging through the `alicloud_mongodb_audit_policy` resource. Set `db_instance_id` to the instance's `id` attribute directly, so the check can pair the audit policy with its instance. An ID passed through a local value or a module output cannot be traced back to the instance before apply, and the instance fails the check:
 
             ```hcl
             resource "alicloud_mongodb_instance" "example" {
@@ -4069,24 +4076,48 @@ queries:
       alicloud.mongodb.instance.sslEnabled == true
       alicloud.mongodb.instance.auditPolicyEnabled == true
 
+  # Audit logging is a separate alicloud_mongodb_audit_policy resource, so each variant pairs an instance with an
+  # enabled audit policy. HCL keeps a reference as text: `alicloud_mongodb_instance.x.id` arrives as that string,
+  # and an indexed `alicloud_mongodb_instance.x[count.index].id` as a list whose first element is
+  # `alicloud_mongodb_instance.x`, so both spellings are matched after `.flat`. A literal instance ID names an
+  # instance outside this configuration and matches nothing here.
   - uid: mondoo-alibaba-security-mongodb-instance-ssl-and-audit-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_mongodb_instance")
     mql: |
+      auditedInstances = "|" + terraform.resources("alicloud_mongodb_audit_policy").where(arguments["audit_status"] == "enable").map(arguments["db_instance_id"]).flat.join("|") + "|"
       terraform.resources("alicloud_mongodb_instance").all(arguments["ssl_action"] == "Open")
+      terraform.resources("alicloud_mongodb_instance").all(
+        auditedInstances.contains("|alicloud_mongodb_instance." + labels[1] + ".id|") || auditedInstances.contains("|alicloud_mongodb_instance." + labels[1] + "|")
+      )
+  # In a plan, db_instance_id is known only when the instance already exists. For an instance created by the same
+  # plan it is unknown, so the pairing falls back to the root-module configuration, whose `references` list for an
+  # enabled audit policy names the instance address. Child-module configuration is not exposed there, so a new
+  # instance in a child module, or one whose ID reaches its audit policy through a local value or module input,
+  # fails until it is applied instead of passing unchecked. The state variant pairs resolved IDs and has no such gap.
   - uid: mondoo-alibaba-security-mongodb-instance-ssl-and-audit-terraform-plan
     filters: |
       asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_mongodb_instance")
     mql: |
+      enabledAudits = terraform.plan.resourceChanges.where(type == "alicloud_mongodb_audit_policy" && change.after["audit_status"] == "enable")
+      auditedIds = "|" + enabledAudits.map(change.after["db_instance_id"]).join("|") + "|"
+      auditedRefs = "|" + terraform.plan.configuration.resources.where(_["type"] == "alicloud_mongodb_audit_policy" && _["name"].in(enabledAudits.where(moduleAddress == empty).map(name))).map(_["expressions"]["db_instance_id"]["references"]).flat.join("|") + "|"
       terraform.plan.resourceChanges.where(type == "alicloud_mongodb_instance").all(
         change.after["ssl_action"] == "Open"
+      )
+      terraform.plan.resourceChanges.where(type == "alicloud_mongodb_instance").all(
+        change.after["id"] != empty && auditedIds.contains(change.after["id"] + "|") || moduleAddress == empty && auditedRefs.contains("|alicloud_mongodb_instance." + name + "|")
       )
   - uid: mondoo-alibaba-security-mongodb-instance-ssl-and-audit-terraform-state
     filters: |
       asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_mongodb_instance")
     mql: |
+      auditedIds = "|" + terraform.state.resources.where(type == "alicloud_mongodb_audit_policy" && values["audit_status"] == "enable").map(values["db_instance_id"]).join("|") + "|"
       terraform.state.resources.where(type == "alicloud_mongodb_instance").all(
         values["ssl_action"] == "Open"
+      )
+      terraform.state.resources.where(type == "alicloud_mongodb_instance").all(
+        values["id"] != empty && auditedIds.contains(values["id"] + "|")
       )
 
   - uid: mondoo-alibaba-security-mongodb-instance-restrict-security-ip-list
