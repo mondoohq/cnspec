@@ -7341,9 +7341,11 @@ queries:
     impact: 70
     docs:
       desc: |
-        This check verifies that every secret held in KMS Secrets Manager rotates automatically.
+        This check verifies that every KMS Secrets Manager secret able to rotate automatically has automatic rotation enabled.
 
-        A secret whose rotation state is `Disabled` or `Suspended` keeps the same value indefinitely, so the window in which a copy taken from a log, a backup, or a developer's machine still works never closes on its own. Rotation is configured in the KMS console under Resource and then Secrets, by opening the secret, choosing Configure Rotation, and setting an automatic rotation interval. The same policy is set with `aliyun kms UpdateSecretRotationPolicy --EnableAutomaticRotation true`, or in Terraform with `enable_automatic_rotation` and a `rotation_interval`.
+        Automatic rotation is available for the managed secret types: RDS, PolarDB, Redis, RAM, and ECS secrets. The check excludes generic secrets, including those created without a type, because Generic is the default type and KMS does not support automatic rotation for it. `UpdateSecretRotationPolicy` rejects generic secrets, so a generic secret has no setting that could make it pass. An account or Terraform configuration that holds only generic secrets passes.
+
+        A managed secret whose rotation state is anything other than `Enabled` keeps the same value indefinitely, so the window in which a copy taken from a log, a backup, or a developer's machine still works never closes on its own. Rotation is configured in the KMS console under Resource and then Secrets, by opening the secret, choosing Configure Rotation, and setting an automatic rotation interval. The same policy is set with `aliyun kms UpdateSecretRotationPolicy --EnableAutomaticRotation true`, or in Terraform with `enable_automatic_rotation` and a `rotation_interval`.
 
         **Why this matters**
 
@@ -7351,27 +7353,36 @@ queries:
 
         A static secret therefore has an unbounded compromise window. An attacker who obtains the value once retains the access it grants for as long as the secret exists, and nothing in the account marks the moment that access should have ended.
 
-        A suspended rotation schedule is the worst of both states, because it looks configured. It reads as "rotation is set up" during a console review while nothing is actually rotating, so the gap survives exactly the kind of inspection meant to catch it.
+        An `Invalid` rotation state is the worst of both states, because it looks configured. KMS reports it when it cannot rotate the secret, so a console review reads "rotation is set up" while nothing is actually rotating, and the gap survives exactly the kind of inspection meant to catch it.
 
         Regular automatic rotation also exercises the rotation path itself. Consumers are proven to handle a changing value under normal conditions, so an emergency rotation during an incident is not the first attempt. Choose an interval that matches the sensitivity of the value, and confirm that every consumer reads the secret at use rather than caching it at deployment.
+
+        Generic secrets still need rotating, but only by hand. Storing a new version with `PutSecretValue` replaces the current value, and that operation applies only to generic secrets. This check does not assess when a generic secret last received a new version.
       audit: |
         ### Audit via Console
 
         1. Sign in to the [KMS console](https://kms.console.aliyun.com/).
-        2. Go to **Resource** > **Secrets** and open each secret.
-        3. Review the automatic rotation setting.
+        2. Go to **Resource** > **Secrets** and note the type of each secret.
+        3. Skip generic secrets, which cannot rotate automatically.
+        4. Open each RDS, PolarDB, Redis, RAM, and ECS secret and review its automatic rotation setting.
 
-        A passing secret has rotation enabled. A failing secret has it disabled or suspended.
+        A passing managed secret has rotation enabled. A failing managed secret has it disabled or in an invalid state.
 
         ### Audit via CLI
 
-        1. Describe each secret and review its rotation state:
+        1. List the secrets and note each `SecretType`:
+
+        ```bash
+        aliyun kms ListSecrets
+        ```
+
+        2. Describe each secret whose `SecretType` is not `Generic` and review its rotation state:
 
         ```bash
         aliyun kms DescribeSecret --SecretName <secret-name>
         ```
 
-        A passing secret returns `AutomaticRotation` of `Enabled`. A failing secret returns `Disabled` or `Suspended`.
+        A passing secret returns `AutomaticRotation` of `Enabled`. A failing secret returns `Disabled` or `Invalid`. Generic secrets are out of scope and do not return `AutomaticRotation`.
       remediation:
         - id: console
           desc: |
@@ -7381,7 +7392,7 @@ queries:
             2. Go to **Resource** > **Secrets** and open the secret.
             3. Select **Configure Rotation**, turn on **Automatic Rotation**, set a rotation interval, and confirm.
 
-            Automatic rotation is available for managed secrets: RDS, PolarDB, Redis, RAM and ECS secrets. A generic secret cannot enable it. Rotate a generic secret by storing a new version with `PutSecretValue`, or convert the credential into the matching managed secret type so the service can rotate it.
+            Automatic rotation is available for managed secrets: RDS, PolarDB, Redis, RAM and ECS secrets. A generic secret cannot enable it, and this check does not evaluate generic secrets. Rotate a generic secret by storing a new version with `PutSecretValue`, or convert the credential into the matching managed secret type so the service can rotate it.
 
             **Rotation changes the credential the secret manages.** Applications must read the secret at use rather than caching the value, or they fail after the first rotation.
         - id: cli
@@ -7395,13 +7406,13 @@ queries:
 
             Replace the values as follows:
 
-            - `<secret-name>` is an RDS, PolarDB, Redis, RAM or ECS secret. The call does not support generic secrets.
+            - `<secret-name>` is an RDS, PolarDB, Redis, RAM or ECS secret. The call does not support generic secrets, which this check does not evaluate.
             - `--RotationInterval` is required when rotation is enabled and accepts 7 to 365 days. `2592000s` is 30 days; choose an interval that matches the sensitivity of the credential.
 
             **Rotation changes the credential the secret manages.** Applications must read the secret at use rather than caching the value, or they fail after the first rotation.
         - id: terraform
           desc: |
-            To enable automatic rotation in Terraform, declare a managed secret type and set `enable_automatic_rotation` and a `rotation_interval`. A generic secret, the default `secret_type`, cannot rotate automatically:
+            To enable automatic rotation in Terraform, declare a managed secret type and set `enable_automatic_rotation` and a `rotation_interval`. The check does not evaluate a generic secret, which is what an `alicloud_kms_secret` without `secret_type` creates, because generic secrets cannot rotate automatically:
 
             ```hcl
             resource "alicloud_kms_secret" "example" {
@@ -7440,26 +7451,37 @@ queries:
   - uid: mondoo-alibaba-security-kms-secret-rotation-enabled-alicloud
     filters: asset.platform == "alicloud-account"
     mql: |
-      alicloud.kms.secrets.all(automaticRotation == "Enabled")
+      alicloud.kms.secrets.where(secretType != "Generic").all(automaticRotation == "Enabled")
   - uid: mondoo-alibaba-security-kms-secret-rotation-enabled-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_kms_secret")
     mql: |
-      terraform.resources("alicloud_kms_secret").all(
+      # An omitted secret_type creates a Generic secret, which cannot rotate automatically.
+      terraform.resources("alicloud_kms_secret").where(
+        arguments["secret_type"] != empty && arguments["secret_type"] != "Generic"
+      ).all(
         arguments["enable_automatic_rotation"] == true
       )
   - uid: mondoo-alibaba-security-kms-secret-rotation-enabled-terraform-plan
     filters: |
       asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_kms_secret")
     mql: |
-      terraform.plan.resourceChanges.where(type == "alicloud_kms_secret").all(
+      terraform.plan.resourceChanges.where(
+        type == "alicloud_kms_secret" &&
+        change.after["secret_type"] != empty &&
+        change.after["secret_type"] != "Generic"
+      ).all(
         change.after["enable_automatic_rotation"] == true
       )
   - uid: mondoo-alibaba-security-kms-secret-rotation-enabled-terraform-state
     filters: |
       asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_kms_secret")
     mql: |
-      terraform.state.resources.where(type == "alicloud_kms_secret").all(
+      terraform.state.resources.where(
+        type == "alicloud_kms_secret" &&
+        values["secret_type"] != empty &&
+        values["secret_type"] != "Generic"
+      ).all(
         values["enable_automatic_rotation"] == true
       )
 
