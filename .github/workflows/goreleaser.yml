@@ -34,6 +34,8 @@ on:
 
 env:
   REGISTRY: docker.io
+  # C07QZDJFF89 == #release-coordination
+  SLACK_BOT_CHANNEL_ID: "C07QZDJFF89"
 
 permissions:
   contents: read
@@ -42,6 +44,8 @@ jobs:
   goreleaser:
     outputs:
       skip-publish: ${{ steps.skip-publish.outputs.skip-publish }}
+      channel: ${{ steps.channel.outputs.channel }}
+      promote-latest: ${{ steps.channel.outputs.promote-latest }}
     permissions:
       # Add "contents" to write release
       contents: "write"
@@ -66,11 +70,84 @@ jobs:
       - name: Import environment variables from file
         run: cat ".github/env" >> $GITHUB_ENV
 
-      - name: Skip Publish for non-release tags
-        id: skip-publish
-        if: contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'pre') || contains(github.ref, 'rc') || inputs.skip-publish == true
+      # A tag's release channel is derived from its semver pre-release segment,
+      # never declared: `14.0.0-rc.2` is preview, `13.38.1` is stable, and build
+      # metadata (`8.4.0+41`) is not a pre-release so it stays stable. This
+      # replaces a substring test for alpha/beta/pre/rc that disagreed with the
+      # equivalent lists in the publishing tools. See minstaller ADR 0003.
+      #
+      # A pre-release is published, just not promoted: it gets a GitHub release
+      # flagged as a pre-release, it reaches the release bucket, and it appears
+      # in the preview channel. What it must not do is become `latest`, or be
+      # packaged for apt/yum/msi/pkg/chocolatey.
+      - name: Determine release channel
+        id: channel
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
-          echo "Skipping publish for non-release tags"
+          if [ "$REF_TYPE" != "tag" ]; then
+            # Snapshot runs off a branch never publish, so there is no channel
+            # to derive and no tag to validate.
+            echo "not a tag ($REF_NAME), treating as stable and non-promoting"
+            echo "channel=stable" >> $GITHUB_OUTPUT
+            echo "promote-latest=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Build metadata is everything after a `+`, and SemVer 10 says it MUST
+          # be ignored when determining precedence. So `v14.0.0+rc.1` does not
+          # mean "release candidate": it compares EQUAL to `14.0.0`, outranks
+          # every real `14.0.0-rc.N`, derives the stable channel, and ships to
+          # every user on their next update check. A pre-release is introduced
+          # with `-`, never `+`.
+          #
+          # This is worth failing on rather than warning about, because
+          # everything downstream would accept it happily.
+          #
+          # The boundaries on both sides keep the marker list from firing on
+          # real words that merely contain one of them. Verified:
+          #   rejects: +rc.1 +alpha3 +pre-2 +preview +edge.7 +test +next.1
+          #   allows:  +3508 +build.7 +attestation +contest +greatest +latest
+          #            +protest +nextcloud +edgecase
+          META="${REF_NAME#*+}"
+          if [ "$META" != "$REF_NAME" ]; then
+            if printf '%s' "$META" | grep -Eiq '(^|[.-])(pre|rc|alpha|beta|dev|canary|nightly|snapshot|preview|edge|test|next)([.-]|[0-9]|$)'; then
+              echo "::error::tag $REF_NAME puts a pre-release marker in build metadata. Build metadata is ignored for precedence, so this tag means the FINAL ${REF_NAME%%+*} and would publish to the stable channel. Use a hyphen: ${REF_NAME%%+*}-${META}"
+              exit 1
+            fi
+            echo "::warning::tag $REF_NAME carries build metadata (+${META}), which is ignored when comparing versions"
+          fi
+
+          CORE="${REF_NAME#v}"
+          CORE="${CORE%%+*}"
+          if ! printf '%s' "$CORE" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::tag $REF_NAME is not a semver version, so its release channel cannot be derived"
+            exit 1
+          fi
+
+          case "$CORE" in
+            *-*) CHANNEL=preview ;;
+            *)   CHANNEL=stable ;;
+          esac
+
+          PROMOTE=false
+          if [ "$CHANNEL" = "stable" ]; then
+            PROMOTE=true
+          fi
+
+          echo "$REF_NAME -> channel=$CHANNEL promote-latest=$PROMOTE"
+          echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
+          echo "promote-latest=$PROMOTE" >> $GITHUB_OUTPUT
+
+      # skip-publish is now only the manual dry-run switch. It used to also mean
+      # "this is a pre-release", which is what stopped pre-releases from ever
+      # reaching the release bucket: the dispatch below was gated on it.
+      - name: Skip publish (manual dry run)
+        id: skip-publish
+        if: inputs.skip-publish == true
+        run: |
+          echo "Skipping publish: requested by workflow input"
           echo "skip-publish=true" >> $GITHUB_OUTPUT
           echo "skip-publish=true" >> $GITHUB_ENV
 
@@ -99,7 +176,7 @@ jobs:
       # These packages have been installed on the self-hosted runner using ansible from the private repo
 
       - name: Azure login
-        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
         with:
           client-id: ${{ secrets.TSIGN_AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.TSIGN_AZURE_TENANT_ID}}
@@ -140,7 +217,7 @@ jobs:
       # created a discussion on the issue here https://github.com/orgs/goreleaser/discussions/5943
 
       - name: Run GoReleaser and promote latest
-        if: ${{ inputs.skip-publish != true && steps.skip-publish.outputs.skip-publish != 'true' }}
+        if: ${{ inputs.skip-publish != true && steps.channel.outputs.promote-latest == 'true' }}
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
@@ -166,7 +243,7 @@ jobs:
           MAKE_LATEST: ${{ inputs.make-latest == false && 'false' || 'true' }}
 
       - name: Run GoReleaser without promoting 'latest'
-        if: ${{ inputs.skip-publish == true || steps.skip-publish.outputs.skip-publish == 'true' }}
+        if: ${{ inputs.skip-publish == true || steps.channel.outputs.promote-latest != 'true' }}
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
@@ -208,6 +285,10 @@ jobs:
 
   trigger-installer-release:
     name: Trigger Installer Release
+    # Runs for every channel. Gating this on "is a pre-release" is what kept
+    # pre-releases out of the release bucket entirely and made the publish a
+    # manual runbook step. installer decides what a preview release is allowed
+    # to trigger; packaging stays stable-only there.
     if: ${{ inputs.skip-publish != true && needs.goreleaser.outputs.skip-publish != 'true' }}
     runs-on: ubuntu-latest
     needs: goreleaser
@@ -240,24 +321,32 @@ jobs:
             mondoohq/installer
             mondoohq/cnspec
 
-      - name: Check if pre-release
-        id: is_prerelease
-        run: echo "is_pre=${IS_PRE}" >> $GITHUB_OUTPUT
-        env:
-          IS_PRE: ${{ contains(github.ref_name, '-pre') }}
-
       - name: Trigger installer release
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ steps.generate-token.outputs.token }}
           repository: "mondoohq/installer"
           event-type: trigger-release
+          # channel is an assertion, not an instruction: installer derives the
+          # same answer from the version itself, so an older installer that does
+          # not read this field still behaves correctly. skip-publish keeps its
+          # old meaning for consumers that read it.
+          #
+          # format() keeps skip-publish a JSON *string*, as it has always been.
+          # It used to come from a step output, which is always a string, so
+          # toJSON produced "true"; comparing the channel directly yields a
+          # boolean, and toJSON would emit an unquoted true. The one consumer
+          # normalizes in bash and handles both, but this is a cross-repo wire
+          # contract and its type should not change as a side effect of
+          # refactoring how the value is computed.
           client-payload: >-
-            {"version": ${{ toJSON(github.ref_name) }}, "skip-publish": ${{ toJSON(steps.is_prerelease.outputs.is_pre) }}}
+            {"version": ${{ toJSON(github.ref_name) }}, "channel": ${{ toJSON(needs.goreleaser.outputs.channel) }}, "skip-publish": ${{ toJSON(format('{0}', needs.goreleaser.outputs.channel != 'stable')) }}}
 
   mondoo-operator-cnspec:
     name: Trigger Mondoo Operator cnspec image release
-    if: ${{ inputs.skip-publish != true && needs.goreleaser.outputs.skip-publish != 'true' }}
+    # Stable only: the operator ships cnspec to customer clusters, which is not
+    # somewhere a release candidate belongs.
+    if: ${{ inputs.skip-publish != true && needs.goreleaser.outputs.skip-publish != 'true' && needs.goreleaser.outputs.channel == 'stable' }}
     runs-on: ubuntu-latest
     needs: goreleaser
     steps:
@@ -280,3 +369,134 @@ jobs:
           event-type: update
           client-payload: >-
             {"version": ${{ toJSON(github.ref_name) }}}
+
+  # Reports the release outcome to #release-coordination.
+  #
+  # Nothing depends on this job, and it never gates the release: a Slack outage,
+  # a rotated token or a renamed channel must not turn a good release red. It
+  # runs on failure too, because a release that did not happen is the case most
+  # worth announcing.
+  notify:
+    name: Report the release to Slack
+    if: ${{ always() && github.ref_type == 'tag' }}
+    needs: [goreleaser, trigger-installer-release, mondoo-operator-cnspec]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compose the message
+        id: meta
+        env:
+          CHANNEL: ${{ needs.goreleaser.outputs.channel }}
+          BUILD: ${{ needs.goreleaser.result }}
+          DISPATCH: ${{ needs.trigger-installer-release.result }}
+          OPERATOR: ${{ needs.mondoo-operator-cnspec.result }}
+          # Through env rather than `${{ }}` inline: an expression is pasted into
+          # the script before bash parses it, so a tag carrying a quote or `$(…)`
+          # would be read as shell rather than as text.
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # The tag reaches Slack through two different parsers, and it is not
+          # validated anywhere upstream -- git allows `"`, `&`, `<` and `>` in a
+          # ref name. `ref_safe` is escaped for both: backslash and quote so the
+          # value cannot terminate the double-quoted YAML scalar it is pasted
+          # into (that one fails the whole step, not just the rendering), then
+          # the three characters Slack reads as markup. `ref_url` is for the
+          # link target, where percent-encoding rather than escaping is correct.
+          ref_safe=$REF_NAME
+          ref_safe=${ref_safe//\\/\\\\}
+          ref_safe=${ref_safe//\"/\\\"}
+          ref_safe=${ref_safe//&/&amp;}
+          ref_safe=${ref_safe//</&lt;}
+          ref_safe=${ref_safe//>/&gt;}
+          ref_url=$(jq -rn --arg v "$REF_NAME" '$v|@uri')
+          {
+            echo "version=$ref_safe"
+            echo "version_url=$ref_url"
+          } >> "$GITHUB_OUTPUT"
+
+          # Skipped is not failed: on a pre-release the operator image trigger
+          # is skipped by design, and reporting that red would train everyone to
+          # ignore the colour.
+          ok=true
+          for result in "$BUILD" "$DISPATCH" "$OPERATOR"; do
+            case "$result" in
+              success|skipped) ;;
+              *) ok=false ;;
+            esac
+          done
+
+          if [ "$ok" = "true" ]; then
+            echo "header=:rocket: cnspec $ref_safe released" >> "$GITHUB_OUTPUT"
+            echo "colour=good" >> "$GITHUB_OUTPUT"
+            echo "mention=" >> "$GITHUB_OUTPUT"
+          else
+            echo "header=:x: cnspec $ref_safe failed to release" >> "$GITHUB_OUTPUT"
+            echo "colour=danger" >> "$GITHUB_OUTPUT"
+            echo "mention=<!here> " >> "$GITHUB_OUTPUT"
+          fi
+
+          case "$CHANNEL" in
+            preview) echo "channel_line=:test_tube: *preview* — install with \`--channel preview\`, not promoted to latest" >> "$GITHUB_OUTPUT" ;;
+            *)       echo "channel_line=:package: *stable* — this is what a default install gets" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+          # Emits the value only. The label and the newline stay in the Slack payload,
+          # where `\n` inside a double-quoted YAML scalar is a real escape. A `\n` that
+          # arrives by substitution only renders because of when GitHub interpolates,
+          # which is not a property worth depending on.
+          status() {
+            case "$1" in
+              success) echo ":white_check_mark: Done" ;;
+              skipped) echo ":double_vertical_bar: Skipped" ;;
+              "")      echo ":grey_question: Not run" ;;
+              *)       echo ":x: $1" ;;
+            esac
+          }
+          {
+            echo "build_status=$(status "$BUILD")"
+            echo "dispatch_status=$(status "$DISPATCH")"
+            echo "operator_status=$(status "$OPERATOR")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post to Slack
+        continue-on-error: true
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            channel: "${{ env.SLACK_BOT_CHANNEL_ID }}"
+            text: "${{ steps.meta.outputs.mention }}${{ steps.meta.outputs.header }}"
+            blocks:
+              - type: "header"
+                text:
+                  type: "plain_text"
+                  text: "${{ steps.meta.outputs.header }}"
+                  emoji: true
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "${{ steps.meta.outputs.channel_line }}"
+              - type: "section"
+                fields:
+                  - type: "mrkdwn"
+                    text: "*Repository:*\n`${{ github.repository }}`"
+                  - type: "mrkdwn"
+                    text: "*Version:*\n`${{ steps.meta.outputs.version }}`"
+                  - type: "mrkdwn"
+                    text: "*Triggered by:*\n${{ github.actor }}"
+                  - type: "mrkdwn"
+                    text: "*Workflow run:*\n<https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|Open run>"
+              - type: "section"
+                fields:
+                  - type: "mrkdwn"
+                    text: "*Build:*\n${{ steps.meta.outputs.build_status }}"
+                  - type: "mrkdwn"
+                    text: "*Publish trigger:*\n${{ steps.meta.outputs.dispatch_status }}"
+                  - type: "mrkdwn"
+                    text: "*Operator image:*\n${{ steps.meta.outputs.operator_status }}"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "*Release notes:*\n<https://github.com/${{ github.repository }}/releases/tag/${{ steps.meta.outputs.version_url }}|${{ steps.meta.outputs.version }}>"
