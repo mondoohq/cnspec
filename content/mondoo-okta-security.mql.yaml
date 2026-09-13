@@ -3912,7 +3912,9 @@ queries:
       desc: |
         This check verifies that signing in to the org actually requires a second factor, not merely that users have one enrolled.
 
-        Global session policy rules decide what a user must present to establish an Okta session. Each rule is written in the Admin Console under Security > Global Session Policy and independently states whether multifactor authentication is required for the people and conditions it matches. This check requires every active rule in every active policy to demand a factor, including the Default Rule at the bottom of the default policy, which matches every sign-in that no other rule catches.
+        Global session policy rules decide what a user must present to establish an Okta session. Each rule is written in the Admin Console under Security > Global Session Policy and independently states whether multifactor authentication is required for the people and conditions it matches. This check requires every active rule in every active policy that allows sign-in to demand a factor, including the Default Rule at the bottom of the default policy, which matches every sign-in that no other rule catches.
+
+        Rules that deny access are exempt. A deny rule blocks the sign-in outright, so it issues no session and never prompts for a factor, and Okta's own deny-rule example leaves the factor requirement off. Requiring a factor on a rule that grants nothing would report a defect where none exists.
 
         **Why this matters**
 
@@ -3928,9 +3930,9 @@ queries:
 
         1. In the Admin Console, go to **Security > Global Session Policy** on Okta Identity Engine orgs, or go to **Security > Authentication** and open the **Sign On** tab on Okta Classic Engine orgs.
         2. Select each active policy.
-        3. Review each active rule, including the **Default Rule**, and confirm it requires a second factor.
+        3. Review each active rule that is set to **Allow** access, including the **Default Rule**, and confirm it requires a second factor. Rules set to **Deny** access need no factor.
 
-        A passing result shows every active rule requiring multi-factor authentication; a failing result shows at least one active rule that does not require a factor.
+        A passing result shows every active rule that allows access requiring multi-factor authentication; a failing result shows at least one active rule that allows access without requiring a factor.
 
         ### Audit via API
 
@@ -3941,7 +3943,7 @@ queries:
           "https://$OKTA_ORG.okta.com/api/v1/policies?type=OKTA_SIGN_ON"
         ```
 
-        For each active policy, retrieve its rules with `GET /api/v1/policies/{id}/rules`. A passing response has every active rule with `actions.signon.requireFactor` set to `true`; a failing response has at least one active rule with it set to `false`.
+        For each active policy, retrieve its rules with `GET /api/v1/policies/{id}/rules`. A passing response has every active rule either with `actions.signon.access` set to `DENY` or with `actions.signon.requireFactor` set to `true`; a failing response has at least one active rule whose `actions.signon.access` is `ALLOW` and whose `actions.signon.requireFactor` is `false`.
       remediation:
         - id: console
           desc: |
@@ -3952,7 +3954,7 @@ queries:
             On Okta Identity Engine orgs:
 
             1. Go to **Security > Global Session Policy**.
-            2. For each active rule, select **Edit**, set **Multifactor authentication (MFA) is** to **Required**, choose when **Users will be prompted for MFA**, and save the rule. **Establish the user session with** only picks the first factor and does not make a second factor required.
+            2. For each active rule whose **Access** is set to **Allowed**, select **Edit**, set **Multifactor authentication (MFA) is** to **Required**, choose when **Users will be prompted for MFA**, and save the rule. **Establish the user session with** only picks the first factor and does not make a second factor required.
             3. Go to **Security > Authentication Policies** to enforce MFA at the point each application is accessed. Open each policy, edit its rules, and require a second factor for app access.
 
             On Okta Classic Engine orgs:
@@ -3961,14 +3963,14 @@ queries:
             2. For each active policy, review its rules and select **Edit** on each rule.
             3. Select **Prompt for Factor** and choose how often users are prompted, then select **Update Rule**.
 
-            Repeat for all active rules in every active policy, including each policy's **Default Rule**, so no rule allows password-only sign-in. Requiring a second factor blocks an attacker who holds only a stolen or guessed password.
+            Repeat for all active rules that allow access in every active policy, including each policy's **Default Rule**, so no rule allows password-only sign-in. Leave rules that deny access alone, since they issue no session at all. Requiring a second factor blocks an attacker who holds only a stolen or guessed password.
 
             **Confirm that users can complete MFA before you save.** Accounts with no enrolled authenticator cannot establish a session once their rule requires a factor, so enroll users first and keep a break-glass admin who can sign in.
         - id: terraform
           desc: |
             Set `mfa_required = true` on every `okta_policy_rule_signon` resource, together with `mfa_prompt`, which Okta requires whenever MFA is required. `mfa_prompt` chooses when users are challenged: `ALWAYS` on every sign-in, `DEVICE` for a new device, or `SESSION` after the factor lifetime expires. The `policy_id` refers to the global session policy the rule belongs to.
 
-            A new rule does not change the rules that already exist. The check evaluates every active rule in every active global session policy, so edit existing rules that allow password-only sign-in, including each policy's **Default Rule**, in the Admin Console as well.
+            A new rule does not change the rules that already exist. The check evaluates every active rule in every active global session policy except those that set `access = "DENY"`, so edit existing rules that allow password-only sign-in, including each policy's **Default Rule**, in the Admin Console as well.
 
             ```hcl
             resource "okta_policy_rule_signon" "require_mfa" {
@@ -3986,20 +3988,20 @@ queries:
     filters: asset.platform == "okta-org"
     mql: |
       okta.policies.signOn.where(status == "ACTIVE").all(
-        rules.where(status == "ACTIVE").all(actions["signon"]["requireFactor"] == true)
+        rules.where(status == "ACTIVE").all(actions["signon"]["access"] == "DENY" || actions["signon"]["requireFactor"] == true)
       )
   - uid: mondoo-okta-security-signon-requires-mfa-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.providers.any( nameLabel == "okta" )
     mql: |
-      terraform.resources("okta_policy_rule_signon").all( arguments['mfa_required'] == /^var\./ || arguments['mfa_required'] == true || arguments['factor_required'] == true )
+      terraform.resources("okta_policy_rule_signon").all( arguments['access'] == "DENY" || arguments['mfa_required'] == /^var\./ || arguments['mfa_required'] == true || arguments['factor_required'] == true )
   - uid: mondoo-okta-security-signon-requires-mfa-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( providerName == /okta/ )
     mql: |
-      terraform.plan.resourceChanges.where( type == "okta_policy_rule_signon" ).all( change.after['mfa_required'] == true || change.after['factor_required'] == true )
+      terraform.plan.resourceChanges.where( type == "okta_policy_rule_signon" ).all( change.after['access'] == "DENY" || change.after['mfa_required'] == true || change.after['factor_required'] == true )
   - uid: mondoo-okta-security-signon-requires-mfa-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == /okta_policy_rule_signon/ )
     mql: |
-      terraform.state.resources.where( type == "okta_policy_rule_signon" ).all( values['mfa_required'] == true || values['factor_required'] == true )
+      terraform.state.resources.where( type == "okta_policy_rule_signon" ).all( values['access'] == "DENY" || values['mfa_required'] == true || values['factor_required'] == true )
   # No Terraform variants: counts ORG_ADMIN role assignments across the org.
   # Per-user `okta_user_admin_roles` HCL would only see TF-managed grants and
   # miss assignments made via the API or Admin Console — the runtime check
