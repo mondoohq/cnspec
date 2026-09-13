@@ -75,6 +75,36 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.token.outputs.token }}
 
+      # merge_commit_sha is only the real commit for a *merged* PR; on an open
+      # one GitHub puts the throwaway test-merge commit there, which belongs to
+      # no branch. The `merged == true` guard above should mean we never see
+      # that, but the cost of being wrong is a release tag -- and a tag on an
+      # unreachable commit produces a build from a tree that is in nobody's
+      # history, which is far harder to notice afterwards than a failed job.
+      #
+      # This also records what was tagged versus where the branch had got to,
+      # so a run's log answers "did this release include anything beyond the
+      # bump?" without reconstructing it later.
+      - name: Verify the target is on the base branch
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+          SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SHA" ]; then
+            echo "::error::the event carried no merge_commit_sha; refusing to guess what to tag"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$SHA" "origin/${BASE}"; then
+            echo "::error::${SHA} is not an ancestor of origin/${BASE}; refusing to tag a commit that is not on the branch"
+            exit 1
+          fi
+          tip=$(git rev-parse "origin/${BASE}")
+          echo "::notice::tagging ${SHA} on ${BASE}"
+          if [ "$tip" != "$SHA" ]; then
+            echo "::notice::${BASE} has since advanced to ${tip}; those commits are deliberately NOT in this release"
+          fi
+
       - name: Skip if tag exists
         id: check
         env:
