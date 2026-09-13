@@ -2190,42 +2190,48 @@ queries:
   # ---------------------------------------------------------------------------
   # Instances
   # ---------------------------------------------------------------------------
-  # No Terraform variants: internetExposed is a computed inbound-reachability signal derived from public IP, EIP, and effective security-group rules; no single alicloud_instance attribute reproduces it, so a static variant would misrepresent the check.
+  # No Terraform variants: internetExposed is true for any public IP address or associated elastic IP address, and an elastic IP address can be associated through a separate alicloud_eip_association resource, so no single alicloud_instance attribute reproduces it.
   - uid: mondoo-alibaba-security-ecs-instance-no-public-ip
     title: Ensure ECS instances are not directly exposed to the internet
     impact: 70
     docs:
       desc: |
-        This check verifies that ECS instances are not directly reachable from the internet, meaning they carry no public or elastic IP that permissive security-group rules leave open.
+        This check verifies that ECS instances have no internet-routable address of their own, so no instance can be reached directly from the internet.
 
-        Direct exposure is the combination of two things: a routable address on the instance, either an assigned public IP or a bound elastic IP, and security-group rules that let outside traffic reach it. Both are managed in the ECS console, where an elastic IP is unbound from the instance and the attached security groups are tightened. Workloads that must serve external traffic belong behind a load balancer or a NAT gateway instead, so the address that faces the internet is not the host itself.
+        An instance gets a routable address in one of two ways: a public IP address assigned when the instance is created, or an elastic IP address associated with it later. Either one fails the check, whatever the attached security groups allow. Both appear on the instance in the ECS console, where an elastic IP address is unbound from the instance and a public IP address is first converted to an elastic IP address and then unbound. Workloads that must serve external traffic belong behind a load balancer, and workloads that only need outbound access belong behind a NAT gateway, so the address that faces the internet is not the host itself.
 
         **Why this matters**
 
-        A publicly addressed instance is discovered and probed continuously, and every service it runs is evaluated by whoever finds it. The host operating system, not a managed edge, becomes the thing that has to survive that traffic.
+        A security group is the only thing standing between a publicly addressed instance and the internet, and security groups change often. A rule opened for a quick test, a group attached to the wrong instance, or a `0.0.0.0/0` source added while troubleshooting exposes every listening service on the host at once. An instance without a public address is one misconfiguration further away from exposure, which is why the address itself is the finding even when today's rules admit nothing.
+
+        Once reachable, a publicly addressed instance is discovered and probed continuously, and every service it runs is evaluated by whoever finds it. The host operating system, not a managed edge, becomes the thing that has to survive that traffic.
 
         Fronting the workload with a load balancer or gateway reintroduces a layer where filtering, rate limiting, TLS termination, and request logging happen before anything reaches the instance. A directly exposed host has none of that, and an attack against it leaves evidence only in whatever the host itself records.
 
         The consequence of compromise is also worse. An internet-facing instance still sits inside the private network, so a successful intrusion starts from a position with routes to internal subnets and internal services, turning an external hit into a foothold for lateral movement.
 
-        Some designs legitimately require a public address, such as a NAT instance or a bastion. Where that is true, the exposure should be one narrow, deliberately scoped path rather than a general-purpose host, and the security-group checks in this policy remain the control that keeps administrative ports closed.
+        Some designs legitimately require a public address, such as a NAT instance or a bastion host. Those instances still fail, so record them as deliberate exceptions and keep their security groups limited to the ports and source ranges the design needs.
       audit: |
         ### Audit via Console
 
-        1. Sign in to the [ECS console](https://ecs.console.aliyun.com/).
-        2. Open each instance and review its **Public IP** / **Elastic IP** and attached security groups.
+        1. Sign in to the [ECS console](https://ecs.console.aliyun.com/) and select a region.
+        2. On the **Instances** page, review the **IP Address** column for each instance.
+        3. Repeat for every region that hosts instances.
 
-        A passing instance has no public reachability. A failing instance has a public or elastic IP reachable via permissive security-group rules.
+        A passing instance shows only private IP addresses. A failing instance shows a public IP address or an elastic IP address, regardless of the rules in its security groups.
 
         ### Audit via CLI
 
-        1. List instances and inspect public addresses:
+        1. List the public IP address and elastic IP address of every instance in a region:
 
         ```bash
-        aliyun ecs DescribeInstances --output cols=InstanceId,PublicIpAddress,EipAddress
+        aliyun ecs DescribeInstances --RegionId <region-id> --PageSize 100 \
+          --output cols=InstanceId,PublicIpAddress.IpAddress,EipAddress.IpAddress rows='Instances.Instance[]'
         ```
 
-        A passing instance returns no public or elastic IP. A failing instance returns one.
+        2. Repeat for every region that hosts instances. In a region with more than 100 instances, rerun the command with `--PageNumber 2`, `--PageNumber 3`, and so on.
+
+        A passing instance shows `[]` under `PublicIpAddress.IpAddress` and nothing under `EipAddress.IpAddress`. A failing instance shows an address in either column. Security group rules do not affect the result, so they don't need to be reviewed to confirm a finding.
       remediation:
         - id: console
           desc: |
@@ -2253,7 +2259,7 @@ queries:
             `<eip-alloc-id>` is the `AllocationId` in the instance's `EipAddress` field from `aliyun ecs DescribeInstances --InstanceIds '["<instance-id>"]'`. Skip the first command for an instance that only has an elastic IP address.
 
             **Connections that reach the instance through its public address stop working once the address is unbound.** The converted elastic IP address is billed separately while it stays allocated, so release it with `aliyun vpc ReleaseEipAddress --AllocationId <eip-alloc-id>` if nothing else needs it.
-        # No Terraform remediation: removing computed inbound reachability spans elastic IP association, public IP assignment, and security-group rules across multiple resources rather than one alicloud_instance attribute.
+        # No Terraform remediation: removing the address spans public IP assignment on alicloud_instance and elastic IP association on alicloud_eip_association rather than one alicloud_instance attribute.
     variants:
       - uid: mondoo-alibaba-security-ecs-instance-no-public-ip-alicloud
     tags:
