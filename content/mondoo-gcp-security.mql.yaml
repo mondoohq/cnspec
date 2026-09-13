@@ -31928,9 +31928,6 @@ queries:
     filters: asset.platform == 'gcp-memorystore-instance'
     mql: |
       gcp.project.memorystoreService.instance.pscAttachmentDetails.all(connectionType != "PUBLIC_ENDPOINT")
-  # No Terraform variants yet. The google_memorystore_instance engine_version
-  # attribute uses the same value space as the API field this check reads, so
-  # variants are feasible. Tracked in #3938.
   - uid: mondoo-gcp-security-memorystore-engine-version-supported
     title: Ensure Memorystore instances run a current Valkey engine version
     impact: 70
@@ -31949,11 +31946,30 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-5
+    variants:
+      - uid: mondoo-gcp-security-memorystore-engine-version-supported-gcp
+        tags:
+          mondoo.com/filter-title: GCP Memorystore (Valkey/Redis)
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-memorystore-engine-version-supported-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memorystore-engine-version-supported-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memorystore-engine-version-supported-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that a Memorystore instance runs a current Valkey engine version rather than the oldest line the service still offers.
 
         The Memorystore API serves Memorystore for Valkey and reports `engineVersion` as one of `VALKEY_7_2`, `VALKEY_8_0`, `VALKEY_9_0`, or `VALKEY_9_1`. Memorystore patches within a major version but never performs the major-version upgrade for you, so an instance created on `VALKEY_7_2` keeps running that line until an operator upgrades it. This check fails an instance reporting `VALKEY_7_2`. The version is shown under **Engine version** on the instance details page, and `gcloud memorystore instances update INSTANCE_ID --location=LOCATION --engine-version=VALKEY_9_0` moves the instance forward.
+
+        The Terraform versions of this check read `engine_version` on `google_memorystore_instance`, which holds the same `VALKEY_*` strings the API reports. The attribute is optional: when it is omitted, Memorystore assigns the current default version, so an absent attribute passes and only an explicit `VALKEY_7_2` fails.
 
         **Why this matters**
 
@@ -32038,6 +32054,7 @@ queries:
         title: Memorystore for Valkey release notes
       - url: https://valkey.io/topics/security/
         title: Valkey security advisories
+  - uid: mondoo-gcp-security-memorystore-engine-version-supported-gcp
     filters: asset.platform == 'gcp-memorystore-instance'
     mql: |
       # The Memorystore API reports engineVersion as VALKEY_7_2, VALKEY_8_0,
@@ -32045,6 +32062,29 @@ queries:
       # offers and the first to leave upstream maintenance, on 2027-04-16.
       # Extend this list as Google retires further versions.
       gcp.project.memorystoreService.instance.engineVersion.notIn(["VALKEY_7_2"])
+  - uid: mondoo-gcp-security-memorystore-engine-version-supported-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_memorystore_instance')
+    mql: |
+      # engine_version is optional and computed: an omitted attribute reads null
+      # and Memorystore assigns the current default version, so it passes.
+      terraform.resources('google_memorystore_instance').all(
+        arguments.engine_version.notIn(["VALKEY_7_2"])
+      )
+  - uid: mondoo-gcp-security-memorystore-engine-version-supported-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_memorystore_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_memorystore_instance').all(
+        change.after['engine_version'].notIn(["VALKEY_7_2"])
+      )
+  - uid: mondoo-gcp-security-memorystore-engine-version-supported-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_memorystore_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_memorystore_instance').all(
+        values['engine_version'].notIn(["VALKEY_7_2"])
+      )
   - uid: mondoo-gcp-security-datastream-stream-cmek-encryption
     title: Ensure Datastream streams are encrypted with CMEK
     impact: 70
