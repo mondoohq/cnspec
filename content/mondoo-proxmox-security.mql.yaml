@@ -1236,6 +1236,8 @@ queries:
 
             Use this Ansible playbook to create enabled management allow rules and then enable the cluster firewall. Set `management_cidr` to the CIDR of the network you administer the cluster from; the `10.0.0.0/24` value is only an example.
 
+            `pvesh create /cluster/firewall/rules` never looks for an existing identical rule. It prepends whatever you pass, so a second run of an unguarded playbook adds a second copy of every rule. The playbook below reads the current rules and options first and acts only when the cluster does not already have the rule or the setting, which makes a repeat run a no-op.
+
             **Enabling the firewall with the wrong source network locks administrators out.** Keep an existing session open until you confirm web UI and SSH access still work.
 
             ```yaml
@@ -1246,30 +1248,46 @@ queries:
               run_once: true
               vars:
                 management_cidr: "10.0.0.0/24"
+                management_rules:
+                  - dport: "22"
+                    comment: Allow SSH from management
+                  - dport: "8006"
+                    comment: Allow PVE Web UI from management
 
               tasks:
-                - name: Allow SSH from management network
+                - name: Read the existing cluster firewall rules
+                  ansible.builtin.command: pvesh get /cluster/firewall/rules --output-format json
+                  register: cluster_rules
+                  changed_when: false
+
+                - name: Read the current cluster firewall options
+                  ansible.builtin.command: pvesh get /cluster/firewall/options --output-format json
+                  register: cluster_options
+                  changed_when: false
+
+                - name: Allow management traffic from the management network
                   ansible.builtin.command: >-
                     pvesh create /cluster/firewall/rules
-                    --type in --action ACCEPT --proto tcp --dport 22
+                    --type in --action ACCEPT --proto tcp --dport {{ item.dport }}
                     --source {{ management_cidr }} --enable 1
-                    --comment "Allow SSH from management"
-                  register: ssh_rule
-                  changed_when: ssh_rule.rc == 0
-                  failed_when: ssh_rule.rc not in [0, 2]
+                    --comment "{{ item.comment }}"
+                  loop: "{{ management_rules }}"
+                  when: >-
+                    cluster_rules.stdout | from_json
+                    | selectattr('enable', 'defined') | selectattr('enable', 'equalto', 1)
+                    | selectattr('type', 'equalto', 'in')
+                    | selectattr('action', 'equalto', 'ACCEPT')
+                    | selectattr('proto', 'defined') | selectattr('proto', 'equalto', 'tcp')
+                    | selectattr('source', 'defined')
+                    | selectattr('source', 'equalto', management_cidr)
+                    | selectattr('dport', 'defined')
+                    | selectattr('dport', 'equalto', item.dport)
+                    | list | length == 0
+                  changed_when: true
 
-                - name: Allow PVE Web UI from management network
-                  ansible.builtin.command: >-
-                    pvesh create /cluster/firewall/rules
-                    --type in --action ACCEPT --proto tcp --dport 8006
-                    --source {{ management_cidr }} --enable 1
-                    --comment "Allow PVE Web UI from management"
-                  register: gui_rule
-                  changed_when: gui_rule.rc == 0
-                  failed_when: gui_rule.rc not in [0, 2]
-
-                - name: Enable cluster firewall via pvesh
+                - name: Enable the cluster firewall
                   ansible.builtin.command: pvesh set /cluster/firewall/options --enable 1
+                  when: (cluster_options.stdout | from_json).enable | default(0) | int != 1
                   changed_when: true
             ```
 
@@ -1391,6 +1409,8 @@ queries:
 
             Use this Ansible playbook to set the default input policy to `DROP` after creating enabled management allow rules. Set `management_cidr` to the CIDR of the network you administer the cluster from; the `10.0.0.0/24` value is only an example.
 
+            `pvesh create /cluster/firewall/rules` never looks for an existing identical rule. It prepends whatever you pass, so a second run of an unguarded playbook adds a second copy of every rule. The playbook below reads the current rules and options first and acts only when the cluster does not already have the rule or the setting, which makes a repeat run a no-op.
+
             **A `DROP` policy with the wrong source network locks administrators out.** Keep an existing session open until you confirm access still works, and have console or IPMI access ready.
 
             ```yaml
@@ -1401,30 +1421,46 @@ queries:
               run_once: true
               vars:
                 management_cidr: "10.0.0.0/24"
+                management_rules:
+                  - dport: "22"
+                    comment: Allow SSH from management
+                  - dport: "8006"
+                    comment: Allow PVE Web UI from management
 
               tasks:
-                - name: Allow SSH from management network
+                - name: Read the existing cluster firewall rules
+                  ansible.builtin.command: pvesh get /cluster/firewall/rules --output-format json
+                  register: cluster_rules
+                  changed_when: false
+
+                - name: Read the current cluster firewall options
+                  ansible.builtin.command: pvesh get /cluster/firewall/options --output-format json
+                  register: cluster_options
+                  changed_when: false
+
+                - name: Allow management traffic from the management network
                   ansible.builtin.command: >-
                     pvesh create /cluster/firewall/rules
-                    --type in --action ACCEPT --proto tcp --dport 22
+                    --type in --action ACCEPT --proto tcp --dport {{ item.dport }}
                     --source {{ management_cidr }} --enable 1
-                    --comment "Allow SSH from management"
-                  register: ssh_rule
-                  changed_when: ssh_rule.rc == 0
-                  failed_when: ssh_rule.rc not in [0, 2]
+                    --comment "{{ item.comment }}"
+                  loop: "{{ management_rules }}"
+                  when: >-
+                    cluster_rules.stdout | from_json
+                    | selectattr('enable', 'defined') | selectattr('enable', 'equalto', 1)
+                    | selectattr('type', 'equalto', 'in')
+                    | selectattr('action', 'equalto', 'ACCEPT')
+                    | selectattr('proto', 'defined') | selectattr('proto', 'equalto', 'tcp')
+                    | selectattr('source', 'defined')
+                    | selectattr('source', 'equalto', management_cidr)
+                    | selectattr('dport', 'defined')
+                    | selectattr('dport', 'equalto', item.dport)
+                    | list | length == 0
+                  changed_when: true
 
-                - name: Allow PVE Web UI from management network
-                  ansible.builtin.command: >-
-                    pvesh create /cluster/firewall/rules
-                    --type in --action ACCEPT --proto tcp --dport 8006
-                    --source {{ management_cidr }} --enable 1
-                    --comment "Allow PVE Web UI from management"
-                  register: gui_rule
-                  changed_when: gui_rule.rc == 0
-                  failed_when: gui_rule.rc not in [0, 2]
-
-                - name: Set default input policy to DROP
+                - name: Set the default input policy to DROP
                   ansible.builtin.command: pvesh set /cluster/firewall/options --policy_in DROP
+                  when: (cluster_options.stdout | from_json).policy_in | default('') != 'DROP'
                   changed_when: true
             ```
 
@@ -1634,6 +1670,8 @@ queries:
 
             Use this Ansible playbook to create enabled baseline cluster firewall rules. Set `management_cidr` to the CIDR of the network you administer the cluster from; the `10.0.0.0/24` value is only an example.
 
+            `pvesh create /cluster/firewall/rules` never looks for an existing identical rule. It prepends whatever you pass, so a second run of an unguarded playbook adds a second copy of every rule. The playbook below reads the current rules first and creates one only when no enabled rule already matches it, which makes a repeat run a no-op.
+
             ```yaml
             ---
             - name: Seed Proxmox cluster firewall rules
@@ -1642,27 +1680,37 @@ queries:
               run_once: true
               vars:
                 management_cidr: "10.0.0.0/24"
+                management_rules:
+                  - dport: "22"
+                    comment: Allow SSH from management
+                  - dport: "8006"
+                    comment: Allow PVE Web UI from management
 
               tasks:
-                - name: Allow SSH from management network
-                  ansible.builtin.command: >-
-                    pvesh create /cluster/firewall/rules
-                    --type in --action ACCEPT --proto tcp --dport 22
-                    --source {{ management_cidr }} --enable 1
-                    --comment "Allow SSH from management"
-                  register: ssh_rule
-                  changed_when: ssh_rule.rc == 0
-                  failed_when: ssh_rule.rc not in [0, 2]
+                - name: Read the existing cluster firewall rules
+                  ansible.builtin.command: pvesh get /cluster/firewall/rules --output-format json
+                  register: cluster_rules
+                  changed_when: false
 
-                - name: Allow PVE Web UI from management network
+                - name: Allow management traffic from the management network
                   ansible.builtin.command: >-
                     pvesh create /cluster/firewall/rules
-                    --type in --action ACCEPT --proto tcp --dport 8006
+                    --type in --action ACCEPT --proto tcp --dport {{ item.dport }}
                     --source {{ management_cidr }} --enable 1
-                    --comment "Allow PVE Web UI from management"
-                  register: gui_rule
-                  changed_when: gui_rule.rc == 0
-                  failed_when: gui_rule.rc not in [0, 2]
+                    --comment "{{ item.comment }}"
+                  loop: "{{ management_rules }}"
+                  when: >-
+                    cluster_rules.stdout | from_json
+                    | selectattr('enable', 'defined') | selectattr('enable', 'equalto', 1)
+                    | selectattr('type', 'equalto', 'in')
+                    | selectattr('action', 'equalto', 'ACCEPT')
+                    | selectattr('proto', 'defined') | selectattr('proto', 'equalto', 'tcp')
+                    | selectattr('source', 'defined')
+                    | selectattr('source', 'equalto', management_cidr)
+                    | selectattr('dport', 'defined')
+                    | selectattr('dport', 'equalto', item.dport)
+                    | list | length == 0
+                  changed_when: true
             ```
 
   # =================================================================
