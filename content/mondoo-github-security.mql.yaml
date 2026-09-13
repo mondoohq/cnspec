@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-github-organization-security
     name: Mondoo GitHub Organization Security
-    version: 1.8.7
+    version: 1.8.8
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -56,7 +56,7 @@ policies:
     scoring_system: highest impact
   - uid: mondoo-github-repository-security
     name: Mondoo GitHub Repository Security
-    version: 1.8.6
+    version: 1.8.7
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -204,10 +204,10 @@ queries:
             To enable two-factor authentication for all users in your GitHub organization, follow these steps:
               1. Navigate to your organization on GitHub.
               2. Go to **Settings** > **Security** > **Authentication security**.
-              3. Under "Two-factor authentication," enable the option to require two-factor authentication for all members of the organization.
-              4. Save the changes.
+              3. Under "Two-factor authentication," select **Require two-factor authentication for everyone in your organization**.
+              4. Click **Save**, review the list of users who will be affected, and click **Confirm**.
 
-            Warning: When you require two-factor authentication, members, outside collaborators, and billing managers who have not enabled two-factor authentication are removed from the organization. Confirm your own account has two-factor authentication enabled and notify affected users before turning on enforcement.
+            **Accounts without two-factor authentication lose access as soon as you save.** Members and billing managers who have not enrolled keep their membership and their seat, but cannot reach the organization's resources until they add a second factor. Outside collaborators who have not enrolled are removed from the organization and lose access to its repositories and to their forks of its private repositories. Confirm your own account has two-factor authentication enabled and notify affected users before turning on enforcement.
 
             For more details, see [Requiring two-factor authentication in your organization](https://docs.github.com/en/organizations/keeping-your-organization-secure/managing-two-factor-authentication-for-your-organization/requiring-two-factor-authentication-in-your-organization) in the GitHub documentation.
         # No Terraform remediation: github_organization_settings has no two-factor-enforcement argument. Earlier versions of this remediation referenced `enforce_two_factor_authentication`, which is not a real argument and would fail terraform plan with "Unsupported argument".
@@ -470,7 +470,7 @@ queries:
           desc: |
             **Using the GitHub web UI**
 
-            1. Navigate to your organization's `.github` repository, or create it if it does not exist. A `SECURITY.md` file in this repository applies to every repository in the organization that has no security policy of its own.
+            1. Navigate to your organization's `.github` repository, or create it as a public repository if it does not exist. A `SECURITY.md` file in this repository applies to every repository in the organization that has no security policy of its own, and GitHub only serves it from a public `.github` repository.
             2. Click the **Security and quality** tab. If the tab is not visible, open the dropdown menu and select it.
             3. In the sidebar under "Reporting," click **Security policy**.
             4. Click **Start setup**.
@@ -492,16 +492,14 @@ queries:
 
             ## Reporting a Vulnerability
 
-            If you discover a security vulnerability, please report it to us via email at security@example.com
-            or through our [issue tracker](https://github.com/example/repo/issues).
-
-            ## Security Policy
-
-            We take security seriously and will respond to reports promptly.
+            Do not open a public issue for a security vulnerability. Report it privately by email
+            to security@example.com, and we will respond within five business days.
             EOF
               commit_message = "Add security policy"
             }
             ```
+
+            Replace `security@example.com` with a monitored address that reaches the people who handle vulnerability reports, and set the response time to one your team can meet. The file must stay in the `.github` repository and that repository must be public, because GitHub serves the organization default only from a public `.github` repository.
         - id: cli
           desc: |
             **Using GitHub CLI**
@@ -520,6 +518,8 @@ queries:
             CONTENT
             )"
             ```
+
+            Replace `ORG` with the organization name and `security@example.com` with a monitored address that reaches the people who handle vulnerability reports.
     refs:
       - url: https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/add-security-policy
         title: Adding a security policy to your repository
@@ -637,12 +637,14 @@ queries:
             }
             ```
 
+            Set `pattern` to the name of your default branch. Replace `ci/circleci` with the name of a status check that already reports on pull requests in this repository, because a required check that never reports blocks every merge. `enforce_admins = true` applies the rule to administrators as well, so they can no longer push past it in an emergency.
+
             For more details, see [github_branch_protection](https://registry.terraform.io/providers/integrations/github/latest/docs/resources/branch_protection) in the Terraform Registry.
         - id: cli
           desc: |
             **Using GitHub CLI**
 
-            Note: This endpoint replaces the entire branch protection configuration. Include all desired settings in the request.
+            Replace `main` with the name of your default branch. The request creates a protection rule on that branch, which is what the check requires:
 
             ```bash
             gh api --method PUT /repos/OWNER/REPO/branches/main/protection \
@@ -651,6 +653,15 @@ queries:
               -F "enforce_admins=true" \
               -F "restrictions=null"
             ```
+
+            The four fields are required by the endpoint:
+
+            - `required_pull_request_reviews[required_approving_review_count]=1` requires one approving review before a pull request can merge.
+            - `required_status_checks=null` leaves status checks off.
+            - `enforce_admins=true` applies the rule to administrators as well, so they can no longer push past it in an emergency.
+            - `restrictions=null` leaves pushes unrestricted beyond the rule's other requirements.
+
+            **This request replaces any protection rule the branch already has.** Settings left out of the request are reset to their defaults, so read the current rule first with `gh api /repos/OWNER/REPO/branches/main/protection` and carry over anything you want to keep.
     refs:
       - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches
         title: About Branch protection
@@ -774,12 +785,14 @@ queries:
             }
             ```
 
+            Set `pattern` so it matches the names your release branches actually use, and add one resource per pattern if they use more than one. In a GitHub branch pattern `*` does not match `/`, so `release/*` covers `release/1.2` but not `release-1.2` or `v2.x`. Replace `ci/circleci` with the name of a status check that already reports on pull requests in this repository, because a required check that never reports blocks every merge. `enforce_admins = true` applies the rule to administrators as well, so they can no longer push past it in an emergency.
+
             For more details, see [github_branch_protection](https://registry.terraform.io/providers/integrations/github/latest/docs/resources/branch_protection) in the Terraform Registry.
         - id: cli
           desc: |
             **Using GitHub CLI**
 
-            Run this for each release branch. Replace RELEASE_BRANCH with the branch name and URL-encode any slashes, for example `release%2F1.2`. Note: This endpoint replaces the entire branch protection configuration. Include all desired settings in the request.
+            Run this for each release branch. Replace `RELEASE_BRANCH` with the branch name and URL-encode any slashes, for example `release%2F1.2`. The request creates a protection rule on that branch, which is what the check requires:
 
             ```bash
             gh api --method PUT /repos/OWNER/REPO/branches/RELEASE_BRANCH/protection \
@@ -788,6 +801,15 @@ queries:
               -F "enforce_admins=true" \
               -F "restrictions=null"
             ```
+
+            The four fields are required by the endpoint:
+
+            - `required_pull_request_reviews[required_approving_review_count]=1` requires one approving review before a pull request can merge.
+            - `required_status_checks=null` leaves status checks off.
+            - `enforce_admins=true` applies the rule to administrators as well, so they can no longer push past it in an emergency.
+            - `restrictions=null` leaves pushes unrestricted beyond the rule's other requirements.
+
+            **This request replaces any protection rule the branch already has.** Settings left out of the request are reset to their defaults, so read the current rule first with `gh api /repos/OWNER/REPO/branches/RELEASE_BRANCH/protection` and carry over anything you want to keep.
     refs:
       - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/managing-a-branch-protection-rule
         title: GitHub Branch Protection Rules
@@ -868,20 +890,15 @@ queries:
 
             You must have admin access to the repository to change branch protection.
 
-            GitHub now recommends Repository Rulesets as the modern mechanism for protecting branches. To block force pushes with a ruleset:
-              1. Navigate to your repository on GitHub.
-              2. Go to **Settings** > **Rules** > **Rulesets**.
-              3. Create or edit an active branch ruleset that targets your default branch, such as `main` or `master`.
-              4. Enable **Block force pushes**.
-              5. Save the ruleset.
-
-            Classic branch protection rules remain available as an alternative:
+            To block force pushes on the default branch with a branch protection rule:
               1. Navigate to your repository on GitHub.
               2. Go to **Settings** > **Branches**.
               3. Under "Branch protection rules," add or edit a rule for your default branch, such as `main` or `master`.
               4. Ensure **Protect matching branches** is enabled.
               5. In the rule settings, make sure **Allow force pushes** is unchecked.
               6. Save the branch protection rule.
+
+            **A ruleset alone does not clear this finding.** Repository rulesets under **Settings** > **Rules** > **Rulesets** also protect branches, and GitHub enforces them alongside branch protection rules, but the check reads this setting from the branch protection rule that covers the branch. A branch covered only by a ruleset keeps failing, so add the branch protection rule even if a ruleset already enforces the same behavior.
 
             For more details, see [About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches), [Allow force pushes](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#allow-force-pushes), and [About rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets) in the GitHub documentation.
         - id: terraform
@@ -897,11 +914,13 @@ queries:
               allows_force_pushes = false
             }
             ```
+
+            Set `pattern` to the name of your default branch.
         - id: cli
           desc: |
             **Using GitHub CLI**
 
-            Note: This endpoint replaces the entire branch protection configuration. Include all desired settings in the request.
+            Replace `main` with the name of your default branch.
 
             ```bash
             gh api --method PUT /repos/OWNER/REPO/branches/main/protection \
@@ -911,6 +930,16 @@ queries:
               -F "enforce_admins=true" \
               -F "restrictions=null"
             ```
+
+            The fields in the request are:
+
+            - `allow_force_pushes=false` blocks force pushes, which is the setting the check requires.
+            - `required_pull_request_reviews[required_approving_review_count]=1` requires one approving review before a pull request can merge.
+            - `required_status_checks=null` leaves status checks off. Supply your existing checks instead if the branch already requires them.
+            - `enforce_admins=true` applies the rule to administrators as well, so they can no longer push past it in an emergency.
+            - `restrictions=null` leaves pushes unrestricted beyond the rule's other requirements.
+
+            **This request replaces any protection rule the branch already has.** Settings left out of the request are reset to their defaults, so read the current rule first with `gh api /repos/OWNER/REPO/branches/main/protection` and carry over anything you want to keep.
     refs:
       - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches
         title: GitHub Docs - About protected branches
@@ -1014,20 +1043,15 @@ queries:
 
             You must have admin access to the repository to change branch protection.
 
-            GitHub now recommends Repository Rulesets as the modern mechanism for protecting branches. To block force pushes with a ruleset:
-              1. Navigate to your repository on GitHub.
-              2. Go to **Settings** > **Rules** > **Rulesets**.
-              3. Create or edit an active branch ruleset that targets your release branches, for example the pattern `release/*`.
-              4. Enable **Block force pushes**.
-              5. Save the ruleset.
-
-            Classic branch protection rules remain available as an alternative:
+            To block force pushes on your release branches with a branch protection rule:
               1. Navigate to your repository on GitHub.
               2. Go to **Settings** > **Branches**.
               3. Under "Branch protection rules," add or edit a rule covering your release branches, for example the pattern `release/*`.
               4. Ensure **Protect matching branches** is enabled.
               5. In the rule settings, make sure **Allow force pushes** is unchecked.
               6. Save the branch protection rule.
+
+            **A ruleset alone does not clear this finding.** Repository rulesets under **Settings** > **Rules** > **Rulesets** also protect branches, and GitHub enforces them alongside branch protection rules, but the check reads this setting from the branch protection rule that covers the branch. A branch covered only by a ruleset keeps failing, so add the branch protection rule even if a ruleset already enforces the same behavior.
 
             For more details, see [About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches), [Allow force pushes](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#allow-force-pushes), and [About rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets) in the GitHub documentation.
         - id: terraform
@@ -1043,11 +1067,13 @@ queries:
               allows_force_pushes = false
             }
             ```
+
+            Set `pattern` so it matches the names your release branches actually use, and add one resource per pattern if they use more than one. In a GitHub branch pattern `*` does not match `/`, so `release/*` covers `release/1.2` but not `release-1.2` or `v2.x`.
         - id: cli
           desc: |
             **Using GitHub CLI**
 
-            Run this for each release branch. Replace RELEASE_BRANCH with the branch name and URL-encode any slashes. Note: This endpoint replaces the entire branch protection configuration. Include all desired settings in the request.
+            Run this for each release branch. Replace `RELEASE_BRANCH` with the branch name and URL-encode any slashes, for example `release%2F1.2`.
 
             ```bash
             gh api --method PUT /repos/OWNER/REPO/branches/RELEASE_BRANCH/protection \
@@ -1057,6 +1083,16 @@ queries:
               -F "enforce_admins=true" \
               -F "restrictions=null"
             ```
+
+            The fields in the request are:
+
+            - `allow_force_pushes=false` blocks force pushes, which is the setting the check requires.
+            - `required_pull_request_reviews[required_approving_review_count]=1` requires one approving review before a pull request can merge.
+            - `required_status_checks=null` leaves status checks off. Supply your existing checks instead if the branch already requires them.
+            - `enforce_admins=true` applies the rule to administrators as well, so they can no longer push past it in an emergency.
+            - `restrictions=null` leaves pushes unrestricted beyond the rule's other requirements.
+
+            **This request replaces any protection rule the branch already has.** Settings left out of the request are reset to their defaults, so read the current rule first with `gh api /repos/OWNER/REPO/branches/RELEASE_BRANCH/protection` and carry over anything you want to keep.
     refs:
       - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches
         title: GitHub Docs - About protected branches
@@ -1135,20 +1171,15 @@ queries:
 
             You must have admin access to the repository to change branch protection.
 
-            GitHub now recommends Repository Rulesets as the modern mechanism for protecting branches. To require conversation resolution with a ruleset:
-              1. Navigate to your repository on GitHub.
-              2. Go to **Settings** > **Rules** > **Rulesets**.
-              3. Create or edit an active branch ruleset that targets your default branch, such as `main` or `master`.
-              4. Enable **Require conversation resolution before merging**.
-              5. Save the ruleset.
-
-            Classic branch protection rules remain available as an alternative:
+            To require conversation resolution with a branch protection rule on the default branch:
               1. Navigate to your repository on GitHub.
               2. Go to **Settings** > **Branches**.
               3. Under "Branch protection rules," add or edit a rule for your default branch, such as `main` or `master`.
               4. Ensure **Protect matching branches** is enabled.
               5. In the rule settings, check the box for **Require conversation resolution before merging**.
               6. Save the branch protection rule.
+
+            **A ruleset alone does not clear this finding.** Repository rulesets under **Settings** > **Rules** > **Rulesets** also protect branches, and GitHub enforces them alongside branch protection rules, but the check reads this setting from the branch protection rule that covers the branch. A branch covered only by a ruleset keeps failing, so add the branch protection rule even if a ruleset already enforces the same behavior.
 
             For more details, see [About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches), [Require conversation resolution before merging](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-conversation-resolution-before-merging), and [About rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets) in the GitHub documentation.
         - id: terraform
@@ -1164,11 +1195,13 @@ queries:
               require_conversation_resolution = true
             }
             ```
+
+            Set `pattern` to the name of your default branch.
         - id: cli
           desc: |
             **Using GitHub CLI**
 
-            Note: This endpoint replaces the entire branch protection configuration. Include all desired settings in the request.
+            Replace `main` with the name of your default branch.
 
             ```bash
             gh api --method PUT /repos/OWNER/REPO/branches/main/protection \
@@ -1178,6 +1211,16 @@ queries:
               -F "enforce_admins=true" \
               -F "restrictions=null"
             ```
+
+            The fields in the request are:
+
+            - `required_conversation_resolution=true` blocks merging while review conversations are unresolved, which is the setting the check requires.
+            - `required_pull_request_reviews[required_approving_review_count]=1` requires one approving review before a pull request can merge.
+            - `required_status_checks=null` leaves status checks off. Supply your existing checks instead if the branch already requires them.
+            - `enforce_admins=true` applies the rule to administrators as well, so they can no longer push past it in an emergency.
+            - `restrictions=null` leaves pushes unrestricted beyond the rule's other requirements.
+
+            **This request replaces any protection rule the branch already has.** Settings left out of the request are reset to their defaults, so read the current rule first with `gh api /repos/OWNER/REPO/branches/main/protection` and carry over anything you want to keep.
     refs:
       - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches
         title: GitHub Docs - About protected branches
@@ -1279,20 +1322,15 @@ queries:
 
             You must have admin access to the repository to change branch protection.
 
-            GitHub now recommends Repository Rulesets as the modern mechanism for protecting branches. To require status checks with a ruleset:
-              1. Navigate to your repository on GitHub.
-              2. Go to **Settings** > **Rules** > **Rulesets**.
-              3. Create or edit an active branch ruleset that targets your default branch, such as `main` or `master`.
-              4. Enable **Require status checks to pass** and add the status checks to require.
-              5. Save the ruleset.
-
-            Classic branch protection rules remain available as an alternative:
+            To require status checks with a branch protection rule on the default branch:
               1. Navigate to your repository on GitHub.
               2. Go to **Settings** > **Branches**.
               3. Under "Branch protection rules," add or edit a rule for your default branch, such as `main` or `master`.
               4. Ensure **Protect matching branches** is enabled.
               5. In the rule settings, check the box for **Require status checks to pass before merging** and select the status checks to require.
               6. Save the branch protection rule.
+
+            **A ruleset alone does not clear this finding.** Repository rulesets under **Settings** > **Rules** > **Rulesets** also protect branches, and GitHub enforces them alongside branch protection rules, but the check reads this setting from the branch protection rule that covers the branch. A branch covered only by a ruleset keeps failing, so add the branch protection rule even if a ruleset already enforces the same behavior.
 
             For more details, see [About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches), [Require status checks before merging](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-status-checks-before-merging), and [About rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets) in the GitHub documentation.
         - id: terraform
@@ -1312,11 +1350,13 @@ queries:
               }
             }
             ```
+
+            Set `pattern` to the name of your default branch. Replace the entries in `contexts` with the names of status checks that already report on pull requests in this repository, because a required check that never reports blocks every merge. `strict = true` also requires the pull request branch to be up to date with the default branch before it merges.
         - id: cli
           desc: |
             **Using GitHub CLI**
 
-            Note: This endpoint replaces the entire branch protection configuration. Include all desired settings in the request.
+            Replace `main` with the name of your default branch.
 
             ```bash
             gh api --method PUT /repos/OWNER/REPO/branches/main/protection \
@@ -1326,6 +1366,16 @@ queries:
               -F "enforce_admins=true" \
               -F "restrictions=null"
             ```
+
+            The fields in the request are:
+
+            - `required_status_checks[strict]=true` requires the pull request branch to be up to date with the default branch before it merges.
+            - `required_status_checks[contexts][]=ci/build` names a status check that must pass, which is the setting the check requires. Replace `ci/build` with the name of a check that already reports on pull requests in this repository, because a required check that never reports blocks every merge. Repeat the field once per check to require several.
+            - `required_pull_request_reviews[required_approving_review_count]=1` requires one approving review before a pull request can merge.
+            - `enforce_admins=true` applies the rule to administrators as well, so they can no longer push past it in an emergency.
+            - `restrictions=null` leaves pushes unrestricted beyond the rule's other requirements.
+
+            **This request replaces any protection rule the branch already has.** Settings left out of the request are reset to their defaults, so read the current rule first with `gh api /repos/OWNER/REPO/branches/main/protection` and carry over anything you want to keep.
     refs:
       - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches
         title: GitHub Docs - About protected branches
@@ -1429,22 +1479,17 @@ queries:
 
             You must have admin access to the repository to change branch protection.
 
-            Prerequisite: before enabling this, ensure contributors have configured local commit signing with GPG, SSH, or S/MIME and registered their signing key with GitHub. Once **Require signed commits** is enforced, unsigned commits are rejected, so any contributor who has not set up signing will be unable to merge.
+            **Contributors without a registered signing key can no longer push to the branch.** Before enabling this, ensure contributors have configured local commit signing with GPG, SSH, or S/MIME and registered their signing key with GitHub. Once **Require signed commits** is enforced, unsigned commits are rejected.
 
-            GitHub now recommends Repository Rulesets as the modern mechanism for protecting branches. To require signed commits with a ruleset:
-              1. Navigate to your repository on GitHub.
-              2. Go to **Settings** > **Rules** > **Rulesets**.
-              3. Create or edit an active branch ruleset that targets your default branch, such as `main` or `master`.
-              4. Enable **Require signed commits**.
-              5. Save the ruleset.
-
-            Classic branch protection rules remain available as an alternative:
+            To require signed commits with a branch protection rule on the default branch:
               1. Navigate to your repository on GitHub.
               2. Go to **Settings** > **Branches**.
               3. Under "Branch protection rules," add or edit a rule for your default branch, such as `main` or `master`.
               4. Ensure **Protect matching branches** is enabled.
               5. In the rule settings, check the box for **Require signed commits**.
               6. Save the branch protection rule.
+
+            **A ruleset alone does not clear this finding.** Repository rulesets under **Settings** > **Rules** > **Rulesets** also protect branches, and GitHub enforces them alongside branch protection rules, but the check reads this setting from the branch protection rule that covers the branch. A branch covered only by a ruleset keeps failing, so add the branch protection rule even if a ruleset already enforces the same behavior.
 
             For more details, see [About commit signature verification](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification), [Require signed commits](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-signed-commits), and [About rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets) in the GitHub documentation.
         - id: terraform
@@ -1458,14 +1503,22 @@ queries:
               require_signed_commits = true
             }
             ```
+
+            Set `pattern` to the name of your default branch.
+
+            **Contributors without a registered signing key can no longer push to the branch.** Confirm contributors sign their commits before applying this.
         - id: cli
           desc: |
             **Using GitHub CLI**
+
+            Replace `main` with the name of your default branch. The endpoint only adds the signature requirement to an existing rule, so the branch must already carry a branch protection rule, otherwise the request fails with a `404` error. Create the rule first as described in the web UI steps if it has none.
 
             ```bash
             gh api --method POST \
               /repos/OWNER/REPO/branches/main/protection/required_signatures
             ```
+
+            **Contributors without a registered signing key can no longer push to the branch.** Confirm contributors sign their commits before running this.
     refs:
       - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches
         title: GitHub Docs - About protected branches
@@ -1567,22 +1620,17 @@ queries:
 
             You must have admin access to the repository to change branch protection.
 
-            Caution: enforcing this applies the branch protection rules to administrators as well, so admins lose the ability to make emergency pushes that bypass the rules. Before enabling it, confirm a break-glass process exists, for example a documented procedure to temporarily disable enforcement under approval, so the team is not locked out during an incident.
+            **Administrators lose the ability to push past the rule.** Enforcing this applies the branch protection rules to administrators as well, so emergency pushes that bypass the rules are no longer possible. Before enabling it, confirm a break-glass process exists, for example a documented procedure to temporarily disable enforcement under approval, so the team is not locked out during an incident.
 
-            GitHub now recommends Repository Rulesets as the modern mechanism for protecting branches. Rulesets do not have an admin bypass by default; you control who may bypass through the ruleset's bypass list. To enforce protection for everyone with a ruleset:
-              1. Navigate to your repository on GitHub.
-              2. Go to **Settings** > **Rules** > **Rulesets**.
-              3. Create or edit an active branch ruleset that targets your default branch, such as `main` or `master`.
-              4. Leave the **Bypass list** empty, or add only the break-glass actors you intend to allow.
-              5. Save the ruleset.
-
-            Classic branch protection rules remain available as an alternative:
+            To apply the branch protection rule on the default branch to administrators:
               1. Navigate to your repository on GitHub.
               2. Go to **Settings** > **Branches**.
               3. Under "Branch protection rules," add or edit a rule for your default branch, such as `main` or `master`.
               4. Ensure **Protect matching branches** is enabled.
               5. In the rule settings, check the box for **Do not allow bypassing the above settings**.
               6. Save the branch protection rule.
+
+            **An empty ruleset bypass list does not clear this finding.** Repository rulesets under **Settings** > **Rules** > **Rulesets** carry their own bypass list, and GitHub enforces them alongside branch protection rules, but the check reads **Do not allow bypassing the above settings** from the branch protection rule that covers the branch. A branch covered only by a ruleset keeps failing, so add the branch protection rule and turn the option on even if a ruleset already allows no bypass.
 
             For more details, see [About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches), [Do not allow bypassing the above settings](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#do-not-allow-bypassing-the-above-settings), and [About rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets) in the GitHub documentation.
         - id: terraform
@@ -1596,16 +1644,22 @@ queries:
               enforce_admins = true
             }
             ```
+
+            Set `pattern` to the name of your default branch.
+
+            **Administrators lose the ability to push past the rule.** Confirm a break-glass process exists before applying this.
         - id: cli
           desc: |
             **Using GitHub CLI**
 
-            Caution: this applies branch protection to administrators as well, removing their ability to bypass the rules for emergency pushes. Confirm a break-glass process exists before running it.
+            Replace `main` with the name of your default branch. The endpoint only turns on admin enforcement for an existing rule, so the branch must already carry a branch protection rule before you run it. Create the rule first as described in the web UI steps if it has none.
 
             ```bash
             gh api --method POST \
               /repos/OWNER/REPO/branches/main/protection/enforce_admins
             ```
+
+            **Administrators lose the ability to push past the rule.** This removes their ability to bypass the rules for emergency pushes, so confirm a break-glass process exists before running it.
     refs:
       - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches
         title: GitHub Docs - About protected branches
@@ -1782,7 +1836,7 @@ queries:
         1. List the repository tree and search for common binary file extensions:
 
            ```bash
-           gh api /repos/OWNER/REPO/git/trees/HEAD?recursive=1 \
+           gh api '/repos/OWNER/REPO/git/trees/HEAD?recursive=1' \
              --jq '.tree[].path | select(test("\\.(exe|dll|jar|so|pyc|class)$"))'
            ```
 
@@ -1810,6 +1864,8 @@ queries:
             git commit -m "Remove binary artifact from source control"
             git push
             ```
+
+            Replace `app.exe` with the path of each committed binary, and `*.exe` with an ignore pattern for its extension. The check reads the file tree of the default branch, so the finding clears once this commit reaches that branch, either by a direct push or by merging a pull request. `git rm --cached` leaves your local copy of the file in place.
 
             If a binary contains sensitive data, also rewrite history with a tool such as git filter-repo and rotate any embedded credentials, because the file remains reachable in prior commits.
     refs:
@@ -2740,30 +2796,35 @@ queries:
             **Using the GitHub web UI**
 
             1. Navigate to your repository on GitHub.
-            2. Go to **Security** > **Secret scanning alerts**.
+            2. Click the **Security and quality** tab, then click **Secret scanning** in the sidebar.
             3. Review each open alert and take appropriate action:
                - **Revoke the secret**: Immediately revoke or rotate the exposed credential in the service where it is used.
                - **Remove from history**: If the secret is still in the repository, remove it and rewrite Git history if necessary.
-               - **Close the alert**: After remediation, close the alert with the appropriate resolution (revoked, false positive, used in tests, etc.).
+               - **Close the alert**: After remediation, use **Close as** to close the alert with the reason that applies, such as revoked, false positive, or used in tests.
             4. Verify that the revoked credential is no longer valid by testing access.
+
+            An alert stops counting against the check once it is closed. Closing it without revoking the credential clears the finding while the secret stays usable, so revoke first.
 
             For more details, see [Managing alerts from secret scanning](https://docs.github.com/en/code-security/how-tos/manage-security-alerts/manage-secret-scanning-alerts) in the GitHub documentation.
         - id: cli
           desc: |
             **Using GitHub CLI**
 
-            List open secret scanning alerts to identify and remediate them:
+            List open secret scanning alerts to identify and remediate them. The quotes keep the shell from treating `?` as a wildcard:
 
             ```bash
-            gh api /repos/OWNER/REPO/secret-scanning/alerts?state=open
+            gh api --paginate '/repos/OWNER/REPO/secret-scanning/alerts?state=open' \
+              --jq '.[] | {number, secret_type_display_name, html_url}'
             ```
 
-            Resolve an alert after remediating the exposed secret:
+            Resolve an alert after revoking the exposed secret, replacing `ALERT_NUMBER` with the alert's `number`:
 
             ```bash
             gh api --method PATCH /repos/OWNER/REPO/secret-scanning/alerts/ALERT_NUMBER \
               -f state=resolved -f resolution=revoked
             ```
+
+            `resolution` accepts `revoked`, `false_positive`, `used_in_tests`, and `wont_fix`. Any of them closes the alert and clears the finding, so use `revoked` only after the credential has actually been revoked. Resolving an alert requires admin access to the repository or the organization.
     refs:
       - url: https://docs.github.com/en/code-security/how-tos/manage-security-alerts/manage-secret-scanning-alerts
         title: Manage secret scanning alerts
@@ -2846,7 +2907,7 @@ queries:
             4. Under "SSL verification," ensure **Enable SSL verification** is selected.
             5. Save the webhook configuration.
 
-            If the webhook endpoint does not support SSL, update the endpoint to use HTTPS before enabling SSL verification. Self-signed certificates can be configured if needed, but disabling SSL verification entirely should be avoided.
+            **Deliveries fail once verification is on if the endpoint's certificate is not publicly trusted.** Verification only succeeds against a certificate from a publicly trusted certificate authority, so before enabling it replace a self-signed or private certificate on the receiver, or put the receiver behind a proxy that presents a publicly trusted one.
 
             For more details, see [Creating webhooks](https://docs.github.com/en/webhooks/using-webhooks/creating-webhooks) in the GitHub documentation.
         - id: terraform
@@ -2870,20 +2931,22 @@ queries:
           desc: |
             **Using GitHub CLI**
 
-            Updating a webhook replaces its entire config object, so include the webhook's existing URL and content type along with the SSL setting. Read the current values first:
+            List the repository's webhooks to find the ID of each one that reports `insecure_ssl` as `"1"`:
 
             ```bash
-            gh api /repos/OWNER/REPO/hooks/HOOK_ID --jq '.config'
+            gh api /repos/OWNER/REPO/hooks --jq '.[] | {id, url: .config.url, insecure_ssl: .config.insecure_ssl}'
             ```
 
-            Then update the webhook with SSL verification enabled:
+            Then turn SSL verification back on for each of them, replacing `HOOK_ID` with the webhook ID:
 
             ```bash
-            gh api --method PATCH /repos/OWNER/REPO/hooks/HOOK_ID \
-              -F "config[url]=https://example.com/webhook" \
-              -F "config[content_type]=json" \
-              -F "config[insecure_ssl]=0"
+            gh api --method PATCH /repos/OWNER/REPO/hooks/HOOK_ID/config \
+              -f insecure_ssl=0
             ```
+
+            The webhook configuration endpoint changes only the fields in the request, so the payload URL, content type, and secret stay as they are. `insecure_ssl=0` tells GitHub to verify the endpoint's certificate, which is the value the check requires.
+
+            **Deliveries fail once verification is on if the endpoint's certificate is not publicly trusted.** Fix the receiver's certificate first.
     refs:
       - url: https://docs.github.com/en/webhooks/using-webhooks/creating-webhooks
         title: Creating webhooks
@@ -3129,7 +3192,7 @@ queries:
             **Using the GitHub web UI**
 
             1. Navigate to your repository on GitHub.
-            2. Go to the **Security** tab > **Code scanning alerts**.
+            2. Click the **Security and quality** tab, then click **Code scanning** in the sidebar.
             3. Review each open alert and take action:
                - **Fix the vulnerability**: Implement the suggested fix and push the change.
                - **Dismiss false positives**: If the alert is a false positive, dismiss it with a reason.
@@ -3140,18 +3203,21 @@ queries:
           desc: |
             **Using GitHub CLI**
 
-            List open code scanning alerts:
+            List open code scanning alerts. The quotes keep the shell from treating `?` as a wildcard:
 
             ```bash
-            gh api /repos/OWNER/REPO/code-scanning/alerts?state=open
+            gh api --paginate '/repos/OWNER/REPO/code-scanning/alerts?state=open' \
+              --jq '.[] | {number, rule: .rule.id, path: .most_recent_instance.location.path}'
             ```
 
-            Dismiss an alert after review:
+            Dismiss an alert after review, replacing `ALERT_NUMBER` with the alert's `number`:
 
             ```bash
             gh api --method PATCH /repos/OWNER/REPO/code-scanning/alerts/ALERT_NUMBER \
               -f state=dismissed -f dismissed_reason="won't fix"
             ```
+
+            `dismissed_reason` accepts `false positive`, `won't fix`, `used in tests`, and `mitigated`. Dismissing clears the alert from the check, so reserve it for findings that are genuinely not exploitable and fix the rest in code. An alert fixed in code closes on the next analysis of the default branch.
     refs:
       - url: https://docs.github.com/en/code-security/how-tos/manage-security-alerts/manage-code-scanning-alerts/resolve-alerts
         title: Resolving code scanning alerts
@@ -3220,7 +3286,7 @@ queries:
             **Using the GitHub web UI**
 
             1. Navigate to your repository on GitHub.
-            2. Go to the **Security** tab > **Dependabot alerts**.
+            2. Click the **Security and quality** tab, then click **Dependabot** in the sidebar.
             3. Filter alerts by **Critical** severity.
             4. For each critical alert:
                - Click the alert to review the vulnerability details and affected dependency.
@@ -3328,20 +3394,15 @@ queries:
 
             You must have admin access to the repository to change branch protection.
 
-            GitHub now recommends Repository Rulesets as the modern mechanism for protecting branches. To require pull request reviews with a ruleset:
-              1. Navigate to your repository on GitHub.
-              2. Go to **Settings** > **Rules** > **Rulesets**.
-              3. Create or edit an active branch ruleset that targets your default branch.
-              4. Enable **Require a pull request before merging** and set **Required approvals** to at least 1.
-              5. Save the ruleset.
-
-            Classic branch protection rules remain available as an alternative:
+            To require pull request reviews with a branch protection rule on the default branch:
               1. Navigate to your repository on GitHub.
               2. Go to **Settings** > **Branches**.
               3. Under "Branch protection rules," click **Edit** next to the default branch rule (or **Add rule** if none exists).
               4. Check **Require a pull request before merging**.
               5. Under that option, check **Require approvals** and set the required number of approvals to at least 1.
               6. Click **Save changes**.
+
+            **A ruleset alone does not clear this finding.** Repository rulesets under **Settings** > **Rules** > **Rulesets** also protect branches, and GitHub enforces them alongside branch protection rules, but the check reads this setting from the branch protection rule that covers the branch. A branch covered only by a ruleset keeps failing, so add the branch protection rule even if a ruleset already enforces the same behavior.
 
             For more details, see [Managing a branch protection rule](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/managing-a-branch-protection-rule) and [About rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets) in the GitHub documentation.
         - id: terraform
@@ -3359,12 +3420,14 @@ queries:
             }
             ```
 
+            Set `pattern` to the name of your default branch. `required_approving_review_count = 1` requires one approving review before a pull request can merge, and a higher number requires more.
+
             For more details, see [github_branch_protection](https://registry.terraform.io/providers/integrations/github/latest/docs/resources/branch_protection) in the Terraform Registry.
         - id: cli
           desc: |
             **Using GitHub CLI**
 
-            Note: This endpoint replaces the entire branch protection configuration. Include all desired settings in the request.
+            Replace `main` with the name of your default branch.
 
             ```bash
             gh api --method PUT /repos/OWNER/REPO/branches/main/protection \
@@ -3373,6 +3436,15 @@ queries:
               -F "enforce_admins=true" \
               -F "restrictions=null"
             ```
+
+            The fields in the request are:
+
+            - `required_pull_request_reviews[required_approving_review_count]=1` requires one approving review before a pull request can merge.
+            - `required_status_checks=null` leaves status checks off. Supply your existing checks instead if the branch already requires them.
+            - `enforce_admins=true` applies the rule to administrators as well, so they can no longer push past it in an emergency.
+            - `restrictions=null` leaves pushes unrestricted beyond the rule's other requirements.
+
+            **This request replaces any protection rule the branch already has.** Settings left out of the request are reset to their defaults, so read the current rule first with `gh api /repos/OWNER/REPO/branches/main/protection` and carry over anything you want to keep.
     refs:
       - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/managing-a-branch-protection-rule
         title: Managing a branch protection rule
@@ -3478,27 +3550,24 @@ queries:
 
             You must have admin access to the repository to change branch protection.
 
-            GitHub now recommends Repository Rulesets as the modern mechanism for protecting branches. To block branch creation with a ruleset:
-              1. Navigate to your repository on GitHub.
-              2. Go to **Settings** > **Rules** > **Rulesets**.
-              3. Create or edit an active branch ruleset that targets your default branch.
-              4. Enable **Restrict creations**.
-              5. Save the ruleset.
-
-            Classic branch protection rules remain available as an alternative:
+            To block branch creation with a branch protection rule on the default branch:
               1. Navigate to your repository on GitHub.
               2. Go to **Settings** > **Branches**.
-              3. Under "Branch protection rules," click **Edit** next to the default branch rule.
-              4. Check **Restrict who can push to matching branches**.
-              5. Check **Restrict pushes that create matching branches**.
+              3. Under "Branch protection rules," click **Edit** next to the default branch rule, or add a rule for the default branch if none exists.
+              4. Check **Restrict who can push to matching branches**, then add the people, teams, or apps that should keep push access.
+              5. Check **Restrict pushes that create matching branches**. This option only appears once push restrictions are on, and it is the setting the check requires.
               6. Click **Save changes**.
+
+            **Only the listed actors can push to the branch afterward.** Everyone else with write access loses the ability to update the branch, although repository administrators and people with the Maintain role keep it. Push restrictions are only available on repositories owned by an organization.
+
+            **A ruleset alone does not clear this finding.** Repository rulesets under **Settings** > **Rules** > **Rulesets** also protect branches, and GitHub enforces them alongside branch protection rules, but the check reads this setting from the branch protection rule that covers the branch. A branch covered only by a ruleset keeps failing, so add the branch protection rule even if a ruleset already enforces the same behavior.
 
             For more details, see [About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#restrict-who-can-push-to-matching-branches) and [About rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets) in the GitHub documentation.
         - id: terraform
           desc: |
             **Using Terraform**
 
-            Use the `restrict_pushes` block of the `github_branch_protection` resource. The `blocks_creations` argument prevents creation of branches that match the rule:
+            Use the `restrict_pushes` block of the `github_branch_protection` resource. The block turns on push restrictions, and `blocks_creations = true` inside it prevents creation of branches that match the rule, which is what the check requires:
 
             ```hcl
             resource "github_branch_protection" "default" {
@@ -3507,23 +3576,41 @@ queries:
 
               restrict_pushes {
                 blocks_creations = true
+                push_allowances  = ["/example-user"]
               }
             }
             ```
+
+            Set `pattern` to the name of your default branch. List in `push_allowances` the actors that should keep push access, writing a user as `/` followed by the login and a team as the organization name, `/`, and the team slug.
+
+            **Only the actors in `push_allowances` can push to the branch afterward.** Everyone else with write access loses the ability to update the branch, although repository administrators and people with the Maintain role keep it. Push restrictions are only available on repositories owned by an organization.
         - id: cli
           desc: |
             **Using GitHub CLI**
 
-            Note: This endpoint replaces the entire branch protection configuration. Include all desired settings in the request.
+            Replace `main` with the name of your default branch and `TEAM_SLUG` with the slug of a team that should keep push access.
 
             ```bash
             gh api --method PUT /repos/OWNER/REPO/branches/main/protection \
               -F "block_creations=true" \
+              -F "restrictions[users][]" \
+              -F "restrictions[teams][]=TEAM_SLUG" \
               -F "required_pull_request_reviews[required_approving_review_count]=1" \
               -F "required_status_checks=null" \
-              -F "enforce_admins=true" \
-              -F "restrictions=null"
+              -F "enforce_admins=true"
             ```
+
+            The fields in the request are:
+
+            - `block_creations=true` blocks pushes that create a matching branch, which is the setting the check requires. It only takes effect together with push restrictions, so `restrictions` must be an object rather than `null`.
+            - `restrictions[users][]` and `restrictions[teams][]=TEAM_SLUG` turn push restrictions on and list who may still push. Add a `restrictions[users][]=LOGIN` field for each user, or leave the empty `restrictions[users][]` field in place when only teams are allowed.
+            - `required_pull_request_reviews[required_approving_review_count]=1` requires one approving review before a pull request can merge.
+            - `required_status_checks=null` leaves status checks off. Supply your existing checks instead if the branch already requires them.
+            - `enforce_admins=true` applies the rule to administrators as well, so they can no longer push past it in an emergency.
+
+            **Only the listed users and teams can push to the branch afterward.** Everyone else with write access loses the ability to update the branch. Push restrictions are only available on repositories owned by an organization.
+
+            **This request replaces any protection rule the branch already has.** Settings left out of the request are reset to their defaults, so read the current rule first with `gh api /repos/OWNER/REPO/branches/main/protection` and carry over anything you want to keep.
     refs:
       - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/managing-a-branch-protection-rule
         title: Managing a branch protection rule
