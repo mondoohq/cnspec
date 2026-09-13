@@ -351,7 +351,12 @@ queries:
       desc: |
         This check verifies that phishable authentication factors are not offered to users when they enroll in multifactor authentication.
 
-        Email, SMS, and voice call all deliver a one-time code over a channel the user simply reads and retypes. Their availability is set per enrollment policy in the Admin Console under Security > Authenticators, on the enrollment tab, where each authenticator is required, optional, or disallowed for the people the policy covers. This check requires that email, SMS, and phone are neither required nor optional in any enrollment policy.
+        Email, SMS, and voice call all deliver a one-time code over a channel the user simply reads and retypes. Their availability is set per enrollment policy, where each one is required, optional, or disabled for the people the policy covers:
+
+        - On Okta Identity Engine, authenticator enrollment policies live under Security > Authenticators on the Enrollment tab. Email is the Email authenticator, and SMS and voice call are both methods of the single Phone authenticator.
+        - On Okta Classic Engine, factor enrollment policies live under Security > Multifactor on the Factor Enrollment tab. Email, SMS, and Voice Call are separate factors.
+
+        This check requires that email, SMS, and voice call are neither required nor optional in any enrollment policy, whichever of the two formats the policy uses.
 
         **Why this matters**
 
@@ -365,11 +370,11 @@ queries:
       audit: |
         ### Audit via Admin Console
 
-        1. In the Admin Console, go to **Security > Multifactor**.
-        2. Select **Factor Enrollment** and open each policy.
-        3. Confirm that email, SMS, and voice or phone factors are set to disabled rather than optional or required.
+        1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select the **Enrollment** tab. On Okta Classic Engine orgs, go to **Security > Multifactor** and select **Factor Enrollment**.
+        2. Open each enrollment policy.
+        3. On Identity Engine, confirm that **Email** and **Phone** are set to **Disabled**. On Classic Engine, confirm that **Email**, **SMS**, and **Voice Call** are set to **Disabled**.
 
-        A passing result shows weak factors disabled in every factor enrollment policy; a failing result shows email, SMS, or phone factors set to optional or required.
+        A passing result shows these factors disabled in every enrollment policy; a failing result shows any of them set to optional or required.
 
         ### Audit via API
 
@@ -380,7 +385,12 @@ queries:
           "https://$OKTA_ORG.okta.com/api/v1/policies?type=MFA_ENROLL"
         ```
 
-        For each policy, inspect `settings.factors`. A passing response shows the `okta_email`, `okta_sms`, and `phone_number` factors with self-enrollment neither optional nor required; a failing response shows any of those factors available for self-enrollment.
+        Each policy stores its settings in one of two formats, and an org can hold both:
+
+        - Identity Engine policies set `settings.type` to `AUTHENTICATORS` and list an array under `settings.authenticators`. A passing policy has no entry whose `key` is `okta_email` or `phone_number` with `enroll.self` set to `OPTIONAL` or `REQUIRED`.
+        - Classic Engine policies, and default policies kept from a Classic Engine org that migrated to Identity Engine, list factors under `settings.factors`, keyed by factor name. A passing policy has no `okta_email`, `okta_sms`, `okta_call`, or `phone_number` factor with `enroll.self` set to `OPTIONAL` or `REQUIRED`.
+
+        A failing response has any of those authenticators or factors set to `OPTIONAL` or `REQUIRED` in any policy.
       remediation:
         - id: console
           desc: |
@@ -388,12 +398,12 @@ queries:
 
             1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select the **Enrollment** tab. On Okta Classic Engine orgs, go to **Security > Multifactor** and select **Factor Enrollment**.
             2. For each enrollment policy, select **Edit**.
-            3. Set the **Email**, **SMS**, and **Phone** or **Voice Call** factors to **Disabled** so users cannot self-enroll them.
+            3. On Identity Engine, set **Email** and **Phone** to **Disabled**. On Classic Engine, set **Email**, **SMS**, and **Voice Call** to **Disabled**. Users can then no longer self-enroll them.
             4. Keep stronger factors such as Okta Verify and WebAuthn set to **Required** or **Optional**.
             5. Select **Update Policy**.
         - id: terraform
           desc: |
-            Set the `enroll` value of each weak factor to `NOT_ALLOWED`, so users can no longer register it. `OPTIONAL` and `REQUIRED` both fail the check. The factors to disallow are `okta_email`, `okta_sms`, and `phone_number`.
+            Set the `enroll` value of each weak factor to `NOT_ALLOWED`, so users can no longer register it. `OPTIONAL` and `REQUIRED` both fail the check. On Okta Identity Engine, disallow the `okta_email` and `phone_number` authenticators. On Okta Classic Engine, disallow the `okta_email`, `okta_sms`, and `okta_call` factors.
 
             Use the example that matches the org. Set `is_oie = true` on Okta Identity Engine orgs, where enrollment is configured per authenticator, and `is_oie = false` on Okta Classic Engine orgs, where it is configured per factor.
 
@@ -440,6 +450,10 @@ queries:
               okta_sms = {
                 enroll = "NOT_ALLOWED"
               }
+
+              okta_call = {
+                enroll = "NOT_ALLOWED"
+              }
             }
             ```
     refs:
@@ -452,24 +466,29 @@ queries:
     mql: |
       okta.policies.mfaEnroll.all( _.settings['factors']['okta_email']['enroll']['self'] != /(OPTIONAL|REQUIRED)/ )
       okta.policies.mfaEnroll.all( _.settings['factors']['okta_sms']['enroll']['self'] != /(OPTIONAL|REQUIRED)/ )
+      okta.policies.mfaEnroll.all( _.settings['factors']['okta_call']['enroll']['self'] != /(OPTIONAL|REQUIRED)/ )
       okta.policies.mfaEnroll.all( _.settings['factors']['phone_number']['enroll']['self'] != /(OPTIONAL|REQUIRED)/ )
+      okta.policies.mfaEnroll.all( _.settings['authenticators'] == null || _.settings['authenticators'].none( _['key'] == /^(okta_email|phone_number)$/ && _['enroll']['self'] == /(OPTIONAL|REQUIRED)/ ) )
   - uid: mondoo-okta-security-disable-weaker-mfa-factors-in-factor-enrollment-policies-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.providers.any( nameLabel == "okta" )
     mql: |
       terraform.resources("okta_policy_mfa_default").all( arguments['okta_sms']['enroll'] != /(OPTIONAL|REQUIRED)/)
       terraform.resources("okta_policy_mfa_default").all( arguments['okta_email']['enroll'] != /(OPTIONAL|REQUIRED)/)
+      terraform.resources("okta_policy_mfa_default").all( arguments['okta_call']['enroll'] != /(OPTIONAL|REQUIRED)/)
       terraform.resources("okta_policy_mfa_default").all( arguments['phone_number']['enroll'] != /(OPTIONAL|REQUIRED)/)
   - uid: mondoo-okta-security-disable-weaker-mfa-factors-in-factor-enrollment-policies-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( providerName == /okta/ )
     mql: |
       terraform.plan.resourceChanges.where( type == "okta_policy_mfa_default" ).all( change.after['okta_email']['enroll'] != /(OPTIONAL|REQUIRED)/ )
       terraform.plan.resourceChanges.where( type == "okta_policy_mfa_default" ).all( change.after['okta_sms']['enroll'] != /(OPTIONAL|REQUIRED)/ )
+      terraform.plan.resourceChanges.where( type == "okta_policy_mfa_default" ).all( change.after['okta_call']['enroll'] != /(OPTIONAL|REQUIRED)/ )
       terraform.plan.resourceChanges.where( type == "okta_policy_mfa_default" ).all( change.after['phone_number']['enroll'] != /(OPTIONAL|REQUIRED)/ )
   - uid: mondoo-okta-security-disable-weaker-mfa-factors-in-factor-enrollment-policies-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == /okta_policy_mfa_default/ )
     mql: |
       terraform.state.resources.where( type == 'okta_policy_mfa_default' ).all( values['okta_sms']['enroll'] != /(OPTIONAL|REQUIRED)/ )
       terraform.state.resources.where( type == 'okta_policy_mfa_default' ).all( values['okta_email']['enroll'] != /(OPTIONAL|REQUIRED)/ )
+      terraform.state.resources.where( type == 'okta_policy_mfa_default' ).all( values['okta_call']['enroll'] != /(OPTIONAL|REQUIRED)/ )
       terraform.state.resources.where( type == 'okta_policy_mfa_default' ).all( values['phone_number']['enroll'] != /(OPTIONAL|REQUIRED)/ )
   - uid: mondoo-okta-security-enable-okta-verify-with-push-for-mfa
     title: Enable Okta Verify (with Push if available) for MFA
