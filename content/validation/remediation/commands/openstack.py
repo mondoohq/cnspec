@@ -11,7 +11,7 @@ import sys
 from common import (
     FAILURES,
     CONTENT_DIR,
-    extract_bash_blocks,
+    extract_command_sources,
     policy_relpath,
     split_commands,
     truncate_cmd,
@@ -244,7 +244,7 @@ def validate_openstack() -> tuple[int, int]:
         sys.exit(1)
 
     content = OPENSTACK_POLICY_FILE.read_text()
-    blocks = extract_bash_blocks(content, include_audit=True)
+    blocks = extract_command_sources(content, include_audit=True)
     if not blocks:
         return 0, 0
 
@@ -252,7 +252,7 @@ def validate_openstack() -> tuple[int, int]:
     relpath = policy_relpath(OPENSTACK_POLICY_FILE)
 
     pass_count = fail_count = 0
-    for block_text, block_line, uid in blocks:
+    for block_text, block_line, uid, _ in blocks:
         for cmd, line_num in split_commands(block_text, "openstack", block_line):
             command_path, flags, next_word = parse_openstack_command(cmd, commands_db)
             if not command_path:

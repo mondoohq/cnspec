@@ -15,7 +15,7 @@ from common import (
     COMMAND_SUBSTITUTION,
     FAILURES,
     CONTENT_DIR,
-    extract_bash_blocks,
+    extract_command_sources,
     policy_relpath,
     split_commands,
     truncate_cmd,
@@ -194,7 +194,7 @@ def _iter_gcloud_policy_invocations() -> Iterator[list[str]]:
         return
 
     content = GCLOUD_POLICY_FILE.read_text()
-    for block, _line, _uid in extract_bash_blocks(content, include_audit=True):
+    for block, _line, _uid, _inline in extract_command_sources(content, include_audit=True):
         joined = re.sub(r"\\\s*\n\s*", " ", block)
         for line in joined.split("\n"):
             line = line.strip()
@@ -426,14 +426,14 @@ def validate_gcloud() -> tuple[int, int]:
         return 0, 0
 
     content = GCLOUD_POLICY_FILE.read_text()
-    blocks = extract_bash_blocks(content, include_audit=True)
+    blocks = extract_command_sources(content, include_audit=True)
 
     pass_count = 0
     fail_count = 0
 
     relpath = policy_relpath(GCLOUD_POLICY_FILE)
 
-    for block_text, block_line, uid in blocks:
+    for block_text, block_line, uid, _ in blocks:
         commands = split_commands(block_text, "gcloud", block_line)
         for cmd, line_num in commands:
             command_path, flags = parse_gcloud_command(cmd, commands_db)

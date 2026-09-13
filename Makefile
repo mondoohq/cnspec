@@ -153,7 +153,8 @@ VALIDATION := content/validation
 .PHONY: test/content/remediation test/content/remediation/terraform test/content/remediation/cloudformation
 .PHONY: test/content/remediation/bicep test/content/remediation/ansible test/content/remediation/powershell
 .PHONY: test/content/remediation/bash test/content/remediation/chef
-.PHONY: test/content/commands test/content/upstream test/content/upstream/unit
+.PHONY: test/content/commands test/content/commands/unit
+.PHONY: test/content/upstream test/content/upstream/unit
 
 # The checks that run with nothing installed but Go and cnspec. Two groups are
 # deliberately left out, each for its own reason:
@@ -280,6 +281,12 @@ test/content/remediation/chef:
 CLOUD ?= all
 test/content/commands:
 	python3 $(VALIDATION)/remediation/commands/validate.py $(CLOUD)
+
+# The extraction those validators read policies with. Offline, no CLI needed,
+# and the one part of this that a wrong answer hides rather than reports: a
+# command the extraction misses is never validated and never mentioned.
+test/content/commands/unit:
+	python3 -m unittest discover -s $(VALIDATION)/remediation/commands -p "*_test.py"
 
 # Reports which upstreams the validators are pinned behind. Hits the network;
 # reports only, never fails the build.

@@ -28,7 +28,7 @@ from paths import CONTENT_DIR, DATA_DIR, VALIDATION_DIR  # noqa: E402
 DEFAULT_OUTPUT = DATA_DIR / "azure_commands.json"
 
 sys.path.insert(0, str(VALIDATION_DIR / "remediation" / "commands"))
-from common import extract_bash_blocks  # noqa: E402
+from common import extract_command_sources  # noqa: E402
 
 # Remediation ids whose bash blocks may contain `az` commands. The Azure
 # policy uses `cli`; the M365 policy documents a few DNS fixes there too.
@@ -341,8 +341,9 @@ def detect_policy_commands(commands: dict) -> set[str]:
     """Return every `az` command path the validator will check.
 
     That is a wider set than the `- id: cli` remediation blocks alone: the
-    validator also reads `audit:` blocks, and the M365 policy documents some
-    fixes under other remediation ids. A command missed here keeps phase 1's
+    validator also reads `audit:` blocks and the inline code spans in
+    `desc:`/`audit:` prose, and the M365 policy documents some fixes under
+    other remediation ids. A command missed here keeps phase 1's
     destination-name flags, which is precisely the defect this scoping used
     to cause — so the extraction mirrors the validator's own reader rather
     than re-implementing a narrower regex.
@@ -358,10 +359,10 @@ def detect_policy_commands(commands: dict) -> set[str]:
         if not policy_file.exists():
             continue
         content = policy_file.read_text()
-        blocks = extract_bash_blocks(
+        blocks = extract_command_sources(
             content, include_audit=True, remediation_ids=AZURE_REMEDIATION_IDS
         )
-        for block, _line, _uid in blocks:
+        for block, _line, _uid, _inline in blocks:
             joined = re.sub(r"\\\s*\n\s*", " ", block)
             for line in joined.split("\n"):
                 line = line.strip()

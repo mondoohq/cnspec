@@ -42,7 +42,7 @@ from common import (
     FAILURES,
     CONTENT_DIR,
     DUMP_DIR,
-    extract_bash_blocks,
+    extract_command_sources,
     policy_relpath,
     split_commands,
 )
@@ -809,6 +809,7 @@ def validate_api_curl(
     body: str | None,
     provider: dict,
     loaded_specs: list[tuple[dict, str, dict[str, set[str]]]],
+    check_required: bool = True,
 ) -> tuple[bool, list[str]]:
     """Validate one parsed curl call against a provider's specs.
 
@@ -874,7 +875,7 @@ def validate_api_curl(
     schema, body_required = _request_body_schema(matched_spec, matched, method)
 
     if body is None:
-        if schema is not None and body_required:
+        if schema is not None and body_required and check_required:
             errors.append(
                 f"'{method} {matched}' requires a request body, "
                 "but the command sends none"
@@ -901,7 +902,7 @@ def validate_api_curl(
 
     _validate_body(
         value, schema, matched_spec, "body", errors,
-        check_required=(exemption != "required"),
+        check_required=check_required and exemption != "required",
     )
     return (not errors), errors
 
@@ -926,7 +927,7 @@ def validate_api_provider(key: str) -> tuple[int, int]:
         # audit blocks are validated alongside remediation blocks. A
         # provider may document its fix under `- id: api` instead of the
         # default `- id: cli` (see remediation_ids).
-        blocks = extract_bash_blocks(
+        blocks = extract_command_sources(
             content,
             include_audit=True,
             remediation_ids=provider.get("remediation_ids", ("cli",)),
@@ -934,7 +935,7 @@ def validate_api_provider(key: str) -> tuple[int, int]:
 
         # Skip loading specs entirely if the policy has no curl calls
         # against this provider's API.
-        if not any(host in b for b, _, _ in blocks):
+        if not any(host in b for b, _, _, _ in blocks):
             continue
 
         if loaded_specs is None:
@@ -947,7 +948,7 @@ def validate_api_provider(key: str) -> tuple[int, int]:
 
         relpath = policy_relpath(policy_file)
 
-        for block_text, block_line, uid in blocks:
+        for block_text, block_line, uid, from_prose in blocks:
             commands = split_commands(block_text, "curl", block_line)
             for cmd, line_num in commands:
                 parsed = parse_api_curl(cmd, host)
@@ -956,7 +957,11 @@ def validate_api_provider(key: str) -> tuple[int, int]:
                 method, path, body = parsed
 
                 is_valid, errors = validate_api_curl(
-                    method, path, body, provider, loaded_specs
+                    method, path, body, provider, loaded_specs,
+                    # A curl call quoted in prose is a fragment; it names
+                    # the endpoint, not a payload the reader sends as
+                    # written. The path and method are still checked.
+                    check_required=not from_prose,
                 )
 
                 if is_valid:

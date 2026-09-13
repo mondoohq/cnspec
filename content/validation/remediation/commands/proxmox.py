@@ -10,7 +10,7 @@ from common import (
     FAILURES,
     CONTENT_DIR,
     DATA_DIR,
-    extract_bash_blocks,
+    extract_command_sources,
     policy_relpath,
     split_commands,
     truncate_cmd,
@@ -195,7 +195,7 @@ def validate_proxmox() -> tuple[int, int]:
     # nodes. Reading only `cli` would leave 12 of the 29 pvesh invocations
     # unchecked — shellcheck lints those blocks, but nothing there knows
     # whether the command exists.
-    blocks = extract_bash_blocks(
+    blocks = extract_command_sources(
         content, include_audit=True, remediation_ids=("cli", "bash")
     )
     if not blocks:
@@ -205,7 +205,7 @@ def validate_proxmox() -> tuple[int, int]:
     relpath = policy_relpath(PROXMOX_POLICY_FILE)
 
     pass_count = fail_count = 0
-    for block_text, block_line, uid in blocks:
+    for block_text, block_line, uid, _ in blocks:
         for cmd, line_num in split_commands(block_text, "pvesh", block_line):
             verb, path, options = parse_pvesh_command(cmd)
             if not verb:
