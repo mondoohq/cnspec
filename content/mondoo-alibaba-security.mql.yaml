@@ -4994,7 +4994,9 @@ queries:
       desc: |
         This check verifies that mount access to Apsara File Storage NAS is scoped to named VPC and on-premises ranges instead of granting the `RDWR` permission to the entire internet.
 
-        A NAS access group is the list of rules deciding which clients may mount a file system, and each rule pairs a source address range with a read/write permission. A rule that sets its `source_cidr_ip` to `0.0.0.0/0`, or its IPv6 source to `::/0`, while holding the `RDWR` permission lets any host able to reach the mount target both read and modify stored files. The rules live under **Permission Groups** in the NAS console, and `aliyun nas ModifyAccessRule` changes them from the command line.
+        A NAS access group is the list of rules deciding which clients may mount a file system, and each rule pairs a source address range with a read/write permission. A rule that sets its `source_cidr_ip` to `0.0.0.0/0`, or its IPv6 source to `::/0`, while holding the `RDWR` permission lets any host able to reach the mount target both read and modify stored files. NAS applies `RDWR` when a rule does not name a permission, so an omitted permission counts as read-write. The rules live under **Permission Groups** in the NAS console, and `aliyun nas ModifyAccessRule` changes them from the command line.
+
+        Every account also has the default permission group `DEFAULT_VPC_GROUP_NAME`. It grants read-write access to any address in the VPC, and NAS does not allow its rules to be modified or deleted. The check therefore skips the default group's own rules and instead fails any mount target that uses it, because attaching a custom permission group to the mount target is the only way to narrow that access.
 
         **Why this matters**
 
@@ -5009,21 +5011,29 @@ queries:
         ### Audit via Console
 
         1. Sign in to the [NAS console](https://nas.console.aliyun.com/).
-        2. Navigate to **Permission Groups** and open each access group.
-        3. Review the rules and confirm that no rule sets **Authorization Address** to `0.0.0.0/0` (or `::/0`) while **Read/Write Permission** is **RDWR**.
+        2. Navigate to **Permission Groups** and open each access group other than the default permission group.
+        3. Review the rules and confirm that no rule sets **Authorization Address** to `0.0.0.0/0` or `::/0` while **Read/Write Permission** is **RDWR**.
+        4. Navigate to **File System** > **File System List**, open each file system, and select the **Mount Target** tab.
+        5. Confirm that no mount target uses the default permission group.
 
-        A passing access group has no read-write rule whose source is the entire internet. A failing group has an `RDWR` rule with a source of `0.0.0.0/0` or `::/0`.
+        A passing account has no custom access group with a read-write rule whose source is the entire internet, and no mount target on the default permission group. A failing account has an `RDWR` rule with a source of `0.0.0.0/0` or `::/0`, or a mount target that uses the default permission group.
 
         ### Audit via CLI
 
-        1. List access groups and inspect the rules of each with the `aliyun` CLI:
+        1. List access groups and inspect the rules of each custom group with the `aliyun` CLI:
 
         ```bash
         aliyun nas DescribeAccessGroups
         aliyun nas DescribeAccessRules --AccessGroupName <access-group-name>
         ```
 
-        A passing rule with `RWAccess` of `RDWR` shows a specific `SourceCidrIp`. A failing rule shows `RWAccess` `RDWR` with `SourceCidrIp` `0.0.0.0/0` or `Ipv6SourceCidrIp` `::/0`.
+        2. List file systems and read the `AccessGroupName` of each entry under `MountTargets`:
+
+        ```bash
+        aliyun nas DescribeFileSystems
+        ```
+
+        A passing rule with `RWAccess` of `RDWR` shows a specific `SourceCidrIp`. A failing rule shows `RWAccess` `RDWR` with `SourceCidrIp` `0.0.0.0/0` or `Ipv6SourceCidrIp` `::/0`. A mount target fails when its `AccessGroupName` is `DEFAULT_VPC_GROUP_NAME`.
       remediation:
         - id: console
           desc: |
@@ -5032,6 +5042,12 @@ queries:
             1. Sign in to the [NAS console](https://nas.console.aliyun.com/).
             2. Navigate to **Permission Groups** and open the affected access group.
             3. Edit the offending rule and change **Authorization Address** from `0.0.0.0/0` to the specific VPC or client CIDR that needs access, or set **Read/Write Permission** to **RDONLY** where write access is not required.
+
+            For a mount target on the default permission group, whose rules cannot be edited:
+
+            1. Under **Permission Groups**, create a permission group and add rules for only the VPC or client ranges that mount the file system.
+            2. Navigate to **File System** > **File System List**, open the file system, and select the **Mount Target** tab.
+            3. Click **Edit Permission Group** for the mount target, select the new permission group, and click **OK**.
         - id: cli
           desc: |
             To restrict a NAS access rule to a specific network with the `aliyun` CLI:
@@ -5048,20 +5064,41 @@ queries:
             - `--RWAccessType RDONLY` also resolves it on its own. Drop the flag to keep `RDWR` for clients that must write, as long as the source is no longer `0.0.0.0/0`.
             - For a rule with an IPv6 source of `::/0`, pass `--Ipv6SourceCidrIp` instead of `--SourceCidrIp`.
 
-            Rules in the default permission group `DEFAULT_VPC_GROUP_NAME` cannot be modified. Attach a custom permission group to the mount target instead.
+            Rules in the default permission group `DEFAULT_VPC_GROUP_NAME` cannot be modified. For a mount target that uses it, create a custom permission group with a scoped rule and attach it to the mount target:
+
+            ```bash
+            aliyun nas CreateAccessGroup --AccessGroupName app-tier --AccessGroupType Vpc
+            aliyun nas CreateAccessRule --AccessGroupName app-tier \
+              --SourceCidrIp 10.0.0.0/16 --RWAccessType RDWR --UserAccessType root_squash
+            aliyun nas ModifyMountTarget --FileSystemId <file-system-id> \
+              --MountTargetDomain <mount-target-domain> --AccessGroupName app-tier
+            ```
+
+            `<file-system-id>` and `<mount-target-domain>` identify a mount target whose `AccessGroupName` is `DEFAULT_VPC_GROUP_NAME` in the `DescribeFileSystems` output.
 
             **Clients outside the new source range can no longer mount the file system, and a read-only rule makes writes fail.**
         - id: terraform
           desc: |
-            To declare a scoped NAS access rule in Terraform, set a specific `source_cidr_ip` and an appropriate `rw_access_type`:
+            To declare a scoped NAS access rule in Terraform, set a specific `source_cidr_ip` and an explicit `rw_access_type`, and attach the custom permission group to the mount target instead of `DEFAULT_VPC_GROUP_NAME`:
 
             ```hcl
+            resource "alicloud_nas_access_group" "example" {
+              access_group_name = "app-tier"
+              access_group_type = "Vpc"
+            }
+
             resource "alicloud_nas_access_rule" "example" {
               access_group_name = alicloud_nas_access_group.example.access_group_name
               source_cidr_ip    = "10.0.0.0/8"
               rw_access_type    = "RDONLY"
               user_access_type  = "no_squash"
               priority          = 1
+            }
+
+            resource "alicloud_nas_mount_target" "example" {
+              file_system_id    = alicloud_nas_file_system.example.id
+              access_group_name = alicloud_nas_access_group.example.access_group_name
+              vswitch_id        = alicloud_vswitch.example.id
             }
             ```
     variants:
@@ -5088,29 +5125,41 @@ queries:
   - uid: mondoo-alibaba-security-nas-access-rule-restrict-source-alicloud
     filters: asset.platform == "alicloud-account"
     mql: |
-      alicloud.nas.accessGroups.all(
+      alicloud.nas.accessGroups.where(accessGroupName != "DEFAULT_VPC_GROUP_NAME").all(
         accessRules.where(rwAccess == "RDWR").all(sourceCidrIp != "0.0.0.0/0" && ipv6SourceCidrIp != "::/0")
+      )
+      alicloud.nas.fileSystems.all(
+        mountTargets.all(accessGroupName != "DEFAULT_VPC_GROUP_NAME")
       )
   - uid: mondoo-alibaba-security-nas-access-rule-restrict-source-terraform-hcl
     filters: |
-      asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_nas_access_rule")
+      asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_nas_access_rule" || nameLabel == "alicloud_nas_mount_target")
     mql: |
       terraform.resources("alicloud_nas_access_rule").all(
-        arguments["rw_access_type"] != "RDWR" || arguments["source_cidr_ip"] != "0.0.0.0/0" && arguments["ipv6_source_cidr_ip"] != "::/0"
+        arguments["rw_access_type"] == /^rdonly$/i || arguments["source_cidr_ip"] != "0.0.0.0/0" && arguments["ipv6_source_cidr_ip"] != "::/0"
+      )
+      terraform.resources("alicloud_nas_mount_target").all(
+        arguments["access_group_name"] != "DEFAULT_VPC_GROUP_NAME"
       )
   - uid: mondoo-alibaba-security-nas-access-rule-restrict-source-terraform-plan
     filters: |
-      asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_nas_access_rule")
+      asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "alicloud_nas_access_rule" || type == "alicloud_nas_mount_target")
     mql: |
       terraform.plan.resourceChanges.where(type == "alicloud_nas_access_rule").all(
-        change.after["rw_access_type"] != "RDWR" || change.after["source_cidr_ip"] != "0.0.0.0/0" && change.after["ipv6_source_cidr_ip"] != "::/0"
+        change.after["rw_access_type"] == /^rdonly$/i || change.after["source_cidr_ip"] != "0.0.0.0/0" && change.after["ipv6_source_cidr_ip"] != "::/0"
+      )
+      terraform.plan.resourceChanges.where(type == "alicloud_nas_mount_target").all(
+        change.after["access_group_name"] != "DEFAULT_VPC_GROUP_NAME"
       )
   - uid: mondoo-alibaba-security-nas-access-rule-restrict-source-terraform-state
     filters: |
-      asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_nas_access_rule")
+      asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_nas_access_rule" || type == "alicloud_nas_mount_target")
     mql: |
       terraform.state.resources.where(type == "alicloud_nas_access_rule").all(
-        values["rw_access_type"] != "RDWR" || values["source_cidr_ip"] != "0.0.0.0/0" && values["ipv6_source_cidr_ip"] != "::/0"
+        values["rw_access_type"] == /^rdonly$/i || values["source_cidr_ip"] != "0.0.0.0/0" && values["ipv6_source_cidr_ip"] != "::/0"
+      )
+      terraform.state.resources.where(type == "alicloud_nas_mount_target").all(
+        values["access_group_name"] != "DEFAULT_VPC_GROUP_NAME"
       )
 
   # ===========================================================================
