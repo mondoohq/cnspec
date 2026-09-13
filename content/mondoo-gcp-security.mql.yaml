@@ -22205,7 +22205,7 @@ queries:
 
         A private endpoint participates in VPC network controls, so firewall rules, VPC Service Controls, and flow logs govern model prediction traffic the same way they govern the rest of the environment. Data-in-transit requirements in regulatory frameworks are correspondingly easier to demonstrate when client traffic never leaves a private boundary.
 
-        Private Service Connect can only be chosen when the endpoint is created, and the `gcloud` CLI cannot enable it, so an endpoint must be built through the Vertex AI REST API or Terraform. The `network` argument and the `private_service_connect_config` block are mutually exclusive, and the Terraform version of this check accepts either one as a valid private path.
+        Private Service Connect can only be chosen when the endpoint is created, and the `gcloud` CLI cannot enable it, so an endpoint must be built through the Vertex AI REST API or Terraform. The `network` argument and the `private_service_connect_config` block are mutually exclusive, and every version of this check accepts either one as a valid private path.
       audit: |
         ### Audit via Console
 
@@ -22278,7 +22278,8 @@ queries:
   - uid: mondoo-gcp-security-vertexai-endpoint-private-service-connect-gcp
     filters: asset.platform == 'gcp-vertexai-endpoint'
     mql: |
-      gcp.project.vertexaiService.endpoint.enablePrivateServiceConnect == true
+      gcp.project.vertexaiService.endpoint.enablePrivateServiceConnect == true ||
+      gcp.project.vertexaiService.endpoint.networkRef != null
   - uid: mondoo-gcp-security-vertexai-endpoint-private-service-connect-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_vertex_ai_endpoint')
@@ -22677,6 +22678,9 @@ queries:
               -d '{
                 "displayName": "PIPELINE_JOB_NAME",
                 "pipelineSpec": PIPELINE_SPEC_JSON,
+                "runtimeConfig": {
+                  "gcsOutputDirectory": "gs://BUCKET/pipeline-root"
+                },
                 "encryptionSpec": {
                   "kmsKeyName": "projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY"
                 }
@@ -22684,6 +22688,10 @@ queries:
             ```
 
             Replace PIPELINE_SPEC_JSON with the compiled pipeline definition produced by the Kubeflow Pipelines SDK.
+
+            Replace `gs://BUCKET/pipeline-root` with the Cloud Storage path that holds the pipeline's output artifacts. The API marks `runtimeConfig.gcsOutputDirectory` as required, and a request that omits it succeeds only when the compiled pipeline specification already sets `defaultPipelineRoot`. The service account the pipeline runs as needs the `storage.objects.get` and `storage.objects.create` permissions on that bucket.
+
+            **The job's `encryptionSpec` does not encrypt the output bucket.** Create that bucket with the same Cloud KMS key if the artifacts the pipeline writes must also be held under an organization-controlled key.
     refs:
       - url: https://docs.cloud.google.com/gemini-enterprise-agent-platform/machine-learning/general/cmek
         title: Customer-managed encryption keys for Vertex AI
@@ -22782,11 +22790,16 @@ queries:
               -d '{
                 "displayName": "PIPELINE_JOB_NAME",
                 "pipelineSpec": PIPELINE_SPEC_JSON,
+                "runtimeConfig": {
+                  "gcsOutputDirectory": "gs://BUCKET/pipeline-root"
+                },
                 "network": "projects/PROJECT/global/networks/VPC_NAME"
               }'
             ```
 
             Replace PIPELINE_SPEC_JSON with the compiled pipeline definition produced by the Kubeflow Pipelines SDK.
+
+            Replace `gs://BUCKET/pipeline-root` with the Cloud Storage path that holds the pipeline's output artifacts. The API marks `runtimeConfig.gcsOutputDirectory` as required, and a request that omits it succeeds only when the compiled pipeline specification already sets `defaultPipelineRoot`. The service account the pipeline runs as needs the `storage.objects.get` and `storage.objects.create` permissions on that bucket.
     refs:
       - url: https://docs.cloud.google.com/gemini-enterprise-agent-platform/machine-learning/general/vpc-peering
         title: VPC Network Peering for Vertex AI
@@ -22898,11 +22911,16 @@ queries:
               -d '{
                 "displayName": "PIPELINE_JOB_NAME",
                 "pipelineSpec": PIPELINE_SPEC_JSON,
+                "runtimeConfig": {
+                  "gcsOutputDirectory": "gs://BUCKET/pipeline-root"
+                },
                 "serviceAccount": "CUSTOM_SA_EMAIL"
               }'
             ```
 
             Replace PIPELINE_SPEC_JSON with the compiled pipeline definition produced by the Kubeflow Pipelines SDK.
+
+            Replace `gs://BUCKET/pipeline-root` with the Cloud Storage path that holds the pipeline's output artifacts. The API marks `runtimeConfig.gcsOutputDirectory` as required, and a request that omits it succeeds only when the compiled pipeline specification already sets `defaultPipelineRoot`. Grant CUSTOM_SA_EMAIL the `storage.objects.get` and `storage.objects.create` permissions on that bucket, because the dedicated service account replaces the default one that held project-wide editor rights.
     refs:
       - url: https://docs.cloud.google.com/gemini-enterprise-agent-platform/machine-learning/pipelines/configure-project#service-account
         title: Configure a service account for Vertex AI Pipelines
@@ -37529,7 +37547,7 @@ queries:
 
         Each of these resources holds something derived from the training inputs. Tensorboards store training metrics that disclose dataset characteristics; indexes encode embeddings of the indexed content; metadata stores hold pipeline lineage spanning the whole project; the Feature Store backs online prediction with stored feature values. Encrypting some of them and not others leaves copies of the same underlying data outside the organization's key custody.
 
-        Custom training jobs are a special case, because their checkpoints and intermediate files land in a staging bucket whose encryption is fixed at submission. There is no way to correct that afterwards, so the key has to be passed with `--kms-key` on every submission.
+        Custom training jobs are a special case, because their checkpoints and intermediate files land in a staging bucket whose encryption is fixed at submission. There is no way to correct that afterwards, so the key has to be passed with `--kms-key` on every submission. The check therefore evaluates only the custom jobs still in `JOB_STATE_QUEUED`, `JOB_STATE_PENDING`, or `JOB_STATE_RUNNING`. A run that has already finished cannot be re-encrypted, and holding finished runs in scope would fail a project on history that no operator can correct.
 
         Google-managed keys cannot be disabled or destroyed on request, which removes cryptographic revocation from the incident response toolkit for every resource that lacks a CMEK key. A key the organization holds restores that option across the whole set.
 
@@ -37553,12 +37571,13 @@ queries:
           --format="table(name,encryptionSpec.kmsKeyName)"
         ```
 
-        2. List custom training jobs and check encryption settings:
+        2. List the custom training jobs that have not finished yet and check encryption settings:
 
         ```bash
         gcloud ai custom-jobs list \
           --region=REGION \
-          --format="table(name,encryptionSpec.kmsKeyName)"
+          --filter="state=JOB_STATE_QUEUED OR state=JOB_STATE_PENDING OR state=JOB_STATE_RUNNING" \
+          --format="table(name,state,encryptionSpec.kmsKeyName)"
         ```
 
         3. List indexes and check encryption settings:
@@ -37626,6 +37645,23 @@ queries:
               --config=config.yaml
             ```
 
+            A job that is already queued or running cannot have a key attached to it. Cancel it and submit a replacement that carries `--kms-key`:
+
+            ```bash
+            gcloud ai custom-jobs cancel CUSTOM_JOB \
+              --region=REGION
+            ```
+
+            The check stops evaluating a job once it leaves the queued, pending, and running states, so a finished run without CMEK needs no further action. To clear the record itself, use the Vertex AI REST API, which is the only interface that deletes a custom job:
+
+            ```bash
+            curl -X DELETE \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/customJobs/JOB_ID"
+            ```
+
+            **Deleting a job record is permanent.** The run's configuration and its link to the training logs are lost, so keep the record if the job history is part of an audit trail.
+
             For Tensorboards:
 
             ```bash
@@ -37643,7 +37679,9 @@ queries:
       gcp.project.vertexai.tensorboards.all(
         encryptionSpec != empty
       )
-      gcp.project.vertexai.customJobs.all(
+      gcp.project.vertexai.customJobs.where(
+        state.in(["JOB_STATE_QUEUED", "JOB_STATE_PENDING", "JOB_STATE_RUNNING"])
+      ).all(
         encryptionSpec != empty
       )
       gcp.project.vertexai.indexes.all(
