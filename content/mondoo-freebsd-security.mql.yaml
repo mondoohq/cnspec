@@ -5824,26 +5824,34 @@ queries:
       compliance/vda-isa-5: vda-isa-5-4-2-1
     mql: |
       file("/boot/loader.conf") {
-        user.name == 'root'
-        group.name == 'wheel'
-        permissions.user_executable == false
-        permissions.group_readable == false
-        permissions.group_writeable == false
-        permissions.group_executable == false
-        permissions.other_readable == false
-        permissions.other_writeable == false
-        permissions.other_executable == false
+        exists == false ||
+          user.name == 'root' &&
+          group.name == 'wheel' &&
+          permissions.user_executable == false &&
+          permissions.group_readable == false &&
+          permissions.group_writeable == false &&
+          permissions.group_executable == false &&
+          permissions.other_readable == false &&
+          permissions.other_writeable == false &&
+          permissions.other_executable == false
       }
     docs:
       refs:
         - url: https://man.freebsd.org/cgi/man.cgi?query=loader.conf&sektion=5
           title: FreeBSD loader.conf(5)
       desc: |
-        This check verifies that `/boot/loader.conf` is owned by `root:wheel` and has mode 0600 or more restrictive.
+        This check verifies that `/boot/loader.conf` is owned by `root:wheel` and has mode 0600 or more restrictive. The file is optional, so the check passes when it is absent.
 
         **Why this matters**
 
-        The bootloader configuration file controls kernel parameters and module loading at boot time. If readable by unauthorized users, it may expose sensitive configuration such as bootloader passwords. If writable, an attacker could modify boot parameters to bypass security controls, boot into single-user mode, or load malicious kernel modules.
+        The bootloader configuration file controls kernel parameters and module loading at boot time. If readable by unauthorized users, it may expose sensitive configuration such as the loader `password` setting. If writable, an attacker could modify boot parameters to bypass security controls, boot into single-user mode, or load malicious kernel modules.
+
+        **Scope**
+
+        loader.conf(5) lists `/boot/defaults/loader.conf` as the default settings that ship with the base system and `/boot/loader.conf` as user defined settings. A system whose loader settings have never been customized has no `/boot/loader.conf` at all and exposes no administrator-defined boot configuration. This check therefore covers `/boot/loader.conf` only:
+
+        - An absent `/boot/loader.conf` passes. There is no file to read and no file whose contents an attacker could change.
+        - `/boot/defaults/loader.conf` is out of scope. It ships with the base system, holds no site configuration, and is world readable on every FreeBSD install, so requiring mode 0600 on it would fail every system without protecting anything.
       audit: |
         To verify the ownership and permissions of `/boot/loader.conf`, run the following command:
 
@@ -5851,18 +5859,22 @@ queries:
         ls -l /boot/loader.conf
         ```
 
-        If the file is owned by `root:wheel` with mode `0600` or more restrictive, the check passes. If group or other have any access, the check fails.
+        The check passes when the file is owned by `root:wheel` with mode `0600` or more restrictive. It fails when the owner or group is wrong, or when group or other have any access.
+
+        The check also passes when `ls` reports `No such file or directory`. That system keeps its loader settings in `/boot/defaults/loader.conf` alone and has no administrator-defined bootloader configuration to protect.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            Set the correct ownership and permissions:
+            Set the correct ownership and permissions on an existing `/boot/loader.conf`:
 
             ```bash
             chown root:wheel /boot/loader.conf
             chmod 0600 /boot/loader.conf
             ```
+
+            **Do not create `/boot/loader.conf` just to satisfy this check.** An absent file already passes. Creating one adds a boot configuration file the system did not have, and the loader starts reading it.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -5870,6 +5882,11 @@ queries:
             ```sh
             #!/bin/sh
             set -e
+
+            if [ ! -e /boot/loader.conf ]; then
+              echo "/boot/loader.conf does not exist, nothing to secure."
+              exit 0
+            fi
 
             echo "Setting permissions on /boot/loader.conf..."
             chown root:wheel /boot/loader.conf
@@ -5881,7 +5898,7 @@ queries:
           desc: |
             To set the correct ownership and permissions using Ansible:
 
-            1. Add the following task to a playbook targeting the FreeBSD host.
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
             2. Run the playbook.
 
             ```yaml
@@ -5891,24 +5908,32 @@ queries:
               become: true
 
               tasks:
+                - name: Check whether /boot/loader.conf exists
+                  ansible.builtin.stat:
+                    path: /boot/loader.conf
+                  register: loader_conf
+
                 - name: Secure /boot/loader.conf permissions
                   ansible.builtin.file:
                     path: /boot/loader.conf
+                    state: file
                     owner: root
                     group: wheel
                     mode: '0600'
+                  when: loader_conf.stat.exists
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to restrict the bootloader configuration to root:
+            Use this Chef Infra recipe code to restrict an existing bootloader configuration to root. The `only_if` guard keeps the `file` resource from creating `/boot/loader.conf` on systems that do not have one:
 
             ```ruby
             file '/boot/loader.conf' do
               owner 'root'
               group 'wheel'
               mode '0600'
+              only_if { ::File.exist?('/boot/loader.conf') }
             end
             ```
   - uid: mondoo-freebsd-security-root-is-the-only-uid-0-account
