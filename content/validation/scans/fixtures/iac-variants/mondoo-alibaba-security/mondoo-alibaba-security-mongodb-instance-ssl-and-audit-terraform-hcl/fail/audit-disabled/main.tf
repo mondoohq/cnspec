@@ -1,3 +1,4 @@
+# The audit policy exists but turns audit logging off.
 resource "alicloud_mongodb_instance" "prod" {
   engine_version      = "6.0"
   db_instance_class   = "dds.mongo.mid"
@@ -8,5 +9,5 @@ resource "alicloud_mongodb_instance" "prod" {
 
 resource "alicloud_mongodb_audit_policy" "prod" {
   db_instance_id = alicloud_mongodb_instance.prod.id
-  audit_status   = "enable"
+  audit_status   = "disabled"
 }
