@@ -19,7 +19,7 @@ from common import (
     DATA_DIR,
     FAILURES,
     CONTENT_DIR,
-    extract_bash_blocks,
+    extract_command_sources,
     policy_relpath,
     split_commands,
     truncate_cmd,
@@ -164,13 +164,13 @@ def validate_vercel() -> tuple[int, int]:
     # Vercel's audit paths use the CLI directly (`### Audit via CLI`), so
     # audit blocks are validated alongside cli remediation blocks. This is
     # a new validator with no backlog of unvalidated audit blocks.
-    blocks = extract_bash_blocks(content, include_audit=True)
+    blocks = extract_command_sources(content, include_audit=True)
     relpath = policy_relpath(VERCEL_POLICY_FILE)
 
     pass_count = 0
     fail_count = 0
 
-    for block_text, block_line, uid in blocks:
+    for block_text, block_line, uid, _ in blocks:
         for cmd, line_num in split_commands(block_text, "vercel", block_line):
             command_path, next_token, flags = parse_vercel_command(
                 cmd, commands, aliases

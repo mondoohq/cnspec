@@ -35,7 +35,7 @@ import sys
 from common import (
     FAILURES,
     CONTENT_DIR,
-    extract_bash_blocks,
+    extract_command_sources,
     policy_relpath,
     split_commands,
     truncate_cmd,
@@ -220,7 +220,9 @@ def detect_cli_services(cli: str, policy_files: list, include_audit: bool) -> li
         if not policy_file.exists():
             continue
         content = policy_file.read_text()
-        for block, line, _ in extract_bash_blocks(content, include_audit=include_audit):
+        for block, line, _, _ in extract_command_sources(
+            content, include_audit=include_audit
+        ):
             for cmd, _ in split_commands(block, cli, line):
                 parts = cmd.split()[1:]
                 for token in parts[:4]:
@@ -454,10 +456,10 @@ def validate_cobra_cli(key: str) -> tuple[int, int]:
             sys.exit(1)
 
         content = policy_file.read_text()
-        blocks = extract_bash_blocks(content, include_audit=entry["include_audit"])
+        blocks = extract_command_sources(content, include_audit=entry["include_audit"])
         relpath = policy_relpath(policy_file)
 
-        for block_text, block_line, uid in blocks:
+        for block_text, block_line, uid, _ in blocks:
             commands = split_commands(block_text, cli, block_line)
             for cmd, line_num in commands:
                 command_path, next_token, flags = parse_cobra_command(cli, cmd, db)

@@ -90,6 +90,7 @@ Run the one that covers what you touched.
 | `make test/content/remediation` | all seven remediation code-block validators | see below |
 | `make test/content/remediation/terraform` | one of them (also `/cloudformation`, `/bicep`, `/ansible`, `/powershell`, `/bash`, `/chef`) | that language's linter |
 | `make test/content/commands` | CLI and API calls; `CLOUD=aws` scopes it | that cloud's CLI |
+| `make test/content/commands/unit` | how those validators read a policy | none |
 | `make test/content/upstream` | which pins are behind | network |
 | `make test/content/upstream/unit` | the pin resolvers, against recorded payloads | none |
 | `make test/content/spelling` | `typos` over the repo | `brew install typos-cli` |
@@ -251,6 +252,11 @@ The Bicep job takes several minutes: the CLI reloads the ARM type index on every
 ### Remediation CLI and API commands (`remediation/commands/`)
 
 Verifies that every CLI command and REST call in a remediation section names a real subcommand, a real flag, and a real endpoint. It reads `id: cli` and `id: api` blocks **and `audit:` blocks** — a wrong audit command misleads an auditor exactly as a wrong remediation misleads an operator.
+
+It also reads commands written as **inline code spans in `desc:` and `audit:` prose**, not only fenced blocks. Prose that names a flag is making the same claim a snippet makes, and until this existed it was the one place a wrong flag could ship with every gate green: both Swift container ACL checks told readers to run `openstack container set --read-acl`, which OpenStackClient has never accepted, and `validate.py openstack` reported 0 failures on either side of the fix. Two rules keep the prose reader from flooding a run with things that were never commands:
+
+- A span qualifies only when it reads as `<program> <word>` **and** names at least one `--flag`. Prose names command *paths* constantly, usually a group ("the `doctl compute firewall` commands"), and a group is indistinguishable from a misspelled leaf. Nobody writes `--read-acl` to gesture at a family of commands.
+- Completeness is not checked on a prose span. A sentence quoting `aws s3api put-bucket-policy --policy ...` is naming the call, not writing it out, so AWS required parameters and required request-body properties are skipped there. The flags it does name are still checked.
 
 For `aws` it also checks that the command supplies every parameter the operation **requires**. Naming only real flags is not enough: a snippet missing a required one is rejected by argument parsing before it reaches AWS, so the documented fix cannot run at all. Members carrying `idempotencyToken` are excluded, because botocore fills those in, and `AWS_CLI_DEFAULTED_PARAMS` in `commands/aws.py` lists the few the CLI itself defaults. Confirm a command really is rejected before adding an entry there — argument validation is client-side, so dummy credentials are enough to tell a `ParamValidation` error from one that means the command parsed.
 

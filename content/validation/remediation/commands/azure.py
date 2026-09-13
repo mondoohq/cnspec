@@ -8,7 +8,7 @@ import sys
 
 from pathlib import Path
 
-from common import DATA_DIR, FAILURES, CONTENT_DIR, extract_bash_blocks, policy_relpath, split_commands, truncate_cmd
+from common import DATA_DIR, FAILURES, CONTENT_DIR, extract_command_sources, policy_relpath, split_commands, truncate_cmd
 
 
 # ---------------------------------------------------------------------------
@@ -117,10 +117,10 @@ def validate_azure() -> tuple[int, int]:
             sys.exit(1)
 
         content = policy_file.read_text()
-        blocks = extract_bash_blocks(content, include_audit=True)
+        blocks = extract_command_sources(content, include_audit=True)
         relpath = policy_relpath(policy_file)
 
-        for block_text, block_line, uid in blocks:
+        for block_text, block_line, uid, _ in blocks:
             commands = split_commands(block_text, "az", block_line)
             for cmd, line_num in commands:
                 command_path, flags = parse_az_command(cmd, commands_db)

@@ -28,6 +28,35 @@ COMMAND_SUBSTITUTION = re.compile(r"\$\(([^()]*)\)")
 # `&&` is lexed as its own token but left inline, as it was before.
 SHELL_OPERATORS = {"|", "||", ";"}
 
+# A `desc:`/`audit:` block scalar. `|-` and `|+` are chomping indicators and
+# hold the same prose as `|`.
+PROSE_KEY = re.compile(r"^(\s*)(?:desc|audit): \|[-+]?\s*$")
+
+# An inline code span in prose: `` `openstack container set --read-acl x` ``.
+# A span never wraps, so the match is bounded to one line, which also keeps
+# the reported line number exact. The lookarounds skip ``double-backtick``
+# spans, whose contents are a literal backtick rather than a command.
+INLINE_CODE_SPAN = re.compile(r"(?<!`)`([^`\n]+)`(?!`)")
+
+# Which inline spans are commands. Prose is full of spans that are not:
+# a bare flag (`--read-acl`), a field path, a header name, a file name.
+# Requiring a lowercase program name followed by at least one non-flag word
+# keeps the fragments out, at the cost of skipping the rare prose span that
+# puts a global flag first (`aws --profile prod s3 ls`). That trade is
+# deliberate: a false positive costs a reviewer an investigation, a false
+# negative costs nothing that is not already the status quo.
+INLINE_COMMAND = re.compile(r"^[a-z][a-z0-9._+-]*[ \t]+[^-\s]")
+
+# ...and at least one long flag somewhere in the span. Command *paths* are
+# named in prose constantly, usually as a group ("the `doctl compute
+# firewall` commands", "`az synapse` requires the extension"), and a group
+# is indistinguishable from a misspelled leaf without treating every such
+# mention as a defect. A flag is different: nobody writes `--read-acl` to
+# gesture at a family of commands, so a span carrying one is a claim about
+# a specific invocation, which is the claim worth checking and the one
+# #3858 got wrong.
+INLINE_FLAG = re.compile(r"(?:^|\s)--[A-Za-z]")
+
 
 def lex_shell(text: str) -> list[str]:
     """Tokenize a shell command, keeping unquoted `|` and `;` as their own
@@ -79,6 +108,80 @@ def policy_relpath(policy_file: Path) -> str:
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+def index_uids(content: str) -> list[tuple[int, str]]:
+    """List of (line_number, uid) for every `- uid:` line in a policy, so the
+    enclosing check can be looked up for any position in the file."""
+    positions: list[tuple[int, str]] = []
+    for i, line in enumerate(content.split("\n")):
+        m = re.match(r"^  - uid:\s+(\S+)", line)
+        if m:
+            positions.append((i + 1, m.group(1)))
+    return positions
+
+
+def uid_for_line(positions: list[tuple[int, str]], line_num: int) -> str:
+    """The nearest uid defined at or before line_num."""
+    result = ""
+    for pos, uid in positions:
+        if pos <= line_num:
+            result = uid
+        else:
+            break
+    return result
+
+
+def extract_inline_commands(content: str) -> list[tuple[str, int, str]]:
+    """Extract inline code spans from `desc:` and `audit:` prose.
+
+    Returns the same (text, line_number, uid) shape as extract_bash_blocks,
+    with one span per entry, so a caller can hand the result straight to
+    split_commands as if it were a one-line code block.
+
+    Until this existed a command was only ever checked when it sat in a
+    fenced block, so prose could recommend a flag that does not exist with
+    every gate green. Both Swift container ACL checks told readers to run
+    `openstack container set --read-acl`, which OpenStackClient has never
+    accepted, and `validate.py openstack` reported zero failures on either
+    side of the fix (#3858, #3879, #3893).
+
+    Fenced blocks inside the prose are skipped: extract_bash_blocks already
+    reads those, and reading them twice would double every count.
+    """
+    lines = content.split("\n")
+    positions = index_uids(content)
+    found: list[tuple[str, int, str]] = []
+
+    i = 0
+    while i < len(lines):
+        key = PROSE_KEY.match(lines[i])
+        if not key:
+            i += 1
+            continue
+
+        # A block scalar runs until the next non-blank line indented no
+        # further than its key. That is its sibling key (`remediation:`) or,
+        # for a `desc:` inside a `- id:` remediation entry, the next list
+        # item, which is indented less.
+        indent = len(key.group(1))
+        j = i + 1
+        in_fence = False
+        while j < len(lines):
+            line = lines[j]
+            if line.strip() and len(line) - len(line.lstrip()) <= indent:
+                break
+            if line.lstrip().startswith("```"):
+                in_fence = not in_fence
+            elif not in_fence:
+                for span in INLINE_CODE_SPAN.finditer(line):
+                    text = span.group(1).strip()
+                    if INLINE_COMMAND.match(text) and INLINE_FLAG.search(text):
+                        found.append((text, j + 1, uid_for_line(positions, j + 1)))
+            j += 1
+        i = j
+
+    return found
+
+
 def extract_bash_blocks(
     content: str,
     include_audit: bool = False,
@@ -107,25 +210,15 @@ def extract_bash_blocks(
     destination names — with the old grammar, commands used only in audit
     blocks kept names like `--resource-group-name`, and turning this on
     reported ~170 failures that were the grammar's fault, not the content's.
+
+    Fenced blocks are all this reads. Commands written as inline code spans
+    in prose come from extract_inline_commands; extract_command_sources
+    returns both.
     """
-    # Pre-compute a list of (line_number, uid) from all `- uid:` lines so we
-    # can look up the enclosing check for any position in the file.
-    lines = content.split("\n")
-    uid_positions: list[tuple[int, str]] = []
-    for i, line in enumerate(lines):
-        m = re.match(r"^  - uid:\s+(\S+)", line)
-        if m:
-            uid_positions.append((i + 1, m.group(1)))
+    uid_positions = index_uids(content)
 
     def find_uid_for_line(line_num: int) -> str:
-        """Find the nearest uid defined before line_num."""
-        result = ""
-        for pos, uid in uid_positions:
-            if pos <= line_num:
-                result = uid
-            else:
-                break
-        return result
+        return uid_for_line(uid_positions, line_num)
 
     id_alt = "|".join(re.escape(i) for i in remediation_ids)
     pattern = re.compile(
@@ -167,6 +260,38 @@ def extract_bash_blocks(
                     line_number = content[:code_offset].count("\n") + 1
                     blocks.append((block, line_number, uid))
 
+    return blocks
+
+
+def extract_command_sources(
+    content: str,
+    include_audit: bool = False,
+    remediation_ids: tuple[str, ...] = ("cli",),
+) -> list[tuple[str, int, str, bool]]:
+    """Every place in a policy a command can be written, in one list.
+
+    Entries are (text, line_number, uid, from_prose): the fenced blocks
+    extract_bash_blocks finds, then the inline spans extract_inline_commands
+    finds, each tagged with which it is.
+
+    The tag exists because the two are not the same kind of claim. A fenced
+    block is a snippet the reader runs as written, so an incomplete
+    invocation is a defect. A prose span is a fragment quoted mid-sentence,
+    and leaving out a required argument is how prose is written. A caller
+    that checks an invocation for completeness (AWS required parameters, a
+    required request-body property) has to skip that check when the entry
+    came from prose; existence of the command and of its flags is checked
+    either way.
+    """
+    blocks: list[tuple[str, int, str, bool]] = [
+        (text, line, uid, False)
+        for text, line, uid in extract_bash_blocks(
+            content, include_audit=include_audit, remediation_ids=remediation_ids
+        )
+    ]
+    blocks += [
+        (text, line, uid, True) for text, line, uid in extract_inline_commands(content)
+    ]
     return blocks
 
 

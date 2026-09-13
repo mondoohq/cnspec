@@ -30,7 +30,7 @@ from common import (
     CONTENT_DIR,
     DATA_DIR,
     DUMP_DIR,
-    extract_bash_blocks,
+    extract_command_sources,
     policy_relpath,
     split_commands,
     truncate_cmd,
@@ -154,13 +154,13 @@ def validate_alicloud() -> tuple[int, int]:
     # Greenfield policy with no unvalidated-audit backlog, so audit blocks are
     # validated too — a wrong audit command misleads an auditor just like a
     # wrong remediation.
-    blocks = extract_bash_blocks(content, include_audit=True)
+    blocks = extract_command_sources(content, include_audit=True)
 
     relpath = policy_relpath(ALICLOUD_POLICY_FILE)
     pass_count = 0
     fail_count = 0
 
-    for block_text, block_line, uid in blocks:
+    for block_text, block_line, uid, _ in blocks:
         for cmd, line_num in split_commands(block_text, "aliyun", block_line):
             is_valid, errors = validate_command(cmd, db)
             if is_valid:

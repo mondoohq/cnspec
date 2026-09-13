@@ -10,7 +10,15 @@ import sys
 
 from pathlib import Path
 
-from common import FAILURES, CONTENT_DIR, extract_bash_blocks, policy_relpath, split_commands, truncate_cmd
+from common import (
+    FAILURES,
+    CONTENT_DIR,
+    extract_command_sources,
+    extract_inline_commands,
+    policy_relpath,
+    split_commands,
+    truncate_cmd,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -136,8 +144,13 @@ def detect_aws_services_from_policy() -> list[str]:
 
     content = AWS_POLICY_FILE.read_text()
     services = set()
-    for match in re.finditer(r"```bash\s*\n(.*?)```", content, re.DOTALL):
-        block = match.group(1)
+    blocks = [m.group(1) for m in re.finditer(r"```bash\s*\n(.*?)```", content, re.DOTALL)]
+    # Prose spans are scanned too, and the model for a service they are the
+    # only mention of still has to be loaded. Miss them here and every
+    # `aws organizations ...` quoted in a description comes back as
+    # "unknown service", which reads as a content defect and is not one.
+    blocks += [text for text, _, _ in extract_inline_commands(content)]
+    for block in blocks:
         joined = re.sub(r"\\\s*\n\s*", " ", block)
         for line in joined.split("\n"):
             line = line.strip()
@@ -426,14 +439,14 @@ def validate_aws() -> tuple[int, int]:
         return 0, 0
 
     content = AWS_POLICY_FILE.read_text()
-    blocks = extract_bash_blocks(content, include_audit=True)
+    blocks = extract_command_sources(content, include_audit=True)
 
     pass_count = 0
     fail_count = 0
 
     relpath = policy_relpath(AWS_POLICY_FILE)
 
-    for block_text, block_line, uid in blocks:
+    for block_text, block_line, uid, from_prose in blocks:
         commands = split_commands(block_text, "aws", block_line)
         for cmd, line_num in commands:
             service, subcommand, flags = parse_aws_command(cmd)
@@ -442,7 +455,15 @@ def validate_aws() -> tuple[int, int]:
                 continue
 
             is_valid, errors = validate_aws_command(
-                service, subcommand, flags, commands_db, required_db
+                service,
+                subcommand,
+                flags,
+                commands_db,
+                # A sentence quoting `aws s3api put-bucket-policy --policy
+                # ...` is naming the call, not writing it out, so required
+                # parameters are not expected. Flags it does name are still
+                # checked, which is the point.
+                {} if from_prose else required_db,
             )
 
             if is_valid:

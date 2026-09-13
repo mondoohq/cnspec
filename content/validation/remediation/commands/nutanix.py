@@ -8,7 +8,7 @@ import sys
 
 from pathlib import Path
 
-from common import DATA_DIR, FAILURES, CONTENT_DIR, extract_bash_blocks, policy_relpath, split_commands, truncate_cmd
+from common import DATA_DIR, FAILURES, CONTENT_DIR, extract_command_sources, policy_relpath, split_commands, truncate_cmd
 
 
 # ---------------------------------------------------------------------------
@@ -133,13 +133,13 @@ def validate_nutanix() -> tuple[int, int]:
         sys.exit(1)
 
     content = NUTANIX_POLICY_FILE.read_text()
-    blocks = extract_bash_blocks(content, include_audit=True)
+    blocks = extract_command_sources(content, include_audit=True)
     relpath = policy_relpath(NUTANIX_POLICY_FILE)
 
     pass_count = 0
     fail_count = 0
 
-    for block_text, block_line, uid in blocks:
+    for block_text, block_line, uid, _ in blocks:
         commands = split_commands(block_text, "ncli", block_line)
         for cmd, line_num in commands:
             parsed = parse_ncli_command(cmd)
