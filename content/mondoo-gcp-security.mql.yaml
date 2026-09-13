@@ -8302,7 +8302,7 @@ queries:
 
         Google Cloud allows an `allow` entry to name a protocol such as TCP with no ports listed. That is not a narrow rule: it silently opens all 65,535 ports of that protocol. This check assesses only ingress rules whose source ranges already include `0.0.0.0/0` or `::/0`, and requires each such rule to enumerate explicit ports and to avoid the all-protocols form. In the Google Cloud console, set `Protocols and ports` to `Specified protocols and ports` rather than `Allow all`.
 
-        The Compute API accepts a port list only for TCP and UDP. An entry for a protocol that carries no ports, such as `icmp`, `esp`, `ah`, or `ipip`, has nothing to enumerate, so the port requirement does not apply to it. The default network's `default-allow-icmp` rule is one such entry and passes this check.
+        Only TCP, UDP, and SCTP carry ports. An entry for a protocol that has none, such as `icmp`, `esp`, `ah`, or `ipip`, has nothing to enumerate, so the port requirement does not apply to it. The default network's `default-allow-icmp` rule is one such entry and passes this check.
 
         **Why this matters**
 
@@ -8321,9 +8321,9 @@ queries:
         1. Sign in to the [Google Cloud Console](https://console.cloud.google.com).
         2. Navigate to **VPC Network** > **Firewall**.
         3. Review each firewall rule with **Direction** set to `Ingress` and a **Source IP range** of `0.0.0.0/0` or `::/0`.
-        4. For each such rule, check the **Protocols and ports** column. Verify that every allowed TCP and UDP protocol specifies explicit port numbers rather than allowing all ports.
+        4. For each such rule, check the **Protocols and ports** column. Verify that every TCP, UDP, and SCTP entry specifies explicit port numbers rather than allowing all ports.
 
-        A passing firewall rule that allows internet ingress specifies explicit port numbers for each TCP and UDP entry, such as `tcp:80,443`. A failing rule allows internet ingress on TCP or UDP with no port restrictions, such as a bare `tcp` entry, or allows all protocols. An entry for a protocol that carries no ports, such as `icmp`, is not assessed.
+        A passing firewall rule that allows internet ingress specifies explicit port numbers for each TCP, UDP, and SCTP entry, such as `tcp:80,443`. A failing rule allows internet ingress on one of those protocols with no port restrictions, such as a bare `tcp` entry, or allows all protocols. An entry for a protocol that carries no ports, such as `icmp`, is not assessed.
 
         ### Audit via CLI
 
@@ -8385,9 +8385,9 @@ queries:
       gcp.compute.firewall.sourceRanges.any(_ == "0.0.0.0/0" || _ == "::/0")
     mql: |
       gcp.compute.firewall.allowedProtocols.keys.none(_ == "all")
-      # The Compute API accepts ports only for TCP and UDP, so a rule for a protocol that carries no
-      # ports, such as ICMP, ESP, AH, or IPIP, has nothing to enumerate and is not assessed here.
-      gcp.compute.firewall.allowedProtocols.where(key == /^(tcp|udp|6|17)$/i).values.all(_.length > 0)
+      # Only TCP, UDP, and SCTP carry ports, so an entry for a protocol that has none, such as ICMP,
+      # ESP, AH, or IPIP, has nothing to enumerate and is not assessed here.
+      gcp.compute.firewall.allowedProtocols.where(key == /^(tcp|udp|sctp|6|17|132)$/i).values.all(_.length > 0)
   - uid: mondoo-gcp-security-firewall-no-overly-permissive-ingress-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_firewall')
@@ -8398,7 +8398,7 @@ queries:
         arguments.source_ranges.any(_ == '0.0.0.0/0' || _ == '::/0')
       ).all(
         blocks.where(type == 'allow').none(arguments.protocol == 'all') &&
-        blocks.where(type == 'allow' && arguments.protocol == /^(tcp|udp|6|17)$/i).all(arguments.ports != empty)
+        blocks.where(type == 'allow' && arguments.protocol == /^(tcp|udp|sctp|6|17|132)$/i).all(arguments.ports != empty)
       )
   - uid: mondoo-gcp-security-firewall-no-overly-permissive-ingress-terraform-plan
     filters: |
@@ -8410,7 +8410,7 @@ queries:
         change.after.source_ranges.any(_ == '0.0.0.0/0' || _ == '::/0')
       ).all(
         change.after.allow.none(_['protocol'] == 'all') &&
-        change.after.allow.where(_['protocol'] == /^(tcp|udp|6|17)$/i).all(_['ports'] != empty && _['ports'].length > 0)
+        change.after.allow.where(_['protocol'] == /^(tcp|udp|sctp|6|17|132)$/i).all(_['ports'] != empty && _['ports'].length > 0)
       )
   - uid: mondoo-gcp-security-firewall-no-overly-permissive-ingress-terraform-state
     filters: |
@@ -8422,7 +8422,7 @@ queries:
         values.source_ranges.any(_ == '0.0.0.0/0' || _ == '::/0')
       ).all(
         values.allow.none(_['protocol'] == 'all') &&
-        values.allow.where(_['protocol'] == /^(tcp|udp|6|17)$/i).all(_['ports'] != empty && _['ports'].length > 0)
+        values.allow.where(_['protocol'] == /^(tcp|udp|sctp|6|17|132)$/i).all(_['ports'] != empty && _['ports'].length > 0)
       )
   - uid: mondoo-gcp-security-gke-cluster-legacy-abac-disabled
     title: Ensure legacy authorization (ABAC) is disabled on GKE clusters
@@ -23498,7 +23498,7 @@ queries:
 
         Constraining egress ports narrows the outbound attack surface and forces attacker traffic into the patterns that are actually monitored, which is what makes detection realistic rather than theoretical. Enumerate only the TCP and UDP ports legitimate outbound traffic requires, and revisit those lists periodically so they track operational reality instead of drifting back toward permissive defaults.
 
-        Protocols that carry no ports are exempt from the port requirement. The Compute API accepts a port list only for TCP and UDP, so an `icmp`, `esp`, `ah`, or `ipip` entry has nothing to enumerate. As with other egress rules, an omitted destination list in Terraform reaches the open internet and is assessed the same way as one that names it explicitly.
+        Protocols that carry no ports are exempt from the port requirement. Only TCP, UDP, and SCTP take a port list, so an `icmp`, `esp`, `ah`, or `ipip` entry has nothing to enumerate. As with other egress rules, an omitted destination list in Terraform reaches the open internet and is assessed the same way as one that names it explicitly.
       audit: |
         ### Audit via Console
 
@@ -23507,7 +23507,7 @@ queries:
         3. For each rule with **Direction** set to **Egress**, check the **Destination IP ranges** and **Protocols and ports** columns.
         4. Identify any egress rules where **Destination IP ranges** includes `0.0.0.0/0` or `::/0` and **Protocols and ports** allows traffic without explicit port restrictions.
 
-        A passing egress firewall rule targeting `0.0.0.0/0` specifies explicit protocols and ports, such as `tcp:443`. A failing rule allows all TCP or UDP ports, or uses protocol `all`, to `0.0.0.0/0` or `::/0`. An entry for a protocol that carries no ports, such as `esp`, is not assessed.
+        A passing egress firewall rule targeting `0.0.0.0/0` specifies explicit protocols and ports, such as `tcp:443`. A failing rule allows every port of TCP, UDP, or SCTP, or uses protocol `all`, to `0.0.0.0/0` or `::/0`. An entry for a protocol that carries no ports, such as `esp`, is not assessed.
 
         ### Audit via CLI
 
@@ -23519,7 +23519,7 @@ queries:
           --format="table(name,network,destinationRanges,allowed)"
         ```
 
-        A passing firewall rule returns explicit port restrictions in the `ALLOW` column, such as `tcp:443`. A failing rule returns `all` as the protocol, or a TCP or UDP entry with no port restrictions.
+        A passing firewall rule returns explicit port restrictions in the `ALLOW` column, such as `tcp:443`. A failing rule returns `all` as the protocol, or a TCP, UDP, or SCTP entry with no port restrictions.
       remediation:
         - id: console
           desc: |
@@ -23579,9 +23579,9 @@ queries:
       gcp.compute.firewall.destinationRanges.any(_ == "0.0.0.0/0" || _ == "::/0")
     mql: |
       gcp.compute.firewall.allowedProtocols.keys.none(_ == "all")
-      # The Compute API accepts ports only for TCP and UDP, so a rule for a protocol that carries no
-      # ports, such as ICMP, ESP, AH, or IPIP, has nothing to enumerate and is not assessed here.
-      gcp.compute.firewall.allowedProtocols.where(key == /^(tcp|udp|6|17)$/i).values.all(_.length > 0)
+      # Only TCP, UDP, and SCTP carry ports, so an entry for a protocol that has none, such as ICMP,
+      # ESP, AH, or IPIP, has nothing to enumerate and is not assessed here.
+      gcp.compute.firewall.allowedProtocols.where(key == /^(tcp|udp|sctp|6|17|132)$/i).values.all(_.length > 0)
   - uid: mondoo-gcp-security-firewall-no-egress-all-ports-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_firewall')
@@ -23593,7 +23593,7 @@ queries:
         arguments.direction == "EGRESS" && arguments['destination_ranges'].any(_ == "0.0.0.0/0" || _ == "::/0")
       ).all(
         blocks.where(type == 'allow').none(arguments.protocol == "all") &&
-        blocks.where(type == 'allow' && arguments.protocol == /^(tcp|udp|6|17)$/i).all(arguments['ports'] != empty)
+        blocks.where(type == 'allow' && arguments.protocol == /^(tcp|udp|sctp|6|17|132)$/i).all(arguments['ports'] != empty)
       )
   - uid: mondoo-gcp-security-firewall-no-egress-all-ports-terraform-plan
     filters: |
@@ -23604,7 +23604,7 @@ queries:
         type == 'google_compute_firewall' && change.after['direction'] == "EGRESS" && change.after['destination_ranges'].any(_ == "0.0.0.0/0" || _ == "::/0")
       ).all(
         change.after['allow'].none(_['protocol'] == "all") &&
-        change.after['allow'].where(_['protocol'] == /^(tcp|udp|6|17)$/i).all(_['ports'] != empty && _['ports'].length > 0)
+        change.after['allow'].where(_['protocol'] == /^(tcp|udp|sctp|6|17|132)$/i).all(_['ports'] != empty && _['ports'].length > 0)
       )
   - uid: mondoo-gcp-security-firewall-no-egress-all-ports-terraform-state
     filters: |
@@ -23615,7 +23615,7 @@ queries:
         type == 'google_compute_firewall' && values['direction'] == "EGRESS" && values['destination_ranges'].any(_ == "0.0.0.0/0" || _ == "::/0")
       ).all(
         values['allow'].none(_['protocol'] == "all") &&
-        values['allow'].where(_['protocol'] == /^(tcp|udp|6|17)$/i).all(_['ports'] != empty && _['ports'].length > 0)
+        values['allow'].where(_['protocol'] == /^(tcp|udp|sctp|6|17|132)$/i).all(_['ports'] != empty && _['ports'].length > 0)
       )
   - uid: mondoo-gcp-security-gke-legacy-metadata-disabled
     title: Ensure legacy metadata endpoints are disabled on GKE nodes
