@@ -11690,7 +11690,11 @@ queries:
       desc: |
         This check verifies that the organization holds the key to its own log data, requiring Cloud Logging log buckets to be encrypted with a customer-managed encryption key (CMEK) rather than the default Google-managed key.
 
-        The configured key appears in the **Encryption** section of the bucket details under **Logging > Logs Storage**, and `gcloud logging buckets describe` returns it as `cmekSettings.kmsKeyName`. The console cannot set it; apply the key with `gcloud logging buckets update --cmek-kms-key-name`.
+        The configured key appears in the **Encryption** section of the bucket details under **Logging > Logs Storage**, and `gcloud logging buckets describe` returns it as `cmekSettings.kmsKeyName`. The console cannot set it; supply the key with `gcloud logging buckets create --cmek-kms-key-name` when the bucket is created.
+
+        **Scope:** Cloud Logging does not support CMEK for log buckets created in the `global` region. Every Google Cloud project is created with a `_Required` and a `_Default` log bucket, and both land in `global` unless the parent organization or folder already carried a default storage location when the project was created. Neither bucket can be deleted or relocated afterward, so CMEK is unreachable on them no matter what an administrator does. The check treats a `_Required` or `_Default` bucket in `global` as out of scope and assesses every other log bucket.
+
+        A log bucket an administrator created in `global` is still assessed and still fails, because it can be recreated in a region where CMEK is available.
 
         **Why this matters**
 
@@ -11702,36 +11706,37 @@ queries:
 
         Holding the key in Cloud KMS under its own IAM policy also separates duties: the principals who administer log buckets are not automatically the principals who control the key that protects them. Apply least-privilege IAM on the key and alert on unexpected key operations to catch unauthorized decryption attempts.
 
-        Grant the Logs Router service account `roles/cloudkms.cryptoKeyEncrypterDecrypter` on the key before applying it, otherwise the bucket cannot accept new entries. Prioritize buckets holding compliance-relevant or security-critical logs where revocation capability actually matters.
+        Grant the Cloud Logging CMEK service account `roles/cloudkms.cryptoKeyEncrypterDecrypter` on the key before the bucket is created, otherwise the bucket cannot accept new entries. Bringing `_Required` and `_Default` under CMEK is an organization or folder decision made with `gcloud logging settings update`, and it applies only to projects created afterward. Prioritize buckets holding compliance-relevant or security-critical logs where revocation capability actually matters.
       audit: |
         ### Audit via Console
 
         1. Sign in to the [Google Cloud Console](https://console.cloud.google.com) and open the target project.
         2. Navigate to **Logging > Logs Storage**.
-        3. Select each log bucket and review the **Encryption** section in the bucket details.
-        4. Check whether a **Customer-managed encryption key** is configured.
+        3. Note the **Location** of each log bucket. The `_Required` and `_Default` buckets in the `global` location are out of scope, because Cloud Logging does not offer CMEK there.
+        4. Select every remaining log bucket and review the **Encryption** section in the bucket details.
+        5. Check whether a **Customer-managed encryption key** is configured.
 
-        A passing log bucket displays a Cloud KMS key resource name in the encryption section. A failing log bucket shows no customer-managed key (Google-managed encryption only).
+        A passing log bucket displays a Cloud KMS key resource name in the encryption section. A failing log bucket shows Google-managed encryption and no customer-managed key.
 
         ### Audit via CLI
 
-        1. Describe each log bucket and check for the `cmekSettings` field:
+        List every log bucket in the project with its location and key:
 
         ```bash
-        gcloud logging buckets describe BUCKET_ID --location=LOCATION \
-          --format="value(cmekSettings.kmsKeyName)"
+        gcloud logging buckets list --project=PROJECT_ID \
+          --format="table(name.segment(-3):label=LOCATION, name.segment(-1):label=BUCKET_ID, cmekSettings.kmsKeyName:label=KMS_KEY_NAME)"
         ```
 
-        A passing log bucket returns a non-empty Cloud KMS key resource name. A failing log bucket returns an empty value.
+        Ignore the `_Required` and `_Default` rows whose `LOCATION` is `global`, since Cloud Logging offers no CMEK there. A passing log bucket returns a Cloud KMS key resource name in the `KMS_KEY_NAME` column. A failing log bucket returns an empty value in that column.
       remediation:
         - id: terraform
           desc: |
-            To ensure Cloud Logging log buckets are encrypted with CMEK in Terraform:
+            To ensure Cloud Logging log buckets are encrypted with CMEK in Terraform, declare the bucket in a region rather than in `global`, because CMEK is unavailable there:
 
             ```hcl
             resource "google_logging_project_bucket_config" "example" {
               project        = var.project_id
-              location       = "global"
+              location       = "us-central1"
               bucket_id      = "my-log-bucket"
               retention_days = 30
 
@@ -11744,35 +11749,63 @@ queries:
           desc: |
             The Google Cloud console does not support configuring CMEK on log buckets. Use the Google Cloud CLI instead:
 
-            1. Grant the Logs Router service account the `roles/cloudkms.cryptoKeyEncrypterDecrypter` role on the Cloud KMS key.
-            2. Apply the key to the log bucket:
+            1. In **Logging > Logs Storage**, note the location of the failing log bucket. If it is `global`, the bucket has to be replaced by a regional one, since Cloud Logging offers no CMEK in `global`.
+            2. Grant the Cloud Logging CMEK service account reported by `gcloud logging settings describe` the `roles/cloudkms.cryptoKeyEncrypterDecrypter` role on the Cloud KMS key.
+            3. Create the replacement log bucket in the key's region with the key attached:
 
             ```bash
-            gcloud logging buckets update BUCKET_ID \
-              --location=LOCATION \
-              --cmek-kms-key-name=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            gcloud logging buckets create BUCKET_ID \
+              --location=REGION \
+              --cmek-kms-key-name=projects/PROJECT/locations/REGION/keyRings/RING/cryptoKeys/KEY \
+              --project=PROJECT
             ```
+
+            Then repoint the sinks that wrote to the old bucket at the new one and delete the old bucket.
         - id: cli
           desc: |
-            To ensure Cloud Logging log buckets are encrypted with CMEK using the Google Cloud CLI, update a log bucket with CMEK:
+            To ensure Cloud Logging log buckets are encrypted with CMEK using the Google Cloud CLI, supply the key when the bucket is created, since a bucket in `global` cannot take a key and a key cannot be added to an existing bucket:
+
+            ```bash
+            gcloud logging buckets create BUCKET_ID \
+              --location=REGION \
+              --cmek-kms-key-name=projects/PROJECT/locations/REGION/keyRings/RING/cryptoKeys/KEY \
+              --project=PROJECT
+            ```
+
+            To change the key on a log bucket that already uses CMEK:
 
             ```bash
             gcloud logging buckets update BUCKET_ID \
-              --location=LOCATION \
-              --cmek-kms-key-name=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+              --location=REGION \
+              --cmek-kms-key-name=projects/PROJECT/locations/REGION/keyRings/RING/cryptoKeys/NEW_KEY \
+              --project=PROJECT
+            ```
+
+            The `_Required` and `_Default` buckets of existing projects stay in `global` and stay out of reach. To place them under CMEK for projects created from now on, set a default storage location and key on the organization or folder:
+
+            ```bash
+            gcloud logging settings update \
+              --organization=ORGANIZATION_ID \
+              --storage-location=REGION \
+              --kms-key-name=projects/PROJECT/locations/REGION/keyRings/RING/cryptoKeys/KEY
             ```
     refs:
       - url: https://docs.cloud.google.com/logging/docs/routing/managed-encryption-storage
-        title: Customer-managed encryption keys for Cloud Logging
+        title: Configure CMEK for log buckets
+      - url: https://docs.cloud.google.com/logging/docs/default-settings
+        title: Configure default resource settings for Cloud Logging
   - uid: mondoo-gcp-security-logging-bucket-cmek-encryption-gcp
     filters: asset.platform == 'gcp-logging-bucket'
     mql: |
+      gcp.project.loggingservice.bucket.location == "global" &&
+      gcp.project.loggingservice.bucket.name == /\/buckets\/_(Required|Default)$/ ||
       gcp.project.loggingservice.bucket.kmsKey != null
   - uid: mondoo-gcp-security-logging-bucket-cmek-encryption-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_logging_project_bucket_config')
     mql: |
       terraform.resources('google_logging_project_bucket_config').all(
+        arguments.location == 'global' && arguments.bucket_id == /^_(Required|Default)$/ ||
         blocks.where(type == 'cmek_settings') != empty &&
         blocks.where(type == 'cmek_settings').all(arguments.kms_key_name != empty)
       )
@@ -11781,6 +11814,7 @@ queries:
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_logging_project_bucket_config')
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_logging_project_bucket_config').all(
+        change.after.location == 'global' && change.after.bucket_id == /^_(Required|Default)$/ ||
         change.after.cmek_settings != empty
       )
   - uid: mondoo-gcp-security-logging-bucket-cmek-encryption-terraform-state
@@ -11788,6 +11822,7 @@ queries:
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_logging_project_bucket_config')
     mql: |
       terraform.state.resources.where(type == 'google_logging_project_bucket_config').all(
+        values.location == 'global' && values.bucket_id == /^_(Required|Default)$/ ||
         values.cmek_settings != empty
       )
   - uid: mondoo-gcp-security-logging-sinks-configured
