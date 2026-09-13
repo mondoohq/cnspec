@@ -3981,7 +3981,13 @@ queries:
     filters: asset.platform == "openstack-project"
     mql: |
       openstack.databaseInstances.all(
-        addresses.none(_['type'] == "public" || ip(_['address']).isPublic)
+        addresses.none(
+          _['type'] == "public" ||
+          ip(_['address']).isPublic ||
+          ip(_['address']).address.in(
+            openstack.ports.where(deviceOwner == /^compute:/ && network.external).map(fixedIps).flat.map(ip(_['ip_address']).address)
+          )
+        )
       )
     docs:
       desc: |
@@ -3989,9 +3995,13 @@ queries:
 
         A Trove instance takes its addresses from the networks it is created on, and networks are chosen with `--nic` on `openstack database instance create`. Trove types an address `public` only when it is a floating IP mapped to the instance's port. A fixed IP is always typed `private`, including when the port sits directly on an external provider network, so the type alone does not say whether the database engine's listener is routable.
 
-        This check therefore fails an instance on either signal: an address Trove typed `public`, or an address in globally routable space regardless of the type Trove gave it. Loopback, link-local, multicast, and the RFC 1918 and RFC 4193 private ranges count as not routable.
+        This check therefore fails an instance on three signals:
 
-        An external network built on private address space and routed by something upstream of Neutron is indistinguishable from a tenant network by address alone, so an instance placed on one still passes. Confirm the network's `router:external` flag when the addressing does not settle the question.
+        - An address Trove typed `public`, which is a floating IP mapped to the instance's port.
+        - An address in globally routable space, regardless of the type Trove gave it. Loopback, link-local, multicast, and the RFC 1918 and RFC 4193 private ranges count as not routable.
+        - An address that is also a fixed IP on a Neutron compute port whose network carries `router:external`. This catches an external network built on private address space and routed upstream of Neutron, which the address alone cannot distinguish from a tenant network.
+
+        The third signal reads the project's own Neutron ports. A deployment that runs Trove instances in a separate service project hides those ports from the scanned project, so only the first two signals apply there.
 
         **Why this matters**
 
@@ -4009,23 +4019,31 @@ queries:
         2. Open **Database** then **Instances**.
         3. Select each instance and review the addresses listed on its **Overview** tab.
 
-        A passing result shows every address in private space and none of them typed `public`; a failing result shows an address typed `public`, or an address outside the private ranges.
+        A passing result shows every address in private space and none of them typed `public`; a failing result shows an address typed `public`, or an address outside the private ranges. Horizon does not show which network an address came from, so use the CLI to settle the external-network case.
 
         ### Audit via CLI
 
-        Run the OpenStack CLI and inspect the result:
+        1. List the addresses Trove assigned to the instance:
 
-        ```bash
-        openstack database instance show <instance>
-        ```
+           ```bash
+           openstack database instance show db-instance-1
+           ```
 
-        A passing result shows no address of type `public` and every address inside `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, or `fc00::/7`. A failing result shows an address of type `public`, or an address outside those ranges.
+           A passing result shows no address of type `public` and every address inside `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, or `fc00::/7`. A failing result shows an address of type `public`, or an address outside those ranges.
 
-        To confirm whether the address that failed is a floating IP or a fixed IP on an external network, list the networks the deployment marks external:
+        2. List the networks the deployment marks external:
 
-        ```bash
-        openstack network list --external
-        ```
+           ```bash
+           openstack network list --external
+           ```
+
+        3. For each external network, list the instance ports on it and compare their fixed IPs with the addresses from step 1:
+
+           ```bash
+           openstack port list --network public --device-owner compute:nova
+           ```
+
+        An address that matches a fixed IP from step 3 is on an external network and fails the check even when it falls inside a private range.
       remediation:
         - id: console
           desc: |
