@@ -7643,8 +7643,8 @@ queries:
       compliance/soc2-2017: false
       compliance/vda-isa-5: false
     mql: |
-      file("/etc/pkg/FreeBSD.conf").exists && file("/etc/pkg/FreeBSD.conf").content.find(/(?sm)^\w[\w.-]*\s*:\s*\{(?:[^\n]*\}[^\n]*$|.*?^\})/).all(_ == /(?i)signature_type\s*:\s*["']?(fingerprints|pubkey)\b/)
-      files.find(from: "/usr/local/etc/pkg/repos", regex: ".*[.]conf$", type: "file").list.all(content.find(/(?sm)^\w[\w.-]*\s*:\s*\{(?:[^\n]*\}[^\n]*$|.*?^\})/).where(_ != /(?i)enabled\s*:\s*(no|false|off|0)\b/).all(_ == /(?i)signature_type\s*:\s*["']?(fingerprints|pubkey)\b/ || _ != /(?i)signature_type\s*:/ && file("/etc/pkg/FreeBSD.conf").content.contains("\n" + _.split("{")[0].trim)))
+      pkg.repos != empty
+      pkg.repos.where(enabled == true).all(signatureType == /^(fingerprints|pubkey)$/)
     docs:
       refs:
         - url: https://man.freebsd.org/cgi/man.cgi?query=pkg.conf&sektion=5
@@ -7654,11 +7654,11 @@ queries:
 
         pkg reads repository definitions from the directories in `REPOS_DIR`, which defaults to `/etc/pkg/` and `/usr/local/etc/pkg/repos/`. Files are read in that order, and a block that reuses a repository name overrides only the keys it sets, keeping the rest of the earlier definition.
 
-        The base repositories are defined in `/etc/pkg/FreeBSD.conf`. Every block there ships with `signature_type: "fingerprints"` and validates packages against the trusted keys in `/usr/share/keys/pkg`. FreeBSD 14 defines `FreeBSD` and `FreeBSD-kmods`, and FreeBSD 15 defines `FreeBSD-ports`, `FreeBSD-ports-kmods`, and `FreeBSD-base`. The check reads each block on its own, so one repository downgraded to `signature_type: "none"` fails the check even when the other blocks in the file still enforce fingerprints. Both `fingerprints` and `pubkey` are accepted, the latter validating against a configured public key. A repository that declares no `signature_type` gets `NONE`, so a block that omits the key fails exactly as one setting `"none"` does. Every block in this file is held to that rule whether or not it is enabled, because a file later on the search path can turn a repository back on without restating the signature. Removing the file fails the check as well.
+        The check evaluates each repository after that merge, the same set and the same values `pkg -vv` reports. A repository is scored on its effective `signature_type`, which must be `fingerprints` or `pubkey`. The first validates packages against the trusted keys in `/usr/share/keys/pkg`, the second against a configured public key. One repository downgraded to `signature_type: "none"` fails the check even when every other repository still enforces fingerprints.
 
-        The check then reads the repository files in `/usr/local/etc/pkg/repos/*.conf`. A block naming a repository that `/etc/pkg/FreeBSD.conf` already defines inherits the `signature_type` from there, so the usual override that points a base repository at another URL, or re-enables it, keeps fingerprint verification and passes. A block naming a repository defined nowhere else creates that repository from scratch and has to declare `fingerprints` or `pubkey` itself. A block setting any other `signature_type` fails wherever it appears.
+        The base repositories are defined in `/etc/pkg/FreeBSD.conf` and ship with `signature_type: "fingerprints"`. FreeBSD 14 defines `FreeBSD` and `FreeBSD-kmods`, and FreeBSD 15 defines `FreeBSD-ports`, `FreeBSD-ports-kmods`, and `FreeBSD-base`. A repository that no configuration file gives a `signature_type` gets `NONE`, so omitting the key fails exactly as setting `"none"` does. A file in `/usr/local/etc/pkg/repos` that restates only a `url`, or only `enabled`, keeps the signature scheme it inherits and passes. A repository defined nowhere else has nothing to inherit and has to declare a scheme of its own. Removing every repository definition fails the check as well, since a host with no configured repository is not a host with verified ones.
 
-        In `/usr/local/etc/pkg/repos` a block turned off with `enabled: no` is exempt. pkg uses a repository only while it is enabled, so a disabled one is never contacted and cannot deliver a package, and the documented way of turning off a base repository writes an override block containing nothing but `enabled: no`, which has no signature to declare.
+        A repository turned off with `enabled: no` is exempt. pkg uses a repository only while it is enabled, so a disabled one is never contacted and cannot deliver a package, and the documented way of turning off a base repository writes an override block containing nothing but `enabled: no`, which has no signature to declare. Re-enabling an unsigned repository, from any file, fails the check at that point, because the merged repository is then both enabled and unverified.
 
         **Why this matters**
 
@@ -7696,13 +7696,13 @@ queries:
         cat /usr/local/etc/pkg/repos/*.conf
         ```
 
-        Every block in `/etc/pkg/FreeBSD.conf` needs its own `signature_type`, because a block that omits it gets `NONE` and an override file can enable it again without declaring one. A block in `/usr/local/etc/pkg/repos` that reuses a repository name from `/etc/pkg/FreeBSD.conf` keeps whatever it does not restate, so an override setting only a `url` or `enabled` still verifies signatures. A block naming a repository defined nowhere else needs a `signature_type` of its own.
+        The `Repositories:` section is the merged result, so it is the answer, and the files only explain how it was reached. A block that reuses a repository name from `/etc/pkg/FreeBSD.conf` keeps whatever it does not restate, so an override setting only a `url` or `enabled` still verifies signatures. A block naming a repository defined nowhere else needs a `signature_type` of its own, and one that names no scheme anywhere reports `"NONE"` above.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            1. Restore fingerprint verification for the base repositories by editing `/etc/pkg/FreeBSD.conf` so that every repository block contains the two lines below, including any block that is currently disabled. Fix each block on its own, because one block set to `"none"` leaves that repository unverified no matter what the others say, and a block that declares no `signature_type` at all is unverified in the same way. FreeBSD 14 names the blocks `FreeBSD` and `FreeBSD-kmods`, and FreeBSD 15 names them `FreeBSD-ports`, `FreeBSD-ports-kmods`, and `FreeBSD-base`:
+            1. Restore fingerprint verification for the base repositories by editing `/etc/pkg/FreeBSD.conf` so that every repository block contains the two lines below. Fix each block on its own, because one block set to `"none"` leaves that repository unverified no matter what the others say, and a block that declares no `signature_type` at all is unverified in the same way. Fix the disabled blocks too. They are not scored while they stay off, and an override that switches one back on without restating the signature enables an unverified repository. FreeBSD 14 names the blocks `FreeBSD` and `FreeBSD-kmods`, and FreeBSD 15 names them `FreeBSD-ports`, `FreeBSD-ports-kmods`, and `FreeBSD-base`:
 
                 ```ini
                 signature_type: "fingerprints",
@@ -7734,7 +7734,7 @@ queries:
                 done
                 ```
 
-                The check fails for each file the two commands print. A repository that declares no `signature_type` gets `NONE` and installs packages without verifying them. A file that only overrides one of the FreeBSD repositories, by pointing it at another URL or by enabling it, keeps the `signature_type` from `/etc/pkg/FreeBSD.conf` and needs no change. Add a `signature_type` to the repository block in each file the commands report:
+                Every repository the two commands name fails the check while it is enabled, because a repository that declares no `signature_type` gets `NONE` and installs packages without verifying them. A file that only overrides one of the FreeBSD repositories, by pointing it at another URL or by enabling it, keeps the `signature_type` from `/etc/pkg/FreeBSD.conf` and needs no change. Add a `signature_type` to the repository block in each file the commands report:
 
                 - For a file that defines a repository of its own that the FreeBSD signing infrastructure signs, copy the two lines from step 1.
                 - For a third-party or internal repository, use `signature_type: "pubkey"` and set `pubkey` to the path of the public key that repository signs with, such as `/usr/local/etc/ssl/pkg.pub`. Get that key from the repository's operator. `fingerprints` also works if the operator publishes a fingerprints directory.
@@ -7744,7 +7744,7 @@ queries:
           desc: |
             **Using a Shell Script**
 
-            The script switches every `signature_type: "none"` in `/etc/pkg/FreeBSD.conf` back to `fingerprints` and warns when a block there declares no `signature_type` at all. Under `/usr/local/etc/pkg/repos` it only reports the files that define a repository of their own without one, because the right key for those depends on who signs the repository, and it leaves the files that merely override a FreeBSD repository alone, since those inherit the setting from `/etc/pkg/FreeBSD.conf`. Fix the files it reports with step 3 of the CLI instructions.
+            The script switches every `signature_type: "none"` in `/etc/pkg/FreeBSD.conf` back to `fingerprints` and warns when a block there declares no `signature_type` at all, including the blocks that are currently disabled and therefore not yet scored. Under `/usr/local/etc/pkg/repos` it only reports the files that define a repository of their own without one, because the right key for those depends on who signs the repository, and it leaves the files that merely override a FreeBSD repository alone, since those inherit the setting from `/etc/pkg/FreeBSD.conf`. Fix the files it reports with step 3 of the CLI instructions.
 
             ```sh
             #!/bin/sh
