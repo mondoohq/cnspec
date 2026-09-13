@@ -1286,7 +1286,7 @@ queries:
       desc: |
         This check verifies that the default branch requires at least one status check to pass before a pull request can be merged into it.
 
-        On the branch protection rule for the default branch, GitHub calls this Require status checks to pass before merging. Turning it on reveals a search field beneath it where an administrator picks the individual checks that become required. The check passes only when the default branch is protected and that required list holds at least one entry. It asserts nothing about which checks are named or what they do. The Terraform version of this check asserts that a `required_status_checks` block is present on a `github_branch_protection` resource.
+        On the branch protection rule for the default branch, GitHub calls this Require status checks to pass before merging. Turning it on reveals a search field beneath it where an administrator picks the individual checks that become required. The check passes only when the default branch is protected and that required list holds at least one entry. It asserts nothing about which checks are named or what they do. The Terraform version of this check asserts that a `github_branch_protection` resource carries a `required_status_checks` block whose `contexts` argument names at least one status check.
 
         **Why this matters**
 
@@ -1389,21 +1389,28 @@ queries:
         .all( isProtected == true )
       github.repository.branches
         .where( isDefault == true )
-        .all( protectionRules { requiredStatusChecks.length > 0 } )
+        .all( protectionRules { requiredStatusChecks.contexts != empty || requiredStatusChecks.checks != empty } )
   - uid: mondoo-github-repository-security-require-status-checks-before-merging-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_branch_protection")
     mql: |
       terraform.resources("github_branch_protection").all(
-        blocks.where(type == "required_status_checks") != empty
+        blocks.where(type == "required_status_checks") != empty &&
+        blocks.where(type == "required_status_checks").all(arguments["contexts"] != empty)
       )
   - uid: mondoo-github-repository-security-require-status-checks-before-merging-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_branch_protection")
     mql: |
-      terraform.plan.resourceChanges.where(type == "github_branch_protection").all(change.after["required_status_checks"] != empty)
+      terraform.plan.resourceChanges.where(type == "github_branch_protection").all(
+        change.after["required_status_checks"] != empty &&
+        change.after["required_status_checks"].all(_["contexts"] != empty)
+      )
   - uid: mondoo-github-repository-security-require-status-checks-before-merging-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_branch_protection")
     mql: |
-      terraform.state.resources.where(type == "github_branch_protection").all(values["required_status_checks"] != empty)
+      terraform.state.resources.where(type == "github_branch_protection").all(
+        values["required_status_checks"] != empty &&
+        values["required_status_checks"].all(_["contexts"] != empty)
+      )
   - uid: mondoo-github-repository-security-required-signed-commits
     title: Ensure repository branch protection requires signed commits
     impact: 80
