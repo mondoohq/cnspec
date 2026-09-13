@@ -28263,12 +28263,12 @@ queries:
       terraform.state.resources.where(type == 'google_iap_tunnel_dest_group').all(
         values['cidrs'].none(_ == /\/([0-9]|1[0-5])$/)
       )
-  # No Terraform variants: this check evaluates the runtime status of the most
-  # recent job execution (latestJobs[].state == "DONE"), which is operational
-  # telemetry returned by the API at runtime, not configuration. Job execution
-  # state is not expressible in HCL/plan/state.
+  # No Terraform variants: this check hinges on the errors Cloud DLP records
+  # for a trigger's recent activations, which is operational telemetry returned
+  # by the API at runtime, not configuration. Activation errors are not
+  # expressible in HCL/plan/state.
   - uid: mondoo-gcp-security-dlp-job-trigger-healthy
-    title: Ensure Cloud DLP job triggers are healthy and not stale
+    title: Ensure Cloud DLP job triggers are healthy and free of activation errors
     impact: 70
     filters: asset.platform == 'gcp-project'
     tags:
@@ -28289,37 +28289,39 @@ queries:
     mql: |
       gcp.project.dlpService.jobTriggers.none(
         status != "HEALTHY" ||
-        updated == null ||
-        time.now - updated > 30 * time.day
+        errors != empty
       )
     docs:
       desc: |
-        This check verifies that scheduled sensitive-data classification is still actually running, by requiring every Cloud DLP job trigger to report `HEALTHY` status and to have been updated within the last 30 days.
+        This check requires every Cloud DLP job trigger to report `HEALTHY` status and to carry no errors from its recent activations.
 
-        DLP job triggers run on a recurring schedule to scan BigQuery tables, Cloud Storage buckets, and Datastore kinds for PII, credentials, and other sensitive data. Their status and last-run timestamp appear under **Security** > **Sensitive Data Protection** > **Inspection** > **Job triggers** in the Google Cloud console. Cloud DLP has no `gcloud` surface, so the same data is retrieved from the `jobTriggers` REST endpoint. A trigger fails the check if its status is anything other than `HEALTHY`, such as `PAUSED` or `CANCELLED`, or if its last update is older than 30 days.
+        DLP job triggers run on a recurring schedule to scan BigQuery tables, Cloud Storage buckets, and Datastore kinds for PII, credentials, and other sensitive data. Their status appears under **Security** > **Sensitive Data Protection** > **Inspection** > **Job triggers** in the Google Cloud console. Cloud DLP has no `gcloud` surface, so the same data is retrieved from the `jobTriggers` REST endpoint. A trigger fails the check when either of these is true:
+
+        - Its `status` is anything other than `HEALTHY`, such as `PAUSED` or `CANCELLED`.
+        - Its `errors` list is not empty, which means at least one recent activation failed.
 
         **Why this matters**
 
         A `PAUSED` trigger is almost always paused for a temporary reason that is later forgotten, and it is never resumed. New data landing in the target resource then goes unscanned indefinitely, and nothing in the console draws attention to the gap.
 
-        A trigger that still reports `HEALTHY` but has a stale update timestamp usually indicates an upstream failure such as a removed IAM binding or an exhausted quota that stopped execution without surfacing an error. A missing `dlp.jobs.create` permission on the target bucket or dataset silently prevents runs in exactly this way, which is why the freshness test matters as much as the status test.
+        A trigger that still reports `HEALTHY` can be failing every activation. Cloud DLP records each failed activation in the trigger's `errors` list, so an upstream problem such as a removed IAM binding or an exhausted quota surfaces there first. A missing `dlp.jobs.create` permission on the target bucket or dataset shows up this way well before Cloud DLP pauses the trigger outright.
 
         Downstream controls depend on classification being current. De-identification pipelines, access controls keyed to data labels, and audit reports all consume DLP findings, so a stalled trigger quietly breaks the whole chain while the configuration still looks correct.
 
-        Use **Run now** after resuming a trigger to confirm it executes end to end rather than assuming the status change was enough.
+        **This check does not test how long ago a trigger last ran.** Cloud DLP reports that as `lastRunTime`, which the GCP provider does not expose yet. Editing a trigger also clears its recorded errors, so use **Run now** after resuming a trigger to confirm it executes end to end rather than assuming the status change was enough.
       audit: |
         ### Audit via Console
 
         1. In the Google Cloud Console, navigate to **Security** > **Sensitive Data Protection**.
         2. Select **Inspection** > **Job triggers**.
-        3. For each trigger, review the **Status** column and the **Last run** timestamp.
-        4. A trigger is non-compliant if its status is not `HEALTHY`, or if its last run timestamp is more than 30 days ago.
+        3. For each trigger, review the **Status** column.
+        4. Open each trigger and review the errors recorded for its recent activations.
 
-        A passing job trigger shows a status of `HEALTHY` and a last-run date within the past 30 days. A failing job trigger shows a status other than `HEALTHY` (such as `PAUSED` or `CANCELLED`), or shows a last-run date older than 30 days.
+        A passing job trigger shows a status of `HEALTHY` and no activation errors. A failing job trigger shows a status other than `HEALTHY`, such as `PAUSED` or `CANCELLED`, or lists at least one activation error.
 
         ### Audit via CLI
 
-        1. List all DLP job triggers and their status and last-updated timestamps via the REST API (Cloud DLP has no `gcloud` CLI surface):
+        1. List all DLP job triggers with their status and recorded errors via the REST API. Cloud DLP has no `gcloud` CLI surface:
 
         ```bash
         curl -s \
@@ -28327,9 +28329,9 @@ queries:
           "https://dlp.googleapis.com/v2/projects/PROJECT_ID/jobTriggers"
         ```
 
-        2. In the response, review the `status` and `updateTime` fields for each trigger. A trigger is non-compliant if `status` is not `HEALTHY` or if `updateTime` is more than 30 days in the past.
+        2. In the response, review the `status` and `errors` fields for each trigger. A trigger is non-compliant if `status` is not `HEALTHY`, or if `errors` is present with at least one entry.
 
-        A passing job trigger returns `"status": "HEALTHY"` and an `updateTime` within the last 30 days. A failing job trigger returns a status other than `HEALTHY` or an `updateTime` older than 30 days.
+        A passing job trigger returns `"status": "HEALTHY"` and no `errors` array. A failing job trigger returns a status other than `HEALTHY`, or an `errors` array holding at least one entry.
       remediation:
         - id: terraform
           desc: |
@@ -28376,7 +28378,7 @@ queries:
             1. Open **Security** → **Sensitive Data Protection** → **Inspection** → **Job triggers**.
             2. Select the flagged trigger.
             3. If status is `PAUSED`, review why it was paused and either resume via **Resume** or delete it if no longer needed.
-            4. If the status is **Healthy** but the **Last run** timestamp is stale, check the trigger's schedule and IAM bindings on the target bucket or dataset; a missing `dlp.jobs.create` permission will silently prevent runs.
+            4. If the status is **Healthy** but the trigger lists activation errors, check its schedule and the IAM bindings on the target bucket or dataset. A missing `dlp.jobs.create` permission makes every activation fail.
             5. Use **Run now** to verify the trigger executes end-to-end.
         - id: cli
           desc: |
