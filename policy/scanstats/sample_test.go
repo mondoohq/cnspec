@@ -4,6 +4,7 @@
 package scanstats
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -21,10 +22,26 @@ func TestDefaultSample_ReturnsLiveValues(t *testing.T) {
 // metricByName indexes a ScanStatistics for assertion by metric name.
 
 func TestDefaultSample_ReturnsLiveCPUValues(t *testing.T) {
+	// The /cpu/classes/* counters are only recomputed at a GC boundary, so a
+	// process that has not collected yet reads exactly 0 for every one of
+	// them. Measured on go1.26: at startup total=0.000000000, and immediately
+	// after a forced collection total=0.016285328.
+	//
+	// This package allocates almost nothing, so its tests routinely run
+	// before the first GC and the TotalSeconds assertion below loses the race
+	// -- which is how it failed CI on the v14.0.0-rc.5 release bump. Force
+	// the collection so the counters are populated rather than asserting a
+	// timing coincidence.
+	//
+	// Note this is a property of the *test*, not of CPUSample: zero
+	// CPU-seconds is a legitimate reading for a short scan, which is exactly
+	// why Valid does not key on value > 0.
+	runtime.GC()
+
 	s := defaultSample()
 
 	require.True(t, s.CPU.Valid, "every /cpu/classes name should resolve on a supported Go runtime")
-	require.Greater(t, s.CPU.TotalSeconds, 0.0, "a running process has consumed some wall-clock CPU capacity")
+	require.Greater(t, s.CPU.TotalSeconds, 0.0, "a collection has happened, so the CPU counters are populated")
 	require.GreaterOrEqual(t, s.CPU.TotalSeconds, s.CPU.IdleSeconds,
 		"total is CPU available and includes idle, so it can never be the smaller of the two")
 	require.Greater(t, s.CPU.GOMAXPROCS, 0)
