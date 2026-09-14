@@ -15181,10 +15181,13 @@ queries:
       - uid: mondooLinuxSecurityKexAlgos
         title: Define the hardened key exchange algorithms for all SSH configurations
         mql: |
-          if( package('openssh-server').version  >= semver("6") && package('openssh-server').version  < semver("7") ) {
+          if( package('openssh-server').version  >= semver("4.4") && package('openssh-server').version  < semver("6.5") ) {
+            return ["diffie-hellman-group-exchange-sha256"]
+          }
+          if( package('openssh-server').version  >= semver("6.5") && package('openssh-server').version  < semver("7.3") ) {
             return ["curve25519-sha256@libssh.org"]
           }
-          if( package('openssh-server').version  >= semver("7") && package('openssh-server').version  < semver("8") ) {
+          if( package('openssh-server').version  >= semver("7.3") && package('openssh-server').version  < semver("8") ) {
             return ["curve25519-sha256@libssh.org","diffie-hellman-group18-sha512"]
           }
           if( package('openssh-server').version  >= semver("8") && package('openssh-server').version  < semver("8.5") ) {
@@ -15199,6 +15202,8 @@ queries:
         This check verifies that the SSH server offers only strong key exchange algorithms.
 
         Key exchange establishes the session keys that the cipher and MAC then use, so it is the foundation the rest of the session rests on. The check reads the `KexAlgorithms` directive in `/etc/ssh/sshd_config` and requires that every algorithm it names appears in the approved list carried by this policy's property. The directive must be present; a configuration that relies on OpenSSH's compiled-in default fails this check.
+
+        The approved list depends on the installed `openssh-server` release, because `sshd` refuses to start when `KexAlgorithms` names an algorithm that release does not recognize. The property changes lists at OpenSSH 6.5, 7.3, 8.0 and 8.5, the releases that added or renamed the algorithms it names.
 
         **Why this matters**
 
@@ -15239,12 +15244,17 @@ queries:
 
             Then, based on the version, set the appropriate `KexAlgorithms` value:
 
-            - **OpenSSH 6.x**:
+            - **OpenSSH 4.4 to 6.4**:
+              ```text
+              KexAlgorithms diffie-hellman-group-exchange-sha256
+              ```
+
+            - **OpenSSH 6.5 to 7.2**:
               ```text
               KexAlgorithms curve25519-sha256@libssh.org
               ```
 
-            - **OpenSSH 7.x**:
+            - **OpenSSH 7.3 to 7.9**:
               ```text
               KexAlgorithms curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
               ```
@@ -15261,12 +15271,17 @@ queries:
 
             The version to match is the upstream OpenSSH release, the number before `p` once any `1:` epoch prefix is removed. A Debian package version of `1:8.4p1-5+deb11u7` is OpenSSH 8.4.
 
-            The two 8.x lists differ only in the post-quantum hybrid algorithm, because each OpenSSH release recognizes just one of its names:
+            The lists change where OpenSSH added or renamed an algorithm, so each list holds only names its own releases recognize:
 
+            - OpenSSH 4.4 added `diffie-hellman-group-exchange-sha256`. It is the strongest exchange available before 6.5, and it stays usable on every later release.
+            - OpenSSH 6.5 added `curve25519-sha256@libssh.org`.
+            - OpenSSH 7.3 added `diffie-hellman-group18-sha512`.
             - OpenSSH 8.0 added `sntrup4591761x25519-sha512@tinyssh.org`.
             - OpenSSH 8.5 replaced it with `sntrup761x25519-sha512@openssh.com` and removed the old name.
 
             The SSH daemon refuses to start when `KexAlgorithms` names an algorithm it does not recognize, and `sshd -t` reports `Bad SSH2 KexAlgorithms`. A list meant for a different release therefore stops SSH instead of merely weakening it.
+
+            Releases before 4.4 offer no key exchange that meets this check. Every method they carry is either SHA-1 based or uses the fixed 1024-bit group. Upgrade OpenSSH on those hosts rather than editing `KexAlgorithms`.
 
             The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
@@ -15304,7 +15319,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To ensure that SSH uses only strong key exchange algorithms, you can run the following bash script. It reads the installed OpenSSH release and writes the list that release recognizes, switching from `sntrup4591761x25519-sha512@tinyssh.org` to `sntrup761x25519-sha512@openssh.com` at OpenSSH 8.5, where the algorithm was renamed:
+            To ensure that SSH uses only strong key exchange algorithms, you can run the following bash script. It reads the installed OpenSSH release and writes the list that release recognizes, changing lists at 6.5, 7.3, 8.0 and 8.5, the releases that added or renamed each algorithm. On a release older than 4.4 it stops without editing anything, because no key exchange those releases carry meets this check:
 
             ```bash
             #!/bin/bash
@@ -15331,7 +15346,12 @@ queries:
             echo "Configuring SSH with strong KexAlgorithms"
             openssh_version=$(ssh -V 2>&1 | grep -oP 'OpenSSH_\K\d+\.\d+')
 
-            if (( $(echo "$openssh_version < 7.0" | bc -l) )); then
+            if (( $(echo "$openssh_version < 4.4" | bc -l) )); then
+              echo "OpenSSH $openssh_version has no key exchange algorithm that meets this check. Upgrade OpenSSH."
+              exit 1
+            elif (( $(echo "$openssh_version < 6.5" | bc -l) )); then
+              kex_algos="diffie-hellman-group-exchange-sha256"
+            elif (( $(echo "$openssh_version < 7.3" | bc -l) )); then
               kex_algos="curve25519-sha256@libssh.org"
             elif (( $(echo "$openssh_version < 8.0" | bc -l) )); then
               kex_algos="curve25519-sha256@libssh.org,diffie-hellman-group18-sha512"
@@ -15368,7 +15388,7 @@ queries:
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
             2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
 
-            To configure SSH to use only approved key exchange algorithms, use the following Ansible playbook. It reads the installed OpenSSH release and writes the list that release recognizes, switching from `sntrup4591761x25519-sha512@tinyssh.org` to `sntrup761x25519-sha512@openssh.com` at OpenSSH 8.5, where the algorithm was renamed:
+            To configure SSH to use only approved key exchange algorithms, use the following Ansible playbook. It reads the installed OpenSSH release and writes the list that release recognizes, changing lists at 6.5, 7.3, 8.0 and 8.5, the releases that added or renamed each algorithm. On a release older than 4.4 it fails the host without editing anything, because no key exchange those releases carry meets this check:
 
             ```yaml
             ---
@@ -15410,10 +15430,17 @@ queries:
                   ansible.builtin.set_fact:
                     openssh_version_float: "{{ sshd_version.stdout }}"
 
+                - name: Fail on releases with no key exchange algorithm that meets this check
+                  ansible.builtin.fail:
+                    msg: "OpenSSH {{ openssh_version_float }} has no key exchange algorithm that meets this check. Upgrade OpenSSH."
+                  when: openssh_version_float | float < 4.4
+
                 - name: Determine appropriate KexAlgorithms value
                   ansible.builtin.set_fact:
                     kexalgos: >-
-                      {% if openssh_version_float | float < 7.0 %}
+                      {% if openssh_version_float | float < 6.5 %}
+                        diffie-hellman-group-exchange-sha256
+                      {% elif openssh_version_float | float < 7.3 %}
                         curve25519-sha256@libssh.org
                       {% elif openssh_version_float | float < 8.0 %}
                         curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
@@ -15457,7 +15484,7 @@ queries:
             1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
             2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
-            Use this Chef Infra recipe code to restrict SSH to approved key exchange algorithms. The algorithm list depends on the OpenSSH release, so it is selected from the version reported by the installed binary. OpenSSH 8.5 renamed `sntrup4591761x25519-sha512@tinyssh.org` to `sntrup761x25519-sha512@openssh.com`, and sshd rejects a name its release does not recognize, so the recipe switches lists at 8.5:
+            Use this Chef Infra recipe code to restrict SSH to approved key exchange algorithms. The algorithm list depends on the OpenSSH release, so it is selected from the version reported by the installed binary. `sshd` rejects a name its release does not recognize, so the recipe changes lists at 6.5, 7.3, 8.0 and 8.5, the releases that added or renamed each algorithm. On a release older than 4.4 it raises without editing anything, because no key exchange those releases carry meets this check:
 
             ```ruby
             # sshd uses the first value it reads for each keyword, and the Include at the top of
@@ -15483,7 +15510,13 @@ queries:
               action :create_if_missing
             end
             openssh_version = shell_out('ssh -V').stderr[/OpenSSH_(\d+\.\d+)/, 1].to_f
-            kex_algorithms = if openssh_version < 7.0
+            if openssh_version < 4.4
+              raise "OpenSSH #{openssh_version} has no key exchange algorithm that meets this check. Upgrade OpenSSH."
+            end
+
+            kex_algorithms = if openssh_version < 6.5
+                               'diffie-hellman-group-exchange-sha256'
+                             elsif openssh_version < 7.3
                                'curve25519-sha256@libssh.org'
                              elsif openssh_version < 8.0
                                'curve25519-sha256@libssh.org,diffie-hellman-group18-sha512'
