@@ -16,8 +16,13 @@ import (
 	"go.mondoo.com/mql/cli/config"
 	"go.mondoo.com/mql/providers"
 	"go.mondoo.com/mql/providers-sdk/v1/plugin"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
 	"go.mondoo.com/mql/sbom/generator"
 )
+
+// vulnUploadSource identifies cnspec-produced vulnerability findings uploaded to
+// Mondoo Platform.
+const vulnUploadSource = "cnspec"
 
 func init() {
 	rootCmd.AddCommand(vulnCmd)
@@ -31,6 +36,11 @@ func init() {
 	vulnCmd.Flags().String("inventory-file", "", "Set the path to the inventory file")
 	vulnCmd.Flags().Bool("inventory-ansible", false, "Set the inventory format to Ansible")
 	vulnCmd.Flags().Bool("inventory-domainlist", false, "Set the inventory format to domain list")
+
+	// Experimental: also emit the discovered vulnerabilities to Mondoo Platform
+	// as findings. Hidden until it has been validated in production.
+	vulnCmd.Flags().Bool("upload", false, "Experimental: upload discovered vulnerabilities to Mondoo Platform as findings")
+	_ = vulnCmd.Flags().MarkHidden("upload")
 }
 
 var vulnCmd = &cobra.Command{
@@ -98,7 +108,8 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	// the default location for an empty path, so an empty Opts silently reads
 	// ~/.config/mondoo/mondoo.yml and ignores --config -- which surfaces as an
 	// auth failure blaming the user's key rather than as "wrong config".
-	vex, err := upload.ScanSBOM(ctx, upload.Opts{ConfigPath: config.UserProvidedPath}, bom)
+	opts := upload.Opts{ConfigPath: config.UserProvidedPath}
+	vex, err := upload.ScanSBOM(ctx, opts, bom)
 	if err != nil {
 		// Without credentials we can still report the local inventory; degrade to
 		// a clear warning rather than failing the command.
@@ -116,4 +127,29 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	if err := r.PrintVulns(vex, bom.Asset.Name); err != nil {
 		log.Fatal().Err(err).Msg("failed to print")
 	}
+
+	if doUpload, _ := cmd.Flags().GetBool("upload"); doUpload {
+		uploadVulnFindings(ctx, opts, vex)
+	}
+}
+
+// uploadVulnFindings emits the vulnerabilities this scan already discovered to
+// Mondoo Platform as findings. The VEX is the one ScanSBOM returned above, so
+// what is uploaded is exactly what was printed -- re-scanning would cost a
+// second round-trip and could report a different result. opts is the same one
+// the scan used, which keeps --config and the resolved space in force.
+//
+// Upload failures are logged, not fatal: the scan itself succeeded and its
+// output is already on screen.
+func uploadVulnFindings(ctx context.Context, opts upload.Opts, vex []*fex.VulnerabilityExchange) {
+	docs := fex.VexToDocuments(vex)
+	if len(docs) == 0 {
+		log.Info().Msg("no vulnerabilities to upload")
+		return
+	}
+	if err := upload.UploadFindings(ctx, opts, docs, vulnUploadSource); err != nil {
+		log.Error().Err(err).Msg("failed to upload vulnerability findings")
+		return
+	}
+	log.Info().Msgf("uploaded %d vulnerability finding(s) to Mondoo Platform", len(docs))
 }
