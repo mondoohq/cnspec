@@ -20,7 +20,7 @@ import (
 	"go.mondoo.com/mql/mqlc"
 	"go.mondoo.com/mql/providers"
 	"go.mondoo.com/mql/providers-sdk/v1/resources"
-	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
 	"go.mondoo.com/mql/utils/iox"
 	"sigs.k8s.io/yaml"
 )
@@ -169,10 +169,15 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 	}
 }
 
-func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
+// PrintVulns renders the vulnerabilities returned by the PURL-native SBOM scan.
+// The input is VEX (Vulnerability Exchange) documents, which the reporter
+// flattens into a sorted, rendering-agnostic row model via fex.VulnRows.
+func (r *Reporter) PrintVulns(vex []*fex.VulnerabilityExchange, target string) error {
 	if !r.Conf.printVulnerabilities {
 		return nil
 	}
+
+	rows := fex.VulnRows(vex)
 
 	switch r.Conf.format {
 	case FormatCompact, FormatSummary, FormatFull:
@@ -181,7 +186,7 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
 			isCompact: r.Conf.isCompact,
 			isSummary: !r.Conf.printContents(),
 			out:       r.out,
-			data:      data,
+			rows:      rows,
 			target:    target,
 		}
 		return rr.print()
@@ -190,20 +195,20 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
 	case FormatJUnit:
 		return errors.New("'junit' is not supported for vuln reports, please use one of the other formats")
 	case FormatSarif:
+		// TODO: render VEX as SARIF natively (deferred from the VEX migration).
 		return errors.New("'sarif' is not supported for vuln reports, please use one of the other formats")
 	case FormatHDF:
 		return errors.New("'hdf' is not supported for vuln reports, please use one of the other formats")
-	case FormatOcsfJson:
-		return ocsfconvert.ConvertVulnReport(target, data, r.Conf.ocsfVersion, r.out)
-	case FormatOcsfParquet:
-		return errors.New("'ocsf-parquet' is not supported for vuln reports, please use 'ocsf-json'")
+	case FormatOcsfJson, FormatOcsfParquet:
+		// TODO: render VEX as OCSF natively (deferred from the VEX migration).
+		return errors.New("'ocsf' output is not yet supported for vuln reports, please use full, json, or csv")
 	case FormatCSV:
 		writer := iox.IOWriter{Writer: r.out}
-		return VulnReportToCSV(data, &writer)
+		return VulnReportToCSV(rows, &writer)
 	case FormatYAMLv1, FormatYAMLv2:
 		raw := bytes.Buffer{}
 		writer := iox.IOWriter{Writer: &raw}
-		err := VulnReportToJSON(target, data, &writer)
+		err := VulnReportToJSON(target, rows, &writer)
 		if err != nil {
 			return err
 		}
@@ -216,7 +221,7 @@ func (r *Reporter) PrintVulns(data *mvd.VulnReport, target string) error {
 		return err
 	case FormatJSONv1, FormatJSONv2:
 		writer := iox.IOWriter{Writer: r.out}
-		return VulnReportToJSON(target, data, &writer)
+		return VulnReportToJSON(target, rows, &writer)
 	default:
 		return errors.New("unknown reporter type, don't recognize this format")
 	}

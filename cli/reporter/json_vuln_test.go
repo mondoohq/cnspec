@@ -6,27 +6,40 @@ package reporter
 import (
 	"bytes"
 	"encoding/json"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
 	"go.mondoo.com/mql/utils/iox"
 )
 
 func TestJsonConverter(t *testing.T) {
-	reportRaw, err := os.ReadFile("./testdata/mondoo-debug-vulnReport.json")
-	require.NoError(t, err)
-
-	report := &mvd.VulnReport{}
-	err = json.Unmarshal(reportRaw, report)
-	require.NoError(t, err)
+	rows := fex.VulnRows(sampleVEX())
 
 	buf := bytes.Buffer{}
 	writer := iox.IOWriter{Writer: &buf}
-	err = VulnReportToJSON("index.docker.io/ubuntu:focal-20220113", report, &writer)
-	require.NoError(t, err)
+	require.NoError(t, VulnReportToJSON("index.docker.io/library/ubuntu:focal", rows, &writer))
 
-	assert.Contains(t, buf.String(), "\"cves\":[\"CVE-2021-43618\"]")
+	// It must be valid JSON and carry the target, severity stats, and the richer
+	// per-vulnerability fields.
+	var doc vulnJSONReport
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &doc))
+
+	assert.Equal(t, "index.docker.io/library/ubuntu:focal", doc.Target)
+	assert.Equal(t, 3, doc.Stats.Total)
+	assert.Equal(t, 1, doc.Stats.Critical)
+	assert.Equal(t, 1, doc.Stats.High)
+	assert.Equal(t, 1, doc.Stats.Medium)
+	require.Len(t, doc.Vulnerabilities, 3)
+
+	// sorted most-severe first
+	first := doc.Vulnerabilities[0]
+	assert.Equal(t, "CVE-2022-0001", first.Advisory)
+	assert.Equal(t, fex.SeverityCritical, first.Severity)
+	assert.Equal(t, "lodash", first.Package)
+	assert.Equal(t, "4.17.20", first.Installed)
+	assert.Equal(t, "4.17.21", first.Fixed)
+	assert.Equal(t, "pkg:npm/lodash@4.17.20", first.Purl)
+	assert.Equal(t, "Upgrade lodash to 4.17.21", first.Remediation)
 }

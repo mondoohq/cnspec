@@ -5,8 +5,6 @@ package reporter
 
 import (
 	"bytes"
-	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 
@@ -143,57 +141,56 @@ func TestCompactReporterNoChecksSpacing(t *testing.T) {
 }
 
 func TestVulnReporter(t *testing.T) {
-	reportRaw, err := os.ReadFile("./testdata/mondoo-debug-vulnReport.json")
-	require.NoError(t, err)
-
-	report := &mvd.VulnReport{}
-	err = json.Unmarshal(reportRaw, report)
-	require.NoError(t, err)
-
-	buf := bytes.Buffer{}
-	writer := iox.IOWriter{Writer: &buf}
+	vex := sampleVEX()
 	target := "index.docker.io/library/ubuntu@669e010b58ba"
 
 	t.Run("format=summary", func(t *testing.T) {
+		buf := bytes.Buffer{}
+		// the summary format intentionally suppresses the vulnerability listing
 		conf := defaultPrintConfig().setFormat(FormatSummary)
 		r := NewReporter(conf, false)
-		r.out = &writer
-		require.NoError(t, err)
-		err = r.PrintVulns(report, target)
-		require.NoError(t, err)
+		r.out = &buf
+		require.NoError(t, r.PrintVulns(vex, target))
+		assert.Empty(t, buf.String())
 	})
 
 	t.Run("format=compact", func(t *testing.T) {
+		buf := bytes.Buffer{}
 		conf := defaultPrintConfig().setFormat(FormatCompact)
 		r := NewReporter(conf, false)
-		r.out = &writer
-		err = r.PrintVulns(report, target)
-		require.NoError(t, err)
-		assert.Contains(t, buf.String(), "5.5    libblkid1       2.34-0.1ubuntu9.1")
-		assert.NotContains(t, buf.String(), "USN-5279-1")
+		r.out = &buf
+		require.NoError(t, r.PrintVulns(vex, target))
+		out := buf.String()
+		// the compact table shows the severity breakdown and lists advisories,
+		// most severe first, without the detailed remediation column
+		assert.Contains(t, out, "Vulnerabilities: 3")
+		assert.Contains(t, out, "CVE-2022-0001")
+		assert.Contains(t, out, "lodash")
+		assert.NotContains(t, out, "REMEDIATION")
 	})
 
 	t.Run("format=full", func(t *testing.T) {
+		buf := bytes.Buffer{}
 		conf := defaultPrintConfig().setFormat(FormatFull)
 		r := NewReporter(conf, false)
-		r.out = &writer
-		require.NoError(t, err)
-		err = r.PrintVulns(report, target)
-		require.NoError(t, err)
-		assert.Contains(t, buf.String(), "5.5    libblkid1       2.34-0.1ubuntu9.1")
-		assert.Contains(t, buf.String(), "USN-5279-1")
+		r.out = &buf
+		require.NoError(t, r.PrintVulns(vex, target))
+		out := buf.String()
+		assert.Contains(t, out, "CVE-2022-0001")
+		assert.Contains(t, out, "REMEDIATION")
+		assert.Contains(t, out, "Upgrade lodash to 4.17.21")
 	})
 
 	t.Run("format=yaml", func(t *testing.T) {
+		buf := bytes.Buffer{}
 		conf := defaultPrintConfig().setFormat(FormatYAMLv1)
 		r := NewReporter(conf, false)
-		r.out = &writer
-		require.NoError(t, err)
-		err = r.PrintVulns(report, target)
-		require.NoError(t, err)
-		assert.Contains(t, buf.String(), "score: 5.5")
-		assert.Contains(t, buf.String(), "package: libblkid1")
-		assert.Contains(t, buf.String(), "installed: 2.34-0.1ubuntu9.1")
-		assert.Contains(t, buf.String(), "advisory: USN-5279-1")
+		r.out = &buf
+		require.NoError(t, r.PrintVulns(vex, target))
+		out := buf.String()
+		assert.Contains(t, out, "advisory: CVE-2022-0001")
+		assert.Contains(t, out, "package: lodash")
+		assert.Contains(t, out, "severity: CRITICAL")
+		assert.Contains(t, out, "fixed: 4.17.21")
 	})
 }

@@ -5,53 +5,59 @@ package reporter
 
 import (
 	"encoding/csv"
-	"fmt"
 	"strings"
 
-	"go.mondoo.com/cnspec/cli/components"
-	"go.mondoo.com/cnspec/cli/components/advisories"
-	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
 	"go.mondoo.com/mql/utils/iox"
 )
 
 type csvStruct struct {
-	Name      string
-	Score     string
-	Installed string
-	Fixed     string
-	Available string
-	Advisory  string
-	Cves      string
+	Severity    string
+	Advisory    string
+	Package     string
+	Installed   string
+	Fixed       string
+	Purl        string
+	References  string
+	Remediation string
 }
 
 func (c csvStruct) toSlice() []string {
-	return []string{c.Name, c.Score, c.Installed, c.Fixed, c.Available, c.Advisory, c.Cves}
+	return []string{c.Severity, c.Advisory, c.Package, c.Installed, c.Fixed, c.Purl, c.References, c.Remediation}
 }
 
-// ReportCollectionToCSV writes the given report collection to the given output directory
-func VulnReportToCSV(data *mvd.VulnReport, out iox.OutputHelper) error {
+// VulnReportToCSV writes the VEX rows for a target as CSV.
+func VulnReportToCSV(rows []fex.VulnRow, out iox.OutputHelper) error {
 	w := csv.NewWriter(out)
 
 	// write header
 	err := w.Write(csvStruct{
-		"Package Name",
-		"Score",
-		"Installed",
-		"Fixed",
-		"Available",
-		"Advisory",
-		"CVEs",
+		Severity:    "Severity",
+		Advisory:    "Advisory",
+		Package:     "Package",
+		Installed:   "Installed",
+		Fixed:       "Fixed",
+		Purl:        "PURL",
+		References:  "References",
+		Remediation: "Remediation",
 	}.toSlice())
 	if err != nil {
 		return err
 	}
 
-	pkgs := renderVulnerabilitiesAsCSV(data)
-
-	for i := range pkgs {
-		pkg := pkgs[i]
-		err := w.Write(escapeCSVRow(pkg.toSlice()))
-		if err != nil {
+	for i := range rows {
+		row := rows[i]
+		rec := csvStruct{
+			Severity:    severityOrNone(row.Severity),
+			Advisory:    row.ID,
+			Package:     row.AffectedName,
+			Installed:   row.AffectedVersion,
+			Fixed:       row.FixedVersion,
+			Purl:        row.AffectedPurl,
+			References:  strings.Join(row.References, " "),
+			Remediation: row.RemediationHint,
+		}
+		if err := w.Write(escapeCSVRow(rec.toSlice())); err != nil {
 			return err
 		}
 	}
@@ -80,32 +86,4 @@ func escapeCSVCell(value string) string {
 		return "'" + value
 	}
 	return value
-}
-
-func renderVulnerabilitiesAsCSV(r *mvd.VulnReport) []*csvStruct {
-	if r == nil {
-		return []*csvStruct{}
-	}
-
-	// packages advisories
-	var packages []*advisories.ReportFindingRow
-	var printPkgs []*csvStruct
-	if r.Stats != nil && r.Stats.Packages != nil {
-		packages = advisories.ReportAffectedPackages(r, advisories.RowWriterOpts{AdvisoryDetails: true})
-		for i := range packages {
-			pkg := packages[i]
-			outPkg := &csvStruct{
-				Score:     fmt.Sprintf("%v", components.IntScore2Float(pkg.Score)),
-				Name:      pkg.Name,
-				Installed: pkg.Installed,
-				Fixed:     pkg.Fixed,
-				Available: pkg.Available,
-				Advisory:  pkg.Advisory,
-				Cves:      strings.Join(pkg.Cves, " "),
-			}
-			printPkgs = append(printPkgs, outPkg)
-		}
-	}
-
-	return printPkgs
 }

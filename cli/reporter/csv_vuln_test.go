@@ -5,63 +5,50 @@ package reporter
 
 import (
 	"bytes"
-	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
 	"go.mondoo.com/mql/utils/iox"
 )
 
 func TestCsvConverter(t *testing.T) {
-	reportRaw, err := os.ReadFile("./testdata/mondoo-debug-vulnReport.json")
-	require.NoError(t, err)
-
-	report := &mvd.VulnReport{}
-	err = json.Unmarshal(reportRaw, report)
-	require.NoError(t, err)
+	rows := fex.VulnRows(sampleVEX())
 
 	buf := bytes.Buffer{}
 	writer := iox.IOWriter{Writer: &buf}
-	err = VulnReportToCSV(report, &writer)
-	require.NoError(t, err)
+	require.NoError(t, VulnReportToCSV(rows, &writer))
 
-	assert.Contains(t, buf.String(), "libblkid1,5.5,2.34-0.1ubuntu9.1,2.34-0.1ubuntu9.3,2.34-0.1ubuntu9.3,USN-5279-1,CVE-2021-3995 CVE-2021-3996")
+	out := buf.String()
+	// header
+	assert.Contains(t, out, "Severity,Advisory,Package,Installed,Fixed,PURL,References,Remediation")
+	// the critical row carries the richer VEX fields (severity, purl, fix, refs)
+	assert.Contains(t, out, "CRITICAL,CVE-2022-0001,lodash,4.17.20,4.17.21,pkg:npm/lodash@4.17.20,https://nvd.nist.gov/vuln/detail/CVE-2022-0001,Upgrade lodash to 4.17.21")
 }
 
 func TestCsvConverterNeutralizesFormulas(t *testing.T) {
-	reportRaw, err := os.ReadFile("./testdata/mondoo-debug-vulnReport.json")
-	require.NoError(t, err)
-
-	report := &mvd.VulnReport{}
-	err = json.Unmarshal(reportRaw, report)
-	require.NoError(t, err)
-
 	// A scanned target controls package names; inject a spreadsheet formula
-	// payload into an affected package so it flows through to the CSV output.
+	// payload as an affected package name so it flows through to the CSV output.
 	const payload = `=HYPERLINK("http://evil","click")`
-	found := false
-	for _, pkg := range report.Packages {
-		if pkg.Name == "libblkid1" {
-			pkg.Name = payload
-			found = true
-		}
-	}
-	require.True(t, found, "expected to find a package to mutate")
+	vex := []*fex.VulnerabilityExchange{{
+		Id:      "CVE-2030-0001",
+		Ratings: []*fex.Rating{{Severity: "high"}},
+		Affects: []*fex.Affects{{
+			Component: &fex.Component{Id: payload},
+		}},
+	}}
+	rows := fex.VulnRows(vex)
 
 	buf := bytes.Buffer{}
 	writer := iox.IOWriter{Writer: &buf}
-	err = VulnReportToCSV(report, &writer)
-	require.NoError(t, err)
+	require.NoError(t, VulnReportToCSV(rows, &writer))
 
 	out := buf.String()
 	// The payload must survive but be neutralized with a leading single quote,
 	// and no CSV field may begin with the raw formula.
 	assert.Contains(t, out, `'=HYPERLINK`)
-	assert.NotContains(t, out, "\n="+`HYPERLINK`)
 	for _, line := range strings.Split(out, "\n") {
 		assert.False(t, strings.HasPrefix(line, "="), "line begins with a formula: %q", line)
 	}

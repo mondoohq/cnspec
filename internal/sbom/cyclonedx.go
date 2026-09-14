@@ -66,13 +66,32 @@ func (ccx *CycloneDX) convertToCycloneDx(bom *Sbom) (*cyclonedx.BOM, error) {
 		cpe = bom.Asset.Platform.Cpes[0]
 	}
 
-	components = append(components, cyclonedx.Component{
+	osComponent := cyclonedx.Component{
 		BOMRef:  uuid.New().String(),
 		Type:    cyclonedx.ComponentTypeOS,
 		Name:    bom.Asset.Platform.Name,
 		Version: bom.Asset.Platform.Version,
 		CPE:     cpe,
-	})
+	}
+	// CycloneDX has no field for the architecture, title or family of an
+	// operating system, so they go in properties. Without the architecture a
+	// vulnerability scan of a re-read SBOM matches nothing: the packages carry
+	// arch in their purls, but the platform the advisories are selected for does
+	// not, and the scan silently returns no findings.
+	osProps := []cyclonedx.Property{}
+	addProp := func(name, value string) {
+		if value == "" {
+			return
+		}
+		osProps = append(osProps, cyclonedx.Property{Name: name, Value: value})
+	}
+	addProp(propPlatformArch, bom.Asset.Platform.Arch)
+	addProp(propPlatformTitle, bom.Asset.Platform.Title)
+	addProp(propPlatformFamily, strings.Join(bom.Asset.Platform.Family, ","))
+	if len(osProps) > 0 {
+		osComponent.Properties = &osProps
+	}
+	components = append(components, osComponent)
 
 	// add os packages as components
 	for i := range bom.Packages {
@@ -117,6 +136,23 @@ func (ccx *CycloneDX) convertToCycloneDx(bom *Sbom) (*cyclonedx.BOM, error) {
 			PackageURL: pkg.Purl,
 			CPE:        cpe,
 			Evidence:   evidence,
+		}
+
+		// The source package this binary was built from. CycloneDX has no field
+		// for it, and it is what vulnerability matching needs: Debian and RPM
+		// advisories are published against the source package, so an advisory for
+		// glibc has to reach the installed libc6 and libc-bin. Dropping it is why
+		// a scan of a re-read SBOM returned no findings while the same asset
+		// scanned directly returned them.
+		pkgProps := []cyclonedx.Property{}
+		if pkg.Origin != "" {
+			pkgProps = append(pkgProps, cyclonedx.Property{Name: propPackageOrigin, Value: pkg.Origin})
+		}
+		if pkg.Architecture != "" {
+			pkgProps = append(pkgProps, cyclonedx.Property{Name: propPackageArch, Value: pkg.Architecture})
+		}
+		if len(pkgProps) > 0 {
+			bomPkg.Properties = &pkgProps
 		}
 
 		components = append(components, bomPkg)
@@ -260,19 +296,65 @@ func (ccx *CycloneDX) convertCycloneDxToSbom(bom *cyclonedx.BOM) (*Sbom, error) 
 			sbom.Asset.Platform.Name = component.Name
 			sbom.Asset.Platform.Version = component.Version
 			sbom.Asset.Platform.Title = component.Description
+			// familyMap is the fallback for SBOMs from other tools; a document we
+			// wrote carries the real values in properties below.
 			sbom.Asset.Platform.Family = familyMap[strings.ToLower(component.Name)]
 			if len(component.CPE) > 0 {
 				sbom.Asset.Platform.Cpes = []string{component.CPE}
 			}
+			if component.Properties != nil {
+				for _, prop := range *component.Properties {
+					switch prop.Name {
+					case propPlatformArch:
+						sbom.Asset.Platform.Arch = prop.Value
+					case propPlatformTitle:
+						sbom.Asset.Platform.Title = prop.Value
+					case propPlatformFamily:
+						if prop.Value != "" {
+							sbom.Asset.Platform.Family = strings.Split(prop.Value, ",")
+						}
+					}
+				}
+			}
 			sbom.Packages = append(sbom.Packages, pkg)
 		case cyclonedx.ComponentTypeLibrary:
+			applyPackageProperties(pkg, component.Properties)
 			sbom.Packages = append(sbom.Packages, pkg)
 		case cyclonedx.ComponentTypeApplication:
+			// Same as a library: this component becomes a package, so its
+			// properties are package properties. The OS component is the one
+			// exception -- its properties describe the platform.
+			applyPackageProperties(pkg, component.Properties)
 			sbom.Packages = append(sbom.Packages, pkg)
 		}
 	}
 
 	return sbom, nil
+}
+
+// Property names for the platform fields CycloneDX does not model. They are
+// namespaced so a reader can tell them from another tool's properties.
+const (
+	propPlatformArch   = "mondoo:platform:arch"
+	propPlatformTitle  = "mondoo:platform:title"
+	propPlatformFamily = "mondoo:platform:family"
+	propPackageOrigin  = "mondoo:package:origin"
+	propPackageArch    = "mondoo:package:arch"
+)
+
+// applyPackageProperties restores the package fields CycloneDX does not model.
+func applyPackageProperties(pkg *Package, props *[]cyclonedx.Property) {
+	if pkg == nil || props == nil {
+		return
+	}
+	for _, prop := range *props {
+		switch prop.Name {
+		case propPackageOrigin:
+			pkg.Origin = prop.Value
+		case propPackageArch:
+			pkg.Architecture = prop.Value
+		}
+	}
 }
 
 var familyMap = map[string][]string{
