@@ -1655,11 +1655,11 @@ queries:
 
   # ---------------------------------------------------------------------------
   # Security groups
-  # MQL has no string-to-int conversion, so a "from/to" port range cannot be
-  # compared arithmetically. Range containment is encoded as a regex instead:
-  # one alternation for "lower bound <= port" and one for "upper bound >= port".
-  # Each half is verified exhaustively over 0-65535 before it lands here. The
-  # upper half over-matches above 65535, which the service rejects on input.
+  # portRange is the rule's raw "first/last" string; fromPort and toPort are the
+  # same bounds as numbers, with the all-ports sentinel -1/-1 resolved to 1 and
+  # 65535. Range containment is a pair of comparisons on those. A range the
+  # provider could not read leaves both fields null, which fails the comparison
+  # rather than passing it.
   # ---------------------------------------------------------------------------
   - uid: mondoo-alibaba-security-ecs-security-group-no-public-ssh
     title: Ensure security groups do not allow public ingress to SSH (port 22)
@@ -1763,8 +1763,8 @@ queries:
     filters: asset.platform == "alicloud-account"
     mql: |
       # A rule opens the port whenever its range spans it, not only when the range is written
-      # exactly as the port. The regex encodes "lower bound <= port <= upper bound" as two
-      # alternations; it over-matches above 65535, which the service rejects on the way in.
+      # exactly as the port. The all-ports sentinel -1/-1 resolves to the full span, so one
+      # pair of comparisons covers the sentinel and every wider range alike.
       alicloud.ecs.securityGroups.all(
         permissions
           .where(direction.downcase == "ingress")
@@ -1772,8 +1772,7 @@ queries:
           .where(sourceCidrIp == "0.0.0.0/0" || sourcePrefixList != empty && sourcePrefixList.cidrBlocks.any(_ == "0.0.0.0/0"))
           .none(
             ipProtocol.downcase == "all" ||
-            ipProtocol.downcase == "tcp" && portRange == "-1/-1" ||
-            ipProtocol.downcase == "tcp" && portRange == /^(\d|1\d|2[0-2])\/(2[2-9]|[3-9]\d|\d{3,5})$/
+            ipProtocol.downcase == "tcp" && fromPort <= 22 && toPort >= 22
           )
       )
 
@@ -1895,8 +1894,8 @@ queries:
     filters: asset.platform == "alicloud-account"
     mql: |
       # A rule opens the port whenever its range spans it, not only when the range is written
-      # exactly as the port. The regex encodes "lower bound <= port <= upper bound" as two
-      # alternations; it over-matches above 65535, which the service rejects on the way in.
+      # exactly as the port. The all-ports sentinel -1/-1 resolves to the full span, so one
+      # pair of comparisons covers the sentinel and every wider range alike.
       alicloud.ecs.securityGroups.all(
         permissions
           .where(direction.downcase == "ingress")
@@ -1904,8 +1903,7 @@ queries:
           .where(sourceCidrIp == "0.0.0.0/0" || sourcePrefixList != empty && sourcePrefixList.cidrBlocks.any(_ == "0.0.0.0/0"))
           .none(
             ipProtocol.downcase == "all" ||
-            ipProtocol.downcase == "tcp" && portRange == "-1/-1" ||
-            ipProtocol.downcase == "tcp" && portRange == /^(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)\/(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})$/
+            ipProtocol.downcase == "tcp" && fromPort <= 3389 && toPort >= 3389
           )
       )
 
@@ -2033,8 +2031,7 @@ queries:
           .where(sourceCidrIp == "0.0.0.0/0" || sourcePrefixList != empty && sourcePrefixList.cidrBlocks.any(_ == "0.0.0.0/0"))
           .none(
             ipProtocol.downcase == "all" ||
-            portRange == "-1/-1" ||
-            portRange == "1/65535"
+            fromPort <= 1 && toPort >= 65535
           )
       )
 
@@ -2156,8 +2153,8 @@ queries:
     filters: asset.platform == "alicloud-account"
     mql: |
       # A rule opens the port whenever its range spans it, not only when the range is written
-      # exactly as the port. The regex encodes "lower bound <= port <= upper bound" as two
-      # alternations; it over-matches above 65535, which the service rejects on the way in.
+      # exactly as the port. The all-ports sentinel -1/-1 resolves to the full span, so one
+      # pair of comparisons covers the sentinel and every wider range alike.
       alicloud.ecs.securityGroups.all(
         permissions
           .where(direction.downcase == "ingress")
@@ -2165,9 +2162,8 @@ queries:
           .where(ipv6SourceCidrIp == "::/0" || sourcePrefixList != empty && sourcePrefixList.cidrBlocks.any(_ == "::/0"))
           .none(
             ipProtocol.downcase == "all" ||
-            ipProtocol.downcase == "tcp" && portRange == "-1/-1" ||
-            ipProtocol.downcase == "tcp" && portRange == /^(\d|1\d|2[0-2])\/(2[2-9]|[3-9]\d|\d{3,5})$/ ||
-            ipProtocol.downcase == "tcp" && portRange == /^(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)\/(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})$/
+            ipProtocol.downcase == "tcp" && fromPort <= 22 && toPort >= 22 ||
+            ipProtocol.downcase == "tcp" && fromPort <= 3389 && toPort >= 3389
           )
       )
 
@@ -7324,7 +7320,7 @@ queries:
       desc: |
         This check verifies that the subnet-level filter in front of a VPC does not accept administrative traffic from the whole internet.
 
-        A network ACL is bound to vSwitches and evaluated ahead of the security groups attached to the instances inside them, so whatever it accepts reaches everything in those subnets. The check fails an inbound entry whose policy is `accept` and whose source is `0.0.0.0/0` when it covers every protocol, every port through `-1/-1`, or a TCP range containing SSH on port 22 or RDP on port 3389. Entries live under **Access Control** > **Network ACL** in the VPC console and are replaced with `aliyun vpc UpdateNetworkAclEntries`.
+        A network ACL is bound to vSwitches and evaluated ahead of the security groups attached to the instances inside them, so whatever it accepts reaches everything in those subnets. The check fails an inbound entry whose policy is `accept` and whose source is `0.0.0.0/0` when it covers every protocol, every port through `-1/-1` or `1/65535`, or a TCP range containing SSH on port 22 or RDP on port 3389. Entries live under **Access Control** > **Network ACL** in the VPC console and are replaced with `aliyun vpc UpdateNetworkAclEntries`.
 
         **Why this matters**
 
@@ -7385,7 +7381,7 @@ queries:
 
             - Entry 1 shows an admin port scoped to a trusted range. `203.0.113.0/24` is an example; use the office, bastion or VPN range that needs SSH or RDP.
             - Entry 2 shows a published service port that may stay open to `0.0.0.0/0`. Keep or drop it to match what the vSwitches actually serve.
-            - No accepting entry from `0.0.0.0/0` may use protocol `all`, port `-1/-1`, or a TCP range that spans port 22 or port 3389.
+            - No accepting entry from `0.0.0.0/0` may use protocol `all`, an all-ports range written `-1/-1` or `1/65535`, or a TCP range that spans port 22 or port 3389.
         - id: terraform
           desc: |
             To scope the inbound entries in Terraform, name the source range each entry accepts:
@@ -7429,17 +7425,18 @@ queries:
   - uid: mondoo-alibaba-security-network-acl-no-unrestricted-ingress-alicloud
     filters: asset.platform == "alicloud-account"
     mql: |
-      # Port containment is encoded as a regex because MQL cannot convert the "first/last"
-      # string to numbers. Both halves are verified exhaustively over 0-65535.
+      # fromPort and toPort are the entry's port bounds as numbers, with the all-ports
+      # sentinel -1/-1 resolved to the full span. An entry whose protocol carries no ports
+      # reports that same span, so the all-ports term catches it whatever the protocol names.
       alicloud.vpc.networkAcls.all(
         ingressEntries
           .where(policy.downcase == "accept")
           .where(sourceCidrIp == "0.0.0.0/0")
           .none(
             protocol.downcase == "all" ||
-            port == "-1/-1" ||
-            protocol.downcase == "tcp" && port == /^(\d|1\d|2[0-2])\/(2[2-9]|[3-9]\d|\d{3,5})$/ ||
-            protocol.downcase == "tcp" && port == /^(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)\/(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})$/
+            fromPort <= 1 && toPort >= 65535 ||
+            protocol.downcase == "tcp" && fromPort <= 22 && toPort >= 22 ||
+            protocol.downcase == "tcp" && fromPort <= 3389 && toPort >= 3389
           )
       )
   - uid: mondoo-alibaba-security-network-acl-no-unrestricted-ingress-terraform-hcl
