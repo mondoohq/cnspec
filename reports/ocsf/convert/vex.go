@@ -65,7 +65,7 @@ func (c *converter) vexFinding(id string, rows []fex.VulnRow, ctx *assetContext)
 		uid = "vulnerable-package"
 		title = "Vulnerable package"
 		if name := strings.TrimSpace(first.AffectedName); name != "" {
-			uid = "vulnerable-package/" + vexPackageKey(first)
+			uid = "vulnerable-package/" + reportdoc.VexPackageKey(first)
 			title = name + " " + first.AffectedVersion + " has known vulnerabilities"
 		}
 	}
@@ -77,7 +77,7 @@ func (c *converter) vexFinding(id string, rows []fex.VulnRow, ctx *assetContext)
 	fixAvailable := false
 	seen := map[string]bool{}
 	for _, row := range rows {
-		key := vexPackageKey(row)
+		key := reportdoc.VexPackageKey(row)
 		if row.AffectedName == "" || seen[key] {
 			continue
 		}
@@ -183,12 +183,4 @@ func vexReferences(rows []fex.VulnRow) []string {
 	}
 	sort.Strings(res)
 	return res
-}
-
-// vexPackageKey identifies the affected package of a row.
-func vexPackageKey(row fex.VulnRow) string {
-	if row.AffectedPurl != "" {
-		return row.AffectedPurl
-	}
-	return row.AffectedName + "@" + row.AffectedVersion
 }

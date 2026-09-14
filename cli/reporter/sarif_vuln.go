@@ -31,8 +31,22 @@ func VulnReportToSarif(target string, rows []fex.VulnRow, out iox.OutputHelper) 
 	}
 
 	run := newVulnRun(target)
-	for _, id := range sortedVulnRuleIDs(rows) {
-		registerVexRule(run, id, rows)
+	// Group once: a rule needs the advisory fields any of its rows carries, and
+	// re-scanning every row per rule would be quadratic on a long report.
+	byRule := map[string]fex.VulnRow{}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		id := vexRuleID(row)
+		if _, seen := byRule[id]; seen {
+			continue
+		}
+		byRule[id] = row
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	for _, id := range ids {
+		registerVexRule(run, id, byRule[id])
 	}
 	for i := range rows {
 		run.AddResult(vexResult(target, rows[i]))
@@ -63,23 +77,6 @@ func newVulnRun(target string) *sarif.Run {
 	return run
 }
 
-// sortedVulnRuleIDs lists the advisory ids in the rows, deduplicated and sorted,
-// so a run's rules are emitted in a stable order regardless of row order.
-func sortedVulnRuleIDs(rows []fex.VulnRow) []string {
-	seen := map[string]bool{}
-	ids := make([]string, 0, len(rows))
-	for i := range rows {
-		id := vexRuleID(rows[i])
-		if seen[id] {
-			continue
-		}
-		seen[id] = true
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return ids
-}
-
 // vexRuleID is the rule a row reports under. A row with no advisory id still has
 // to report under something, and the generic package rule is what the scan path
 // uses for the same case.
@@ -92,18 +89,10 @@ func vexRuleID(row fex.VulnRow) string {
 
 // registerVexRule registers one advisory as a SARIF rule. The rule carries what
 // is true of the advisory itself; anything per-package belongs on the result.
-// Rows are passed in so the rule can take its description and references from
-// the first row reporting it -- they are properties of the advisory, so every
-// such row carries the same ones.
-func registerVexRule(run *sarif.Run, ruleID string, rows []fex.VulnRow) {
-	var row fex.VulnRow
-	for i := range rows {
-		if vexRuleID(rows[i]) == ruleID {
-			row = rows[i]
-			break
-		}
-	}
-
+// row is the first row reporting this advisory -- description, severity and
+// references are properties of the advisory, so every such row carries the same
+// ones and the first will do.
+func registerVexRule(run *sarif.Run, ruleID string, row fex.VulnRow) {
 	if ruleID == sarifVulnPackageRuleID && row.ID == "" {
 		run.AddRule(sarifVulnPackageRuleID).
 			WithName("Vulnerable package").
@@ -229,21 +218,11 @@ func vexResult(target string, row fex.VulnRow) *sarif.Result {
 			sarif.NewLocation().WithLogicalLocations(logicalLocs),
 		}).
 		WithPartialFingerPrints(map[string]interface{}{
-			// The purl identifies the package precisely; name@version is what
-			// there is when a row carries none.
-			sarifFingerprintKey: sarifFingerprint(ruleID, target, vexPackageKey(row)),
+			sarifFingerprintKey: sarifFingerprint(ruleID, target, reportdoc.VexPackageKey(row)),
 		}).
 		WithRank(float32(risk))
 	result.Properties = props
 	return result
-}
-
-// vexPackageKey identifies the affected package within a target, for fingerprints.
-func vexPackageKey(row fex.VulnRow) string {
-	if row.AffectedPurl != "" {
-		return row.AffectedPurl
-	}
-	return row.AffectedName + "@" + row.AffectedVersion
 }
 
 // orUnknownPackage names a row whose component never resolved. VulnRows emits
