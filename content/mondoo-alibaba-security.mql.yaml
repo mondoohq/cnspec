@@ -4913,62 +4913,82 @@ queries:
         values["slb_internet_enabled"] == false
       )
 
-  # No Terraform variants: The runtime auditLogEnabled signal is derived from the ACK CheckControlPlaneLogEnable API reporting an "audit" control-plane log component; the Terraform control_plane_log_components attribute does not document an "audit" value, and the separate audit_log_config block writes cluster audit logs to an independent Log Service Logstore rather than flipping the control-plane audit component, so no Terraform attribute maps cleanly to this signal.
+  # No Terraform variants yet: alicloud_cs_managed_kubernetes carries an audit_log_config
+  # block whose enabled attribute maps onto apiServerAuditEnabled, so variants are possible
+  # and are tracked in https://github.com/mondoohq/cnspec/issues/3992. They need pass and
+  # fail fixtures and registration with the variant suites, so they are not added here.
   - uid: mondoo-alibaba-security-cs-cluster-audit-log-enabled
-    title: Ensure ACK clusters have audit logging enabled
+    title: Ensure ACK clusters have API server auditing enabled
     impact: 80
     docs:
       desc: |
-        This check verifies that Container Service for Kubernetes (ACK) clusters ship Kubernetes API server audit logs from the control plane to Log Service.
+        This check verifies that Container Service for Kubernetes (ACK) clusters have API server auditing enabled, so calls to the Kubernetes API are recorded to Log Service.
 
-        Audit logging records who called the API server, what they requested, and what the outcome was. Collection is turned on in the Container Service console under Operations, then Log Center and Control Plane Logs, by enabling control-plane log collection with the `audit` component selected and a Log Service project chosen. The same configuration is applied by posting the control-plane log request with `aliyun cs` and including `audit` in the component list.
+        API server auditing is its own ACK feature with its own setting, enabled per cluster under **Security** > **Cluster Auditing**. A Log Service project is chosen there and ACK creates an `audit-<cluster-id>` Logstore inside it. Auditing is separate from control plane log collection, which ships component logs such as the API server, controller manager and scheduler. Turning on control plane log collection does not turn on auditing.
 
         **Why this matters**
 
-        Without the audit component, malicious or accidental API server actions leave no trail at all. An intrusion cannot be reconstructed, the scope of a compromise cannot be bounded, and there is no way to distinguish an attacker's activity from routine operations after the fact.
+        Without auditing, malicious or accidental API server actions leave no trail at all. An intrusion cannot be reconstructed, the scope of a compromise cannot be bounded, and there is no way to distinguish an attacker's activity from routine operations after the fact.
 
         Detection depends on the audit stream existing before anything goes wrong. Alerting on suspicious API activity such as unexpected secret reads, service account token requests, or privilege escalations requires the events to have been captured in the first place, and no amount of later investigation can recover events that were never recorded.
 
         Most security frameworks require that access to sensitive systems is logged and retained, and a Kubernetes control plane holding the account's workloads and secrets is squarely such a system. Streaming those events to Log Service also puts them somewhere a compromised cluster cannot quietly erase them.
 
-        This check confirms that the cluster collects the audit component. It does not evaluate the retention period on the Log Service project, who can read the resulting Logstore, or whether anything alerts on its contents, so pair it with a review of the destination project's configuration.
+        This check confirms that auditing is on. It does not evaluate the retention period on the Log Service project, who can read the resulting Logstore, or whether anything alerts on its contents, so pair it with a review of the destination project's configuration. Retention defaults to 30 days on ACK managed clusters and 365 days on ACK dedicated clusters.
       audit: |
         ### Audit via Console
 
         1. Sign in to the [Container Service console](https://cs.console.aliyun.com/).
-        2. Open each cluster and navigate to **Operations** > **Log Center** > **Control Plane Logs**.
-        3. Confirm that control-plane logging is enabled and includes the **audit** (kube-apiserver audit) component.
+        2. Click **Clusters**, then click the name of the cluster.
+        3. In the left-side navigation pane, choose **Security** > **Cluster Auditing**.
 
-        A passing cluster collects the audit component. A failing cluster has control-plane logging off or excludes the audit component.
+        A passing cluster shows cluster auditing enabled against a Log Service project. A failing cluster offers to enable it.
 
         ### Audit via CLI
 
-        1. Check the control-plane log configuration of each cluster:
+        1. Query the auditing state of each cluster:
 
         ```bash
-        aliyun cs GET /clusters/<cluster-id>/controlplanelog
+        aliyun cs GET /clusters/<cluster-id>/audit
         ```
 
-        A passing cluster lists `audit` among the collected `components`. A failing cluster returns no components or omits `audit`.
+        A passing cluster returns `audit_enabled` as `true`, alongside the `sls_project_name` that holds the audit Logstore. A failing cluster returns `audit_enabled` as `false`.
       remediation:
         - id: console
           desc: |
-            To enable control-plane audit logging on an ACK cluster in the console:
+            To enable API server auditing on an ACK cluster in the console:
 
             1. Sign in to the [Container Service console](https://cs.console.aliyun.com/).
-            2. Open the cluster and go to **Operations** > **Log Center** > **Control Plane Logs**.
-            3. Enable control-plane log collection, select the **audit** component, choose or create a Log Service project, and save.
+            2. Click **Clusters**, then click the name of the cluster.
+            3. In the left-side navigation pane, choose **Security** > **Cluster Auditing**.
+            4. Select a Log Service project and enable cluster auditing.
+
+            ACK creates an `audit-<cluster-id>` Logstore in the project you select.
         - id: cli
           desc: |
-            To enable control-plane audit logging with the `aliyun` CLI, install or update the log collection for the cluster and include the `audit` component:
+            To enable API server auditing with the `aliyun` CLI:
 
             ```bash
-            aliyun cs PUT /clusters/<cluster-id>/controlplanelog \
-              --body '{"components":["audit","apiserver"],"aliuid":"<uid>"}'
+            aliyun cs PUT /clusters/<cluster-id>/audit_log --body '{"disable":false}'
             ```
 
-            `<uid>` is the Alibaba Cloud account ID that owns the cluster. `components` is the full list of components to collect, so include any component already enabled that you want to keep. Without `log_project` the logs go to the `k8s-log-<cluster-id>` Simple Log Service project, and without `log_ttl` they are kept for 30 days.
-        # No Terraform remediation: The runtime signal reflects the control-plane "audit" log component reported by the ACK CheckControlPlaneLogEnable API; the Terraform control_plane_log_components attribute does not document an "audit" value, and the separate audit_log_config block targets an independent Log Service Logstore, so there is no Terraform attribute that enables this exact signal.
+            `disable` is the switch: `false` enables auditing or updates its configuration, `true` turns it off. Add `sls_project_name` to the body to send the logs to a specific Log Service project. Without it the logs go to `k8s-log-<cluster-id>`. Only ACK managed clusters support changing the project after auditing is enabled.
+        - id: terraform
+          desc: |
+            To enable API server auditing on an ACK managed cluster in Terraform, set the `audit_log_config` block:
+
+            ```hcl
+            resource "alicloud_cs_managed_kubernetes" "example" {
+              # ...
+              vswitch_ids = ["vsw-example"]
+
+              audit_log_config {
+                enabled = true
+              }
+            }
+            ```
+
+            Add `sls_project_name` to the block to choose the Log Service project that receives the audit logs.
     variants:
       - uid: mondoo-alibaba-security-cs-cluster-audit-log-enabled-alicloud
     tags:
@@ -4990,7 +5010,7 @@ queries:
   - uid: mondoo-alibaba-security-cs-cluster-audit-log-enabled-alicloud
     filters: asset.platform == "alicloud-ack-cluster"
     mql: |
-      alicloud.cs.cluster.auditLogEnabled == true
+      alicloud.cs.cluster.apiServerAuditEnabled == true
 
   - uid: mondoo-alibaba-security-cs-cluster-rrsa-enabled
     title: Ensure ACK clusters enable RRSA (RAM Roles for Service Accounts)
