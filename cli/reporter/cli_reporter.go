@@ -195,8 +195,8 @@ func (r *Reporter) PrintVulns(vex []*fex.VulnerabilityExchange, target string) e
 	case FormatJUnit:
 		return errors.New("'junit' is not supported for vuln reports, please use one of the other formats")
 	case FormatSarif:
-		// TODO: render VEX as SARIF natively (deferred from the VEX migration).
-		return errors.New("'sarif' is not supported for vuln reports, please use one of the other formats")
+		writer := iox.IOWriter{Writer: r.out}
+		return VulnReportToSarif(target, rows, &writer)
 	case FormatHDF:
 		return errors.New("'hdf' is not supported for vuln reports, please use one of the other formats")
 	case FormatOcsfJson, FormatOcsfParquet:
