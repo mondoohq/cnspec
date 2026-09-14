@@ -10,12 +10,14 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnspec/cli/reporter"
+	cnspecsbom "go.mondoo.com/cnspec/internal/sbom"
 	"go.mondoo.com/cnspec/internal/sbom/generator"
 	"go.mondoo.com/cnspec/internal/sbom/pack"
 	"go.mondoo.com/cnspec/internal/scandump"
+	"go.mondoo.com/cnspec/upload"
 	"go.mondoo.com/mql/providers"
 	"go.mondoo.com/mql/providers-sdk/v1/plugin"
-	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
+	mqlsbom "go.mondoo.com/mql/sbom"
 )
 
 func init() {
@@ -88,58 +90,49 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	bom := boms[0]
 
 	ctx := cmd.Context()
-	upstreamConf := conf.runtime.UpstreamConfig
-	if upstreamConf == nil {
-		log.Fatal().Err(err).Msg("run `cnspec login` to authenticate with Mondoo Platform")
-	}
-	client, err := upstreamConf.InitClient(ctx)
+
+	scanBom, err := toScanSBOM(bom)
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to initialize authentication with Mondoo Platform")
+		log.Fatal().Err(err).Msg("failed to prepare SBOM for scanning")
 	}
 
-	scannerClient, err := mvd.NewAdvisoryScannerClient(client.ApiEndpoint, client.HttpClient, client.Plugins...)
+	// Scan the locally-generated SBOM against Mondoo Platform. This is the
+	// PURL-native path: the SBOM (which carries package PURLs) is uploaded to
+	// ExtendedVulnMgmt.ScanUploadedSbom, which returns VEX (Vulnerability
+	// Exchange) documents. The scan is ephemeral — nothing is persisted upstream.
+	vex, err := upload.ScanSBOM(ctx, upload.Opts{}, scanBom)
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to initialize advisory scanner client")
+		// Without credentials we can still report the local inventory; degrade to
+		// a clear warning rather than failing the command.
+		if upload.IsNoCredentials(err) {
+			log.Warn().Msg("no Mondoo credentials found; run `cnspec login` to enable vulnerability analysis")
+			return
+		}
+		log.Fatal().Err(err).Msg("failed to scan SBOM for vulnerabilities")
 	}
 
-	var runningKernel string
-	if bom.Asset.Labels != nil {
-		runningKernel = bom.Asset.Labels[generator.LABEL_KERNEL_RUNNING]
-	}
-
-	req := &mvd.AnalyseAssetRequest{
-		Platform: &mvd.Platform{
-			Name:    bom.Asset.Platform.Name,
-			Arch:    bom.Asset.Platform.Arch,
-			Build:   bom.Asset.Platform.Build,
-			Release: bom.Asset.Platform.Version,
-			Labels:  bom.Asset.Platform.Labels,
-			Title:   bom.Asset.Platform.Title,
-		},
-		Packages:      make([]*mvd.Package, 0),
-		KernelVersion: runningKernel,
-	}
-
-	for i := range bom.Packages {
-		pkg := bom.Packages[i]
-		req.Packages = append(req.Packages, &mvd.Package{
-			Name:    pkg.Name,
-			Version: pkg.Version,
-			Arch:    pkg.Architecture,
-			Format:  pkg.Type,
-			Origin:  pkg.Origin,
-		})
-	}
-
-	vulnReport, err := scannerClient.AnalyseAsset(ctx, req)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to analyse asset")
-	}
+	scandump.JSON(dumpCtx, "vex", vex)
 
 	// print the output using the specified output format
 	r := reporter.NewReporter(printConf, false)
-	scandump.JSON(dumpCtx, "vulnReport", report)
-	if err := r.PrintVulns(vulnReport, bom.Asset.Name); err != nil {
+	if err := r.PrintVulns(vex, bom.Asset.Name); err != nil {
 		log.Fatal().Err(err).Msg("failed to print")
 	}
+}
+
+// toScanSBOM converts the locally-generated SBOM (cnspec's internal type) into
+// the platform SBOM type consumed by the ScanUploadedSbom RPC. The two messages
+// share the same protobuf schema and field numbers, so a wire round-trip is a
+// lossless, schema-checked conversion; extra fields the platform type defines
+// are simply left unset.
+func toScanSBOM(bom *cnspecsbom.Sbom) (*mqlsbom.Sbom, error) {
+	data, err := bom.MarshalVT()
+	if err != nil {
+		return nil, err
+	}
+	out := &mqlsbom.Sbom{}
+	if err := out.UnmarshalVT(data); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
