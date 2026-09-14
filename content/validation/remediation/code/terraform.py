@@ -104,7 +104,7 @@ PROVIDER_MAP = {
     "clickhouse": ("ClickHouse/clickhouse", "~> 3.0"),
     "cloudflare": ("cloudflare/cloudflare", "~> 5.0"),
     "databricks": ("databricks/databricks", "~> 1.0"),
-    "datadog": ("DataDog/datadog", "~> 3.0"),
+    "datadog": ("DataDog/datadog", "~> 4.0"),
     "digitalocean": ("digitalocean/digitalocean", "~> 2.0"),
     "hcloud": ("hetznercloud/hcloud", "~> 1.0"),
     "hcp": ("hashicorp/hcp", "~> 0.114"),
