@@ -10,15 +10,13 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnspec/cli/reporter"
-	cnspecsbom "go.mondoo.com/cnspec/internal/sbom"
-	"go.mondoo.com/cnspec/internal/sbom/generator"
 	"go.mondoo.com/cnspec/internal/sbom/pack"
 	"go.mondoo.com/cnspec/internal/scandump"
 	"go.mondoo.com/cnspec/upload"
 	"go.mondoo.com/mql/cli/config"
 	"go.mondoo.com/mql/providers"
 	"go.mondoo.com/mql/providers-sdk/v1/plugin"
-	mqlsbom "go.mondoo.com/mql/sbom"
+	"go.mondoo.com/mql/sbom/generator"
 )
 
 func init() {
@@ -92,11 +90,6 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 
 	ctx := cmd.Context()
 
-	scanBom, err := toScanSBOM(bom)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to prepare SBOM for scanning")
-	}
-
 	// Scan the locally-generated SBOM against Mondoo Platform. This is the
 	// PURL-native path: the SBOM (which carries package PURLs) is uploaded to
 	// ExtendedVulnMgmt.ScanUploadedSbom, which returns VEX (Vulnerability
@@ -105,7 +98,7 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	// the default location for an empty path, so an empty Opts silently reads
 	// ~/.config/mondoo/mondoo.yml and ignores --config -- which surfaces as an
 	// auth failure blaming the user's key rather than as "wrong config".
-	vex, err := upload.ScanSBOM(ctx, upload.Opts{ConfigPath: config.UserProvidedPath}, scanBom)
+	vex, err := upload.ScanSBOM(ctx, upload.Opts{ConfigPath: config.UserProvidedPath}, bom)
 	if err != nil {
 		// Without credentials we can still report the local inventory; degrade to
 		// a clear warning rather than failing the command.
@@ -123,21 +116,4 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	if err := r.PrintVulns(vex, bom.Asset.Name); err != nil {
 		log.Fatal().Err(err).Msg("failed to print")
 	}
-}
-
-// toScanSBOM converts the locally-generated SBOM (cnspec's internal type) into
-// the platform SBOM type consumed by the ScanUploadedSbom RPC. The two messages
-// share the same protobuf schema and field numbers, so a wire round-trip is a
-// lossless, schema-checked conversion; extra fields the platform type defines
-// are simply left unset.
-func toScanSBOM(bom *cnspecsbom.Sbom) (*mqlsbom.Sbom, error) {
-	data, err := bom.MarshalVT()
-	if err != nil {
-		return nil, err
-	}
-	out := &mqlsbom.Sbom{}
-	if err := out.UnmarshalVT(data); err != nil {
-		return nil, err
-	}
-	return out, nil
 }

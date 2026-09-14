@@ -14,12 +14,12 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnspec/cli/reporter"
-	"go.mondoo.com/cnspec/internal/sbom"
-	"go.mondoo.com/cnspec/internal/sbom/generator"
 	"go.mondoo.com/cnspec/internal/sbom/pack"
 	"go.mondoo.com/cnspec/internal/scandump"
 	"go.mondoo.com/mql/providers"
 	"go.mondoo.com/mql/providers-sdk/v1/plugin"
+	"go.mondoo.com/mql/sbom"
+	"go.mondoo.com/mql/sbom/generator"
 )
 
 func init() {
