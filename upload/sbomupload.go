@@ -10,7 +10,6 @@ import (
 	"go.mondoo.com/mql/providers-sdk/v1/upstream"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/sbomupload"
 	"go.mondoo.com/mql/sbom"
-	ranger "go.mondoo.com/ranger-rpc"
 )
 
 // sbomUploader is the slice of the Sbom client that UploadSBOM needs; a fake can
@@ -36,7 +35,7 @@ func UploadSBOM(ctx context.Context, opts Opts, boms []*sbom.Sbom, createAssets 
 	if err != nil {
 		return 0, fmt.Errorf("create auth plugin: %w", err)
 	}
-	client, err := sbomupload.NewSbomClient(creds.ApiEndpoint, ranger.DefaultHttpClient(), plugin)
+	client, err := sbomupload.NewSbomClient(creds.ApiEndpoint, resolverHTTPClient(opts.HTTPClient), plugin)
 	if err != nil {
 		return 0, fmt.Errorf("create sbom upload client: %w", err)
 	}
