@@ -15,6 +15,7 @@ import (
 	"go.mondoo.com/cnspec/reports/ocsf"
 	"go.mondoo.com/cnspec/reports/reportdoc"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
 )
 
@@ -91,6 +92,33 @@ func ConvertVulnReport(target string, data *mvd.VulnReport, version ocsf.Version
 		resource: buildResource(asset),
 	})
 	events.Sort()
+	return events.WriteJSON(out)
+}
+
+// ConvertVexReport writes a standalone VEX-sourced vulnerability report
+// (cnspec vuln) as newline-delimited OCSF Vulnerability Findings. Like
+// ConvertVulnReport it has no scan behind it, so the target names the asset.
+//
+// It reads the same fex.VulnRow view the table, json and csv vuln reporters
+// read, so severity, fixed version and package coordinates are identical across
+// the formats. encoding selects JSON or Parquet.
+func ConvertVexReport(target string, rows []fex.VulnRow, version ocsf.Version, encoding Encoding, out io.Writer) error {
+	c := newConverter(Options{Version: version}, time.Now())
+	c.logName = logNameVulnReport
+	asset := &inventory.Asset{Name: target}
+	events := &ocsf.Events{}
+	c.addVexFindings(events, rows, &assetContext{
+		asset:    asset,
+		device:   buildDevice(asset, c.version),
+		resource: buildResource(asset),
+	})
+	events.Sort()
+	// Every event here is a Vulnerability Finding, so the one-file-per-class
+	// split Parquet needs for a scan collapses to a single class and can be
+	// written to the same stream JSON uses.
+	if encoding == EncodingParquet {
+		return events.WriteParquetClass(ocsf.ClassVulnerabilityFinding, out)
+	}
 	return events.WriteJSON(out)
 }
 

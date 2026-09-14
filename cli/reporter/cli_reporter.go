@@ -199,9 +199,10 @@ func (r *Reporter) PrintVulns(vex []*fex.VulnerabilityExchange, target string) e
 		return VulnReportToSarif(target, rows, &writer)
 	case FormatHDF:
 		return errors.New("'hdf' is not supported for vuln reports, please use one of the other formats")
-	case FormatOcsfJson, FormatOcsfParquet:
-		// TODO: render VEX as OCSF natively (deferred from the VEX migration).
-		return errors.New("'ocsf' output is not yet supported for vuln reports, please use full, json, or csv")
+	case FormatOcsfJson:
+		return ocsfconvert.ConvertVexReport(target, rows, r.Conf.ocsfVersion, ocsfconvert.EncodingJSON, r.out)
+	case FormatOcsfParquet:
+		return ocsfconvert.ConvertVexReport(target, rows, r.Conf.ocsfVersion, ocsfconvert.EncodingParquet, r.out)
 	case FormatCSV:
 		writer := iox.IOWriter{Writer: r.out}
 		return VulnReportToCSV(rows, &writer)
