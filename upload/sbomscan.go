@@ -11,7 +11,6 @@ import (
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/sbomscan"
 	"go.mondoo.com/mql/sbom"
-	ranger "go.mondoo.com/ranger-rpc"
 )
 
 // sbomScanner is the slice of the ExtendedVulnMgmt client that ScanSBOM needs; a
@@ -24,6 +23,10 @@ type sbomScanner interface {
 // and returns the resulting VEX. The scan is ephemeral — the platform stores
 // nothing; the caller uploads the returned VEX itself (e.g. via UploadFindings).
 // This is the same flow xgrep uses for dependency vulnerability scanning.
+//
+// This is the "scan for results" path, distinct from UploadSBOM ("store and
+// auto-enrich"). It backs `cnspec vuln` (display, and `--upload`); the
+// `cnspec upload --format sbom` file path uses UploadSBOM instead.
 func ScanSBOM(ctx context.Context, opts Opts, bom *sbom.Sbom) ([]*fex.VulnerabilityExchange, error) {
 	creds, spaceMrn, err := LoadCredentials(opts)
 	if err != nil {
@@ -33,7 +36,7 @@ func ScanSBOM(ctx context.Context, opts Opts, bom *sbom.Sbom) ([]*fex.Vulnerabil
 	if err != nil {
 		return nil, fmt.Errorf("create auth plugin: %w", err)
 	}
-	scanner, err := sbomscan.NewExtendedVulnMgmtClient(creds.ApiEndpoint, ranger.DefaultHttpClient(), plugin)
+	scanner, err := sbomscan.NewExtendedVulnMgmtClient(creds.ApiEndpoint, resolverHTTPClient(opts.HTTPClient), plugin)
 	if err != nil {
 		return nil, fmt.Errorf("create vuln scan client: %w", err)
 	}
