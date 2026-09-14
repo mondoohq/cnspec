@@ -321,6 +321,10 @@ func (ccx *CycloneDX) convertCycloneDxToSbom(bom *cyclonedx.BOM) (*Sbom, error) 
 			applyPackageProperties(pkg, component.Properties)
 			sbom.Packages = append(sbom.Packages, pkg)
 		case cyclonedx.ComponentTypeApplication:
+			// Same as a library: this component becomes a package, so its
+			// properties are package properties. The OS component is the one
+			// exception -- its properties describe the platform.
+			applyPackageProperties(pkg, component.Properties)
 			sbom.Packages = append(sbom.Packages, pkg)
 		}
 	}
