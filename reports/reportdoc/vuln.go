@@ -6,11 +6,26 @@ package reportdoc
 import (
 	"sort"
 
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
 )
 
 func VulnPackageKey(pkg *mvd.Package) string {
 	return pkg.Name + "@" + pkg.Version
+}
+
+// VexPackageKey identifies the package a VEX row affects, for grouping and for
+// the fingerprints a consumer tracks a finding by across runs. It is the VEX
+// counterpart of VulnPackageKey and sits beside it so the two cannot drift.
+//
+// The purl is preferred because it resolves a package exactly -- name and
+// version alone collide across ecosystems and architectures -- and name@version
+// is what there is when a row carries no purl.
+func VexPackageKey(row fex.VulnRow) string {
+	if row.AffectedPurl != "" {
+		return row.AffectedPurl
+	}
+	return row.AffectedName + "@" + row.AffectedVersion
 }
 
 // AdvisoryPackages returns the packages of an advisory that the asset is actually
