@@ -3,7 +3,10 @@
 
 package reportdoc
 
-import "go.mondoo.com/cnspec/policy"
+import (
+	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
+)
 
 // ScoreRisk is the inverse of a score value: 0 (no risk) to 100 (critical).
 func ScoreRisk(score *policy.Score) int32 {
@@ -79,5 +82,30 @@ func RiskSeverityLabel(risk int32) string {
 		return policy.ScoreRatingTextLow
 	default:
 		return policy.ScoreRatingTextNone
+	}
+}
+
+// RiskFromSeverityLabel maps a VEX severity label to the cnspec risk value at
+// the floor of its band, so a VEX-sourced finding lands in the same band as a
+// scan-sourced one and every downstream mapping -- SARIF level and
+// security-severity, OCSF severity_id -- keeps deriving from BandOf alone.
+//
+// The label vocabulary is fex's, including the CVSS synonyms it accepts
+// (MODERATE, WARNING, NEGLIGIBLE, ...), so the ranking is not restated here.
+// Floors rather than midpoints: they are the CVSS band boundaries GitHub code
+// scanning reads out of security-severity, so CRITICAL renders as 9.0 and HIGH
+// as 7.0 rather than as a value inside the band that no scale defines.
+func RiskFromSeverityLabel(label string) int32 {
+	switch fex.SeverityRank(label) {
+	case 4:
+		return 90
+	case 3:
+		return 70
+	case 2:
+		return 40
+	case 1:
+		return 10
+	default:
+		return 0
 	}
 }
