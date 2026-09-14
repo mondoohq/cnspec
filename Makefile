@@ -75,7 +75,6 @@ policy/generate:
 	go generate ./policy
 	go generate ./policy/scan
 	go generate ./policy/scandb
-	go generate ./internal/sbom
 	go generate ./internal/bundle/yacit
 
 reporter/generate:
