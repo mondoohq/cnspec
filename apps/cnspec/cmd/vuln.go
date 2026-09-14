@@ -15,6 +15,7 @@ import (
 	"go.mondoo.com/cnspec/internal/sbom/pack"
 	"go.mondoo.com/cnspec/internal/scandump"
 	"go.mondoo.com/cnspec/upload"
+	"go.mondoo.com/mql/cli/config"
 	"go.mondoo.com/mql/providers"
 	"go.mondoo.com/mql/providers-sdk/v1/plugin"
 	mqlsbom "go.mondoo.com/mql/sbom"
@@ -100,7 +101,11 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	// PURL-native path: the SBOM (which carries package PURLs) is uploaded to
 	// ExtendedVulnMgmt.ScanUploadedSbom, which returns VEX (Vulnerability
 	// Exchange) documents. The scan is ephemeral — nothing is persisted upstream.
-	vex, err := upload.ScanSBOM(ctx, upload.Opts{}, scanBom)
+	// Pass the config path the CLI resolved. upload.LoadCredentials falls back to
+	// the default location for an empty path, so an empty Opts silently reads
+	// ~/.config/mondoo/mondoo.yml and ignores --config -- which surfaces as an
+	// auth failure blaming the user's key rather than as "wrong config".
+	vex, err := upload.ScanSBOM(ctx, upload.Opts{ConfigPath: config.UserProvidedPath}, scanBom)
 	if err != nil {
 		// Without credentials we can still report the local inventory; degrade to
 		// a clear warning rather than failing the command.

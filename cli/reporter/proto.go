@@ -74,12 +74,48 @@ func ConvertToProto(data *policy.ReportCollection) (*Report, error) {
 			reportingJobByQrId[job.QrId] = job
 		}
 
+		// Code id to MRN, recovered from the resolved policy.
+		//
+		// qid2mrn above is built from bundle.Queries, which only helps when those
+		// queries carry a code id. A query pack's do not: the pack defines its
+		// queries inline in groups and they are compiled during resolution, so
+		// the bundle attached to the report holds definitions with an empty
+		// CodeId. Every data query then mapped to an empty MRN and was dropped,
+		// which is why a query pack produced scores and no data -- `cnspec sbom`
+		// emitted an SBOM with no packages and "no data points found".
+		//
+		// The resolved policy has both halves: an EXECUTION_QUERY job is keyed by
+		// code id, and the DATA_QUERY job that owns it is keyed by MRN and names
+		// it as a child.
+		execCodeIdByUuid := map[string]string{}
+		for _, job := range resolved.CollectorJob.ReportingJobs {
+			if job.Type == policy.ReportingJob_EXECUTION_QUERY {
+				execCodeIdByUuid[job.Uuid] = job.QrId
+			}
+		}
+		resolvedQid2Mrn := map[string]string{}
+		for _, job := range resolved.CollectorJob.ReportingJobs {
+			if job.Type != policy.ReportingJob_DATA_QUERY && job.Type != policy.ReportingJob_CHECK_AND_DATA_QUERY {
+				continue
+			}
+			for childUuid := range job.ChildJobs {
+				if codeId, ok := execCodeIdByUuid[childUuid]; ok {
+					resolvedQid2Mrn[codeId] = job.QrId
+				}
+			}
+		}
+
 		results := report.RawResults()
 		if resolved.ExecutionJob == nil {
 			continue
 		}
 		for qid, query := range resolved.ExecutionJob.Queries {
 			mrn := qid2mrn[qid]
+			if mrn == "" {
+				// a query pack's queries are only identifiable through the
+				// resolved policy; see resolvedQid2Mrn above
+				mrn = resolvedQid2Mrn[qid]
+			}
 
 			// policies and other stuff
 			if mrn == "" {
