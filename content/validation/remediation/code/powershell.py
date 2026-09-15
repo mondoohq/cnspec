@@ -137,7 +137,7 @@ NATIVE_EXECUTABLES = {
     "netsh", "sc", "wmic", "bcdedit", "dism", "sfc", "wevtutil", "icacls", "cipher",
     "takeown", "cmd", "powershell", "pwsh", "net", "certutil", "fsutil",
     "diskpart", "schtasks", "shutdown", "slmgr", "manage-bde", "nltest",
-    "klist", "whoami", "where", "findstr", "tasklist", "taskkill",
+    "klist", "whoami", "where", "findstr", "tasklist", "taskkill", "dotnet",
 }
 
 FAILURES: list[dict] = []
