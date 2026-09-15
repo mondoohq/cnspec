@@ -131,34 +131,9 @@ var Ms365AppPermissions = Permissions{
 				Type: "Role",
 			},
 			{
-				// Also requested by the manual setup docs.
-				ID:   "Policy.Read.ConditionalAccess",
-				Type: "Role",
-			},
-			{
 				// Permission grant policies (GET /policies/permissionGrantPolicies). Learn does not list
 				// Policy.Read.All for this endpoint.
 				ID:   "Policy.Read.PermissionGrant",
-				Type: "Role",
-			},
-			{
-				// Also requested by the manual setup docs.
-				ID:   "IdentityProvider.Read.All",
-				Type: "Role",
-			},
-			{
-				// Also requested by the manual setup docs.
-				ID:   "SecurityActions.Read.All",
-				Type: "Role",
-			},
-			{
-				// PIM eligible role assignments. Also requested by the manual setup docs.
-				ID:   "RoleEligibilitySchedule.Read.Directory",
-				Type: "Role",
-			},
-			{
-				// PIM role management policies. Also requested by the manual setup docs.
-				ID:   "RoleManagementPolicy.Read.Directory",
 				Type: "Role",
 			},
 			{
