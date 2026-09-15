@@ -158,6 +158,50 @@ resource "azuread_application" "mondoo" {
       id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Organization.Read.All"]
       type = "Role"
     }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.ConditionalAccess"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.PermissionGrant"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["IdentityProvider.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["SecurityActions.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["RoleEligibilitySchedule.Read.Directory"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["RoleManagementPolicy.Read.Directory"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["EntitlementManagement.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.DeviceConfiguration"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Domain-InternalFederation.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["TeamSettings.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["ChannelSettings.Read.All"]
+      type = "Role"
+    }
   }
 
   required_resource_access {
@@ -336,6 +380,72 @@ resource "azuread_app_role_assignment" "Domain_Read_All" {
 
 resource "azuread_app_role_assignment" "Organization_Read_All" {
   app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Organization.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "Policy_Read_ConditionalAccess" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.ConditionalAccess"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "Policy_Read_PermissionGrant" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.PermissionGrant"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "IdentityProvider_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["IdentityProvider.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "SecurityActions_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["SecurityActions.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "RoleEligibilitySchedule_Read_Directory" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["RoleEligibilitySchedule.Read.Directory"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "RoleManagementPolicy_Read_Directory" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["RoleManagementPolicy.Read.Directory"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "EntitlementManagement_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["EntitlementManagement.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "Policy_Read_DeviceConfiguration" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.DeviceConfiguration"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "Domain-InternalFederation_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Domain-InternalFederation.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "TeamSettings_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["TeamSettings.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "ChannelSettings_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["ChannelSettings.Read.All"]
   principal_object_id = azuread_service_principal.mondoo.object_id
   resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
 }
@@ -536,6 +646,50 @@ resource "azuread_application" "mondoo" {
       id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Organization.Read.All"]
       type = "Role"
     }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.ConditionalAccess"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.PermissionGrant"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["IdentityProvider.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["SecurityActions.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["RoleEligibilitySchedule.Read.Directory"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["RoleManagementPolicy.Read.Directory"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["EntitlementManagement.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.DeviceConfiguration"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Domain-InternalFederation.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["TeamSettings.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["ChannelSettings.Read.All"]
+      type = "Role"
+    }
   }
 
   required_resource_access {
@@ -714,6 +868,72 @@ resource "azuread_app_role_assignment" "Domain_Read_All" {
 
 resource "azuread_app_role_assignment" "Organization_Read_All" {
   app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Organization.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "Policy_Read_ConditionalAccess" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.ConditionalAccess"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "Policy_Read_PermissionGrant" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.PermissionGrant"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "IdentityProvider_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["IdentityProvider.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "SecurityActions_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["SecurityActions.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "RoleEligibilitySchedule_Read_Directory" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["RoleEligibilitySchedule.Read.Directory"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "RoleManagementPolicy_Read_Directory" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["RoleManagementPolicy.Read.Directory"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "EntitlementManagement_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["EntitlementManagement.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "Policy_Read_DeviceConfiguration" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Policy.Read.DeviceConfiguration"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "Domain-InternalFederation_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Domain-InternalFederation.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "TeamSettings_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["TeamSettings.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "ChannelSettings_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["ChannelSettings.Read.All"]
   principal_object_id = azuread_service_principal.mondoo.object_id
   resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
 }

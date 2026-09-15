@@ -130,6 +130,63 @@ var Ms365AppPermissions = Permissions{
 				ID:   "Organization.Read.All",
 				Type: "Role",
 			},
+			{
+				// Also requested by the manual setup docs.
+				ID:   "Policy.Read.ConditionalAccess",
+				Type: "Role",
+			},
+			{
+				// Permission grant policies (GET /policies/permissionGrantPolicies). Learn does not list
+				// Policy.Read.All for this endpoint.
+				ID:   "Policy.Read.PermissionGrant",
+				Type: "Role",
+			},
+			{
+				// Also requested by the manual setup docs.
+				ID:   "IdentityProvider.Read.All",
+				Type: "Role",
+			},
+			{
+				// Also requested by the manual setup docs.
+				ID:   "SecurityActions.Read.All",
+				Type: "Role",
+			},
+			{
+				// PIM eligible role assignments. Also requested by the manual setup docs.
+				ID:   "RoleEligibilitySchedule.Read.Directory",
+				Type: "Role",
+			},
+			{
+				// PIM role management policies. Also requested by the manual setup docs.
+				ID:   "RoleManagementPolicy.Read.Directory",
+				Type: "Role",
+			},
+			{
+				// Entitlement management external origin resource connectors.
+				ID:   "EntitlementManagement.Read.All",
+				Type: "Role",
+			},
+			{
+				// Device registration policy. Learn lists Policy.Read.All for it only under delegated access.
+				ID:   "Policy.Read.DeviceConfiguration",
+				Type: "Role",
+			},
+			{
+				// Domain federation configuration (GET /domains/{id}/federationConfiguration). Learn does not
+				// list Domain.Read.All or Directory.Read.All for this endpoint.
+				ID:   "Domain-InternalFederation.Read.All",
+				Type: "Role",
+			},
+			{
+				// Teams inventory over Microsoft Graph: list teams and read their settings.
+				ID:   "TeamSettings.Read.All",
+				Type: "Role",
+			},
+			{
+				// Channels in the Teams inventory.
+				ID:   "ChannelSettings.Read.All",
+				Type: "Role",
+			},
 		},
 	},
 	{
