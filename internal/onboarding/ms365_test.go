@@ -195,16 +195,6 @@ resource "azuread_directory_role_assignment" "global_reader" {
   role_id             = azuread_directory_role.global_reader.template_id
 }
 
-resource "azuread_directory_role" "exchange_admin" {
-  display_name = "Exchange Administrator"
-}
-
-resource "azuread_directory_role_assignment" "exchange_admin" {
-  depends_on          = [time_sleep.wait_time]
-  principal_object_id = azuread_service_principal.mondoo.object_id
-  role_id             = azuread_directory_role.exchange_admin.object_id
-}
-
 resource "time_sleep" "wait_time" {
   create_duration = "60s"
 }
@@ -581,16 +571,6 @@ resource "azuread_directory_role_assignment" "global_reader" {
   depends_on          = [time_sleep.wait_time]
   principal_object_id = azuread_service_principal.mondoo.object_id
   role_id             = azuread_directory_role.global_reader.template_id
-}
-
-resource "azuread_directory_role" "exchange_admin" {
-  display_name = "Exchange Administrator"
-}
-
-resource "azuread_directory_role_assignment" "exchange_admin" {
-  depends_on          = [time_sleep.wait_time]
-  principal_object_id = azuread_service_principal.mondoo.object_id
-  role_id             = azuread_directory_role.exchange_admin.object_id
 }
 
 resource "time_sleep" "wait_time" {
