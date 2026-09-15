@@ -69,8 +69,10 @@ queries:
     title: Ensure the Windows Update service is installed and not disabled
     impact: 90
     mql: |
-      windows.update.config.service.installed
-      windows.update.config.service.enabled
+      windows.update {
+        config.service.installed
+        config.service.enabled
+      }
     docs:
       desc: |
         This check ensures the Windows Update service (`wuauserv`) is installed and its start type is not `Disabled`. The service is demand-started, so it is normal for it to be stopped at any given moment; what matters is that Windows is permitted to start it.
@@ -730,7 +732,9 @@ queries:
     title: Ensure the Windows Update Agent reports no detection error
     impact: 80
     mql: |
-      windows.update.config.lastDetectionError == '' || windows.update.config.lastDetectionError == null
+      windows.update {
+        config.lastDetectionError == '' || config.lastDetectionError == null
+      }
     docs:
       desc: |
         This check verifies the Windows Update Agent recorded no error on its most recent detection attempt. The agent stores the HRESULT of the last failure, and that code names the actual problem, which the Settings UI reduces to generic text.
@@ -1014,7 +1018,9 @@ queries:
     title: Ensure automatic updates are not turned off by policy
     impact: 80
     mql: |
-      windows.update.policy.noAutoUpdate != true
+      windows.update {
+        policy.noAutoUpdate != true
+      }
     docs:
       desc: |
         This check verifies that Group Policy has not turned off automatic updates. The `NoAutoUpdate` value under `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU` disables the agent's scheduled detection and installation cycle entirely.
@@ -1259,7 +1265,9 @@ queries:
         mql: |
           return 14
     mql: |
-      windows.update.policy.deferQualityUpdatesPeriodInDays == null || windows.update.policy.deferQualityUpdatesPeriodInDays <= props.windowsUpdateReadinessMaxQualityDeferralDays
+      windows.update {
+        policy.deferQualityUpdatesPeriodInDays == null || policy.deferQualityUpdatesPeriodInDays <= props.windowsUpdateReadinessMaxQualityDeferralDays
+      }
     docs:
       desc: |
         This check verifies that Windows Update for Business quality-update deferral stays within an acceptable window. Quality updates carry the monthly security fixes, and the deferral period delays them after release. A host with an unconfigured deferral passes, since it takes updates as they are published.
@@ -1376,9 +1384,11 @@ queries:
     title: Ensure an update catalog source is configured
     impact: 80
     mql: |
-      windows.update.config.catalogSource != null
-      windows.update.config.catalogSource != ''
-      windows.update.config.catalogSource != 'disabled'
+      windows.update {
+        config.catalogSource != null
+        config.catalogSource != ''
+        config.catalogSource != 'disabled'
+      }
     docs:
       desc: |
         This check verifies the Windows Update Agent has a catalog source to query. The source is where the agent asks which updates apply: public Windows Update, Microsoft Update, a WSUS server, or Windows Update for Business. Without one, detection has nothing to contact and the host reports no applicable updates.
@@ -1522,7 +1532,9 @@ queries:
     title: Ensure a WSUS server URL is set when the host is directed to WSUS
     impact: 80
     mql: |
-      windows.update.config.useWUServer != true || windows.update.config.wsusServerUrl != null && windows.update.config.wsusServerUrl != ''
+      windows.update {
+        config.useWUServer != true || config.wsusServerUrl != null && config.wsusServerUrl != ''
+      }
     docs:
       desc: |
         This check verifies internal consistency in the WSUS configuration. When `UseWUServer` is set, the agent is told to use an intranet update service and will not fall back to public Windows Update. If the corresponding `WUServer` URL is missing or empty, the agent has been redirected to a server that was never specified, so detection has no endpoint to contact.
@@ -1666,10 +1678,12 @@ queries:
     title: Ensure Microsoft Update is registered with the update agent
     impact: 80
     mql: |
-      windows.update.config.useWUServer == true ||
-      powershell("$muServiceId = '7971f918-a847-4430-9279-4a52d1efe18d'
-      $mu = (New-Object -ComObject Microsoft.Update.ServiceManager).Services | Where-Object { $_.ServiceID -eq $muServiceId }
-      if ($mu -and $mu.IsRegisteredWithAU) { 'True' } else { 'False' }").stdout.trim == 'True'
+      windows.update {
+        config.useWUServer == true ||
+        powershell("$muServiceId = '7971f918-a847-4430-9279-4a52d1efe18d'
+        $mu = (New-Object -ComObject Microsoft.Update.ServiceManager).Services | Where-Object { $_.ServiceID -eq $muServiceId }
+        if ($mu -and $mu.IsRegisteredWithAU) { 'True' } else { 'False' }").stdout.trim == 'True'
+      }
     docs:
       desc: |
         This check verifies that the host is offered updates for Microsoft products other than Windows itself.
@@ -1793,29 +1807,31 @@ queries:
         }
       }
       if ($blocked) { 'False' } else { 'True' }").stdout.trim == 'True'
-      windows.update.config.useWUServer == true ||
-      powershell("if ((Get-CimInstance -ClassName Win32_OperatingSystem).ProductType -eq 1) { 'True' } else {
-        $versions = @()
-        foreach ($base in @($env:ProgramFiles, [Environment]::GetEnvironmentVariable('ProgramFiles(x86)'))) {
-          if (-not $base) { continue }
-          $shared = Join-Path $base 'dotnet\\shared\\Microsoft.NETCore.App'
-          if (-not (Test-Path $shared)) { continue }
-          foreach ($dir in (Get-ChildItem $shared -Directory -ErrorAction SilentlyContinue)) {
-            $parts = $dir.Name.Split('.')
-            $versions += ($parts[0] + '.' + $parts[1])
+      windows.update {
+        config.useWUServer == true ||
+        powershell("if ((Get-CimInstance -ClassName Win32_OperatingSystem).ProductType -eq 1) { 'True' } else {
+          $versions = @()
+          foreach ($base in @($env:ProgramFiles, [Environment]::GetEnvironmentVariable('ProgramFiles(x86)'))) {
+            if (-not $base) { continue }
+            $shared = Join-Path $base 'dotnet\\shared\\Microsoft.NETCore.App'
+            if (-not (Test-Path $shared)) { continue }
+            foreach ($dir in (Get-ChildItem $shared -Directory -ErrorAction SilentlyContinue)) {
+              $parts = $dir.Name.Split('.')
+              $versions += ($parts[0] + '.' + $parts[1])
+            }
           }
-        }
-        $versions = @($versions | Sort-Object -Unique)
-        $net = 'HKLM:\\SOFTWARE\\Microsoft\\.NET'
-        $optedIn = (Get-ItemProperty $net -Name AllowAUOnServerOS -ErrorAction SilentlyContinue).AllowAUOnServerOS
-        if ($versions.Count -eq 0 -or $optedIn -eq 1) { 'True' } else {
-          $allowed = $true
-          foreach ($version in $versions) {
-            if ((Get-ItemProperty (Join-Path $net $version) -Name AllowAUOnServerOS -ErrorAction SilentlyContinue).AllowAUOnServerOS -ne 1) { $allowed = $false }
+          $versions = @($versions | Sort-Object -Unique)
+          $net = 'HKLM:\\SOFTWARE\\Microsoft\\.NET'
+          $optedIn = (Get-ItemProperty $net -Name AllowAUOnServerOS -ErrorAction SilentlyContinue).AllowAUOnServerOS
+          if ($versions.Count -eq 0 -or $optedIn -eq 1) { 'True' } else {
+            $allowed = $true
+            foreach ($version in $versions) {
+              if ((Get-ItemProperty (Join-Path $net $version) -Name AllowAUOnServerOS -ErrorAction SilentlyContinue).AllowAUOnServerOS -ne 1) { $allowed = $false }
+            }
+            if ($allowed) { 'True' } else { 'False' }
           }
-          if ($allowed) { 'True' } else { 'False' }
-        }
-      }").stdout.trim == 'True'
+        }").stdout.trim == 'True'
+      }
     docs:
       desc: |
         This check verifies that the .NET installations on the host are permitted to be serviced by Microsoft Update.
@@ -1969,7 +1985,9 @@ queries:
     title: Ensure no pending reboot is blocking Windows servicing
     impact: 70
     mql: |
-      windows.update.config.rebootPending == false
+      windows.update {
+        config.rebootPending == false
+      }
     docs:
       desc: |
         This check verifies no reboot is pending from a previous servicing operation. Windows applies cumulative and servicing stack updates in two phases: files are staged, then committed during restart. Until that restart happens the component store holds an incomplete transaction, and the next update either refuses to install or queues behind it.
