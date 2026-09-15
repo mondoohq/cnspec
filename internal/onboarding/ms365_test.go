@@ -150,6 +150,14 @@ resource "azuread_application" "mondoo" {
       id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Directory.Read.All"]
       type = "Role"
     }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Domain.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Organization.Read.All"]
+      type = "Role"
+    }
   }
 
   required_resource_access {
@@ -164,6 +172,14 @@ resource "azuread_application" "mondoo" {
     resource_app_id = data.azuread_application_published_app_ids.well_known.result.Office365ExchangeOnline
     resource_access {
       id   = azuread_service_principal.Office365ExchangeOnline.app_role_ids["Exchange.ManageAsApp"]
+      type = "Role"
+    }
+  }
+
+  required_resource_access {
+    resource_app_id = data.azuread_application_published_app_ids.well_known.result.Office365ExchangeOnlineProtection
+    resource_access {
+      id   = azuread_service_principal.Office365ExchangeOnlineProtection.app_role_ids["Exchange.ManageAsApp"]
       type = "Role"
     }
   }
@@ -322,6 +338,18 @@ resource "azuread_app_role_assignment" "Directory_Read_All" {
   resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
 }
 
+resource "azuread_app_role_assignment" "Domain_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Domain.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "Organization_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Organization.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
 resource "azuread_service_principal" "Office365SharePointOnline" {
   client_id    = data.azuread_application_published_app_ids.well_known.result.Office365SharePointOnline
   use_existing = true
@@ -343,8 +371,32 @@ resource "azuread_app_role_assignment" "Exchange_ManageAsApp" {
   principal_object_id = azuread_service_principal.mondoo.object_id
   resource_object_id  = azuread_service_principal.Office365ExchangeOnline.object_id
 }
+
+resource "azuread_service_principal" "Office365ExchangeOnlineProtection" {
+  client_id    = data.azuread_application_published_app_ids.well_known.result.Office365ExchangeOnlineProtection
+  use_existing = true
+}
+
+resource "azuread_app_role_assignment" "ExchangeOnlineProtection_Exchange_ManageAsApp" {
+  app_role_id         = azuread_service_principal.Office365ExchangeOnlineProtection.app_role_ids["Exchange.ManageAsApp"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.Office365ExchangeOnlineProtection.object_id
+}
 `
 	assert.Equal(t, expected, code)
+}
+
+func TestMs365AppPermissions_UniqueResourceNames(t *testing.T) {
+	// Each grant becomes an azuread_app_role_assignment named by ResourceName(), and Terraform
+	// rejects duplicate resource addresses.
+	seen := map[string]string{}
+	for _, permission := range subject.Ms365AppPermissions {
+		for _, access := range permission.Access {
+			name := access.ResourceName()
+			assert.NotContainsf(t, seen, name, "azuread_app_role_assignment %q is generated for both %s and %s", name, seen[name], permission.ResourceID)
+			seen[name] = permission.ResourceID
+		}
+	}
 }
 
 func TestGenerateMs365HCL_Minimal(t *testing.T) {
@@ -486,6 +538,14 @@ resource "azuread_application" "mondoo" {
       id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Directory.Read.All"]
       type = "Role"
     }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Domain.Read.All"]
+      type = "Role"
+    }
+    resource_access {
+      id   = azuread_service_principal.MicrosoftGraph.app_role_ids["Organization.Read.All"]
+      type = "Role"
+    }
   }
 
   required_resource_access {
@@ -500,6 +560,14 @@ resource "azuread_application" "mondoo" {
     resource_app_id = data.azuread_application_published_app_ids.well_known.result.Office365ExchangeOnline
     resource_access {
       id   = azuread_service_principal.Office365ExchangeOnline.app_role_ids["Exchange.ManageAsApp"]
+      type = "Role"
+    }
+  }
+
+  required_resource_access {
+    resource_app_id = data.azuread_application_published_app_ids.well_known.result.Office365ExchangeOnlineProtection
+    resource_access {
+      id   = azuread_service_principal.Office365ExchangeOnlineProtection.app_role_ids["Exchange.ManageAsApp"]
       type = "Role"
     }
   }
@@ -658,6 +726,18 @@ resource "azuread_app_role_assignment" "Directory_Read_All" {
   resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
 }
 
+resource "azuread_app_role_assignment" "Domain_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Domain.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
+resource "azuread_app_role_assignment" "Organization_Read_All" {
+  app_role_id         = azuread_service_principal.MicrosoftGraph.app_role_ids["Organization.Read.All"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.MicrosoftGraph.object_id
+}
+
 resource "azuread_service_principal" "Office365SharePointOnline" {
   client_id    = data.azuread_application_published_app_ids.well_known.result.Office365SharePointOnline
   use_existing = true
@@ -678,6 +758,17 @@ resource "azuread_app_role_assignment" "Exchange_ManageAsApp" {
   app_role_id         = azuread_service_principal.Office365ExchangeOnline.app_role_ids["Exchange.ManageAsApp"]
   principal_object_id = azuread_service_principal.mondoo.object_id
   resource_object_id  = azuread_service_principal.Office365ExchangeOnline.object_id
+}
+
+resource "azuread_service_principal" "Office365ExchangeOnlineProtection" {
+  client_id    = data.azuread_application_published_app_ids.well_known.result.Office365ExchangeOnlineProtection
+  use_existing = true
+}
+
+resource "azuread_app_role_assignment" "ExchangeOnlineProtection_Exchange_ManageAsApp" {
+  app_role_id         = azuread_service_principal.Office365ExchangeOnlineProtection.app_role_ids["Exchange.ManageAsApp"]
+  principal_object_id = azuread_service_principal.mondoo.object_id
+  resource_object_id  = azuread_service_principal.Office365ExchangeOnlineProtection.object_id
 }
 `
 	assert.Equal(t, expected, code)

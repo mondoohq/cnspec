@@ -117,6 +117,19 @@ var Ms365AppPermissions = Permissions{
 				ID:   "Directory.Read.All",
 				Type: "Role",
 			},
+			{
+				// Domain DNS records (GET /domains/{id}/serviceConfigurationRecords), read by the
+				// cis-microsoft-365 2.1.8 SPF check. Learn lists only Domain.Read.All for this endpoint.
+				ID:   "Domain.Read.All",
+				Type: "Role",
+			},
+			{
+				// Required by the MicrosoftTeams PowerShell module under application auth (Get-Cs* cmdlets
+				// behind ms365.teams, cis-microsoft-365 8.x). No permission is needed on the Skype and Teams
+				// Tenant Admin API, and Learn warns against adding one.
+				ID:   "Organization.Read.All",
+				Type: "Role",
+			},
 		},
 	},
 	{
@@ -136,6 +149,20 @@ var Ms365AppPermissions = Permissions{
 				// Allows the application to run Exchange Online cmdlets with the same level of access as an administrator.
 				ID:   "Exchange.ManageAsApp",
 				Type: "Role",
+			},
+		},
+	},
+	{
+		ResourceID: "Office365ExchangeOnlineProtection",
+		Access: []ResourceAccess{
+			{
+				// Security & Compliance PowerShell (Connect-IPPSSession) app-only access: DLP policies
+				// (cis-microsoft-365 3.2.2) and sensitivity label policies. Separate from the
+				// Office365ExchangeOnline grant; both are required.
+				ID:   "Exchange.ManageAsApp",
+				Type: "Role",
+				// Distinct resource name, since Office365ExchangeOnline already uses Exchange_ManageAsApp.
+				Name: "ExchangeOnlineProtection_Exchange_ManageAsApp",
 			},
 		},
 	},
@@ -401,6 +428,9 @@ func (p *Permission) ResourceAccessBlocks() (blocks []*hclwrite.Block, err error
 type ResourceAccess struct {
 	ID   string
 	Type string
+	// Name overrides the hcl resource name derived from ID. Set it when another resource grants an
+	// app role with the same ID, since Terraform rejects duplicate resource addresses.
+	Name string
 
 	hclResource *tfgen.HclResource
 	hclBlock    *hclwrite.Block
@@ -412,6 +442,9 @@ func (r *ResourceAccess) AppRoleID() string {
 
 // The hcl resource name, we expect IDs like 'Policy.Read.All' which will translate into 'Policy_Read_All'
 func (r *ResourceAccess) ResourceName() string {
+	if r.Name != "" {
+		return r.Name
+	}
 	return strings.ReplaceAll(r.ID, ".", "_")
 }
 
