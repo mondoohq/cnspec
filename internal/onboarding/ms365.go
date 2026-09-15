@@ -267,11 +267,6 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 		resourceADReadersDirectoryRole = tfgen.NewResource("azuread_directory_role", "global_reader",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{"display_name": "Global Reader"}),
 		)
-		resourceADExchangeAdminDirectoryRole = tfgen.NewResource("azuread_directory_role", "exchange_admin",
-			tfgen.HclResourceWithAttributes(tfgen.Attributes{
-				"display_name": "Exchange Administrator",
-			}),
-		)
 		resourceTimeSleep = tfgen.NewResource("time_sleep", "wait_time",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{"create_duration": "60s"}),
 		)
@@ -279,13 +274,6 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
 				"role_id":             resourceADReadersDirectoryRole.TraverseRef("template_id"),
 				"principal_object_id": resourceADServicePrincipal.TraverseRef("object_id"),
-				"depends_on":          []any{resourceTimeSleep.TraverseRef()},
-			}),
-		)
-		resourceADExchangeAdminRoleAssignment = tfgen.NewResource("azuread_directory_role_assignment", "exchange_admin",
-			tfgen.HclResourceWithAttributes(tfgen.Attributes{
-				"principal_object_id": resourceADServicePrincipal.TraverseRef("object_id"),
-				"role_id":             resourceADExchangeAdminDirectoryRole.TraverseRef("object_id"),
 				"depends_on":          []any{resourceTimeSleep.TraverseRef()},
 			}),
 		)
@@ -322,8 +310,6 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 		resourceAdApplication,
 		resourceADReadersDirectoryRole,
 		resourceADReadersRoleAssignment,
-		resourceADExchangeAdminDirectoryRole,
-		resourceADExchangeAdminRoleAssignment,
 		resourceTimeSleep,
 		resourceMondooIntegration,
 	)
