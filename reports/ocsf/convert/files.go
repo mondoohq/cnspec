@@ -14,6 +14,7 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnspec/internal/reportfile"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/reports/ocsf"
 )
@@ -119,12 +120,11 @@ func (c *classFiles) writerFor(class string) (ocsf.Writer, error) {
 	// Not os.Create: the eight class filenames are fixed and public, so anyone who
 	// can write the output directory can pre-place a symlink at one of them and
 	// have a scan -- frequently running as root -- truncate and overwrite its
-	// target with the findings. O_NOFOLLOW makes the open fail on a symlink
-	// instead of following it (see nofollow_unix.go). The mode is 0600 for the
-	// same reason the directory is 0700: the file carries account ids, MQL
-	// source, observed values and, under IncludeData, the raw output of every
-	// data query.
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|oNoFollow, 0o600)
+	// target with the findings. reportfile.Create fails on a symlink instead of
+	// following it, and creates the file 0600 for the same reason the directory is
+	// 0700: it carries account ids, MQL source, observed values and, under
+	// IncludeData, the raw output of every data query.
+	f, err := reportfile.Create(path)
 	if err != nil {
 		return nil, err
 	}
