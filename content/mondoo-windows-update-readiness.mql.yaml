@@ -54,6 +54,8 @@ policies:
           - uid: windows-update-readiness-bounded-quality-deferral
           - uid: windows-update-readiness-catalog-source-configured
           - uid: windows-update-readiness-wsus-url-present
+          - uid: windows-update-readiness-microsoft-update-registered
+          - uid: windows-update-readiness-dotnet-microsoft-update-allowed
       - title: Servicing Stack Capacity
         filters: asset.family.contains('windows')
         checks:
@@ -1658,6 +1660,308 @@ queries:
                     name: wuauserv
                     state: restarted
                   when: use_wsus.exists and use_wsus.value == 1
+            ```
+
+  - uid: windows-update-readiness-microsoft-update-registered
+    title: Ensure Microsoft Update is registered with the update agent
+    impact: 80
+    mql: |
+      windows.update.config.useWUServer == true ||
+      powershell("$muServiceId = '7971f918-a847-4430-9279-4a52d1efe18d'
+      $mu = (New-Object -ComObject Microsoft.Update.ServiceManager).Services | Where-Object { $_.ServiceID -eq $muServiceId }
+      if ($mu -and $mu.IsRegisteredWithAU) { 'True' } else { 'False' }").stdout.trim == 'True'
+    docs:
+      desc: |
+        This check verifies that the host is offered updates for Microsoft products other than Windows itself.
+
+        Windows Update services the operating system. Microsoft Update is a second catalog that adds .NET, SQL Server, Office, the Visual C++ redistributables, and other Microsoft products to the same detection scan. It is not on by default. Turning it on registers a service with the Windows Update Agent under the service ID `7971f918-a847-4430-9279-4a52d1efe18d` and marks that service as registered with Automatic Updates. Windows calls the toggle **Receive updates for other Microsoft products**, under Settings, Windows Update, Advanced options.
+
+        A host directed at a WSUS server passes without the registration. A WSUS client takes its catalog from the server, where an administrator chooses which product families to synchronize, so registering the service locally changes nothing.
+
+        **Why this matters**
+
+        Nothing on the host reports the gap. The agent runs a normal detection scan, finds Windows fully patched, and returns an empty list for everything else. The build number advances every Patch Tuesday, so patch dashboards rate the host compliant while its .NET runtime, its SQL Server instance, and its Visual C++ redistributables stay at whatever version was installed.
+
+        Those products carry their own remote code execution and elevation of privilege fixes, shipped on the same monthly cadence as Windows and reaching an unmanaged host only through this catalog. A web server running a superseded ASP.NET Core runtime is reachable from wherever the application is reachable, and the servicing gap persists until someone installs the runtime by hand.
+
+        Leave the registration off only where a patch-management product explicitly owns these products, and record which product that is.
+      audit: |
+        Run the following in an elevated PowerShell session:
+
+        ```powershell
+        (New-Object -ComObject Microsoft.Update.ServiceManager).Services |
+          Select-Object Name, ServiceID, IsRegisteredWithAU, IsDefaultAUService
+        ```
+
+        A passing result lists a service with a `ServiceID` of `7971f918-a847-4430-9279-4a52d1efe18d` and `IsRegisteredWithAU` set to `True`. A failing result omits that service entirely, or lists it with `IsRegisteredWithAU` set to `False`.
+
+        Confirm the same state in the Settings app:
+
+        1. Open **Settings**, then **Windows Update**, then **Advanced options**.
+        2. Read **Receive updates for other Microsoft products**.
+
+        A passing result shows the toggle set to **On**. The toggle is hidden on a host whose update behaviour is set by Group Policy or by an MDM profile, so read the COM registration rather than the UI on managed hosts.
+
+        This check passes on a host directed at WSUS, so audit the server instead. In the WSUS console open **Options**, then **Products and Classifications**, and confirm the product families installed on this host are selected for synchronization.
+      remediation:
+        - id: gui
+          desc: |
+            **Using the Settings app**
+
+            1. Open **Settings**, then **Windows Update**, then **Advanced options**.
+            2. Set **Receive updates for other Microsoft products** to **On**.
+            3. Return to **Windows Update** and select **Check for updates**.
+
+            Where the toggle is missing, Group Policy or an MDM profile controls the setting. Correct it in the policy that applies it rather than on the host.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Register Microsoft Update with the update agent:
+
+            ```powershell
+            $sm = New-Object -ComObject Microsoft.Update.ServiceManager
+            $sm.AddService2('7971f918-a847-4430-9279-4a52d1efe18d', 7, '')
+            ```
+
+            The second argument combines the flags that allow a pending registration, allow an online registration, and register the service with Automatic Updates.
+
+            Trigger a detection scan so the new catalog is queried:
+
+            ```powershell
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+            ```
+        - id: script
+          desc: |
+            **Using a PowerShell script**
+
+            ```powershell
+            #Requires -RunAsAdministrator
+            $muServiceId = '7971f918-a847-4430-9279-4a52d1efe18d'
+            $sm = New-Object -ComObject Microsoft.Update.ServiceManager
+
+            $mu = $sm.Services | Where-Object { $_.ServiceID -eq $muServiceId }
+            if ($mu -and $mu.IsRegisteredWithAU) {
+                Write-Output 'Microsoft Update is already registered with Automatic Updates.'
+                return
+            }
+
+            $sm.AddService2($muServiceId, 7, '') | Out-Null
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+
+            $sm.Services |
+                Where-Object { $_.ServiceID -eq $muServiceId } |
+                Select-Object Name, IsRegisteredWithAU
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            ```yaml
+            ---
+            - name: Ensure Microsoft Update is registered with the update agent
+              hosts: windows
+              vars:
+                mu_service_id: 7971f918-a847-4430-9279-4a52d1efe18d
+              tasks:
+                - name: Read the current Microsoft Update registration
+                  ansible.windows.win_shell: |
+                    $mu = (New-Object -ComObject Microsoft.Update.ServiceManager).Services |
+                      Where-Object { $_.ServiceID -eq '{{ mu_service_id }}' }
+                    if ($mu -and $mu.IsRegisteredWithAU) { 'registered' } else { 'missing' }
+                  register: mu_state
+                  changed_when: false
+
+                - name: Register the Microsoft Update service
+                  ansible.windows.win_shell: |
+                    $sm = New-Object -ComObject Microsoft.Update.ServiceManager
+                    $sm.AddService2('{{ mu_service_id }}', 7, '') | Out-Null
+                    (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+                  when: mu_state.stdout | trim == 'missing'
+            ```
+
+  - uid: windows-update-readiness-dotnet-microsoft-update-allowed
+    title: Ensure .NET is configured to receive updates from Microsoft Update
+    impact: 75
+    mql: |
+      powershell("$net = 'HKLM:\\SOFTWARE\\Microsoft\\.NET'
+      $blocked = $false
+      if (Test-Path $net) {
+        $keys = @(Get-Item $net) + @(Get-ChildItem $net -ErrorAction SilentlyContinue)
+        foreach ($key in $keys) {
+          if ((Get-ItemProperty $key.PSPath -Name BlockMU -ErrorAction SilentlyContinue).BlockMU -eq 1) { $blocked = $true }
+        }
+      }
+      if ($blocked) { 'False' } else { 'True' }").stdout.trim == 'True'
+      windows.update.config.useWUServer == true ||
+      powershell("if ((Get-CimInstance -ClassName Win32_OperatingSystem).ProductType -eq 1) { 'True' } else {
+        $versions = @()
+        foreach ($base in @($env:ProgramFiles, [Environment]::GetEnvironmentVariable('ProgramFiles(x86)'))) {
+          if (-not $base) { continue }
+          $shared = Join-Path $base 'dotnet\\shared\\Microsoft.NETCore.App'
+          if (-not (Test-Path $shared)) { continue }
+          foreach ($dir in (Get-ChildItem $shared -Directory -ErrorAction SilentlyContinue)) {
+            $parts = $dir.Name.Split('.')
+            $versions += ($parts[0] + '.' + $parts[1])
+          }
+        }
+        $versions = @($versions | Sort-Object -Unique)
+        $net = 'HKLM:\\SOFTWARE\\Microsoft\\.NET'
+        $optedIn = (Get-ItemProperty $net -Name AllowAUOnServerOS -ErrorAction SilentlyContinue).AllowAUOnServerOS
+        if ($versions.Count -eq 0 -or $optedIn -eq 1) { 'True' } else {
+          $allowed = $true
+          foreach ($version in $versions) {
+            if ((Get-ItemProperty (Join-Path $net $version) -Name AllowAUOnServerOS -ErrorAction SilentlyContinue).AllowAUOnServerOS -ne 1) { $allowed = $false }
+          }
+          if ($allowed) { 'True' } else { 'False' }
+        }
+      }").stdout.trim == 'True'
+    docs:
+      desc: |
+        This check verifies that the .NET installations on the host are permitted to be serviced by Microsoft Update.
+
+        .NET ships as its own product rather than as a Windows component, so it is serviced through the Microsoft Update catalog rather than through Windows Update. Two `REG_DWORD` values decide whether that servicing reaches the host. Both live under `HKLM\SOFTWARE\Microsoft\.NET`, and both may instead be set per major version under a subkey such as `HKLM\SOFTWARE\Microsoft\.NET\8.0`.
+
+        `BlockMU` set to `1` stops .NET updates from being offered at all. The check fails when it is set at the global key or at any version subkey.
+
+        `AllowAUOnServerOS` set to `1` opts a server edition into Automatic Updates for .NET. Server editions are excluded from that channel by default and are expected to take .NET updates from WSUS or the Microsoft Update Catalog instead. The check fails on a server edition that has a .NET runtime installed, takes no WSUS catalog, and has set the value neither globally nor for every installed major version. A workstation passes, and so does any host directed at a WSUS server, because WSUS delivers .NET updates to its clients whatever this value says.
+
+        **Why this matters**
+
+        .NET carries its own remote code execution, elevation of privilege, and denial of service fixes, on the same monthly cadence as Windows. A host that blocks the channel or never opts into it keeps the runtime it was installed with. Nothing marks the gap: Windows patches normally, the build number advances, and the scan that would have reported a missing .NET update never runs, because the update was never offered.
+
+        A server edition is both the common case and the worst one. Server editions host most ASP.NET Core applications, they sit outside Automatic Updates for .NET until opted in, and they are long lived, so a runtime installed once alongside an application stays at that version for the life of the host. The result is an application reachable from the network running on a runtime superseded months earlier.
+
+        `BlockMU` is usually deliberate, set to stop an unattended runtime update from disturbing an application pinned to a specific version. That is a real constraint, but it moves the whole servicing responsibility onto whoever set it. Leave it in place only where a named process installs .NET patches, and record which process that is.
+      audit: |
+        Run the following in an elevated PowerShell session to read both values at the global key and at every version subkey:
+
+        ```powershell
+        $net = 'HKLM:\SOFTWARE\Microsoft\.NET'
+        @(Get-Item $net -ErrorAction SilentlyContinue) + @(Get-ChildItem $net -ErrorAction SilentlyContinue) |
+          Select-Object Name,
+            @{ Name = 'BlockMU'; Expression = { (Get-ItemProperty $_.PSPath -Name BlockMU -ErrorAction SilentlyContinue).BlockMU } },
+            @{ Name = 'AllowAUOnServerOS'; Expression = { (Get-ItemProperty $_.PSPath -Name AllowAUOnServerOS -ErrorAction SilentlyContinue).AllowAUOnServerOS } }
+        ```
+
+        A passing result shows `BlockMU` empty or `0` on every row. On a server edition it also shows `AllowAUOnServerOS` set to `1` at the global key, or at the subkey for every installed major version. An absent `AllowAUOnServerOS` fails on a server edition, because the default leaves server editions outside Automatic Updates for .NET.
+
+        List the runtimes the host has installed, which is the set this check reads on a server edition:
+
+        ```powershell
+        dotnet --list-runtimes
+        ```
+
+        Confirm the edition and whether the host takes a WSUS catalog:
+
+        ```powershell
+        (Get-CimInstance -ClassName Win32_OperatingSystem).ProductType
+        Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate' -ErrorAction SilentlyContinue |
+          Select-Object WUServer
+        ```
+
+        A `ProductType` of `1` is a workstation, which passes regardless of `AllowAUOnServerOS`. A populated `WUServer` passes as well.
+
+        Microsoft documents both values under **Microsoft Update** in [Install .NET on Windows](https://learn.microsoft.com/dotnet/core/install/windows#microsoft-update).
+      remediation:
+        - id: gui
+          desc: |
+            **Using the Registry Editor**
+
+            1. Press `Win+R`, type `regedit`, and press Enter.
+            2. Navigate to `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\.NET`, creating the key if it is missing.
+            3. Delete any `BlockMU` value found here or under a version subkey such as `8.0`, or set it to `0`.
+            4. On a server edition, right-click in the right pane, choose **New**, then **DWORD (32-bit) Value**. Name it `AllowAUOnServerOS` and set its data to `1`.
+            5. Open **Settings**, then **Windows Update**, and select **Check for updates**.
+
+            Setting both values at `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\.NET` covers every installed major version, so the version subkeys need no entry of their own.
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Clear the block and opt a server edition into Automatic Updates for .NET:
+
+            ```powershell
+            $net = 'HKLM:\SOFTWARE\Microsoft\.NET'
+            New-Item $net -Force | Out-Null
+            Remove-ItemProperty $net -Name BlockMU -ErrorAction SilentlyContinue
+            New-ItemProperty $net -Name AllowAUOnServerOS -Value 1 -PropertyType DWord -Force | Out-Null
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+            ```
+
+            A version subkey overrides nothing, but an earlier configuration may have set `BlockMU` there. Clear those as well:
+
+            ```powershell
+            Get-ChildItem $net -ErrorAction SilentlyContinue |
+              ForEach-Object { Remove-ItemProperty $_.PSPath -Name BlockMU -ErrorAction SilentlyContinue }
+            ```
+
+            `AllowAUOnServerOS` has no effect on a workstation edition, so setting it there is harmless.
+        - id: script
+          desc: |
+            **Using a PowerShell script**
+
+            ```powershell
+            #Requires -RunAsAdministrator
+            $net = 'HKLM:\SOFTWARE\Microsoft\.NET'
+            New-Item -Path $net -Force | Out-Null
+
+            $keys = @(Get-Item -Path $net) + @(Get-ChildItem -Path $net -ErrorAction SilentlyContinue)
+            foreach ($key in $keys) {
+                $blockMU = (Get-ItemProperty -Path $key.PSPath -Name BlockMU -ErrorAction SilentlyContinue).BlockMU
+                if ($blockMU -eq 1) {
+                    Write-Warning "Removing BlockMU from $($key.Name). Confirm no process owns .NET patching on this host."
+                    Remove-ItemProperty -Path $key.PSPath -Name BlockMU -ErrorAction SilentlyContinue
+                }
+            }
+
+            if ((Get-CimInstance -ClassName Win32_OperatingSystem).ProductType -eq 1) {
+                Write-Output 'Workstation edition. AllowAUOnServerOS is not required.'
+            } else {
+                New-ItemProperty -Path $net -Name AllowAUOnServerOS -Value 1 -PropertyType DWord -Force | Out-Null
+                Write-Output 'Server edition opted in to Automatic Updates for .NET.'
+            }
+
+            (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow()
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            ```yaml
+            ---
+            - name: Ensure .NET receives updates from Microsoft Update
+              hosts: windows
+              vars:
+                dotnet_key: 'HKLM:\SOFTWARE\Microsoft\.NET'
+              tasks:
+                - name: Remove the global Microsoft Update block
+                  ansible.windows.win_regedit:
+                    path: "{{ dotnet_key }}"
+                    name: BlockMU
+                    state: absent
+
+                - name: List the per version .NET keys
+                  ansible.windows.win_shell: >-
+                    Get-ChildItem '{{ dotnet_key }}' -ErrorAction SilentlyContinue |
+                    Select-Object -ExpandProperty PSChildName
+                  register: dotnet_versions
+                  changed_when: false
+
+                - name: Remove the per version Microsoft Update block
+                  ansible.windows.win_regedit:
+                    path: "{{ dotnet_key }}\\{{ item }}"
+                    name: BlockMU
+                    state: absent
+                  loop: "{{ dotnet_versions.stdout_lines | map('trim') | select | list }}"
+
+                - name: Opt server editions in to Automatic Updates for .NET
+                  ansible.windows.win_regedit:
+                    path: "{{ dotnet_key }}"
+                    name: AllowAUOnServerOS
+                    data: 1
+                    type: dword
+                  when: ansible_os_product_type != 'workstation'
             ```
 
   # ---------------------------------------------------------------- servicing stack capacity
