@@ -15,10 +15,18 @@ import (
 	"go.mondoo.com/mql/cli/theme"
 )
 
+// DefaultMs365AppRegistrationName is the display name of the Entra app registration the automation
+// creates when the caller doesn't set one.
+const DefaultMs365AppRegistrationName = "mondoo_ms365"
+
 // Ms365Integration represents the configuration of a Microsoft 365 integration to be created.
 type Ms365Integration struct {
 	Name  string
 	Space string
+	// AppRegistrationName sets the display name of the Entra app registration. A tenant can hold
+	// several Mondoo integrations, and Entra allows duplicate display names, so telling them apart
+	// afterwards requires distinct names. Empty means DefaultMs365AppRegistrationName.
+	AppRegistrationName string
 }
 
 // The full list of permissions required by Mondoo to scan a Microsoft 365 tenant
@@ -234,6 +242,11 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 		return "", errors.Wrap(err, "failed to generate self signed cert subject block")
 	}
 
+	appRegistrationName := integration.AppRegistrationName
+	if appRegistrationName == "" {
+		appRegistrationName = DefaultMs365AppRegistrationName
+	}
+
 	mondooProviderHclModifier := []tfgen.HclProviderModifier{}
 	if integration.Space != "" {
 		mondooProviderHclModifier = append(mondooProviderHclModifier, tfgen.HclProviderWithAttributes(
@@ -256,7 +269,7 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 		dataADClientConfig    = tfgen.NewDataSource("azuread_client_config", "current")
 		resourceAdApplication = tfgen.NewResource("azuread_application", "mondoo",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
-				"display_name":  "mondoo_ms365",
+				"display_name":  appRegistrationName,
 				"owners":        []any{dataADClientConfig.TraverseRef("object_id")},
 				"marketing_url": "https://www.mondoo.com/",
 			}),

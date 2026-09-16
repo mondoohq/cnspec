@@ -449,6 +449,16 @@ func TestMs365AppPermissions_UniqueResourceNames(t *testing.T) {
 	}
 }
 
+func TestGenerateMs365HCL_CustomAppRegistrationName(t *testing.T) {
+	code, err := subject.GenerateMs365HCL(subject.Ms365Integration{
+		AppRegistrationName: "mondoo_ms365_staging",
+	})
+	assert.Nil(t, err)
+
+	assert.Contains(t, code, `display_name  = "mondoo_ms365_staging"`)
+	assert.NotContains(t, code, `display_name  = "`+subject.DefaultMs365AppRegistrationName+`"`)
+}
+
 func TestGenerateMs365HCL_Minimal(t *testing.T) {
 	subject.UuidGenerator = func() string {
 		return "bcb6e112-30f8-434a-926b-88afcea5fb91"

@@ -49,6 +49,10 @@ func init() {
 
 	// cnspec integrate ms365
 	integrateCmd.AddCommand(integrateMs365Cmd)
+	integrateMs365Cmd.Flags().String("app-registration-name", "",
+		fmt.Sprintf("Set the display name of the Entra app registration (default %q)",
+			onboarding.DefaultMs365AppRegistrationName),
+	)
 }
 
 var (
@@ -316,20 +320,25 @@ Flags are optional:
 
 	cnspec integrate ms365 --space <space_id> --output <output_dir> --integration-name <name>
 
+The automation creates an Entra app registration named "mondoo_ms365". Set a different one with
+--app-registration-name, for example when a tenant holds more than one Mondoo integration.
+
 Ensure that the Azure account used for execution has the Azure AD Role "Global Reader".`,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			errs := []error{
 				viper.BindPFlag("space", cmd.Flags().Lookup("space")),
 				viper.BindPFlag("output", cmd.Flags().Lookup("output")),
 				viper.BindPFlag("integration-name", cmd.Flags().Lookup("integration-name")),
+				viper.BindPFlag("app-registration-name", cmd.Flags().Lookup("app-registration-name")),
 			}
 			return errors.Join(errs...)
 		},
 		RunE: func(_ *cobra.Command, _ []string) error {
 			var (
-				space           = viper.GetString("space")
-				output          = viper.GetString("output")
-				integrationName = viper.GetString("integration-name")
+				space               = viper.GetString("space")
+				output              = viper.GetString("output")
+				integrationName     = viper.GetString("integration-name")
+				appRegistrationName = viper.GetString("app-registration-name")
 			)
 
 			// Verify if space exists, which verifies we have access to the Mondoo Platform
@@ -368,8 +377,9 @@ Ensure that the Azure account used for execution has the Azure AD Role "Global R
 			// Generate HCL for MS365 deployment
 			log.Info().Msg("generating automation code")
 			hcl, err := onboarding.GenerateMs365HCL(onboarding.Ms365Integration{
-				Name:  integrationName,
-				Space: space,
+				Name:                integrationName,
+				Space:               space,
+				AppRegistrationName: appRegistrationName,
 			})
 			if err != nil {
 				return errors.Wrap(err, "unable to generate automation code")
