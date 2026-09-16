@@ -436,6 +436,7 @@ type PolicyResolver interface {
 	StoreResults(context.Context, *StoreResultsReq) (*Empty, error)
 	GetUploadURL(context.Context, *GetUploadURLReq) (*GetUploadURLResp, error)
 	ReportUploadCompleted(context.Context, *ReportUploadCompletedReq) (*Empty, error)
+	GetDownloadURL(context.Context, *GetDownloadURLReq) (*GetDownloadURLResp, error)
 	GetReport(context.Context, *EntityScoreReq) (*Report, error)
 	GetFrameworkReport(context.Context, *EntityScoreReq) (*FrameworkReport, error)
 	GetScore(context.Context, *EntityScoreReq) (*Report, error)
@@ -522,6 +523,11 @@ func (c *PolicyResolverClient) ReportUploadCompleted(ctx context.Context, in *Re
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/ReportUploadCompleted"}, ""), in, out)
 	return out, err
 }
+func (c *PolicyResolverClient) GetDownloadURL(ctx context.Context, in *GetDownloadURLReq) (*GetDownloadURLResp, error) {
+	out := new(GetDownloadURLResp)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetDownloadURL"}, ""), in, out)
+	return out, err
+}
 func (c *PolicyResolverClient) GetReport(ctx context.Context, in *EntityScoreReq) (*Report, error) {
 	out := new(Report)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetReport"}, ""), in, out)
@@ -595,6 +601,7 @@ func NewPolicyResolverServer(handler PolicyResolver, opts ...PolicyResolverServe
 			"StoreResults":          srv.StoreResults,
 			"GetUploadURL":          srv.GetUploadURL,
 			"ReportUploadCompleted": srv.ReportUploadCompleted,
+			"GetDownloadURL":        srv.GetDownloadURL,
 			"GetReport":             srv.GetReport,
 			"GetFrameworkReport":    srv.GetFrameworkReport,
 			"GetScore":              srv.GetScore,
@@ -852,6 +859,30 @@ func (p *PolicyResolverServer) ReportUploadCompleted(ctx context.Context, reqByt
 		return nil, err
 	}
 	return p.handler.ReportUploadCompleted(ctx, &req)
+}
+func (p *PolicyResolverServer) GetDownloadURL(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req GetDownloadURLReq
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.GetDownloadURL(ctx, &req)
 }
 func (p *PolicyResolverServer) GetReport(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req EntityScoreReq

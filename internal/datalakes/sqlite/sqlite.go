@@ -17,6 +17,7 @@ import (
 	"go.mondoo.com/cnspec/v13/policy/scandb"
 	"go.mondoo.com/cnspec/v13/policy/scanstats"
 	"go.mondoo.com/cnspec/v13/upload"
+	mql "go.mondoo.com/mql/v13"
 	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
@@ -59,7 +60,19 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 	if asset != nil {
 		assetMrn = asset.Mrn
 	}
-	err := withSqliteDataStore(ctx, assetMrn, func(scanDataStore *scandb.SqliteScanDataStore) error {
+	// Write-time scan-content checksums: every row is hashed as it is
+	// written (no second pass over the database). Gated by the
+	// server-activated ScanContentMode* features (layered onto ctx from
+	// ScanParameters.enabled_features) — zero checksum work when the scope
+	// hasn't opted in — and on the file having somewhere to go: a temp
+	// database with no upstream and no --output-scan-db directory is
+	// deleted moments later, so checksumming it is pure waste. Checksum
+	// work can never fail a scan: hash errors are counted (and leave the
+	// file unstamped, fail-open), reported below, never propagated.
+	checksumsEnabled := (upstreamClient != nil || outputDirFromCtx(ctx) != "") &&
+		mql.GetFeatures(ctx).ScanContentChecksumsActive()
+
+	err := withSqliteDataStore(ctx, assetMrn, checksumsEnabled, func(scanDataStore *scandb.SqliteScanDataStore) error {
 		// Persist the inventory.Asset proto so the scan database is self-contained
 		// (consumed by the cnspec loadtest tool to replay against SynchronizeAssets).
 		if asset != nil {
@@ -98,8 +111,37 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 		}
 		stats.AddDuration(scanstats.MetricScanDuration, time.Since(scanStart))
 
-		// Snapshot process memory as of this asset's completion. The values
-		// are process-wide, not this asset's cost — see ADR-0004.
+		// Report the write-time checksum activity. The cost rides the
+		// uploaded statistics — shadow mode exists to measure exactly this,
+		// so a local log line is not enough — and so does the failure count:
+		// hash errors never fail a scan (the row is stored without a
+		// checksum and Finalize leaves the file unstamped, fail-open), which
+		// makes the uploaded error metric the only way a silent hashing
+		// problem becomes visible fleet-wide.
+		if checksumsEnabled {
+			// The one stamp call: this seam runs for every scan — with an
+			// upstream (before Finalize/upload) and without one (kept
+			// --output-scan-db files never see Finalize) — so stamping here,
+			// and only here, covers both paths.
+			scanDataStore.StampChecksums()
+			cs := scanDataStore.WriteChecksumStats()
+			stats.AddDuration(scanstats.MetricChecksumDuration, cs.Duration)
+			stats.AddInt(scanstats.MetricChecksumErrors, "count", cs.Errors)
+			evt := log.Info()
+			if cs.Errors > 0 {
+				evt = log.Warn()
+			}
+			evt.
+				Str("checksummedRows", cs.Counts.String()).
+				Int64("failures", cs.Errors).
+				Dur("hashDuration", cs.Duration).
+				Msg("scan content checksums computed at write time")
+		}
+
+		// Snapshot process memory and CPU as of this asset's completion —
+		// after the checksum pass, so the pass's cost shows up in the
+		// snapshot instead of hiding behind it. The values are process-wide,
+		// not this asset's cost — see ADR-0004.
 		recordResourceStats(scanCtx, stats)
 
 		if upstream != nil {
@@ -121,7 +163,7 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 	return nil
 }
 
-func withSqliteDataStore(ctx context.Context, assetMrn string, f func(scanDataStore *scandb.SqliteScanDataStore) error) error {
+func withSqliteDataStore(ctx context.Context, assetMrn string, enableChecksums bool, f func(scanDataStore *scandb.SqliteScanDataStore) error) error {
 	// When the scan ctx carries an output dir (set via WithOutputDir from the
 	// `cnspec scan --output-scan-db` flag), write the scan db there and keep
 	// it after upload. Otherwise create a temp file we delete.
@@ -159,7 +201,11 @@ func withSqliteDataStore(ctx context.Context, assetMrn string, f func(scanDataSt
 		}
 	}()
 
-	scanDataStore, err := scandb.NewSqliteScanDataStore(tmpFile.Name(), assetMrn)
+	var opts []scandb.StoreOption
+	if enableChecksums {
+		opts = append(opts, scandb.WithWriteTimeChecksums())
+	}
+	scanDataStore, err := scandb.NewSqliteScanDataStore(tmpFile.Name(), assetMrn, opts...)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to create scan data store")
 		return err

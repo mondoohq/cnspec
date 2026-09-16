@@ -1213,6 +1213,13 @@ service PolicyResolver {
   // Signed URL upload flow
   rpc GetUploadURL(GetUploadURLReq) returns (GetUploadURLResp) {}
   rpc ReportUploadCompleted(ReportUploadCompletedReq) returns (Empty) {}
+  // GetUploadURL's mirror in the opposite direction: mints a signed GET for
+  // a server-held artifact of this scope (initially the scan manifest, see
+  // DownloadKind). Servers that predate this RPC answer NotFound (ranger's
+  // unknown-method response); in-process local services answer
+  // Unimplemented. Clients must treat any error here exactly like an
+  // absent download_url: upload in full.
+  rpc GetDownloadURL(GetDownloadURLReq) returns (GetDownloadURLResp) {}
 
   rpc GetReport(EntityScoreReq) returns (Report) {}
   rpc GetFrameworkReport(EntityScoreReq) returns (FrameworkReport) {}
@@ -1308,6 +1315,56 @@ message ReportUploadCompletedReq {
   // scan-database upload this packs a ScanStatistics. New upload kinds can pack
   // their own message without changing this message.
   google.protobuf.Any details = 3;
+  // unchanged reports that no PUT happened for this session: the client
+  // compared its scan content against the last processed upload (via the
+  // manifest served by GetDownloadURL) and found every kind digest equal.
+  // Completion is still the scan signal in both outcomes — statistics ride
+  // details exactly as for a full upload.
+  bool unchanged = 4;
+}
+
+// DownloadKind addresses the artifact GetDownloadURL serves. Kind-addressed
+// so future artifacts slot in without another RPC.
+enum DownloadKind {
+  DOWNLOAD_KIND_UNSPECIFIED = 0;
+  // The slim scan manifest: a trimmed-down scan database carrying only each
+  // row's key and content digest per kind, plus the digest metadata of the
+  // last processed upload. The client compares the manifest's kind digests
+  // against its own to decide whether an upload can be skipped, and diffs
+  // row digests for change attribution.
+  DOWNLOAD_KIND_SCAN_MANIFEST = 1;
+}
+
+message GetDownloadURLReq {
+  DownloadKind kind = 1;
+  // Same addressing as GetUploadURL.
+  string scope_mrn = 2;
+}
+
+message GetDownloadURLResp {
+  // The signed GET for the requested artifact. Absent means nothing is
+  // served — the client proceeds with a full upload, always.
+  DownloadURL download_url = 1;
+  // There is deliberately no base-identity field: the comparison policy is
+  // always-latest. A delta that raced a concurrent upload fails the
+  // server's row-digest verify and falls back to a full upload.
+  // Explicit "nothing will be served for this request" — the base does not
+  // exist, its stored digests are no longer eligible, or the scope is in a
+  // force-resend state. Reasons stay server-side; client behavior keys on
+  // download_url presence alone. The marker's one job is telemetry
+  // disambiguation of a degenerate success: an intermediary can turn a
+  // response into an empty 200 whose body unmarshals as an all-zero
+  // message, indistinguishable from a genuine decline without this bit.
+  // (A real transport failure surfaces as an RPC error, never as a
+  // response, so it needs no marker.)
+  bool unavailable = 2;
+}
+
+// DownloadURL mirrors UploadURL for the opposite direction.
+message DownloadURL {
+  string url = 1;
+  map<string, string> headers = 2;
+  int64 expires_at = 3;
 }
 
 // ScanStatistics is the completion payload for a scan-database upload. Every
