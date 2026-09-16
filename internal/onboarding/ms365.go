@@ -15,10 +15,18 @@ import (
 	"go.mondoo.com/mql/cli/theme"
 )
 
+// DefaultMs365AppRegistrationName is the display name of the Entra app registration the automation
+// creates when the caller doesn't set one.
+const DefaultMs365AppRegistrationName = "mondoo_ms365"
+
 // Ms365Integration represents the configuration of a Microsoft 365 integration to be created.
 type Ms365Integration struct {
 	Name  string
 	Space string
+	// AppRegistrationName sets the display name of the Entra app registration. A tenant can hold
+	// several Mondoo integrations, and Entra allows duplicate display names, so telling them apart
+	// afterwards requires distinct names. Empty means DefaultMs365AppRegistrationName.
+	AppRegistrationName string
 }
 
 // The full list of permissions required by Mondoo to scan a Microsoft 365 tenant
@@ -117,6 +125,51 @@ var Ms365AppPermissions = Permissions{
 				ID:   "Directory.Read.All",
 				Type: "Role",
 			},
+			{
+				// Domain DNS records (GET /domains/{id}/serviceConfigurationRecords), read by the
+				// cis-microsoft-365 2.1.8 SPF check. Learn lists only Domain.Read.All for this endpoint.
+				ID:   "Domain.Read.All",
+				Type: "Role",
+			},
+			{
+				// Required by the MicrosoftTeams PowerShell module under application auth (Get-Cs* cmdlets
+				// behind ms365.teams, cis-microsoft-365 8.x). No permission is needed on the Skype and Teams
+				// Tenant Admin API, and Learn warns against adding one.
+				ID:   "Organization.Read.All",
+				Type: "Role",
+			},
+			{
+				// Permission grant policies (GET /policies/permissionGrantPolicies). Learn does not list
+				// Policy.Read.All for this endpoint.
+				ID:   "Policy.Read.PermissionGrant",
+				Type: "Role",
+			},
+			{
+				// Entitlement management external origin resource connectors.
+				ID:   "EntitlementManagement.Read.All",
+				Type: "Role",
+			},
+			{
+				// Device registration policy. Learn lists Policy.Read.All for it only under delegated access.
+				ID:   "Policy.Read.DeviceConfiguration",
+				Type: "Role",
+			},
+			{
+				// Domain federation configuration (GET /domains/{id}/federationConfiguration). Learn does not
+				// list Domain.Read.All or Directory.Read.All for this endpoint.
+				ID:   "Domain-InternalFederation.Read.All",
+				Type: "Role",
+			},
+			{
+				// Teams inventory over Microsoft Graph: list teams and read their settings.
+				ID:   "TeamSettings.Read.All",
+				Type: "Role",
+			},
+			{
+				// Channels in the Teams inventory.
+				ID:   "ChannelSettings.Read.All",
+				Type: "Role",
+			},
 		},
 	},
 	{
@@ -136,6 +189,20 @@ var Ms365AppPermissions = Permissions{
 				// Allows the application to run Exchange Online cmdlets with the same level of access as an administrator.
 				ID:   "Exchange.ManageAsApp",
 				Type: "Role",
+			},
+		},
+	},
+	{
+		ResourceID: "Office365ExchangeOnlineProtection",
+		Access: []ResourceAccess{
+			{
+				// Security & Compliance PowerShell (Connect-IPPSSession) app-only access: DLP policies
+				// (cis-microsoft-365 3.2.2) and sensitivity label policies. Separate from the
+				// Office365ExchangeOnline grant; both are required.
+				ID:   "Exchange.ManageAsApp",
+				Type: "Role",
+				// Distinct resource name, since Office365ExchangeOnline already uses Exchange_ManageAsApp.
+				Name: "ExchangeOnlineProtection_Exchange_ManageAsApp",
 			},
 		},
 	},
@@ -175,6 +242,11 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 		return "", errors.Wrap(err, "failed to generate self signed cert subject block")
 	}
 
+	appRegistrationName := integration.AppRegistrationName
+	if appRegistrationName == "" {
+		appRegistrationName = DefaultMs365AppRegistrationName
+	}
+
 	mondooProviderHclModifier := []tfgen.HclProviderModifier{}
 	if integration.Space != "" {
 		mondooProviderHclModifier = append(mondooProviderHclModifier, tfgen.HclProviderWithAttributes(
@@ -197,7 +269,7 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 		dataADClientConfig    = tfgen.NewDataSource("azuread_client_config", "current")
 		resourceAdApplication = tfgen.NewResource("azuread_application", "mondoo",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
-				"display_name":  "mondoo_ms365",
+				"display_name":  appRegistrationName,
 				"owners":        []any{dataADClientConfig.TraverseRef("object_id")},
 				"marketing_url": "https://www.mondoo.com/",
 			}),
@@ -240,11 +312,6 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 		resourceADReadersDirectoryRole = tfgen.NewResource("azuread_directory_role", "global_reader",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{"display_name": "Global Reader"}),
 		)
-		resourceADExchangeAdminDirectoryRole = tfgen.NewResource("azuread_directory_role", "exchange_admin",
-			tfgen.HclResourceWithAttributes(tfgen.Attributes{
-				"display_name": "Exchange Administrator",
-			}),
-		)
 		resourceTimeSleep = tfgen.NewResource("time_sleep", "wait_time",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{"create_duration": "60s"}),
 		)
@@ -252,13 +319,6 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{
 				"role_id":             resourceADReadersDirectoryRole.TraverseRef("template_id"),
 				"principal_object_id": resourceADServicePrincipal.TraverseRef("object_id"),
-				"depends_on":          []any{resourceTimeSleep.TraverseRef()},
-			}),
-		)
-		resourceADExchangeAdminRoleAssignment = tfgen.NewResource("azuread_directory_role_assignment", "exchange_admin",
-			tfgen.HclResourceWithAttributes(tfgen.Attributes{
-				"principal_object_id": resourceADServicePrincipal.TraverseRef("object_id"),
-				"role_id":             resourceADExchangeAdminDirectoryRole.TraverseRef("object_id"),
 				"depends_on":          []any{resourceTimeSleep.TraverseRef()},
 			}),
 		)
@@ -295,8 +355,6 @@ func GenerateMs365HCL(integration Ms365Integration) (string, error) {
 		resourceAdApplication,
 		resourceADReadersDirectoryRole,
 		resourceADReadersRoleAssignment,
-		resourceADExchangeAdminDirectoryRole,
-		resourceADExchangeAdminRoleAssignment,
 		resourceTimeSleep,
 		resourceMondooIntegration,
 	)
@@ -401,6 +459,9 @@ func (p *Permission) ResourceAccessBlocks() (blocks []*hclwrite.Block, err error
 type ResourceAccess struct {
 	ID   string
 	Type string
+	// Name overrides the hcl resource name derived from ID. Set it when another resource grants an
+	// app role with the same ID, since Terraform rejects duplicate resource addresses.
+	Name string
 
 	hclResource *tfgen.HclResource
 	hclBlock    *hclwrite.Block
@@ -412,6 +473,9 @@ func (r *ResourceAccess) AppRoleID() string {
 
 // The hcl resource name, we expect IDs like 'Policy.Read.All' which will translate into 'Policy_Read_All'
 func (r *ResourceAccess) ResourceName() string {
+	if r.Name != "" {
+		return r.Name
+	}
 	return strings.ReplaceAll(r.ID, ".", "_")
 }
 
