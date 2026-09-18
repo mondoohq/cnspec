@@ -79,11 +79,32 @@ jobs:
           failed=0
 
           for wf in "${workflows[@]}"; do
+            # Poll interval, doubled up to a cap: a suite that takes the full 45
+            # minutes should not cost 45 API calls to watch.
+            delay=30
+
             while :; do
-              read -r status conclusion <<<"$(
+              # A failed call and an absent run both used to arrive as "none
+              # none", so a rate limit or a network blip was reported as "this
+              # commit was never tested" -- true only of the second, and it sends
+              # whoever is releasing to look at the wrong thing. Keep them apart:
+              # the API failing is transient until the deadline says otherwise.
+              if ! api_out=$(
                 gh api "repos/${REPO}/actions/workflows/${wf}/runs?head_sha=${SHA}&per_page=1" \
-                  --jq '.workflow_runs[0] | "\(.status // "none") \(.conclusion // "none")"' 2>/dev/null || echo "none none"
-              )"
+                  --jq '.workflow_runs[0] | "\(.status // "none") \(.conclusion // "none")"' 2>&1
+              ); then
+                if [ "$(date +%s)" -ge "$deadline" ]; then
+                  echo "::error::Could not reach the GitHub API for ${wf} on ${SHA} within 45 minutes: ${api_out}"
+                  failed=1
+                  break
+                fi
+                echo "GitHub API call for ${wf} failed (${api_out}); retrying in ${delay}s"
+                sleep "${delay}"
+                [ "${delay}" -lt 120 ] && delay=$(( delay * 2 ))
+                continue
+              fi
+
+              read -r status conclusion <<<"${api_out}"
 
               if [ "$status" = "none" ]; then
                 # Unlike mql, these workflows are filtered by paths rather than
@@ -115,17 +136,27 @@ jobs:
                 break
               fi
 
-              echo "${wf} is ${status} for ${SHA}; waiting"
-              sleep 60
+              echo "${wf} is ${status} for ${SHA}; waiting ${delay}s"
+              sleep "${delay}"
+              [ "${delay}" -lt 120 ] && delay=$(( delay * 2 ))
             done
           done
 
           [ "$failed" -eq 0 ] || exit 1
 
+      # Only an explicit skip is worth warning about. A snapshot build does not
+      # publish a release, so the gate not running is the design rather than a
+      # bypass -- warning on it every time is what teaches people to ignore the
+      # warning that matters.
       - name: Report a bypassed gate
-        if: ${{ inputs.goreleaser-snapshot || inputs.skip-test-gate }}
+        if: ${{ inputs.skip-test-gate }}
         run: |
-          echo "::warning::Test gate bypassed (snapshot=${{ inputs.goreleaser-snapshot }}, skip-test-gate=${{ inputs.skip-test-gate }}). This release has not been checked against its commit's test results."
+          echo "::warning::Test gate bypassed with skip-test-gate. This release has not been checked against its commit's test results."
+
+      - name: Note the gate does not apply to snapshots
+        if: ${{ inputs.goreleaser-snapshot && !inputs.skip-test-gate }}
+        run: |
+          echo "::notice::Snapshot build; the release test gate does not apply."
 
   goreleaser:
     needs: [verify-tested]
