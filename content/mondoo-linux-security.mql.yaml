@@ -7079,28 +7079,43 @@ queries:
       asset.runtime != "docker-container"
     mql: |
       switch {
-        case file("/boot/grub2/grubenv").exists:
-          file("/boot/grub2/grubenv").content.lines.where( _ == /^[^#]/ )
-            .any(_ == /audit(\s+)?\=(\s+)?1/);
-        case file("/boot/grub2/grub.cfg").exists:
-          file("/boot/grub2/grub.cfg").content.lines.where( _ == /^[^#]/ )
-            .any(_ == /audit(\s+)?\=(\s+)?1/);
-        case file("/boot/grub/grub.cfg").exists:
-          file("/boot/grub/grub.cfg").content.lines.where( _ == /^[^#]/ )
-            .any(_ == /audit(\s+)?\=(\s+)?1/);
-        case file("/boot/grub/grub.conf").exists:
-          file("/boot/grub/grub.conf").content.lines.where( _ == /^[^#]/ )
-            .any(_ == /audit(\s+)?\=(\s+)?1/);
-        case file("/etc/secboot/config.json").exists:
-          parse.json('/etc/secboot/config.json')
-            .params['kernel-params'] == /audit(\s+)?\=(\s+)?1/;
+        // Every entry GRUB boots, from grub.cfg, the BLS files, or a legacy menu.lst.
+        // Second alternative: entries left on $kernelopts that grubenv does not define,
+        // which GRUB takes from the set kernelopts line in grub.cfg.
+        case grub.config.entries.where(bootable) != empty:
+          grub.config.entries.where(bootable).all(parameters["audit"] == "1") ||
+          grub.config.entries.where(bootable).all(cmdline == /(^|\s)\$kernelopts(\s|$)/) &&
+            files.find(from: "/boot", xdev: true, type: "file", regex: '.*/grub\.cfg$').list.any(content.lines.any(_ == /^\s*set kernelopts="(\S+\s+)*audit=1(\s|")/)) &&
+            files.find(from: "/boot", xdev: true, type: "file", regex: '.*/grub\.cfg$').list.none(content.lines.any(_ == /^\s*set kernelopts="(\S+\s+)*audit=([^1\s"]|1[^\s"]|[\s"]|$)/));
+        // systemd-boot, which grub.config does not read. Its entries live on the EFI system
+        // partition, mounted at /efi or /boot/efi; the /boot mount is grub.config's.
+        case files.find(from: "/boot/efi/loader/entries", type: "file", regex: '.*\.conf$').list != empty ||
+          files.find(from: "/efi/loader/entries", type: "file", regex: '.*\.conf$').list != empty:
+          files.find(from: "/boot/efi/loader/entries", type: "file", regex: '.*\.conf$').list.all(
+            content.lines.any(_ == /^\s*options(\s+\S+)*\s+audit=1(\s|$)/) &&
+              content.lines.none(_ == /^\s*options(\s+\S+)*\s+audit=([^1\s]|1\S|\s|$)/)
+          ) &&
+          files.find(from: "/efi/loader/entries", type: "file", regex: '.*\.conf$').list.all(
+            content.lines.any(_ == /^\s*options(\s+\S+)*\s+audit=1(\s|$)/) &&
+              content.lines.none(_ == /^\s*options(\s+\S+)*\s+audit=([^1\s]|1\S|\s|$)/)
+          );
+        // secboot embeds the command line in each image it builds. config.json only says
+        // what the next build will embed.
+        case secboot.config.images != null:
+          secboot.config.images.all(parameters["audit"] == "1");
         default: false
       }
     docs:
       desc: |
         This check verifies that the kernel begins auditing at boot, before the `auditd` daemon has started.
 
-        The kernel queues audit events from very early in boot, but only if it is told to. The check reads the boot loader configuration under `/boot`, and on systems that store kernel parameters in `/etc/secboot/config.json` it reads that instead, looking for `audit=1` on the active kernel command line. Setting it means adding the parameter to `GRUB_CMDLINE_LINUX` and regenerating the boot loader configuration, and it takes effect on the next boot.
+        The kernel queues audit events from very early in boot, but only if it is told to. The check reads the kernel arguments that every boot entry passes on the next boot and requires `audit=1` in each of them:
+
+        - Where the host boots with GRUB, it reads the entries GRUB offers, taken from whichever source GRUB takes them from. On Debian, Ubuntu, and SUSE that is the menu entries in `grub.cfg`. On RHEL 8 and later, Fedora, and Amazon Linux 2023 the `grub.cfg` hands the menu to the Boot Loader Specification files under `/boot/loader/entries`, and an entry whose options are `$kernelopts` takes them from the `kernelopts` variable in `/boot/grub2/grubenv`, as RHEL 8 does. Where `grubenv` does not define that variable, GRUB falls back to the `set kernelopts` line in `grub.cfg`, and so does the check. On GRUB legacy hosts, such as Amazon Linux 1 and RHEL 6, it reads the `kernel` line of every `title` entry in `menu.lst`.
+        - Where systemd-boot keeps its entries on the EFI system partition, it reads the `options` line of every entry under it. The Boot Loader Specification allows that partition at `/efi`, `/boot`, or `/boot/efi`, and the check reads all three.
+        - Where `secboot` builds a unified kernel image for each installed kernel, it reads the command line embedded in every image on the EFI system partition. A host whose images cannot be listed fails rather than being answered from the `kernel-params` the next build would embed, which is a build input and not what the host boots with.
+
+        Every entry that starts an operating system is checked, recovery entries included. Submenus, firmware entries, memory tests, and entries that chainload another system start none and are ignored, and a host that offers nothing to boot fails rather than passing over an empty list. A parameter written more than once on one command line takes its last value, which is how the kernel reads it, so `audit=0 audit=1` passes and `audit=1 audit=0` does not. On RHEL-family systems `grubby` writes the parameter into every entry. On Debian-family systems it goes into `GRUB_CMDLINE_LINUX` and the GRUB configuration is regenerated. Either way it takes effect on the next boot.
 
         **Why this matters**
 
@@ -7112,88 +7127,164 @@ queries:
 
         Note that this parameter only preserves events; the rules still decide what is recorded. Pair it with the syscall and watch rules the rest of this policy requires, and confirm the change survived by reading the running kernel command line after the reboot.
       audit: |
-        Run this command to confirm the kernel command line enables auditing of early-boot processes:
+        ### Audit via CLI
 
-        ```bash
-        grep -E 'audit=1' /boot/grub2/grubenv /boot/grub2/grub.cfg /boot/grub/grub.cfg
-        ```
+        1. On RHEL, Fedora, Amazon Linux, and derivatives, print the kernel arguments of every boot entry. `grubby` expands `$kernelopts` from `/boot/grub2/grubenv`, so the output shows the arguments each entry actually boots with:
 
-        A passing result shows an `audit=1` parameter on the active kernel boot entry. A failing result shows the parameter absent.
+            ```bash
+            grubby --info=ALL | grep -E '^(kernel|args)='
+            ```
+
+            On a host without `grubby`, read the Boot Loader Specification entries directly. An entry whose `options` line is `$kernelopts` takes its arguments from the `kernelopts` line of `grubenv`:
+
+            ```bash
+            grep -H '^options' /boot/loader/entries/*.conf
+            grep '^kernelopts=' /boot/grub2/grubenv
+            grep '^[[:space:]]*set kernelopts=' /boot/grub2/grub.cfg
+            ```
+
+            The `set kernelopts` line in `grub.cfg` is the fallback GRUB uses when `grubenv` carries no `kernelopts` variable.
+
+        2. On Debian, Ubuntu, and other systems that boot from a generated GRUB configuration, print every kernel line that does not carry `audit=1`. The file is `/boot/grub2/grub.cfg` on SUSE:
+
+            ```bash
+            grep -E '^\s*linux' /boot/grub/grub.cfg | grep -v memtest | grep -vE '\saudit=1(\s|$)'
+            ```
+
+        3. On hosts that boot with systemd-boot, which keeps its Boot Loader Specification entries on the EFI system partition, print the command line of every entry:
+
+            ```bash
+            bootctl list
+            grep -H '^options' /boot/loader/entries/*.conf /boot/efi/loader/entries/*.conf /efi/loader/entries/*.conf
+            ```
+
+        4. On hosts where `secboot` builds unified kernel images, print the command line embedded in each one. A binary that boots no kernel, such as the firmware updater `secboot` copies in beside the images, carries no `.cmdline` section and prints nothing:
+
+            ```bash
+            for image in /boot/efi/EFI/Linux/*.efi; do
+              printf '%s: ' "$image"
+              objcopy -O binary --only-section=.cmdline "$image" /dev/stdout
+              echo
+            done
+            ```
+
+        A passing result shows `audit=1` as the last `audit=` value in the arguments of every boot entry, and the command in step 2 prints nothing. A failing result shows an entry without `audit=1`, or an entry whose last `audit=` value is something else, such as `audit=0`.
       remediation:
         - id: cli
           desc: |
             **Using CLI**
 
-            1. Edit the GRUB configuration file at `/etc/default/grub` to include the `audit=1` parameter in the `GRUB_CMDLINE_LINUX` value, keeping any previous values it may have:
+            **RHEL, Fedora, Amazon Linux, and derivatives**
+
+            1. Add `audit=1` to every installed kernel. `grubby` rewrites the `options` line of each boot entry, the `kernelopts` variable in `grubenv` where the entries use it, and the arguments applied to kernels installed later. Removing any existing `audit=` value first keeps a leftover `audit=0` from overriding the new setting:
+
+                ```bash
+                grubby --update-kernel=ALL --remove-args="audit"
+                grubby --update-kernel=ALL --args="audit=1"
+                ```
+
+            2. Confirm that `GRUB_CMDLINE_LINUX` in `/etc/default/grub` now includes `audit=1`, so a later `grub2-mkconfig` run keeps it. If it does not, add `audit=1` to that line, keeping the values already there:
+
+                ```bash
+                grep '^GRUB_CMDLINE_LINUX=' /etc/default/grub
+                ```
+
+            3. Reboot the system so the kernel starts with `audit=1`.
+
+            **Debian, Ubuntu, SUSE, and derivatives**
+
+            1. Edit `/etc/default/grub` and add `audit=1` to the `GRUB_CMDLINE_LINUX` value, keeping the values already there. Remove any other `audit=` value from both `GRUB_CMDLINE_LINUX` and `GRUB_CMDLINE_LINUX_DEFAULT`, because a later `audit=0` overrides `audit=1`. Use `GRUB_CMDLINE_LINUX` rather than `GRUB_CMDLINE_LINUX_DEFAULT`, because the default line is not applied to recovery entries:
 
                 ```ini
                 GRUB_CMDLINE_LINUX="audit=1"
                 ```
 
-            2. Update the GRUB configuration:
-
-                **RHEL/Fedora/Amazon Linux and derivatives**
-
-                For BIOS systems:
-
-                ```bash
-                grub2-mkconfig -o /boot/grub2/grub.cfg
-                ```
-
-                For UEFI systems:
-
-                ```bash
-                grub2-mkconfig -o /boot/efi/EFI/<distribution>/grub.cfg
-                ```
-
-                Replace `<distribution>` with your distribution's directory name (e.g., `centos`, `redhat`, `fedora`).
-
-                On RHEL 8 and later, also update the kernel command line for the installed kernels, because the active boot entries read their parameters from `grubenv` and the BLS entries rather than the regenerated `grub.cfg`:
-
-                ```bash
-                grubby --update-kernel=ALL --args="audit=1"
-                ```
-
-                **Debian/Ubuntu and derivatives**
+            2. Regenerate the GRUB configuration so every boot entry picks up the parameter. On Debian and Ubuntu:
 
                 ```bash
                 update-grub
                 ```
 
-            3. Reboot the system so the kernel starts with the new `audit=1` parameter. The change does not take effect until the next boot.
+                On SUSE:
+
+                ```bash
+                grub2-mkconfig -o /boot/grub2/grub.cfg
+                ```
+
+            3. Reboot the system so the kernel starts with `audit=1`.
+
+            **systemd-boot hosts**
+
+            1. Put `audit=1` in `/etc/kernel/cmdline`, keeping the values already there and dropping any other `audit=` value. `kernel-install` reads that file when it writes a boot entry, and falls back to the running kernel command line when the file does not exist:
+
+                ```bash
+                [ -f /etc/kernel/cmdline ] || cat /proc/cmdline > /etc/kernel/cmdline
+                sed -i -E 's/(^| )audit=[^ ]*//g; s/[[:space:]]*$/ audit=1/; s/^[[:space:]]+//' /etc/kernel/cmdline
+                ```
+
+            2. Rewrite the entry of every installed kernel so the entries already on disk pick up the new command line:
+
+                ```bash
+                for version in /lib/modules/*; do
+                  kernel-install add "${version##*/}" "$version/vmlinuz"
+                done
+                ```
+
+                Distributions that wrap this step ship their own command for it, such as `reinstall-kernels` on openSUSE MicroOS.
+
+            3. Confirm that every entry now carries the parameter, then reboot the system:
+
+                ```bash
+                bootctl list
+                ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Use this Bash script to ensure the audit=1 parameter is set in the GRUB configuration.
+            Use this Bash script to set `audit=1` on every boot entry. It uses `grubby` where it is installed, regenerates the GRUB configuration on GRUB hosts, and rewrites the Boot Loader Specification entries with `kernel-install` on systemd-boot hosts:
 
             ```bash
             #!/bin/bash
-            set -e
+            set -euo pipefail
 
-            # Check if GRUB configuration file exists
-            if [ -f /etc/default/grub ]; then
-              if grep -q "audit=1" /etc/default/grub; then
-                echo "audit=1 is already set in GRUB configuration."
-              else
-                echo "Setting audit=1 in GRUB configuration."
-                sed -i 's/GRUB_CMDLINE_LINUX="/GRUB_CMDLINE_LINUX="audit=1 /' /etc/default/grub
-              fi
+            # Keep audit=1 in GRUB_CMDLINE_LINUX so a later regeneration of the GRUB
+            # configuration retains it. Any other audit= value is dropped from both
+            # command line variables first, since a later audit=0 would override it.
+            if [ -f /etc/default/grub ] && grep -q '^GRUB_CMDLINE_LINUX=' /etc/default/grub; then
+              sed -i -E \
+                -e '/^GRUB_CMDLINE_LINUX(_DEFAULT)?=/s/(["[:space:]])audit=[^"[:space:]]*/\1/g' \
+                -e 's/^GRUB_CMDLINE_LINUX="[[:space:]]*/GRUB_CMDLINE_LINUX="audit=1 /' \
+                -e '/^GRUB_CMDLINE_LINUX(_DEFAULT)?=/s/[[:space:]]+"$/"/' \
+                /etc/default/grub
             fi
 
-            if command -v update-grub >/dev/null 2>&1; then
-              echo "Running update-grub"
+            if command -v grubby >/dev/null 2>&1; then
+              # RHEL family: grubby rewrites every boot entry and the kernelopts
+              # variable in grubenv where the entries use it.
+              echo "Setting audit=1 on every boot entry with grubby"
+              grubby --update-kernel=ALL --remove-args="audit"
+              grubby --update-kernel=ALL --args="audit=1"
+            elif command -v update-grub >/dev/null 2>&1; then
+              echo "Regenerating the GRUB configuration with update-grub"
               update-grub
-            else
-              echo "Regenerating grub.cfg"
+            elif command -v grub2-mkconfig >/dev/null 2>&1; then
+              echo "Regenerating the GRUB configuration with grub2-mkconfig"
               grub2-mkconfig -o /boot/grub2/grub.cfg
-              # On RHEL 8 and later the active boot entries read their parameters from grubenv and
-              # the BLS entries, so a regenerated grub.cfg alone may not apply audit=1. grubby
-              # updates the installed kernels directly, so run it whenever it is available.
-              if command -v grubby >/dev/null 2>&1; then
-                echo "Updating the kernel command line with grubby"
-                grubby --update-kernel=ALL --args="audit=1"
-              fi
+            elif command -v kernel-install >/dev/null 2>&1; then
+              # systemd-boot: kernel-install writes each entry's options line from
+              # /etc/kernel/cmdline, falling back to the running kernel command line.
+              # Every audit= value is dropped before audit=1 is appended, so the value
+              # the kernel reads last is the one set here.
+              echo "Setting audit=1 in /etc/kernel/cmdline and rewriting the boot entries"
+              [ -f /etc/kernel/cmdline ] || cat /proc/cmdline > /etc/kernel/cmdline
+              sed -i -E 's/(^| )audit=[^ ]*//g; s/[[:space:]]*$/ audit=1/; s/^[[:space:]]+//' /etc/kernel/cmdline
+              for version in /lib/modules/*; do
+                [ -e "$version/vmlinuz" ] || continue
+                kernel-install add "${version##*/}" "$version/vmlinuz"
+              done
+            else
+              echo "No supported boot loader tool found. Add audit=1 to the kernel command line manually." >&2
+              exit 1
             fi
 
             echo "Reboot required: audit=1 takes effect on the next boot."
@@ -7202,7 +7293,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to ensure the `audit=1` kernel parameter is set in the GRUB bootloader configuration and regenerate the GRUB config:
+            Use this Ansible playbook to set `audit=1` in `GRUB_CMDLINE_LINUX`, apply it to every boot entry with `grubby` on RHEL-family hosts, and regenerate the GRUB configuration on the others:
 
             ```yaml
             ---
@@ -7211,30 +7302,45 @@ queries:
               become: true
 
               tasks:
+                - name: Remove audit values other than audit=1 from the GRUB command line variables
+                  ansible.builtin.replace:
+                    path: /etc/default/grub
+                    regexp: '^(GRUB_CMDLINE_LINUX(?:_DEFAULT)?="(?:[^"]*\s)?)audit=(?!1(?=[\s"]))[^\s"]*\s?([^"]*")$'
+                    replace: '\1\2'
+                  notify: Regenerate GRUB configuration
+
                 - name: Ensure audit=1 is set in GRUB_CMDLINE_LINUX
                   ansible.builtin.lineinfile:
                     path: /etc/default/grub
-                    regexp: '^GRUB_CMDLINE_LINUX="((?!audit=1).*)"$'
-                    line: 'GRUB_CMDLINE_LINUX="audit=1 \1"'
-                    backrefs: yes
+                    regexp: '^GRUB_CMDLINE_LINUX="(?!(?:[^"]*\s)?audit=1[\s"])\s*([^"]*?)\s*"$'
+                    line: 'GRUB_CMDLINE_LINUX="\1 audit=1"'
+                    backrefs: true
+                  notify: Regenerate GRUB configuration
 
-                - name: Regenerate GRUB configuration (Debian/Ubuntu)
-                  ansible.builtin.command: update-grub
-                  when: ansible_os_family == "Debian"
-
-                - name: Regenerate GRUB configuration (RHEL/SUSE BIOS)
-                  ansible.builtin.command: grub2-mkconfig -o /boot/grub2/grub.cfg
-                  when: ansible_os_family in ["RedHat", "Suse"]
-
-                - name: Update the kernel command line for installed kernels (RHEL 8 and later)
-                  ansible.builtin.command: grubby --update-kernel=ALL --args="audit=1"
+                - name: Read the kernel arguments of every boot entry
+                  ansible.builtin.command: grubby --info=ALL
+                  register: grubby_info
+                  changed_when: false
                   when: ansible_os_family == "RedHat"
+
+                - name: Set audit=1 on every boot entry
+                  ansible.builtin.shell: grubby --update-kernel=ALL --remove-args=audit && grubby --update-kernel=ALL --args=audit=1
+                  changed_when: true
+                  when:
+                    - ansible_os_family == "RedHat"
+                    - grubby_info.stdout_lines | select('search', '^args="(?!(.* )?audit=1[ "])|^args=.*[ "]audit=(?!1[ "])') | list | length > 0
+
+              handlers:
+                - name: Regenerate GRUB configuration
+                  ansible.builtin.command: "{{ 'update-grub' if ansible_os_family == 'Debian' else 'grub2-mkconfig -o /boot/grub2/grub.cfg' }}"
+                  changed_when: true
+                  when: ansible_os_family != "RedHat"
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to add `audit=1` to the kernel command line and regenerate the bootloader configuration. The setting takes effect on the next boot:
+            Use this Chef Infra recipe code to set `audit=1` in `GRUB_CMDLINE_LINUX`, apply it to every boot entry with `grubby` on RHEL-family hosts, and regenerate the GRUB configuration on the others. The setting takes effect on the next boot:
 
             ```ruby
             grub_default = '/etc/default/grub'
@@ -7247,24 +7353,37 @@ queries:
             execute 'regenerate the GRUB configuration' do
               command grub_command
               action :nothing
+              not_if { which('grubby') }
             end
 
-            execute 'update the command line of installed kernels' do
-              command 'grubby --update-kernel=ALL --args="audit=1"'
-              only_if { platform_family?('rhel', 'fedora', 'amazon') }
-              only_if 'command -v grubby'
+            # A later audit=0 on the kernel command line overrides audit=1, so other
+            # audit= values are removed from both command line variables.
+            audit_args = lambda do |body, name|
+              body[/^#{name}="([^"]*)"$/, 1].to_s.split.select { |arg| arg.start_with?('audit=') }
             end
 
-            ruby_block 'add audit=1 to the kernel command line' do
+            ruby_block 'set audit=1 in GRUB_CMDLINE_LINUX' do
               block do
-                body = ::File.read(grub_default)
-                body = body.gsub(/^GRUB_CMDLINE_LINUX="(.*)"$/) do
-                  %(GRUB_CMDLINE_LINUX="audit=1 #{Regexp.last_match(1)}")
+                body = ::File.read(grub_default).gsub(/^(GRUB_CMDLINE_LINUX(?:_DEFAULT)?)="([^"]*)"$/) do
+                  name = Regexp.last_match(1)
+                  args = Regexp.last_match(2).split.reject { |arg| arg.start_with?('audit=') }
+                  args << 'audit=1' if name == 'GRUB_CMDLINE_LINUX'
+                  %(#{name}="#{args.join(' ')}")
                 end
                 ::File.write(grub_default, body)
               end
-              not_if { ::File.read(grub_default).match?(/^GRUB_CMDLINE_LINUX=".*\baudit=1\b.*"$/) }
+              only_if { ::File.exist?(grub_default) && ::File.read(grub_default).match?(/^GRUB_CMDLINE_LINUX="[^"]*"$/) }
+              not_if do
+                body = ::File.read(grub_default)
+                audit_args.call(body, 'GRUB_CMDLINE_LINUX') == ['audit=1'] && audit_args.call(body, 'GRUB_CMDLINE_LINUX_DEFAULT').empty?
+              end
               notifies :run, 'execute[regenerate the GRUB configuration]', :immediately
+            end
+
+            execute 'set audit=1 on every boot entry' do
+              command 'grubby --update-kernel=ALL --remove-args=audit && grubby --update-kernel=ALL --args=audit=1'
+              only_if { which('grubby') }
+              only_if "grubby --info=ALL | grep '^args=' | grep -qvE '[ \"]audit=1[ \"]' || grubby --info=ALL | grep -qE '^args=.*[ \"]audit=([^1 \"]|1[^ \"])'"
             end
             ```
     refs:
