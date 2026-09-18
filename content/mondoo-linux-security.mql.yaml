@@ -7373,10 +7373,20 @@ queries:
               notifies :run, 'execute[regenerate the GRUB configuration]', :immediately
             end
 
+            # grubby prints one args= line per boot entry. The fix runs unless every
+            # entry already ends up with audit=1: an entry that has it does not excuse
+            # one that does not, which is how a rescue entry gets left behind. A
+            # parameter written twice takes its last value, the rule the kernel uses.
+            entries_need_audit = lambda do
+              shell_out('grubby --info=ALL').stdout.scan(/^args="([^"]*)"/).flatten.any? do |args|
+                args.split.grep(/\Aaudit=/).last != 'audit=1'
+              end
+            end
+
             execute 'set audit=1 on every boot entry' do
               command 'grubby --update-kernel=ALL --remove-args=audit && grubby --update-kernel=ALL --args=audit=1'
               only_if { which('grubby') }
-              only_if "grubby --info=ALL | grep '^args=' | grep -qvE '[ \"]audit=1[ \"]' || grubby --info=ALL | grep -qE '^args=.*[ \"]audit=([^1 \"]|1[^ \"])'"
+              only_if { entries_need_audit.call }
             end
             ```
     refs:
