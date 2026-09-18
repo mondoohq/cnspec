@@ -3860,24 +3860,19 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_access_key")
     mql: |
       terraform.resources.where(nameLabel == "aws_iam_access_key").where(arguments["status"] != "Inactive").map(arguments["user"]).join("|").split("|").duplicates == empty
+  # Like the HCL variant, this maps the user of every access key that is not
+  # Inactive and looks for a repeat. The join/split detour is required: values
+  # read out of change.after carry no element type, so .duplicates rejects the
+  # mapped list with "cannot extract duplicates from array, must be a basic
+  # type". The string round-trip gives it the basic type it needs.
   - uid: mondoo-aws-security-iam-users-only-one-access-key-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_policy")
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_access_key")
     mql: |
-      terraform.plan.resourceChanges.where(type == "aws_iam_policy").any(
-        change.after.policy.contains('iam:CreateAccessKey') &&
-        change.after.policy.contains('Deny') &&
-        change.after.policy.contains('NumericGreaterThan') &&
-        change.after.policy.contains('iam:AccessKeysCount')
-      )
+      terraform.plan.resourceChanges.where(type == "aws_iam_access_key").where(change.after["status"] != "Inactive").map(change.after["user"]).join("|").split("|").duplicates == empty
   - uid: mondoo-aws-security-iam-users-only-one-access-key-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_iam_policy")
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_iam_access_key")
     mql: |
-      terraform.state.resources.where(type == "aws_iam_policy").any(
-        values.policy.contains('iam:CreateAccessKey') &&
-        values.policy.contains('Deny') &&
-        values.policy.contains('NumericGreaterThan') &&
-        values.policy.contains('iam:AccessKeysCount')
-      )
+      terraform.state.resources.where(type == "aws_iam_access_key").where(values["status"] != "Inactive").map(values["user"]).join("|").split("|").duplicates == empty
   - uid: mondoo-aws-security-iam-user-no-inline-policies-check
     title: Ensure IAM users receive permissions only through groups
     impact: 70
