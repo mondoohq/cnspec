@@ -1,0 +1,358 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-jamf-security
+    name: Mondoo Jamf Pro Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: jamf
+    require:
+      - provider: jamf
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Harden Jamf Pro single sign-on, managed-device encryption, and endpoint hardening
+    docs:
+      desc: |
+        The Mondoo Jamf Pro Security policy connects to a Jamf Pro mobile device management (MDM) tenant and assesses its identity and endpoint posture. It reads the tenant's single sign-on settings and its managed-computer inventory, so the checks reflect how the fleet is actually configured rather than a documented intent.
+
+        This policy provides security checks across three areas:
+        - Single sign-on enforcement for the Jamf Pro console and enrollment
+        - FileVault disk encryption on managed Macs
+        - Endpoint hardening through the host firewall
+
+        Enforcing single sign-on keeps console and enrollment access tied to the organization's identity provider and its controls (MFA, conditional access), while FileVault encryption and the host firewall reduce the exposure of the managed endpoints themselves.
+
+        Learn more about scanning with cnspec in the [cnspec documentation](https://mondoo.com/docs/cnspec).
+    groups:
+      - title: Authentication
+        filters: asset.platform == "jamf"
+        checks:
+          - uid: mondoo-jamf-security-sso-enabled
+          - uid: mondoo-jamf-security-sso-bypass-disabled
+      - title: Endpoint Encryption
+        filters: asset.platform == "jamf"
+        checks:
+          - uid: mondoo-jamf-security-filevault-enabled
+      - title: Endpoint Hardening
+        filters: asset.platform == "jamf"
+        checks:
+          - uid: mondoo-jamf-security-firewall-enabled
+    scoring_system: highest impact
+queries:
+  - uid: mondoo-jamf-security-sso-enabled
+    filters: asset.platform == "jamf"
+    title: Ensure Jamf Pro single sign-on is enabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    mql: |
+      jamf.sso.ssoEnabled == true
+    docs:
+      desc: |-
+        This check ensures that single sign-on is enabled so that the Jamf Pro console and device enrollment authenticate against the organization's identity provider rather than standalone local accounts. When SSO is off, access depends on local Jamf credentials that live outside the identity provider's controls.
+
+        **Why this matters**
+
+        - **Centralized identity:** SSO routes console and enrollment logins through the organization's identity provider, so account lifecycle, MFA, and conditional access apply uniformly.
+        - **Fewer standalone credentials:** Local Jamf accounts are provisioned, rotated, and de-provisioned outside central identity governance, and each one is an independent target.
+        - **Consistent policy:** Login controls enforced at the identity provider (device trust, network restrictions, step-up authentication) reach Jamf Pro only when SSO is in use.
+
+        **Risk mitigation**
+
+        - **Unified offboarding:** Disabling a user at the identity provider immediately removes their Jamf Pro access.
+        - **Stronger authentication:** MFA and conditional access enforced by the identity provider protect every console and enrollment login.
+      audit: |-
+        ### Audit via the Jamf Pro console
+
+        1. Sign in to the Jamf Pro console as an administrator.
+        2. Go to **Settings** > **Single Sign-On**.
+        3. Review whether single sign-on is enabled and bound to an identity provider.
+
+        If single sign-on is enabled, the check passes. If it is disabled, the check fails.
+
+        ### Audit via the API
+
+        1. Read the SSO settings from the Jamf Pro API:
+
+           ```bash
+           curl -s -H "Authorization: Bearer $JAMF_TOKEN" \
+             "https://YOUR_TENANT.jamfcloud.com/api/v1/sso"
+           ```
+
+        If the response reports single sign-on as enabled, the check passes. If it is disabled, the check fails.
+      remediation:
+        - id: console
+          desc: |-
+            To enable single sign-on in the Jamf Pro console:
+
+            1. Sign in to the Jamf Pro console as an administrator.
+            2. Go to **Settings** > **Single Sign-On**.
+            3. Enable single sign-on and bind it to your identity provider (configure the IdP metadata, entity ID, and certificate).
+            4. Save the configuration and verify a test login through the identity provider.
+        - id: api
+          desc: |-
+            To enable single sign-on through the Jamf Pro API, send the updated SSO settings with single sign-on enabled:
+
+            ```bash
+            curl -s -X PUT \
+              -H "Authorization: Bearer $JAMF_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://YOUR_TENANT.jamfcloud.com/api/v1/sso" \
+              --data '{"ssoEnabled": true}'
+            ```
+
+            Supply the full identity-provider configuration (metadata, entity ID, certificate) required by your tenant alongside the enable flag.
+    refs:
+      - url: https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/Single_Sign-On.html
+        title: Jamf Pro Single Sign-On
+  - uid: mondoo-jamf-security-sso-bypass-disabled
+    filters: asset.platform == "jamf"
+    title: Ensure Jamf Pro does not allow single sign-on to be bypassed
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      jamf.sso.ssoBypassAllowed == false
+    docs:
+      desc: |-
+        This check ensures that the "allow single sign-on to be bypassed" option is off so that users cannot fall back to local Jamf credentials and skip the identity provider's controls. When bypass is allowed, a user can sidestep MFA and conditional access simply by logging in with a local account.
+
+        **Why this matters**
+
+        - **No control bypass:** A failover to local credentials skips the MFA, device trust, and conditional-access checks the identity provider enforces.
+        - **Consistent enforcement:** With bypass disabled, every login is subject to the same identity-provider policy, closing a gap that only widens over time.
+        - **Attack surface:** Local fallback accounts are a standing set of credentials an attacker can target independently of the identity provider.
+
+        **Risk mitigation**
+
+        - **Enforced MFA:** Removing the bypass ensures multi-factor authentication cannot be skipped for console or enrollment access.
+        - **Reduced credential exposure:** Users authenticate only through the identity provider, so there is no local-credential path to compromise.
+      audit: |-
+        ### Audit via the Jamf Pro console
+
+        1. Sign in to the Jamf Pro console as an administrator.
+        2. Go to **Settings** > **Single Sign-On**.
+        3. Review the failover/bypass option that lets users authenticate with local Jamf credentials.
+
+        If single sign-on bypass is not allowed, the check passes. If bypass is allowed, the check fails.
+
+        ### Audit via the API
+
+        1. Read the SSO settings from the Jamf Pro API:
+
+           ```bash
+           curl -s -H "Authorization: Bearer $JAMF_TOKEN" \
+             "https://YOUR_TENANT.jamfcloud.com/api/v1/sso"
+           ```
+
+        If the response reports that single sign-on bypass is not allowed, the check passes. If bypass is allowed, the check fails.
+      remediation:
+        - id: console
+          desc: |-
+            To disable single sign-on bypass in the Jamf Pro console:
+
+            1. Sign in to the Jamf Pro console as an administrator.
+            2. Go to **Settings** > **Single Sign-On**.
+            3. Clear the failover/bypass option that allows authentication with local Jamf credentials.
+            4. Save the configuration.
+        - id: api
+          desc: |-
+            To disable single sign-on bypass through the Jamf Pro API, send the updated SSO settings with bypass turned off:
+
+            ```bash
+            curl -s -X PUT \
+              -H "Authorization: Bearer $JAMF_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://YOUR_TENANT.jamfcloud.com/api/v1/sso" \
+              --data '{"ssoBypassAllowed": false}'
+            ```
+    refs:
+      - url: https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/Single_Sign-On.html
+        title: Jamf Pro Single Sign-On
+  - uid: mondoo-jamf-security-filevault-enabled
+    filters: asset.platform == "jamf"
+    title: Ensure managed computers have FileVault disk encryption enabled
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ekm-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-10
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    mql: |
+      jamf.computerInventory.all(fileVault2Status == "VALID")
+    docs:
+      desc: |-
+        This check ensures that every managed computer reports a FileVault status of `VALID`, meaning the boot volume is fully encrypted with a valid, escrowed recovery key. `VALID` is the fully-encrypted, key-escrowed state; other states such as `VALID_BUT_DISABLED_BY_USER` or `NOT_APPLICABLE` indicate that encryption is not effectively in force. A lost or stolen unencrypted Mac exposes all of its local data.
+
+        **Why this matters**
+
+        - **Data-at-rest protection:** FileVault encrypts the entire boot volume, so a lost or stolen device does not surrender its contents to whoever holds it.
+        - **Recoverable keys:** An escrowed recovery key means the organization can recover an encrypted device without leaving encryption optional or unmanaged.
+        - **Effective state, not intent:** Requiring `VALID` distinguishes machines that are actually encrypted from those where a user or platform state left encryption off.
+
+        **Risk mitigation**
+
+        - **Loss and theft:** Encrypted volumes render the data on a misplaced or stolen Mac unreadable without the credentials or escrowed key.
+        - **Decommissioning:** Full-disk encryption reduces the risk of data remnants when devices are retired or reassigned.
+      audit: |-
+        ### Audit via the Jamf Pro console
+
+        1. Sign in to the Jamf Pro console as an administrator.
+        2. Go to **Computers** and build a search or Smart Group on the **FileVault 2 status** criterion.
+        3. Review the disk-encryption status reported for each managed computer.
+
+        If every managed computer reports FileVault status `VALID`, the check passes. If any computer reports another state, the check fails.
+
+        ### Audit via the API
+
+        1. Read the computer inventory with the disk-encryption section from the Jamf Pro API:
+
+           ```bash
+           curl -s -H "Authorization: Bearer $JAMF_TOKEN" \
+             "https://YOUR_TENANT.jamfcloud.com/api/v1/computers-inventory?section=DISK_ENCRYPTION"
+           ```
+
+        If every returned computer reports FileVault status `VALID`, the check passes. If any computer reports another state, the check fails.
+      remediation:
+        - id: console
+          desc: |-
+            To enforce FileVault encryption in the Jamf Pro console:
+
+            1. Sign in to the Jamf Pro console as an administrator.
+            2. Create a **Disk Encryption** configuration profile that enables FileVault and escrows the personal or institutional recovery key.
+            3. Scope the profile to all managed computers.
+            4. Deploy the profile and confirm that computers report FileVault status `VALID`.
+        - id: api
+          desc: |-
+            To enforce FileVault encryption through the Jamf Pro API, create a disk-encryption configuration profile and scope it to all computers. For example, create the FileVault configuration:
+
+            ```bash
+            curl -s -X POST \
+              -H "Authorization: Bearer $JAMF_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://YOUR_TENANT.jamfcloud.com/api/v1/disk-encryption-configurations" \
+              --data '{"name": "Enforce FileVault", "keyType": "Individual"}'
+            ```
+
+            Then scope the resulting configuration profile to all managed computers so the encryption policy applies fleet-wide.
+    refs:
+      - url: https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/FileVault.html
+        title: FileVault management with Jamf Pro
+  - uid: mondoo-jamf-security-firewall-enabled
+    filters: asset.platform == "jamf"
+    title: Ensure managed computers have the host firewall enabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-b-protection
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
+      compliance/soc2-2017: soc2-control-cc6-3-1
+      compliance/vda-isa-5: vda-isa-5-5-2-1
+    mql: |
+      jamf.computerInventory.all(firewallEnabled == true)
+    docs:
+      desc: |-
+        This check ensures that every managed computer has the macOS application firewall enabled, limiting the inbound network exposure of listening services. A Mac with the firewall off accepts unsolicited inbound connections to any service that happens to be listening.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** The application firewall blocks unsolicited inbound connections, so only services the user or administrator allows are reachable.
+        - **Protection on untrusted networks:** Laptops routinely connect to coffee-shop, hotel, and conference networks where any peer can probe listening ports.
+        - **Defense in depth:** The host firewall backstops network controls, containing exposure when a device is off the corporate network.
+
+        **Risk mitigation**
+
+        - **Fewer reachable services:** Inbound-blocking limits what a nearby attacker can connect to and attempt to exploit.
+        - **Lateral-movement resistance:** A firewalled endpoint is harder to pivot to from a compromised peer on the same network.
+      audit: |-
+        ### Audit via the Jamf Pro console
+
+        1. Sign in to the Jamf Pro console as an administrator.
+        2. Go to **Computers** and build a search or Smart Group on the firewall status criterion.
+        3. Review the firewall state reported for each managed computer.
+
+        If every managed computer reports the firewall as enabled, the check passes. If any computer reports the firewall disabled, the check fails.
+
+        ### Audit via the API
+
+        1. Read the computer inventory with the security section from the Jamf Pro API:
+
+           ```bash
+           curl -s -H "Authorization: Bearer $JAMF_TOKEN" \
+             "https://YOUR_TENANT.jamfcloud.com/api/v1/computers-inventory?section=SECURITY"
+           ```
+
+        If every returned computer reports the firewall as enabled, the check passes. If any computer reports it disabled, the check fails.
+      remediation:
+        - id: console
+          desc: |-
+            To enforce the host firewall in the Jamf Pro console:
+
+            1. Sign in to the Jamf Pro console as an administrator.
+            2. Create a **Security** configuration profile (or a policy) that enables the macOS application firewall.
+            3. Scope the profile to all managed computers.
+            4. Deploy the profile and confirm that computers report the firewall as enabled.
+        - id: api
+          desc: |-
+            To enforce the host firewall through the Jamf Pro API, create a configuration profile that enables the macOS application firewall and scope it to all computers:
+
+            ```bash
+            curl -s -X POST \
+              -H "Authorization: Bearer $JAMF_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://YOUR_TENANT.jamfcloud.com/api/v1/macos-configuration-profiles" \
+              --data '{"name": "Enable macOS Firewall"}'
+            ```
+
+            Attach a firewall payload (`com.apple.security.firewall`) that enables the firewall to the profile, then scope it to all managed computers.
+    refs:
+      - url: https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/Computer_Configuration_Profiles.html
+        title: Computer configuration profiles

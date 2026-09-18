@@ -1,0 +1,156 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-weaviate-security
+    name: Mondoo Weaviate Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: weaviate
+    require:
+      - provider: weaviate
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure Weaviate vector database access control and authentication
+    docs:
+      desc: |
+        The Mondoo Weaviate Security policy connects to a running Weaviate vector database and assesses its access-control posture: whether the server answers unauthenticated requests and whether role-based access control is enforced.
+
+        A vector database backs retrieval-augmented generation (RAG) and semantic search, so it holds embeddings derived from potentially sensitive source data. Leaving it open to unauthenticated access exposes that data and lets anyone read, poison, or delete the collections an LLM application depends on.
+
+        Learn more about scanning with cnspec in the [cnspec documentation](https://mondoo.com/docs/cnspec).
+    groups:
+      - title: Access Control
+        filters: asset.platform == "weaviate"
+        checks:
+          - uid: mondoo-weaviate-security-anonymous-access-disabled
+          - uid: mondoo-weaviate-security-rbac-enabled
+    scoring_system: highest impact
+queries:
+  - uid: mondoo-weaviate-security-anonymous-access-disabled
+    filters: asset.platform == "weaviate"
+    title: Ensure Weaviate does not allow anonymous access
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm08
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      weaviate.instance.anonymousAccessEnabled == false
+    docs:
+      desc: |-
+        This check ensures that the Weaviate server rejects unauthenticated requests. When anonymous access is enabled, any client that can reach the network endpoint can read, modify, or delete data without presenting credentials.
+
+        **Why this matters**
+
+        - **Data exposure:** Embeddings and their associated objects often derive from sensitive source documents; anonymous read access leaks that data to anyone on the network.
+        - **Data poisoning:** Without authentication, an attacker can insert or alter vectors, corrupting the results a retrieval-augmented generation pipeline returns.
+        - **Availability:** Anonymous write access lets anyone delete collections the application depends on.
+
+        **Risk mitigation**
+
+        - **Authenticated access only:** Requiring credentials ensures every request is tied to a known identity.
+        - **Attribution:** Authenticated requests can be logged and attributed, supporting detection and investigation.
+      audit: |-
+        ### Audit via the REST API
+
+        1. Query the server's metadata without credentials and observe whether it responds:
+
+           ```bash
+           curl -s -o /dev/null -w "%{http_code}" http://WEAVIATE_HOST:8080/v1/meta
+           ```
+
+        If the request is rejected (for example `401`), anonymous access is disabled and the check passes. If it returns `200` without credentials, anonymous access is enabled and the check fails.
+      remediation:
+        - id: config
+          desc: |-
+            To disable anonymous access, set the environment variable on the Weaviate server and restart it:
+
+            ```bash
+            export AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=false
+            ```
+
+            Configure at least one authentication method (API keys or OIDC) at the same time so authorized clients can still connect, for example:
+
+            ```bash
+            export AUTHENTICATION_APIKEY_ENABLED=true
+            export AUTHENTICATION_APIKEY_ALLOWED_KEYS=<generated-key>
+            export AUTHENTICATION_APIKEY_USERS=admin@example.com
+            ```
+    refs:
+      - url: https://weaviate.io/developers/weaviate/configuration/authentication
+        title: Weaviate authentication
+  - uid: mondoo-weaviate-security-rbac-enabled
+    filters: asset.platform == "weaviate"
+    title: Ensure Weaviate enforces role-based access control
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm08
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      weaviate.instance.rbacEnabled == true
+    docs:
+      desc: |-
+        This check ensures that role-based access control (RBAC) is enabled so that authenticated users are granted only the permissions their role requires, rather than every authenticated client having full access.
+
+        **Why this matters**
+
+        - **Least privilege:** RBAC lets you grant read-only access to consumers of a collection while restricting write and admin operations to a small set of principals.
+        - **Blast radius:** Without RBAC, any valid credential typically carries full control of every collection on the server.
+        - **Separation of duties:** Distinct roles for ingestion, query, and administration limit what a single compromised credential can do.
+
+        **Risk mitigation**
+
+        - **Contained credentials:** A leaked read-only key cannot be used to alter or delete data.
+        - **Scoped automation:** Application service identities can be limited to the collections and actions they need.
+      audit: |-
+        ### Audit via the REST API
+
+        1. Read the server's modules and authorization configuration from its metadata endpoint (with credentials):
+
+           ```bash
+           curl -s -H "Authorization: Bearer $WEAVIATE_API_KEY" http://WEAVIATE_HOST:8080/v1/meta
+           ```
+
+        If role-based access control is enabled on the server, the check passes. If authorization is left at the default all-or-nothing admin list, the check fails.
+      remediation:
+        - id: config
+          desc: |-
+            To enable RBAC, set the environment variables on the Weaviate server and restart it, then define roles and assign them to users:
+
+            ```bash
+            export AUTHORIZATION_RBAC_ENABLED=true
+            export AUTHORIZATION_ADMIN_USERS=admin@example.com
+            ```
+
+            After enabling RBAC, create roles with the minimum permissions each principal needs and assign them, rather than granting admin broadly.
+    refs:
+      - url: https://weaviate.io/developers/weaviate/configuration/authorization
+        title: Weaviate authorization
