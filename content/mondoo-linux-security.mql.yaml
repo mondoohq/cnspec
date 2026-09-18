@@ -7087,15 +7087,14 @@ queries:
           grub.config.entries.where(bootable).all(cmdline == /(^|\s)\$kernelopts(\s|$)/) &&
             files.find(from: "/boot", xdev: true, type: "file", regex: '.*/grub\.cfg$').list.any(content.lines.any(_ == /^\s*set kernelopts="(\S+\s+)*audit=1(\s|")/)) &&
             files.find(from: "/boot", xdev: true, type: "file", regex: '.*/grub\.cfg$').list.none(content.lines.any(_ == /^\s*set kernelopts="(\S+\s+)*audit=([^1\s"]|1[^\s"]|[\s"]|$)/));
-        // systemd-boot, which grub.config does not read. Its entries live on the EFI system
-        // partition, mounted at /efi or /boot/efi; the /boot mount is grub.config's.
-        case files.find(from: "/boot/efi/loader/entries", type: "file", regex: '.*\.conf$').list != empty ||
-          files.find(from: "/efi/loader/entries", type: "file", regex: '.*\.conf$').list != empty:
-          files.find(from: "/boot/efi/loader/entries", type: "file", regex: '.*\.conf$').list.all(
-            content.lines.any(_ == /^\s*options(\s+\S+)*\s+audit=1(\s|$)/) &&
-              content.lines.none(_ == /^\s*options(\s+\S+)*\s+audit=([^1\s]|1\S|\s|$)/)
-          ) &&
-          files.find(from: "/efi/loader/entries", type: "file", regex: '.*\.conf$').list.all(
+        // systemd-boot, which grub.config does not read. bootPath is the directory this
+        // host keeps its entries under, which the resource resolves rather than the check
+        // guessing: the extended boot loader partition where the host has one, and the EFI
+        // system partition otherwise, which the specification allows at /efi, /boot or
+        // /boot/efi.
+        case systemd.boot.installed:
+          files.find(from: systemd.boot.bootPath + "/loader/entries", type: "file", regex: '.*\.conf$').list != empty &&
+          files.find(from: systemd.boot.bootPath + "/loader/entries", type: "file", regex: '.*\.conf$').list.all(
             content.lines.any(_ == /^\s*options(\s+\S+)*\s+audit=1(\s|$)/) &&
               content.lines.none(_ == /^\s*options(\s+\S+)*\s+audit=([^1\s]|1\S|\s|$)/)
           );
@@ -7112,7 +7111,7 @@ queries:
         The kernel queues audit events from very early in boot, but only if it is told to. The check reads the kernel arguments that every boot entry passes on the next boot and requires `audit=1` in each of them:
 
         - Where the host boots with GRUB, it reads the entries GRUB offers, taken from whichever source GRUB takes them from. On Debian, Ubuntu, and SUSE that is the menu entries in `grub.cfg`. On RHEL 8 and later, Fedora, and Amazon Linux 2023 the `grub.cfg` hands the menu to the Boot Loader Specification files under `/boot/loader/entries`, and an entry whose options are `$kernelopts` takes them from the `kernelopts` variable in `/boot/grub2/grubenv`, as RHEL 8 does. Where `grubenv` does not define that variable, GRUB falls back to the `set kernelopts` line in `grub.cfg`, and so does the check. On GRUB legacy hosts, such as Amazon Linux 1 and RHEL 6, it reads the `kernel` line of every `title` entry in `menu.lst`.
-        - Where systemd-boot keeps its entries on the EFI system partition, it reads the `options` line of every entry under it. The Boot Loader Specification allows that partition at `/efi`, `/boot`, or `/boot/efi`, and the check reads all three.
+        - Where systemd-boot keeps its entries, it reads the `options` line of every entry under that directory. The Boot Loader Specification allows the partition at `/efi`, `/boot`, or `/boot/efi`, and a host may keep its entries on a separate extended boot loader partition instead, so the check asks systemd-boot which directory this host uses rather than trying each in turn.
         - Where `secboot` builds a unified kernel image for each installed kernel, it reads the command line embedded in every image on the EFI system partition. A host whose images cannot be listed fails rather than being answered from the `kernel-params` the next build would embed, which is a build input and not what the host boots with.
 
         Every entry that starts an operating system is checked, recovery entries included. Submenus, firmware entries, memory tests, and entries that chainload another system start none and are ignored, and a host that offers nothing to boot fails rather than passing over an empty list. A parameter written more than once on one command line takes its last value, which is how the kernel reads it, so `audit=0 audit=1` passes and `audit=1 audit=0` does not. On RHEL-family systems `grubby` writes the parameter into every entry. On Debian-family systems it goes into `GRUB_CMDLINE_LINUX` and the GRUB configuration is regenerated. Either way it takes effect on the next boot.
