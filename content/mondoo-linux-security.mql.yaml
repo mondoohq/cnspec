@@ -7079,14 +7079,10 @@ queries:
       asset.runtime != "docker-container"
     mql: |
       switch {
-        // Every entry GRUB boots, from grub.cfg, the BLS files, or a legacy menu.lst.
-        // Second alternative: entries left on $kernelopts that grubenv does not define,
-        // which GRUB takes from the set kernelopts line in grub.cfg.
+        // Every entry GRUB boots, from grub.cfg, the BLS files, or a legacy menu.lst,
+        // with $kernelopts resolved from grubenv or from the grub.cfg fallback.
         case grub.config.entries.where(bootable) != empty:
-          grub.config.entries.where(bootable).all(parameters["audit"] == "1") ||
-          grub.config.entries.where(bootable).all(cmdline == /(^|\s)\$kernelopts(\s|$)/) &&
-            files.find(from: "/boot", xdev: true, type: "file", regex: '.*/grub\.cfg$').list.any(content.lines.any(_ == /^\s*set kernelopts="(\S+\s+)*audit=1(\s|")/)) &&
-            files.find(from: "/boot", xdev: true, type: "file", regex: '.*/grub\.cfg$').list.none(content.lines.any(_ == /^\s*set kernelopts="(\S+\s+)*audit=([^1\s"]|1[^\s"]|[\s"]|$)/));
+          grub.config.entries.where(bootable).all(parameters["audit"] == "1");
         // systemd-boot, which grub.config does not read. entries covers both sources it
         // takes entries from: the Boot Loader Specification files, and the unified kernel
         // images, which carry their command line inside the image and have no entry file.
@@ -7104,7 +7100,7 @@ queries:
 
         The kernel queues audit events from very early in boot, but only if it is told to. The check reads the kernel arguments that every boot entry passes on the next boot and requires `audit=1` in each of them:
 
-        - Where the host boots with GRUB, it reads the entries GRUB offers, taken from whichever source GRUB takes them from. On Debian, Ubuntu, and SUSE that is the menu entries in `grub.cfg`. On RHEL 8 and later, Fedora, and Amazon Linux 2023 the `grub.cfg` hands the menu to the Boot Loader Specification files under `/boot/loader/entries`, and an entry whose options are `$kernelopts` takes them from the `kernelopts` variable in `/boot/grub2/grubenv`, as RHEL 8 does. Where `grubenv` does not define that variable, GRUB falls back to the `set kernelopts` line in `grub.cfg`, and so does the check. On GRUB legacy hosts, such as Amazon Linux 1 and RHEL 6, it reads the `kernel` line of every `title` entry in `menu.lst`.
+        - Where the host boots with GRUB, it reads the entries GRUB offers, taken from whichever source GRUB takes them from. On Debian, Ubuntu, and SUSE that is the menu entries in `grub.cfg`. On RHEL 8 and later, Fedora, and Amazon Linux 2023 the `grub.cfg` hands the menu to the Boot Loader Specification files under `/boot/loader/entries`, and an entry whose options are `$kernelopts` takes them from the `kernelopts` variable in `/boot/grub2/grubenv`, as RHEL 8 does. Where `grubenv` does not define that variable, GRUB falls back to the `set kernelopts` line in `grub.cfg`, and the entries are read with that resolved. On GRUB legacy hosts, such as Amazon Linux 1 and RHEL 6, it reads the `kernel` line of every `title` entry in `menu.lst`.
         - Where the host boots with systemd-boot, it reads the entries that bootloader offers, from both of the places it takes them: the Boot Loader Specification files under `loader/entries`, and the unified kernel images under `EFI/Linux`, which carry their command line inside the image and have no entry file at all. A host booting only unified kernel images is read the same as any other.
         - Where `secboot` builds a unified kernel image for each installed kernel, it reads the command line embedded in every image on the EFI system partition. A host whose images cannot be listed fails rather than being answered from the `kernel-params` the next build would embed, which is a build input and not what the host boots with.
 
