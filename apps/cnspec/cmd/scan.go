@@ -347,6 +347,12 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 	}
 	if assetName != "" && cliRes.Asset != nil {
 		cliRes.Asset.Name = assetName
+		// Mark the name as one the user asked for. Providers name assets
+		// themselves during ParseCLI and then improve that name once connected,
+		// so discovery cannot tell a requested name from a provider default by
+		// looking at the field alone; without the marker it leaves the name that
+		// detect computed in place.
+		cliRes.Asset.NameOverride = true
 	}
 
 	platformID := viper.GetString("platform-id")
