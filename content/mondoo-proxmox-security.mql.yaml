@@ -5068,7 +5068,7 @@ queries:
             ```
 
   - uid: mondoo-proxmox-security-automatic-updates-are-enabled
-    title: Ensure unattended-upgrades is installed
+    title: Ensure unattended-upgrades covers Proxmox VE packages
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
@@ -5087,35 +5087,47 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-2-5
     mql: |
       package("unattended-upgrades").installed
+      files.find(from: "/etc/apt/apt.conf.d", type: "file").any(content == /(?m)^\s*"[^"]*(o|origin)=Proxmox/)
     docs:
       desc: |
-        This check verifies that the `unattended-upgrades` package is installed so security updates apply without waiting for a person.
+        This check verifies that unattended upgrades are installed and that the Proxmox VE repository is on their allow list, so hypervisor packages are patched automatically instead of only the Debian base.
 
-        The package is installed with apt and configured through `/etc/apt/apt.conf.d/20auto-upgrades`, where `APT::Periodic::Update-Package-Lists` and `APT::Periodic::Unattended-Upgrade` are both set to `1`. Confirm it is running with `systemctl is-enabled unattended-upgrades` as well, since installing the package without enabling the periodic settings changes nothing.
+        Which packages `unattended-upgrades` may install is decided by `Unattended-Upgrade::Origins-Pattern`, a list of repository metadata patterns assembled from the files under `/etc/apt/apt.conf.d/`. The stock list shipped in `50unattended-upgrades` allows only entries whose origin is `Debian`. The Proxmox VE repository publishes `Origin: Proxmox` and `Label: Proxmox Debian Repository` in its `Release` file, so with the stock list every `pve-manager`, `qemu-server`, `pve-kernel`, and `proxmox-ve` update is passed over. This check requires the package to be installed and an active pattern naming `origin=Proxmox`, written either into `50unattended-upgrades` or into a drop-in file alongside it.
 
         **Why this matters**
 
-        The interval between a fix being published and being installed is the window an attacker works in, and for a hypervisor that window is measured against exploits that already exist. Advisories describe the flaw precisely enough for working exploit code to appear within days, and the components on this host that receive those advisories include QEMU, the kernel, and the API proxy that fronts the web interface.
+        The interval between a fix being published and being installed is the window an attacker works in, and for a hypervisor that window is measured against exploits that already exist. Advisories describe the flaw precisely enough for working exploit code to appear within days, and the components on this host that receive those advisories include QEMU, the kernel, and the API proxy that fronts the web interface. Those components are shipped by Proxmox, not by Debian, so an allow list that names only `origin=Debian` leaves exactly the software the hypervisor is built on unpatched while the automation reports success.
 
         Manual patching does not keep that window short in practice. It depends on someone reading the advisory, deciding it applies, and finding a maintenance slot, and hypervisor nodes are exactly the machines people postpone touching because rebooting them moves guests around. The node that is most disruptive to patch is the one whose compromise reaches the most workloads.
 
         Automatic updates take the routine security fixes off that critical path so the backlog is limited to changes that genuinely need coordination.
 
-        Unattended upgrades restart services, which briefly interrupts the API and can disturb a guest if a component it depends on is replaced, and a kernel update needs a reboot that the mechanism will not perform on its own. Configure the reboot window deliberately, exclude packages you must stage by hand, and stagger nodes so the whole cluster does not update at the same moment. This check confirms the package is present, not that a reboot policy exists, so verify the kernel is actually current afterward.
+        Unattended upgrades restart services, which briefly interrupts the API and can disturb a guest if a component it depends on is replaced, and a kernel update needs a reboot that the mechanism will not perform on its own. Configure the reboot window deliberately, exclude packages you must stage by hand, and stagger nodes so the whole cluster does not update at the same moment.
+
+        **Two limits of the mechanism on a Proxmox node.** `unattended-upgrades` installs upgrades only; it never adds or removes packages, so a Proxmox VE point release whose dependencies changed stays held back until someone runs `apt full-upgrade` by hand. And this check confirms the allow list, not that a reboot policy exists, so verify the running kernel is actually current afterward.
       audit: |
         ### Audit via CLI
 
-        Run the command on a cluster node:
+        Run these commands on a cluster node:
+
+        1. Confirm the package is installed:
+
+           ```bash
+           dpkg-query -W -f='${Status}\n' unattended-upgrades
+           ```
+
+        2. Print the allow list that apt assembles from `/etc/apt/apt.conf.d/`:
+
+           ```bash
+           apt-config dump --no-empty --format '%v%n' Unattended-Upgrade::Origins-Pattern
+           ```
+
+        The check passes when the status reports `install ok installed` and the allow list contains an entry whose origin is `Proxmox`, written as `origin=Proxmox` or `o=Proxmox`. It fails when the package is missing, or when every pattern names `origin=Debian`, which is the stock Debian list. Commented-out patterns do not count, since apt never reads them.
+
+        To see which upgrades the current allow list would actually select, and to confirm the service is active, also run:
 
         ```bash
-        dpkg-query -W -f='${Status}\n' unattended-upgrades
-        ```
-
-        The check passes when the status reports `install ok installed`; it fails when the package is not installed.
-
-        To confirm the service is active, also run:
-
-        ```bash
+        unattended-upgrade --dry-run --debug
         systemctl is-enabled unattended-upgrades
         ```
       remediation:
@@ -5123,18 +5135,26 @@ queries:
           desc: |
             **Using the CLI**
 
-            Install and enable unattended-upgrades:
+            Install unattended-upgrades, enable the periodic jobs, and add the Proxmox VE repository to the allow list. Apt appends list entries across files in `/etc/apt/apt.conf.d/`, so a drop-in adds the Proxmox origin without editing the stock `50unattended-upgrades`:
 
             ```bash
             apt-get update
             apt-get install -y unattended-upgrades
             dpkg-reconfigure -f noninteractive unattended-upgrades
+
+            cat > /etc/apt/apt.conf.d/52unattended-upgrades-proxmox <<'EOF'
+            Unattended-Upgrade::Origins-Pattern {
+                    "origin=Proxmox,codename=${distro_codename},label=Proxmox Debian Repository";
+            };
+            EOF
+
+            unattended-upgrade --dry-run --debug
             ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Idempotently install and enable unattended-upgrades:
+            Idempotently install unattended-upgrades, enable the periodic jobs, and allow the Proxmox VE origin:
 
             ```bash
             #!/bin/bash
@@ -5150,13 +5170,21 @@ queries:
             APT::Periodic::Unattended-Upgrade "1";
             EOF
 
+            cat > /etc/apt/apt.conf.d/52unattended-upgrades-proxmox <<'EOF'
+            Unattended-Upgrade::Origins-Pattern {
+                    "origin=Proxmox,codename=${distro_codename},label=Proxmox Debian Repository";
+            };
+            EOF
+
             systemctl enable --now unattended-upgrades
+
+            apt-config dump --no-empty --format '%v%n' Unattended-Upgrade::Origins-Pattern
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to install and enable unattended-upgrades:
+            Use this Ansible playbook to install unattended-upgrades, enable the periodic jobs, and allow the Proxmox VE origin:
 
             ```yaml
             ---
@@ -5180,6 +5208,17 @@ queries:
                     content: |
                       APT::Periodic::Update-Package-Lists "1";
                       APT::Periodic::Unattended-Upgrade "1";
+
+                - name: Allow the Proxmox VE repository origin
+                  ansible.builtin.copy:
+                    dest: /etc/apt/apt.conf.d/52unattended-upgrades-proxmox
+                    owner: root
+                    group: root
+                    mode: '0644'
+                    content: |
+                      Unattended-Upgrade::Origins-Pattern {
+                              "origin=Proxmox,codename=${distro_codename},label=Proxmox Debian Repository";
+                      };
 
                 - name: Ensure unattended-upgrades service is running
                   ansible.builtin.systemd:
