@@ -147,16 +147,19 @@ func checkResult(report *policy.Report, mrn string) (checkOutcome, uint32) {
 }
 
 // tfAssetForVariant builds a scan asset for a variant fixture, picking the
-// connection type from the variant-uid suffix. terraform-hcl fixtures are a
-// directory of .tf files; cloudformation fixtures point at a single template
-// file (.yaml/.yml/.json) in the scenario dir.
+// connection type from the variant-uid suffix. terraform-hcl is the only
+// connection that takes the scenario dir itself, because an HCL fixture is a
+// directory of .tf files. Every other connection here takes a single file
+// inside that dir and is resolved down to it.
 func tfAssetForVariant(uid, path string) *inventory.Asset {
 	connType := "terraform-hcl"
 	switch {
 	case strings.HasSuffix(uid, "-terraform-plan"):
 		connType = "terraform-plan"
+		path = tfDocumentPath(path)
 	case strings.HasSuffix(uid, "-terraform-state"):
 		connType = "terraform-state"
+		path = tfDocumentPath(path)
 	case strings.HasSuffix(uid, "-cloudformation"):
 		connType = "cloudformation"
 		path = cfnTemplatePath(path)
@@ -170,6 +173,26 @@ func tfAssetForVariant(uid, path string) *inventory.Asset {
 			Options: map[string]string{"path": path},
 		}},
 	}
+}
+
+// tfDocumentPath returns the single JSON document inside a scenario dir. The
+// terraform plan and state connections take a file PATH, not a dir:
+// NewPlanConnection reads it with os.ReadFile, so a dir fails the scan with
+// "is a directory" before any check runs.
+func tfDocumentPath(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return dir
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if strings.HasSuffix(e.Name(), ".json") {
+			return filepath.Join(dir, e.Name())
+		}
+	}
+	return dir
 }
 
 // cfnTemplatePath returns the single CloudFormation template file inside a
