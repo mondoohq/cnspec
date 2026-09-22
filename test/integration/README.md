@@ -3,11 +3,13 @@
 Runs a real cnspec binary against real targets — container images, the local
 system, and a Kubernetes cluster — and asserts on the structured JSON report.
 
-Everything here runs without credentials. No Mondoo Platform service account,
-no cloud tenants, no SaaS orgs: every scan is incognito. The network is still
-used, deliberately — container images are pulled and providers are downloaded
-from the production registry, and those paths are part of what a release has to
-get right.
+Most of it runs without credentials: no cloud tenants, no SaaS orgs, and every
+scan incognito. The network is still used, deliberately — container images are
+pulled and providers are downloaded from the production registry, and those
+paths are part of what a release has to get right.
+
+The one exception is the **upstream tier**, which authenticates against the
+Mondoo Platform. It is opt-in and skips unless asked for; see below.
 
 ## Running it
 
@@ -67,6 +69,70 @@ the same thing via `.github/scripts/resolve-cnspec-artifact.sh`.
 | `local` | the local connector and OS provider on whatever the runner is |
 | `k8s` | the k8s provider, cluster discovery, and the only multi-asset scan in the suite — the one place an aggregation bug (assets discovered, results dropped or collapsed) is visible |
 | `formats` | `-o <name>` wiring from the format registry through the output handler to stdout, for every format a scan supports |
+| `upstream` | registration, policy resolution from the space, the vulnerability service, and report upload — everything incognito skips |
+
+## The upstream tier
+
+```bash
+CNSPEC_IT_UPSTREAM_CONFIG=/path/to/serviceaccount.json make test/integration/upstream
+```
+
+Unset, it skips. It registers assets in whatever space the service account
+belongs to.
+
+**Not `MONDOO_CONFIG_PATH`.** The suite strips every `MONDOO_*` from the child
+environment, so a credential that happens to be in the environment — a
+developer's own, or a secret exported into a CI job for something else — cannot
+pull a tier upstream that was meant to run incognito. Reaching the platform has
+to be asked for by name, and only this tier passes it through.
+
+### What it is for
+
+The client and the platform ship separately, and a fleet routinely runs a client
+ahead of the server it reports to, so "the client is newer" is the normal case
+rather than the exception. Nothing else here covers it: incognito skips
+registration, policy resolution from the space, the vulnerability service and
+the upload entirely.
+
+`TestUpstreamStatus` logs both API versions, so the CI log records what the run
+actually proved compatible:
+
+```
+integration: version cnspec 14.0.0-rc.10
+client API v14
+server API v13 ✓ client ahead
+```
+
+### The assertion the tier turns on
+
+Without a usable credential cnspec does not fail — it logs `Switching to
+--incognito mode` and scans happily. Every other assertion in the tier would
+then pass while testing none of the upstream path, which is the exact shape of a
+test that reports success for something it stopped doing. So:
+
+- stderr must not contain the incognito fallback;
+- the asset MRN must match `//assets.<host>/spaces/<space>/assets/…`, because an
+  incognito scan mints a local identifier instead;
+- stderr must contain `uploaded scan data`, asserted there rather than on the
+  report because stdout is written before the upload is attempted;
+- a credential that is configured but unreadable is a **failure**, never a skip.
+
+Both failure modes are verified: pointing the variable at a missing file fails
+with the path in the message, and pointing it at a readable file that is not a
+service account fails on the incognito assertion rather than passing quietly.
+
+No check-count floor here. The policies come from the space, so how many apply
+is the space's business — what is asserted is that the engine ran them and they
+produced real verdicts rather than a wave of errors.
+
+### In CI
+
+The `upstream` job reads the `MONDOO_INTEGRATION_SERVICE_ACCOUNT` secret, writes
+it to `$RUNNER_TEMP` at 0600 (outside the checkout, so nothing that globs the
+workspace picks it up), and removes it in an `always()` step. When the secret is
+absent — a fork, or a repo that has not configured it — the job reports that and
+does not run the tier, because a missing secret is a property of where the
+workflow is running and not a result about cnspec.
 
 ## Two things that shape every assertion here
 

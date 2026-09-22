@@ -39,6 +39,7 @@ on:
           - all
           - docker-local
           - k8s
+          - upstream
 
 permissions:
   contents: read
@@ -53,7 +54,7 @@ jobs:
     # Written as `!=` rather than `==` so a scheduled run, where inputs are
     # empty, executes every tier. That is what keeps promoting this workflow to
     # a nightly a two-line change instead of a four-line one.
-    if: ${{ inputs.tiers != 'k8s' }}
+    if: ${{ inputs.tiers != 'k8s' && inputs.tiers != 'upstream' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -124,7 +125,7 @@ jobs:
 
   k8s:
     name: kind
-    if: ${{ inputs.tiers != 'docker-local' }}
+    if: ${{ inputs.tiers != 'docker-local' && inputs.tiers != 'upstream' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -187,6 +188,91 @@ jobs:
         if: failure()
         with:
           name: integration-reports-k8s
+          path: test/integration/artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  upstream:
+    name: upstream
+    # The only job that authenticates, and the only one that needs a secret.
+    # Skipped on a run where the secret is absent -- a fork, or a repo that has
+    # not configured it -- rather than failing, because a missing secret is a
+    # property of where the workflow is running and not a result about cnspec.
+    if: ${{ inputs.tiers == 'upstream' || inputs.tiers == 'all' || inputs.tiers == '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Same rule as the other jobs: once the tier is running, a skip is a
+      # failure. It can still skip before this matters -- the secret gate below
+      # decides whether the tier runs at all.
+      CNSPEC_IT_REQUIRE_ALL: "1"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Import environment variables from file
+        run: cat ".github/env" >> $GITHUB_ENV
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "${{ env.golang-version }}"
+          check-latest: true
+          cache: false
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Make provider dir
+        run: mkdir -p ${PWD}/${GITHUB_JOB}/.providers
+
+      - name: Set provider env
+        run: echo "PROVIDERS_PATH=${PWD}/${GITHUB_JOB}/.providers" >> $GITHUB_ENV
+
+      # Written to RUNNER_TEMP rather than the workspace so it cannot be picked
+      # up by a later step that globs the checkout, and 0600 so it is not
+      # readable by anything else sharing the runner.
+      - name: Write the service account
+        id: creds
+        env:
+          SERVICE_ACCOUNT: ${{ secrets.MONDOO_INTEGRATION_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SERVICE_ACCOUNT}" ]; then
+            echo "no service account configured; the upstream tier will not run"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          install -m 600 /dev/null "${RUNNER_TEMP}/mondoo-sa.json"
+          printf '%s' "${SERVICE_ACCOUNT}" > "${RUNNER_TEMP}/mondoo-sa.json"
+          echo "CNSPEC_IT_UPSTREAM_CONFIG=${RUNNER_TEMP}/mondoo-sa.json" >> $GITHUB_ENV
+          echo "present=true" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve binary under test
+        if: steps.creds.outputs.present == 'true'
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/resolve-cnspec-artifact.sh
+
+      - name: Run upstream tier
+        if: steps.creds.outputs.present == 'true'
+        run: make test/integration/upstream
+
+      - name: Remove the service account
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/mondoo-sa.json"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: integration-reports-upstream
           path: test/integration/artifacts/
           if-no-files-found: ignore
           retention-days: 7

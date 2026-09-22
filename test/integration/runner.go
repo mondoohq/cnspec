@@ -39,13 +39,20 @@ type result struct {
 // name, with its output attached.
 func run(t *testing.T, timeout time.Duration, args ...string) *result {
 	t.Helper()
+	return runEnv(t, childEnv(), timeout, args...)
+}
+
+// runEnv is run with an explicit environment, for the upstream tier. Every other
+// caller goes through run and gets the scrubbed one.
+func runEnv(t *testing.T, env []string, timeout time.Duration, args ...string) *result {
+	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, cnspecBin, args...)
-	cmd.Env = childEnv()
+	cmd.Env = env
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	// Kill the process tree if it ignores the context cancellation. Provider
