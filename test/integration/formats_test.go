@@ -6,6 +6,8 @@
 package integration
 
 import (
+	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"encoding/xml"
 	"testing"
@@ -30,8 +32,10 @@ const fsFixture = "../providers/testdata/fs"
 // cli/reporter has unit tests for each format against fixture reports. What
 // those cannot cover is the wiring: -o <name> -> format lookup -> output
 // handler -> stdout. That path is one switch statement away from a format that
-// errors at runtime for every user, which is how `-o csv` currently behaves
-// (see TestOutputFormatCSVIsNotImplemented).
+// errors at runtime for every user. `-o csv` did exactly that until it was
+// implemented: it was in the format map, so `cnspec scan --help` listed it,
+// but writing a scan report in it fell through to the default branch and the
+// command exited 1 with "unknown reporter type".
 func TestOutputFormats(t *testing.T) {
 	formats := []struct {
 		flag   string
@@ -86,6 +90,16 @@ func TestOutputFormats(t *testing.T) {
 			// would break every consumer downstream and is otherwise silent.
 			requireNDJSON(t, out)
 		}},
+		{"csv", func(t *testing.T, out []byte) {
+			// One row per asset x check. encoding/csv enforces a consistent
+			// column count across records, so a converter that emitted a
+			// ragged row fails here rather than in someone's spreadsheet.
+			records, err := csv.NewReader(bytes.NewReader(out)).ReadAll()
+			require.NoError(t, err)
+			require.Greater(t, len(records), 1, "header only: no check was exported")
+			assert.Equal(t, "Asset", records[0][0])
+			assert.Equal(t, "Status", records[0][6])
+		}},
 		{"hdf", func(t *testing.T, out []byte) {
 			var doc map[string]any
 			require.NoError(t, json.Unmarshal(out, &doc))
@@ -109,28 +123,6 @@ func TestOutputFormats(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestOutputFormatCSVIsNotImplemented pins a known gap.
-//
-// `csv` is in the reporter's format map, so it is listed in `cnspec scan
-// --help` as a supported output. Writing a scan report in it is not
-// implemented: the handler falls through to the default branch and the command
-// dies with "unknown reporter type, don't recognize this format". CSV works
-// only for vulnerability reports.
-//
-// Asserted rather than skipped, so the day it is implemented this test fails
-// and someone moves it into the matrix above instead of the gap quietly
-// persisting. Asserted rather than ignored, because a format advertised in
-// --help that always exits 1 is a defect, not a preference.
-func TestOutputFormatCSVIsNotImplemented(t *testing.T) {
-	res := run(t, 5*time.Minute,
-		"scan", "filesystem", "--path", fsFixture,
-		"-f", linuxSecurity, "--detect-cicd=false", "-o", "csv")
-
-	assert.Equal(t, 1, res.exitCode, "-o csv now exits 0; implemented? move it into TestOutputFormats")
-	assert.Contains(t, string(res.stderr), "unknown reporter type",
-		"-o csv failed for a different reason than the known gap")
 }
 
 // requireNDJSON asserts every non-empty line is its own JSON value.

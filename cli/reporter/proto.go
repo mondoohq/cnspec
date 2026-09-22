@@ -180,7 +180,12 @@ func ConvertToProto(data *policy.ReportCollection) (*Report, error) {
 			return nil, errors.New("cannot find resolved pack for " + mrn + " in report")
 		}
 
-		for qid := range resolved.ExecutionJob.Queries {
+		// Getters, not field access: a ResolvedPolicy with no ExecutionJob is a
+		// nil pointer dereference here, and this runs on the `-o json` path, so
+		// the failure is a panic in the middle of writing a report rather than
+		// an error. Reached with a resolved policy that carries only a
+		// CollectorJob.
+		for qid := range resolved.GetExecutionJob().GetQueries() {
 			qmrn := qid2mrn[qid]
 			// policies and other stuff
 			if qmrn == "" {
