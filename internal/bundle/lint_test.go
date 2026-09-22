@@ -370,3 +370,21 @@ policies:
 		}
 	})
 }
+
+// An overlay bundle imports a policy it does not carry and adjusts that
+// policy's checks. Neither the imported policy nor the checks are visible to
+// the linter, which has no Library and no cross-file context, so none of them
+// may be reported as missing or incomplete. Before mondoohq/server#20175 this
+// shape produced a bundle-compile-error for the import, a query-name error for
+// the override that supplies MQL, and a policy-missing-assigned-query error for
+// the one that does not - burying the one thing the author needed to know.
+func TestLinter_PassOverlayImport(t *testing.T) {
+	file := "./testdata/pass-overlay-import.mql.yaml"
+	results, err := Lint(schema, testLintOptions, file)
+	require.NoError(t, err)
+	for _, entry := range results.Entries {
+		t.Logf("[%s] %s: %s", entry.Level, entry.RuleID, entry.Message)
+	}
+	assert.Equal(t, 0, len(results.Entries))
+	assert.False(t, results.HasError())
+}
