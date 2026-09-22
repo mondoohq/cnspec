@@ -91,6 +91,13 @@ var scenarios = []scenario{
 		// production registry. Nothing else in this repo exercises that --
 		// content/validation always passes an explicit bundle -- yet it is what
 		// every new user hits first.
+		//
+		// This one keeps a check floor where the local-tier default scenario
+		// does not, because the target is a pinned image: the platform the
+		// registry resolves against is fixed, so the set of applicable policies
+		// is a property of the content rather than of the machine running the
+		// suite. If this floor starts failing, the content or the resolution
+		// really did change.
 		name: "alpine-default-policies",
 		tier: tierDocker, image: imageAlpine,
 		args:     []string{"scan", "docker", imageAlpine},
@@ -161,9 +168,19 @@ var scenarios = []scenario{
 		wantExit: 1, timeout: 4 * time.Minute,
 	},
 	{
-		// The local connector, against whatever the runner is. The floor is low
-		// and the platform assertion is only non-empty because this is the one
-		// scenario whose target differs between a laptop and CI.
+		// The local connector, against whatever the runner is.
+		//
+		// No check-count floor here, deliberately. Without -f the policies come
+		// from the registry and which ones apply is a property of the host, not
+		// of cnspec: a developer laptop resolved 75 checks while a CI runner
+		// resolved 8, because only the groups whose filters matched that host
+		// applied. A floor calibrated on either one is a false failure on the
+		// other, and neither number is something this suite controls.
+		//
+		// What is invariant is that the local connector produced an asset, the
+		// engine executed something, and at least one check reached a verdict.
+		// The floors live on the bundle scenarios, where the content is pinned
+		// in this repo and a collapse really is a regression.
 		name:     "local-default-policies",
 		tier:     tierLocal,
 		args:     []string{"scan", "local"},
@@ -173,8 +190,7 @@ var scenarios = []scenario{
 			requireNoAssetErrors(t, rep)
 			assert.NotEmpty(t, asset.GetPlatformName())
 			requireAssetScored(t, rep, mrn)
-			requireCheckFloor(t, rep, mrn, 20) // observed 75 on darwin, 2026-09-22
-			requireVerdicts(t, rep, mrn, 10)
+			requireVerdicts(t, rep, mrn, 1)
 		},
 	},
 	{
