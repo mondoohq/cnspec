@@ -162,8 +162,9 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 		// file. It needs a destination directory, never a terminal.
 		return errors.New("'ocsf-parquet' writes one file per OCSF event class, " +
 			"please point --output-target at a directory")
-	// case FormatCSV:
-	// 	res, err = data.ToCsv()
+	case FormatCSV:
+		writer := iox.IOWriter{Writer: r.out}
+		return ConvertToCSV(data, &writer)
 	default:
 		return errors.New("unknown reporter type, don't recognize this format")
 	}
