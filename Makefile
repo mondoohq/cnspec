@@ -163,7 +163,7 @@ VALIDATION := content/validation
 #   test/content/commands    each cloud needs that cloud's CLI on PATH
 #
 # CI runs all of them; locally, run the one that covers what you touched.
-test/content: test/content/lint test/content/scans test/content/compliance
+test/content: test/content/lint test/content/scans test/content/compliance test/content/filters
 
 # Structure, MQL compilation, and schema. Catches a check that cannot compile
 # before any suite tries to run it.
@@ -184,6 +184,10 @@ test/content/scans:
 # Compliance-tag mapping invariants. Reads the bundles only, runs no scans.
 test/content/compliance:
 	go test ./$(VALIDATION)/compliance
+
+.PHONY: test/content/filters
+test/content/filters:
+	go test ./$(VALIDATION)/filters
 
 # Content IaC-variant suites (Terraform / CloudFormation / Bicep / Dockerfile /
 # Kubernetes) validate every policy check against its per-check pass/fail fixtures

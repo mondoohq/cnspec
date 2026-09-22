@@ -11,6 +11,7 @@ The policies are the product. A check that compiles but never matches an asset, 
 | **Lint** | Does every check compile against the provider schema? | `cnspec policy lint` | no files here |
 | **[`scans/`](scans)** | When this check meets this input, does it reach the verdict we claim? | Go, provider-backed | `scans/*_test.go` |
 | **[`compliance/`](compliance)** | Are the framework tags internally coherent? | Go, static | `compliance/*_test.go` |
+| **[`filters/`](filters)** | Is every multi-condition filter written so it means what it says? | Go, static | `filters/*_test.go` |
 | **[`remediation/code/`](remediation/code)** | Is the fix we ship well-formed in its own language? | Python + each language's linter | `remediation/code/*.py` |
 | **[`remediation/commands/`](remediation/commands)** | Do the CLI and API calls we ship actually exist? | Python + CLI grammars / OpenAPI specs | `remediation/commands/*.py` |
 | **[`upstream/`](upstream)** | Is what we validate *against* still current? | Python, network | `upstream/*.py` |
@@ -37,6 +38,9 @@ content/validation/
 │
 ├── compliance/                static Go suites, no providers
 │   └── owasp_mapping_test.go
+│
+├── filters/                   static Go suite over filters: shape, no providers
+│   └── filters_test.go
 │
 ├── remediation/
 │   ├── code/                  one validator per remediation language
@@ -83,6 +87,7 @@ Run the one that covers what you touched.
 | `make test/content/lint` | `cnspec policy lint` over `content/` and `content/querypacks` | `cnspec` on PATH |
 | `make test/content/scans` | whole-bundle smoke scans | Go |
 | `make test/content/compliance` | compliance-tag mappings | Go |
+| `make test/content/filters` | `filters:` shape | Go |
 | `make test/content/iac` | all five IaC fixture suites | Go, ~30 min |
 | `make test/content/iac/terraform` | one IaC suite (also `/cloudformation`, `/bicep`, `/dockerfile`, `/kubernetes`) | Go |
 | `make test/content/iac/coverage` | every IaC variant has pass+fail fixtures | Go, no scans |
@@ -121,7 +126,7 @@ python3 content/validation/remediation/commands/validate.py ?     # any unknown 
 | Workflow | Trigger | Runs | Blocking |
 |---|---|---|---|
 | `policies_lint.yaml` | PR + push to main, `content/**` | `cnspec policy lint`, uploaded as SARIF | yes, on `error` findings |
-| `pr-test-lint.yml` (Code Test) | PR + push | `go test ./...`, which includes `scans` (untagged) and `compliance` | yes |
+| `pr-test-lint.yml` (Code Test) | PR + push | `go test ./...`, which includes `scans` (untagged), `compliance` and `filters` | yes |
 | `content-iac-tests.yaml` | PR + push to main, `content/**` | the five IaC suites, the coverage gate, and the closed loop, as a matrix | yes |
 | `validate-remediation.yaml` | PR + push to main, `content/**` | all seven code-block validators and the command validator, one job each | yes |
 | `spell-check.yaml` | PR | `crate-ci/typos` | yes |
@@ -214,6 +219,14 @@ A failed scan is retried before it is believed. Under the suite's concurrency a 
 Static checks over the `compliance/<framework>: <control-uid>` tags the policies carry. They read the bundle files only and run no scans, which is why they live in their own Go package: the `scans` package's `TestMain` provisions cloud providers, which a pure mapping check neither needs nor should depend on.
 
 These guard the mapping against silent drift. They do not and cannot tell you whether a given tag is *correct* — that means reading the framework text for the control. Never copy a `compliance/*` tag from a neighbouring check.
+
+### Filter shape (`filters/`)
+
+A `filters:` written as a list of `- mql:` items is an OR: the resolver applies the check or query as soon as any one item matches. The list form reads like an AND, "this asset type, and this condition", so the broad item matches on its own and the narrowing one never takes effect. `TestNoMultiItemFilterLists` rejects any list with two or more items; write an AND as one expression joined with `&&`, and a real OR with `||`.
+
+Every multi-item list in `content/` was an AND written as a list when the test was added, twelve of them, all in query packs. Workstation-only inventory ran on container images, and an incident-response pack listed every S3 bucket as public and every IAM user as an administrator.
+
+Static, like `compliance/`: it reads the bundle files and needs no providers.
 
 ### Remediation code blocks (`remediation/code/`)
 
