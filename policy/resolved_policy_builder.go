@@ -54,6 +54,7 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 		now:                  now,
 		disabledQuery:        disabledQuery,
 		riskDataQueryInfos:   map[string][]riskDataQueryRef{},
+		foldedOverrideMql:    map[string]string{},
 	}
 
 	builder.gatherGlobalInfoFromPolicy(policyObj)
@@ -266,6 +267,11 @@ type resolvedPolicyBuilder struct {
 	// riskDataQueryInfos maps risk factor MRN → list of data query refs.
 	// Populated during addRiskFactor, consumed after graph walk to build RiskDataQueries.
 	riskDataQueryInfos map[string][]riskDataQueryRef
+	// foldedOverrideMql records the replacement MQL each override folded onto a
+	// check, keyed by check MRN. Only used to spot two overlays replacing the
+	// same check's implementation, which is last-writer-wins and otherwise
+	// silent. See the fold in gatherGlobalInfoFromPolicy.
+	foldedOverrideMql map[string]string
 }
 
 type riskDataQueryRef struct {
@@ -722,6 +728,18 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 					// over MQL and would pick a variant's code id instead of
 					// the replacement the author wrote.
 					merged.Variants = nil
+
+					// Two overlays replacing the same implementation is
+					// last-writer-wins, and the loser leaves no trace in the
+					// report. Say so, since the only other symptom is a check
+					// running MQL its author did not write.
+					if prev, ok := b.foldedOverrideMql[c.Mrn]; ok && prev != c.Mql {
+						log.Warn().
+							Str("mrn", c.Mrn).
+							Str("policy", policy.Mrn).
+							Msg("multiple overrides replace the same check's mql, only the last one applies")
+					}
+					b.foldedOverrideMql[c.Mrn] = c.Mql
 				}
 				b.bundleMap.Queries[c.Mrn] = merged
 			}
@@ -1322,6 +1340,14 @@ func isOverride(action Action, groupType GroupType) bool {
 // of which look like an overlay that silently does nothing
 // (mondoohq/server#20175). It is exported because nexus needs the same
 // predicate in its own pre-pass over bundle MRNs.
+//
+// GroupType_OVERRIDE is deliberately absent. The group type alone does not make
+// an entry a reference - an entry with no action in an override group overrides
+// nothing (normalizeAction returns UNSPECIFIED for it), so treating it as a
+// reference would only strip it of the ability to define content while giving
+// it nothing in return, and would reject it outright when no imported policy
+// owns the uid. Overrides state their intent with an action; every override
+// group in content and in the tests pairs the type with `action: modify`.
 func IsOverrideEntry(action Action, groupType GroupType) bool {
 	return action != Action_UNSPECIFIED ||
 		groupType == GroupType_DISABLE ||
