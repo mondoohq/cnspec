@@ -8,6 +8,11 @@ scan incognito. The network is still used, deliberately — container images are
 pulled and providers are downloaded from the production registry, and those
 paths are part of what a release has to get right.
 
+Policies are not. Every scan loads its bundles from this checkout with `-f`, so
+a result is a statement about this repository's content and not about what a
+service is serving that day. Only the upstream tier resolves policies from a
+service, because that resolution is what it tests.
+
 The one exception is the **upstream tier**, which authenticates against the
 Mondoo Platform. It is opt-in and skips unless asked for; see below.
 
@@ -65,8 +70,8 @@ the same thing via `.github/scripts/resolve-cnspec-artifact.sh`.
 
 | Tier | Covers |
 |---|---|
-| `docker` | provider download and resolution from the production registry; default policy resolution with no bundle; apk and dpkg platform detection; a repo bundle compiling and scoring against a real OS |
-| `local` | the local connector and OS provider on whatever the runner is |
+| `docker` | provider download and resolution from the production registry; every policy and query pack in `content/` against alpine, with no check allowed to error; apk and dpkg platform detection; a repo bundle compiling and scoring against a real OS |
+| `local` | the local connector and OS provider on whatever the runner is, with every bundle in `content/` |
 | `k8s` | the k8s provider, cluster discovery, and the only multi-asset scan in the suite — the one place an aggregation bug (assets discovered, results dropped or collapsed) is visible |
 | `formats` | `-o <name>` wiring from the format registry through the output handler to stdout, for every format a scan supports |
 | `upstream` | registration, policy resolution from the space, the vulnerability service, and report upload — everything incognito skips |
