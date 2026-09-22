@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/v13/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/mql/providers-sdk/v1/testutils"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/testutils"
 )
 
 // An overlay is a policy that imports another policy and adjusts one of its
