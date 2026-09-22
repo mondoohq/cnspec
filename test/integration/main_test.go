@@ -164,3 +164,19 @@ func childEnv(extra ...string) []string {
 	env = append(env, "MONDOO_CONFIG_PATH="+absentConfig)
 	return append(env, extra...)
 }
+
+// upstreamConfig names a Mondoo service account file. It is the only way to
+// reach the platform from this suite.
+//
+// Deliberately not MONDOO_CONFIG_PATH. childEnv strips every MONDOO_* variable,
+// so a credential that happens to be in the environment -- a developer's own,
+// or a secret exported into a CI job for something else -- cannot pull a tier
+// upstream that was meant to run incognito. Reaching the platform has to be
+// asked for by name, and only the upstream tier passes it through.
+const upstreamConfig = "CNSPEC_IT_UPSTREAM_CONFIG"
+
+// upstreamEnv is childEnv with the service account restored, for the one tier
+// that is supposed to authenticate.
+func upstreamEnv(path string, extra ...string) []string {
+	return childEnv(append([]string{"MONDOO_CONFIG_PATH=" + path}, extra...)...)
+}

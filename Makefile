@@ -319,7 +319,7 @@ test/content/upstream/unit:
 # which turns a skip into a failure: a suite that can quietly skip a tier
 # reports success for the thing it stopped testing.
 .PHONY: test/integration test/integration/docker test/integration/local
-.PHONY: test/integration/k8s test/integration/formats
+.PHONY: test/integration/k8s test/integration/formats test/integration/upstream
 
 # Above the sum of the per-scenario timeouts, so a stuck scenario fails by name
 # instead of taking the whole test binary's timeout with it.
@@ -346,6 +346,19 @@ test/integration/k8s:
 
 test/integration/formats:
 	$(INTEGRATION_TEST) -run '^TestOutputFormat'
+
+# The only tier that authenticates. Needs a Mondoo service account:
+#
+#   CNSPEC_IT_UPSTREAM_CONFIG=/path/to/serviceaccount.json make test/integration/upstream
+#
+# Deliberately not MONDOO_CONFIG_PATH -- the suite strips every MONDOO_* from
+# the child environment, so reaching the platform has to be asked for by name
+# and no other tier can be pulled upstream by a credential that happens to be
+# in the environment. Unset, this skips.
+#
+# It registers assets in whatever space the service account belongs to.
+test/integration/upstream:
+	$(INTEGRATION_TEST) -run '^TestUpstream'
 
 .PHONY: test/lint/staticcheck
 test/lint/staticcheck:
