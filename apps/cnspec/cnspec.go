@@ -109,6 +109,55 @@ func normalizeAutoUpdateFlag() {
 	os.Args = newArgs
 }
 
+// isSelfUpdateExemptCommand reports whether args invoke a command that must not
+// trigger the implicit self-update.
+//
+// The exemptions fall into three groups:
+//
+//   - Help and version output. These answer a question about the binary that is
+//     already running, and an update would replace that binary before it
+//     answers -- so the version printed is not the version the user asked
+//     about, and a help request pays for a download. Help is matched anywhere
+//     in the arguments, not just in first position, because `cnspec scan
+//     --help` is as much a help request as `cnspec --help`. This mirrors the
+//     CLI preflight in mql, which likewise treats -h as help and nothing else.
+//
+//   - `update`. It runs the same self-update itself, and without the refresh
+//     interval that paces this one. Letting both run means the implicit check
+//     can consume the update before the command sees it, so the command the
+//     user actually invoked reports "already the latest version" for work it
+//     did not do.
+//
+//   - `login` and `logout`. login is what configures api_endpoint and
+//     updates_url, so an update running ahead of it resolves the release
+//     against whatever the machine was pointed at before -- for an install that
+//     is being enrolled against a mirror, that is a reach for Mondoo's bucket
+//     during the one command that was supposed to stop it. It also re-execs the
+//     new binary mid-enrollment, and logout is its counterpart: a machine being
+//     unenrolled has no reason to download anything. `cnspec update` remains
+//     the explicit way to update, so nothing here removes the ability, only the
+//     surprise.
+func isSelfUpdateExemptCommand(args []string) bool {
+	if len(args) < 2 {
+		return false
+	}
+
+	for _, arg := range args[1:] {
+		if arg == "--help" || arg == "-h" {
+			return true
+		}
+	}
+
+	switch args[1] {
+	case "version", "--version", "help",
+		"update",
+		"login", "register", "logout", "unregister":
+		return true
+	}
+
+	return false
+}
+
 // shouldTrySelfUpdate checks if a self-update should be attempted.
 // This uses viper config and CLI flags to determine if auto-update is enabled.
 // Note: normalizeAutoUpdateFlag() must be called before this function to convert
@@ -121,19 +170,8 @@ func shouldTrySelfUpdate() bool {
 		return false
 	}
 
-	// Skip for version/help commands - these should run fast
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "version", "help", "--help", "-h", "--version":
-			return false
-		case "update":
-			// `cnspec update` runs the same self-update itself, and without the
-			// refresh interval that paces this one. Letting both run means the
-			// implicit check can consume the update before the command sees it,
-			// so the command the user actually invoked reports "already the
-			// latest version" for work it did not do.
-			return false
-		}
+	if isSelfUpdateExemptCommand(os.Args) {
+		return false
 	}
 
 	// Initialize viper to read config files (same as detectConnectorName in cli/providers)
