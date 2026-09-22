@@ -695,6 +695,37 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 		}
 
 		for _, c := range g.Checks {
+			// Fold an override's own content onto the check it references.
+			// Mquery.Merge is already overlay-on-base - set fields win, unset
+			// ones fall back - and gatherLocalAssetFilters and UpdateChecksums
+			// both apply it to group checks already. addPolicy is the one place
+			// that used to throw the group entry away and run the referenced
+			// check verbatim, which is why an override supplying replacement
+			// MQL had no effect (mondoohq/server#20175).
+			//
+			// Folding here rather than in addPolicy keeps it ahead of
+			// collectQueryTypes and addQuery, which both read bundleMap.
+			//
+			// The merged result goes back into bundleMap, which is shared by
+			// the whole resolution tree, so several overlays overriding the
+			// same check compound in policy-visit order: the second one folds
+			// onto the first one's result, not onto the original base. For
+			// impact that is a no-op, since AddBase only fills unset fields;
+			// for replacement MQL the later overlay inherits the earlier
+			// replacement rather than the base implementation. Isolating them
+			// would mean giving each policy its own view of the query map.
+			if base, ok := b.bundleMap.Queries[c.Mrn]; ok && base != nil && isOverride(c.Action, g.Type) {
+				merged := c.Merge(base)
+				if c.Mql != "" {
+					// The override states an implementation, so the base's
+					// variants must not be inherited: addQuery prefers variants
+					// over MQL and would pick a variant's code id instead of
+					// the replacement the author wrote.
+					merged.Variants = nil
+				}
+				b.bundleMap.Queries[c.Mrn] = merged
+			}
+
 			impact := c.Impact
 			if qBundle, ok := b.bundleMap.Queries[c.Mrn]; ok {
 				// Check the impact defined on the query
@@ -1279,6 +1310,19 @@ func normalizeAction(groupType GroupType, action Action, impact *Impact) Action 
 }
 
 func isOverride(action Action, groupType GroupType) bool {
+	return IsOverrideEntry(action, groupType)
+}
+
+// IsOverrideEntry reports whether a group entry only adjusts content that
+// belongs to another policy instead of defining it.
+//
+// Compile, resolve and lint all have to agree on this. When they disagree an
+// override either gets published as a definition of the check it meant to
+// adjust, or gets dropped from the graph with nothing pulling it back in - both
+// of which look like an overlay that silently does nothing
+// (mondoohq/server#20175). It is exported because nexus needs the same
+// predicate in its own pre-pass over bundle MRNs.
+func IsOverrideEntry(action Action, groupType GroupType) bool {
 	return action != Action_UNSPECIFIED ||
 		groupType == GroupType_DISABLE ||
 		groupType == GroupType_OUT_OF_SCOPE_GROUP ||

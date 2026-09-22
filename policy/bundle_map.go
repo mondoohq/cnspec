@@ -25,6 +25,13 @@ type PolicyBundleMap struct {
 	Code        map[string]*llx.CodeBundle `json:"code,omitempty"`
 	RiskFactors map[string]*RiskFactor     `json:"risk_factors,omitempty"`
 	Library     Library                    `json:"library,omitempty"`
+
+	// libraryHits remembers MRNs the Library confirmed so repeated existence
+	// checks stay cheap. It is deliberately NOT the Policies/Queries maps: a
+	// nil value in those reads as "present" to every `v, ok := m[k]` in the
+	// codebase while dereferencing to a panic, which silently defeated guards
+	// like resolved_policy_builder's `if !ok { log.Warn(); continue }`.
+	libraryHits map[string]struct{}
 }
 
 // NewPolicyBundleMap creates a new empty initialized map
@@ -221,7 +228,10 @@ func (p *PolicyBundleMap) validateGroup(ctx context.Context, group *PolicyGroup,
 			return err
 		}
 
-		if check.Action == Action_MODIFY && !exist {
+		// Same reasoning as the policy refs below: without a Library we cannot
+		// know whether a check owned by another policy exists, so we must not
+		// claim it does not.
+		if check.Action == Action_MODIFY && !exist && p.Library != nil {
 			return errors.New("check does not exist, but policy is trying to modify it: " + check.Mrn)
 		}
 	}
@@ -234,7 +244,7 @@ func (p *PolicyBundleMap) validateGroup(ctx context.Context, group *PolicyGroup,
 			return err
 		}
 
-		if query.Action == Action_MODIFY && !exist {
+		if query.Action == Action_MODIFY && !exist && p.Library != nil {
 			return errors.New("query does not exist, but policy is trying to modify it: " + query.Mrn)
 		}
 	}
@@ -249,6 +259,16 @@ func (p *PolicyBundleMap) validateGroup(ctx context.Context, group *PolicyGroup,
 
 		// policies can only be modified, not fully embedded. so they must exist
 		if !exist {
+			// ...but only the Library can say whether a policy outside this
+			// bundle exists, and there is no Library when linting or when
+			// compiling a self-contained local bundle. Failing here made every
+			// bundle that imports a policy it does not carry - which is what an
+			// overlay is - fail `cnspec policy lint` with
+			// "policy does not exist, but policy is trying to modify it"
+			// (mondoohq/server#20175). Nothing to ask means nothing to assert.
+			if p.Library == nil {
+				continue
+			}
 			return errors.New("policy does not exist, but policy is trying to modify it: " + policy.Mrn)
 		}
 	}
@@ -256,8 +276,19 @@ func (p *PolicyBundleMap) validateGroup(ctx context.Context, group *PolicyGroup,
 	return nil
 }
 
+// markLibraryHit records that the Library confirmed this MRN.
+func (p *PolicyBundleMap) markLibraryHit(mrn string) {
+	if p.libraryHits == nil {
+		p.libraryHits = map[string]struct{}{}
+	}
+	p.libraryHits[mrn] = struct{}{}
+}
+
 func (p *PolicyBundleMap) queryExists(ctx context.Context, mrn string) (bool, error) {
 	if _, ok := p.Queries[mrn]; ok {
+		return true, nil
+	}
+	if _, ok := p.libraryHits[mrn]; ok {
 		return true, nil
 	}
 
@@ -265,7 +296,7 @@ func (p *PolicyBundleMap) queryExists(ctx context.Context, mrn string) (bool, er
 		x, err := p.Library.QueryExists(ctx, mrn)
 		if x {
 			// we mark it off for caching purposes
-			p.Queries[mrn] = nil
+			p.markLibraryHit(mrn)
 		}
 
 		return x, err
@@ -278,12 +309,15 @@ func (p *PolicyBundleMap) policyExists(ctx context.Context, mrn string) (bool, e
 	if _, ok := p.Policies[mrn]; ok {
 		return true, nil
 	}
+	if _, ok := p.libraryHits[mrn]; ok {
+		return true, nil
+	}
 
 	if p.Library != nil {
 		x, err := p.Library.PolicyExists(ctx, mrn)
 		if x {
 			// we mark it off for caching purposes
-			p.Policies[mrn] = nil
+			p.markLibraryHit(mrn)
 		}
 
 		return x, err
