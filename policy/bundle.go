@@ -1328,6 +1328,29 @@ func (cache *bundleCache) prepareMRNs(ctx context.Context) error {
 	//
 	// Entries that resolve inside this bundle are left alone: the bundle owns
 	// both sides, and fillOutLookupQuery's merge path already folds them.
+	//
+	// Library lookups are memoized for the whole pass. An overlay typically
+	// overrides many checks from the same handful of imported policies, so
+	// without this every override re-asks for every scope it does not match,
+	// and the Library is usually a network call. Misses are cached too - they
+	// are the repetitive half, and the Library cannot change underneath us
+	// while we are compiling a bundle that has not been uploaded yet.
+	queryInLibrary := map[string]bool{}
+	libraryHasQuery := func(candidate string) bool {
+		if known, ok := queryInLibrary[candidate]; ok {
+			return known
+		}
+		exists, err := cache.conf.Library.QueryExists(ctx, candidate)
+		if err != nil {
+			// Don't remember a transient failure as an answer: the next
+			// override asking about the same MRN would inherit it and be
+			// reported as targeting a check nobody owns.
+			return false
+		}
+		queryInLibrary[candidate] = exists
+		return exists
+	}
+
 	resolveOverrideRefs := func(policy *Policy, group *PolicyGroup, queries []*Mquery, scopes []string) {
 		for _, query := range queries {
 			// An explicit mrn is taken as written, and an entry without a uid
@@ -1367,8 +1390,7 @@ func (cache *bundleCache) prepareMRNs(ctx context.Context) error {
 				if err != nil {
 					continue
 				}
-				exists, err := cache.conf.Library.QueryExists(ctx, candidate.String())
-				if err != nil || !exists {
+				if !libraryHasQuery(candidate.String()) {
 					continue
 				}
 				query.Mrn = candidate.String()
@@ -1384,10 +1406,8 @@ func (cache *bundleCache) prepareMRNs(ctx context.Context) error {
 			// alternative is an override that uploads cleanly, attaches to
 			// assets, and adjusts nothing.
 			ownScope, err := mrn.NewChildMRN(cache.ownerMrn, MRN_RESOURCE_QUERY, query.Uid)
-			if err == nil {
-				if exists, qerr := cache.conf.Library.QueryExists(ctx, ownScope.String()); qerr == nil && exists {
-					continue
-				}
+			if err == nil && libraryHasQuery(ownScope.String()) {
+				continue
 			}
 			cache.errors = append(cache.errors, fmt.Errorf(
 				"policy %s, group '%s': override targets check '%s', which is not defined in this bundle and is not owned by any imported policy",
