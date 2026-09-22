@@ -111,3 +111,23 @@ func TestDecodeReportNeedsProtojson(t *testing.T) {
 			"protojson must populate the platform name")
 	}
 }
+
+func TestErroredChecks(t *testing.T) {
+	scores := map[string]*reporter.ScoreValue{
+		"//local.cnspec.io/run/local-execution/queries/a-pass":       {Status: "pass"},
+		"//local.cnspec.io/run/local-execution/queries/b-error":      {Status: "error"},
+		"//local.cnspec.io/run/local-execution/queries/c-excused":    {Status: "error"},
+		"//local.cnspec.io/run/local-execution/queries/d-skip":       {Status: "skip"},
+		"//local.cnspec.io/run/local-execution/queries/e-excused-ok": {Status: "pass"},
+	}
+	except := map[string]string{"c-excused": "why", "e-excused-ok": "why"}
+
+	errored, tolerated := erroredChecks(scores, except)
+	assert.Equal(t, []string{"//local.cnspec.io/run/local-execution/queries/b-error"}, errored)
+	// An exception only applies to a check that actually errored.
+	assert.Equal(t, []string{"c-excused"}, tolerated)
+
+	errored, tolerated = erroredChecks(scores, nil)
+	assert.Len(t, errored, 2)
+	assert.Empty(t, tolerated)
+}

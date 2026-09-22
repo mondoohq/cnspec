@@ -178,19 +178,44 @@ func requireCheckPrefixFloor(t *testing.T, rep *reporter.Report, assetMrn, prefi
 // check, so the message is the work list.
 func requireNoCheckErrors(t *testing.T, rep *reporter.Report, assetMrn string) {
 	t.Helper()
+	requireNoCheckErrorsExcept(t, rep, assetMrn, nil)
+}
+
+// requireNoCheckErrorsExcept is requireNoCheckErrors with named exceptions:
+// check UID -> why it may error here. An exception is logged, never silent,
+// and every errored check not in the map still fails the test.
+func requireNoCheckErrorsExcept(t *testing.T, rep *reporter.Report, assetMrn string, except map[string]string) {
+	t.Helper()
 	scores := checkScores(t, rep, assetMrn)
-	var errored []string
-	for mrn, v := range scores {
-		if v.GetStatus() == "error" {
-			errored = append(errored, mrn)
-		}
+	errored, tolerated := erroredChecks(scores, except)
+	for _, uid := range tolerated {
+		t.Logf("tolerated errored check %s: %s", uid, except[uid])
 	}
 	if len(errored) == 0 {
 		return
 	}
-	sort.Strings(errored)
 	t.Errorf("%d of %d checks errored, want none (%s):\n  %s",
 		len(errored), len(scores), histogram(scores), strings.Join(errored, "\n  "))
+}
+
+// erroredChecks splits the errored checks into those that fail the test
+// (sorted MRNs) and those excused by except (sorted UIDs). A check is matched
+// on its UID, the last path segment of its MRN.
+func erroredChecks(scores map[string]*reporter.ScoreValue, except map[string]string) (errored, tolerated []string) {
+	for mrn, v := range scores {
+		if v.GetStatus() != "error" {
+			continue
+		}
+		uid := mrn[strings.LastIndex(mrn, "/")+1:]
+		if _, ok := except[uid]; ok {
+			tolerated = append(tolerated, uid)
+			continue
+		}
+		errored = append(errored, mrn)
+	}
+	sort.Strings(errored)
+	sort.Strings(tolerated)
+	return errored, tolerated
 }
 
 // requireVerdicts asserts at least min checks reached a real pass/fail verdict.

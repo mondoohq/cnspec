@@ -170,6 +170,13 @@ is filtered out of it and reports as skipped. Errored checks do not reach the
 report's error map or the exit code, so nothing else here would see them; the
 failure message lists every errored check.
 
+One exception is named in code, not implied: a non-root scan of a Linux host
+may not read other users' home directories, so the AI agent checks error with
+`permission denied` on `/root`. `nonRootForbiddenChecks` lists them for that
+case only. Under ADR-046 (structured provider errors) such a failure is
+`forbidden` and the kind reaches the score; the list is then replaced by
+tolerating only `forbidden` errors in a non-root scan.
+
 ## Why the assertions are floors, not equalities
 
 | Asserted | Not asserted | Why |

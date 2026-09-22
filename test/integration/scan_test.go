@@ -7,6 +7,7 @@ package integration
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -220,7 +221,7 @@ var scenarios = []scenario{
 			assert.NotEmpty(t, asset.GetPlatformName())
 			requireAssetScored(t, rep, mrn)
 			requireVerdicts(t, rep, mrn, 1)
-			requireNoCheckErrors(t, rep, mrn)
+			requireNoCheckErrorsExcept(t, rep, mrn, nonRootForbiddenChecks())
 		},
 	},
 	{
@@ -236,6 +237,32 @@ var scenarios = []scenario{
 			requireNoCheckErrors(t, rep, mrn)
 		},
 	},
+}
+
+// nonRootForbiddenChecks names the checks that error in a non-root scan of a
+// Linux host because the scan may not read another user's home directory.
+//
+// The AI agent resources read every user's home, and /root is closed to a
+// regular user: "open /root/.cursor/rules: permission denied". Under ADR-046
+// (structured provider errors, mql#10973) that failure is ERROR_KIND_FORBIDDEN
+// and still scores as an error, but the kind reaches the score. Once it does,
+// this list goes away in favour of tolerating only forbidden errors in a
+// non-root scan. Until then the checks are named here so that every other
+// error still fails the local tier, which CI runs as a regular user.
+//
+// Measured on ubuntu:22.04 as uid 1000 with v14.0.0-rc.11 (2026-09-23).
+func nonRootForbiddenChecks() map[string]string {
+	if runtime.GOOS != "linux" || os.Geteuid() == 0 {
+		return nil
+	}
+	const why = "non-root scan cannot read other users' homes (ADR-046 forbidden)"
+	return map[string]string{
+		"mondoo-ai-security-no-cursor":                 why,
+		"mondoo-ai-security-no-goose":                  why,
+		"mondoo-ai-security-no-unapproved-mcp-servers": why,
+		"mondoo-ai-security-no-windsurf":               why,
+		"mondoo-ai-security-no-zed":                    why,
+	}
 }
 
 func TestDockerTargets(t *testing.T) { runTier(t, tierDocker) }
