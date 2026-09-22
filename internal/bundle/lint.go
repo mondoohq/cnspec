@@ -300,6 +300,12 @@ func lintParsedBundle(schema resources.ResourcesSchema, filename string, policyB
 	for _, p := range policyBundle.Policies {
 		for _, group := range p.Groups {
 			for _, checkQuery := range group.Checks {
+				// An override is a reference plus adjustments, not a query
+				// definition. The query rules would judge it as one and demand
+				// a title and MQL it has no business carrying.
+				if isOverrideEntry(group.Type, checkQuery.Action) {
+					continue
+				}
 				if isQueryDefinitionComplete(checkQuery) {
 					for _, check := range queryRules {
 						entries := check.Run(lintCtx, QueryLintInput{Query: checkQuery, IsGlobal: false})
@@ -308,6 +314,9 @@ func lintParsedBundle(schema resources.ResourcesSchema, filename string, policyB
 				}
 			}
 			for _, dataQuery := range group.Queries {
+				if isOverrideEntry(group.Type, dataQuery.Action) {
+					continue
+				}
 				if isQueryDefinitionComplete(dataQuery) {
 					for _, check := range queryRules {
 						entries := check.Run(lintCtx, QueryLintInput{Query: dataQuery, IsGlobal: false})
