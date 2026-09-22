@@ -705,6 +705,15 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 			//
 			// Folding here rather than in addPolicy keeps it ahead of
 			// collectQueryTypes and addQuery, which both read bundleMap.
+			//
+			// The merged result goes back into bundleMap, which is shared by
+			// the whole resolution tree, so several overlays overriding the
+			// same check compound in policy-visit order: the second one folds
+			// onto the first one's result, not onto the original base. For
+			// impact that is a no-op, since AddBase only fills unset fields;
+			// for replacement MQL the later overlay inherits the earlier
+			// replacement rather than the base implementation. Isolating them
+			// would mean giving each policy its own view of the query map.
 			if base, ok := b.bundleMap.Queries[c.Mrn]; ok && base != nil && isOverride(c.Action, g.Type) {
 				merged := c.Merge(base)
 				if c.Mql != "" {

@@ -1299,7 +1299,7 @@ func (cache *bundleCache) prepareMRNs(ctx context.Context) error {
 			for i := range query.Variants {
 				variant := query.Variants[i]
 				uid := variant.Uid
-				if err := variant.RefreshMRN(cache.ownerMrn); err != nil {
+				if err := variant.RefreshMRN(ownerMrn); err != nil {
 					return errors.New("failed to refresh MRN for variant in query " + query.Uid)
 				}
 				if uid != "" {
