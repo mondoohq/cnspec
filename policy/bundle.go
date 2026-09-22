@@ -789,6 +789,7 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 		lookupQuery:   map[string]*Mquery{},
 		codeBundles:   map[string]*llx.CodeBundle{},
 		parents:       map[string][]parent{},
+		overrideRefs:  map[*Mquery]struct{}{},
 	}
 
 	// Process variants and inherit attributes filled from their parents
@@ -810,7 +811,7 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 		}
 	}
 
-	if err := cache.prepareMRNs(); err != nil {
+	if err := cache.prepareMRNs(ctx); err != nil {
 		return nil, err
 	}
 
@@ -957,6 +958,11 @@ func LiftPropertiesToPolicy(policy *Policy, lookupQuery map[string]*Mquery) erro
 				for _, q := range arr {
 					resolvedQuery := lookupQuery[q.Mrn]
 					if resolvedQuery == nil {
+						if isOverride(q.Action, g.Type) {
+							// See the same case below: an override does not
+							// define the content it points at.
+							continue
+						}
 						return fmt.Errorf("failed to resolve query %s in policy %s", q.Mrn, policy.Mrn)
 					}
 					for _, prop := range resolvedQuery.Props {
@@ -997,6 +1003,12 @@ func LiftPropertiesToPolicy(policy *Policy, lookupQuery map[string]*Mquery) erro
 			for _, q := range arr {
 				resolvedQuery := lookupQuery[q.Mrn]
 				if resolvedQuery == nil {
+					if isOverride(q.Action, g.Type) {
+						// An override references content another policy owns,
+						// so this bundle does not define it and has no props of
+						// its own to lift for it.
+						continue
+					}
 					return fmt.Errorf("failed to resolve query %s in policy %s", q.Mrn, policy.Mrn)
 				}
 				if len(resolvedQuery.Props) == 0 {
@@ -1097,6 +1109,13 @@ type bundleCache struct {
 	conf          BundleCompileConf
 	errors        []error
 	parents       map[string][]parent
+	// overrideRefs holds the group entries that only *reference* content owned
+	// by another policy and adjust it (action/impact/mql), as opposed to
+	// defining it. Keyed by pointer because the same MRN can legitimately be a
+	// definition in one policy and a reference in another. A reference is never
+	// published into bundle.Queries and is never substituted by the definition
+	// it points at; see prepareMRNs and precompileQuery.
+	overrideRefs map[*Mquery]struct{}
 }
 
 func (c *bundleCache) clone() *bundleCache {
@@ -1109,6 +1128,10 @@ func (c *bundleCache) clone() *bundleCache {
 		bundle:        c.bundle,
 		errors:        c.errors,
 		conf:          c.conf,
+		// Shared, like removeQueries: prepareMRNs runs once on the parent and
+		// classifies every group entry in the bundle, so the per-policy clones
+		// must see the same classification.
+		overrideRefs: c.overrideRefs,
 	}
 	for k, v := range c.lookupQuery {
 		res.lookupQuery[k] = v
@@ -1143,9 +1166,58 @@ func (c *bundleCache) error() error {
 	return errors.New(msg.String())
 }
 
+// policyOwnerScope strips the trailing policies/<id> pair off a policy MRN to
+// get the scope that owns it:
+//
+//	//policy.api.mondoo.app/policies/mondoo-aws-security
+//	  -> //policy.api.mondoo.app
+//	//captain.api.mondoo.app/spaces/acme/policies/overlay
+//	  -> //captain.api.mondoo.app/spaces/acme
+//
+// That scope is where the policy's own checks live, which is what an override
+// referencing one of them has to be resolved against.
+func policyOwnerScope(policyMrn string) (string, bool) {
+	m, err := mrn.NewMRN(policyMrn)
+	if err != nil {
+		return "", false
+	}
+	parts := strings.Split(m.RelativeResourceName, "/")
+	if len(parts) < 2 || parts[len(parts)-2] != MRN_RESOURCE_POLICY {
+		return "", false
+	}
+	m.RelativeResourceName = strings.Join(parts[:len(parts)-2], "/")
+	return m.String(), true
+}
+
+// importedPolicyScopes lists the owner scopes of every policy this one pulls in
+// through a group, deduplicated and in bundle order. Only refs that already
+// carry an MRN count: a uid-only ref names a policy inside this bundle, whose
+// checks are therefore in the bundle too and need no scope probing.
+func importedPolicyScopes(policy *Policy) []string {
+	var res []string
+	seen := map[string]struct{}{}
+	for _, group := range policy.Groups {
+		for _, ref := range group.Policies {
+			if ref.GetMrn() == "" {
+				continue
+			}
+			scope, ok := policyOwnerScope(ref.Mrn)
+			if !ok {
+				continue
+			}
+			if _, dup := seen[scope]; dup {
+				continue
+			}
+			seen[scope] = struct{}{}
+			res = append(res, scope)
+		}
+	}
+	return res
+}
+
 // prepareMRNs is responsible for turning UIDs into MRNs. It also does the
 // lifting of properties to the policy level
-func (cache *bundleCache) prepareMRNs() error {
+func (cache *bundleCache) prepareMRNs(ctx context.Context) error {
 	refreshPropMrns := func(props []*Property, ownerMrn string) error {
 		for _, prop := range props {
 			var name string
@@ -1187,7 +1259,7 @@ func (cache *bundleCache) prepareMRNs() error {
 	refreshQueryMrns := func(queries []*Mquery, ownerMrn string) error {
 		for _, query := range queries {
 			uid := query.Uid
-			if err := query.RefreshMRN(cache.ownerMrn); err != nil {
+			if err := query.RefreshMRN(ownerMrn); err != nil {
 				return fmt.Errorf("failed to refresh MRN for query %s: %w", query.Uid, err)
 			}
 			if uid != "" {
@@ -1197,7 +1269,7 @@ func (cache *bundleCache) prepareMRNs() error {
 			for i := range query.Variants {
 				variant := query.Variants[i]
 				uid := variant.Uid
-				if err := variant.RefreshMRN(cache.ownerMrn); err != nil {
+				if err := variant.RefreshMRN(ownerMrn); err != nil {
 					return errors.New("failed to refresh MRN for variant in query " + query.Uid)
 				}
 				if uid != "" {
@@ -1214,6 +1286,105 @@ func (cache *bundleCache) prepareMRNs() error {
 		return nil
 	}
 
+	// resolveOverrideRefs assigns MRNs to group entries that do not define
+	// content but reference content owned by a policy this one imports, and
+	// adjust it (action / impact / mql).
+	//
+	// Without this, an overlay authored in a space can never name the check it
+	// wants to correct: the uid would be namespaced into the space, match
+	// nothing, and the adjustment would silently apply to no check at all
+	// (mondoohq/server#20175). The scopes to try come from the policies this
+	// policy imports, which is where the referenced check actually lives.
+	//
+	// Entries that resolve inside this bundle are left alone: the bundle owns
+	// both sides, and fillOutLookupQuery's merge path already folds them.
+	//
+	// Library lookups are memoized for the whole pass. An overlay typically
+	// overrides many checks from the same handful of imported policies, so
+	// without this every override re-asks for every scope it does not match,
+	// and the Library is usually a network call. Misses are cached too - they
+	// are the repetitive half, and the Library cannot change underneath us
+	// while we are compiling a bundle that has not been uploaded yet.
+	queryInLibrary := map[string]bool{}
+	libraryHasQuery := func(candidate string) bool {
+		if known, ok := queryInLibrary[candidate]; ok {
+			return known
+		}
+		exists, err := cache.conf.Library.QueryExists(ctx, candidate)
+		if err != nil {
+			// Don't remember a transient failure as an answer: the next
+			// override asking about the same MRN would inherit it and be
+			// reported as targeting a check nobody owns.
+			return false
+		}
+		queryInLibrary[candidate] = exists
+		return exists
+	}
+
+	resolveOverrideRefs := func(policy *Policy, group *PolicyGroup, queries []*Mquery, scopes []string) {
+		for _, query := range queries {
+			// An explicit mrn is taken as written, and an entry without a uid
+			// has nothing to resolve.
+			if query.Mrn != "" || query.Uid == "" {
+				continue
+			}
+			// Mirrors the resolver's isOverride: whatever compile treats as a
+			// reference the resolver must treat as an override, or we are back
+			// to producing orphans.
+			if !isOverride(query.Action, group.Type) {
+				continue
+			}
+			// Defined in this bundle - keep the existing in-bundle behavior:
+			// fillOutLookupQuery's merge path already folds it, and the bundle
+			// owns both sides so writing the merged query is legitimate.
+			if _, ok := cache.uid2mrn[query.Uid]; ok {
+				continue
+			}
+
+			// From here on this entry is a reference, whether or not we can
+			// work out which MRN it points at. That classification is what
+			// stops it being compiled as a definition and published as shared
+			// content, and it does not depend on the Library.
+			cache.overrideRefs[query] = struct{}{}
+
+			// Resolving the scope, on the other hand, does: only the Library
+			// can say whether a candidate exists. It is absent when linting and
+			// for self-contained local bundles, so there we can neither resolve
+			// nor complain - fall back to the owner scope as before.
+			if cache.conf.Library == nil {
+				continue
+			}
+
+			for _, scope := range scopes {
+				candidate, err := mrn.NewChildMRN(scope, MRN_RESOURCE_QUERY, query.Uid)
+				if err != nil {
+					continue
+				}
+				if !libraryHasQuery(candidate.String()) {
+					continue
+				}
+				query.Mrn = candidate.String()
+				query.Uid = ""
+				break
+			}
+
+			if query.Mrn != "" {
+				continue
+			}
+
+			// Nothing owns this uid. Saying so here is the whole point: the
+			// alternative is an override that uploads cleanly, attaches to
+			// assets, and adjusts nothing.
+			ownScope, err := mrn.NewChildMRN(cache.ownerMrn, MRN_RESOURCE_QUERY, query.Uid)
+			if err == nil && libraryHasQuery(ownScope.String()) {
+				continue
+			}
+			cache.errors = append(cache.errors, fmt.Errorf(
+				"policy %s, group '%s': override targets check '%s', which is not defined in this bundle and is not owned by any imported policy",
+				policy.Mrn, group.Title, query.Uid))
+		}
+	}
+
 	fillOutLookupQuery := func(queries []*Mquery, policy *Policy) {
 		for _, query := range queries {
 			if query.Mql == "" {
@@ -1228,6 +1399,14 @@ func (cache *bundleCache) prepareMRNs() error {
 			} else if existing, ok := cache.lookupQuery[query.Mrn]; ok {
 				query = query.Merge(existing)
 				cache.lookupQuery[query.Mrn] = query
+			} else if _, isRef := cache.overrideRefs[query]; isRef {
+				// A reference to another policy's check. Publishing it here
+				// would make SetBundleMap write it to that MRN's row, which is
+				// shared by every policy - and every tenant - that uses the
+				// check. An upload only ever writes what it defines, so the
+				// adjustment stays on this group entry and is folded in at
+				// resolve time instead.
+				continue
 			} else {
 				// Any other query that is in a pack, that does not exist globally,
 				// we share out to be available in the bundle.
@@ -1259,13 +1438,20 @@ func (cache *bundleCache) prepareMRNs() error {
 			return fmt.Errorf("failed to refresh MRNs for properties in policy %s: %w", policy.Mrn, err)
 		}
 
+		// The scopes an override in this policy may reach into. A policy
+		// usually imports in one group and overrides in another, so this is
+		// gathered per policy rather than per group.
+		importedScopes := importedPolicyScopes(policy)
+
 		for _, group := range policy.Groups {
 			// ensure MRNs for queries
+			resolveOverrideRefs(policy, group, group.Queries, importedScopes)
 			if err := refreshQueryMrns(group.Queries, cache.ownerMrn); err != nil {
 				return fmt.Errorf("failed to refresh MRNs for queries in group %s: %w", group.Title, err)
 			}
 			fillOutLookupQuery(group.Queries, policy)
 
+			resolveOverrideRefs(policy, group, group.Checks, importedScopes)
 			if err := refreshQueryMrns(group.Checks, cache.ownerMrn); err != nil {
 				return fmt.Errorf("failed to refresh MRNs for checks in group %s: %w", group.Title, err)
 			}
@@ -1344,6 +1530,16 @@ func (c *bundleCache) buildParents() error {
 func (c *bundleCache) compileQueries(queries []*Mquery, policy *Policy) error {
 	mergedQueries := make([]*Mquery, len(queries))
 	for i := range queries {
+		if _, isRef := c.overrideRefs[queries[i]]; isRef && queries[i].GetMql() == "" {
+			// A reference that carries only adjustments - action, impact, a
+			// validity window - has no MQL of its own to compile, and must not
+			// be substituted by the definition it points at. Leaving it out
+			// here is what lets an override say "just lower the impact"
+			// without inventing an implementation it never wanted.
+			// The nil entry is tolerated by the cycle check, the topological
+			// sort and the write-back loop below.
+			continue
+		}
 		mergedQueries[i] = c.precompileQuery(queries[i], policy)
 	}
 
@@ -1433,12 +1629,19 @@ func (c *bundleCache) precompileQuery(query *Mquery, policy *Policy) *Mquery {
 	query.Sanitize()
 
 	queryMrn := query.Mrn
-	query, ok := c.lookupQuery[query.Mrn]
-	if !ok {
-		// The query should be in the bundle
-		c.errors = append(c.errors, fmt.Errorf("query %s not found in bundle", queryMrn))
-		return nil
+	if _, isRef := c.overrideRefs[query]; !isRef {
+		var ok bool
+		query, ok = c.lookupQuery[query.Mrn]
+		if !ok {
+			// The query should be in the bundle
+			c.errors = append(c.errors, fmt.Errorf("query %s not found in bundle", queryMrn))
+			return nil
+		}
 	}
+	// A reference is deliberately NOT swapped for c.lookupQuery[mrn]: it is not
+	// in there (fillOutLookupQuery does not publish it), and its MQL is this
+	// policy's own replacement, which must be compiled on the group entry so
+	// the adjustment stays local to the policy that declared it.
 
 	// filters have no dependencies, so we can compile them early
 	if err := query.Filters.Compile(c.ownerMrn, c.conf.CompilerConfig); err != nil {

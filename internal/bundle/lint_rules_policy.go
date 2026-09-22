@@ -8,6 +8,7 @@ import (
 	"regexp"
 
 	"github.com/Masterminds/semver"
+	"go.mondoo.com/cnspec/v13/policy"
 )
 
 // reResourceID: lowercase letters, digits, dots or hyphens, fewer than 200 chars, more than 5 chars
@@ -330,6 +331,10 @@ func runRulePolicyGroupAssetFilter(ctx *LintContext, item any) []*Entry {
 
 		// If group has no filter, all its checks must have filters or variants
 		for _, checkRef := range group.Checks {
+			// An override inherits the filters of the check it references.
+			if isOverrideEntry(group.Type, checkRef.Action) {
+				continue
+			}
 			// Check 1: Embedded query definition
 			if isQueryDefinitionComplete(checkRef) { // checkRef is an Mquery object
 				if hasVariantsOrFilters(checkRef) {
@@ -373,6 +378,9 @@ func runRulePolicyAssignedQueriesExist(ctx *LintContext, item any) []*Entry {
 
 	for _, group := range p.Groups {
 		for _, checkRef := range group.Checks { // checkRef is an Mquery struct (either a ref or embedded)
+			if isOverrideEntry(group.Type, checkRef.Action) {
+				continue
+			}
 			if !isQueryDefinitionComplete(checkRef) && checkRef.Uid != "" { // It's a reference
 				if _, exists := ctx.GlobalQueriesByUid[checkRef.Uid]; !exists {
 					entries = append(entries, &Entry{
@@ -390,6 +398,9 @@ func runRulePolicyAssignedQueriesExist(ctx *LintContext, item any) []*Entry {
 			}
 		}
 		for _, queryRef := range group.Queries { // data queries
+			if isOverrideEntry(group.Type, queryRef.Action) {
+				continue
+			}
 			if !isQueryDefinitionComplete(queryRef) && queryRef.Uid != "" { // It's a reference
 				if _, exists := ctx.GlobalQueriesByUid[queryRef.Uid]; !exists {
 					entries = append(entries, &Entry{
@@ -443,6 +454,20 @@ func queryRefIdentifier(q *Mquery) string {
 // A full definition would have MQL, Title, or Variants.
 func isQueryDefinitionComplete(q *Mquery) bool {
 	return q.Mql != "" || q.Title != "" || len(q.Variants) > 0 || (q.Docs != nil && q.Docs.Desc != "")
+}
+
+// isOverrideEntry reports whether a group entry adjusts content that belongs to
+// another policy rather than defining it. It mirrors the compiler's and the
+// resolver's isOverride so the three agree about what a group entry means.
+//
+// The rules below must not judge such an entry as though it were an embedded
+// query: the check it points at may live in a policy this bundle only imports,
+// and the linter has no Library and no cross-file context, so it has no way to
+// see that check. Treating an override as an incomplete definition is what made
+// `cnspec policy lint` bury the real problem under errors about a missing title
+// and a query that "does not exist as a global query" (mondoohq/server#20175).
+func isOverrideEntry(groupType GroupType, action Action) bool {
+	return policy.IsOverrideEntry(policy.Action(action), policy.GroupType(groupType))
 }
 
 // GetQueryPackLintRules returns a list of lint checks for querypacks.
