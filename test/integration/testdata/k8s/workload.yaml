@@ -1,0 +1,87 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+#
+# The workload the k8s tier scans. Everything lives in its own namespace so the
+# scan can be scoped with --namespaces and cannot pick up whatever else is in
+# the cluster.
+#
+# These objects are never required to become Ready. The k8s provider reads API
+# objects, so a Pod stuck in ContainerCreating or CrashLoopBackOff is still a
+# discoverable, scannable asset -- and waiting for readiness would add the
+# tier's largest flake source in exchange for nothing.
+#
+# The bodies are deliberately a mix: the Deployment sets the security context
+# fields mondoo-kubernetes-security looks for, the standalone Pod omits them, so
+# a scan that produces only passes or only failures is visibly wrong.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cnspec-integration
+  labels:
+    app.kubernetes.io/managed-by: cnspec-integration-tests
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cnspec-integration
+  namespace: cnspec-integration
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hardened-deployment
+  namespace: cnspec-integration
+  labels:
+    app: hardened
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hardened
+  template:
+    metadata:
+      labels:
+        app: hardened
+    spec:
+      serviceAccountName: cnspec-integration
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.9
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            privileged: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: permissive-pod
+  namespace: cnspec-integration
+  labels:
+    app: permissive
+spec:
+  serviceAccountName: cnspec-integration
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.9
+      imagePullPolicy: IfNotPresent
+      # No securityContext and no resource limits, on purpose: this is the
+      # asset that should produce failing checks.

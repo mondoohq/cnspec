@@ -60,6 +60,22 @@ make test/content/iac    # IaC fixture suites (slow; run when you touch a varian
 
 Most validators are allowlist-driven: a new policy is covered only once it's registered with them. Add a `*.mql.yaml` without wiring it into the variant suites and the remediation validators and the whole bundle ships unexamined, every gate green. See [Adding a policy: what to register](content/validation/README.md#adding-a-policy-what-to-register).
 
+### Integration tests
+
+A real cnspec binary against real targets (container images, the local system, a kind
+cluster), asserting on the structured JSON report. Behind the `integration` build tag,
+so it never runs in `go test ./...`. Manual trigger only. Full reference:
+[`test/integration/README.md`](test/integration/README.md).
+
+```bash
+make test/integration           # every tier (~2 min)
+make test/integration/docker    # container images
+make test/integration/k8s       # needs: kind create cluster --name cnspec-integration
+```
+
+`CNSPEC_BINARY=/path/to/cnspec` exercises a release artifact instead of building the
+working tree — that is how a release candidate is checked before it ships.
+
 ### Scanning and linting
 
 ```bash
@@ -165,6 +181,31 @@ observed is reported as not observed.
 
 **Prefer the smallest correct change,** and say what it costs. Every real
 decision has a downside; a record without one has not been thought through.
+
+**This repository is public. Write for a reader outside the company.**
+
+Everything here — commit messages, PR descriptions, ADRs, READMEs, code
+comments — is world-readable and permanent. Two rules follow.
+
+*Never reference a private repository, service, or internal system.* Not by
+name, not by URL, and not by description detailed enough to identify it. That
+includes its contents: its CI configuration, its secret names, its issue
+numbers, the tenants or accounts it touched. A reader outside the company
+cannot follow the pointer, and a reader inside does not need it in a public
+artifact. cnspec and mql are public; almost everything else is not. If a piece
+of internal context is genuinely load-bearing, state the technical fact it
+implies and drop the source: "policy resolution reaches the production
+registry" rather than naming the service that serves it.
+
+*Do not disparage earlier work, in public or at all.* No "the old suite was
+useless", no dormancy dates, no counts of what someone failed to assert. It
+reads as blaming colleagues, it ages badly, and it is not the reason anyone
+opens the file. Write what the new thing does and why it is built that way.
+Where a contrast genuinely carries the reasoning, make it a statement about the
+system rather than about the work it replaces: "exit code 0 does not imply a
+useful scan, because the default risk threshold is unreachable" is a fact a
+reader can act on. "The previous tests only checked the exit code" is a
+complaint. The first one also happens to be the one that stays true.
 
 ## Development rules
 

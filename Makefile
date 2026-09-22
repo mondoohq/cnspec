@@ -299,6 +299,54 @@ test/content/upstream:
 test/content/upstream/unit:
 	python3 -m unittest discover -s $(VALIDATION)/upstream -p "*_test.py"
 
+#   🔌 Integration   #
+
+# Runs a real cnspec binary against real targets: container images, the local
+# system, and a kind cluster. Asserts on the structured JSON report -- check
+# counts, per-check status, the error map -- not on the exit code, which at the
+# default risk threshold is 0 for any scan that merely connected.
+#
+# Behind the `integration` build tag, so it never runs in `go test ./...`: a
+# package whose files are all tagged out does not appear in `go list ./...` at
+# all, which is what `make test/go/plain` iterates.
+#
+# Set CNSPEC_BINARY to exercise an artifact -- a downloaded release, a
+# goreleaser build -- instead of building this working tree. That is the point
+# of the suite; see test/integration/README.md.
+#
+# Tiers skip when their infrastructure is missing, so a laptop with Docker runs
+# the docker and local tiers and skips kind. CI sets CNSPEC_IT_REQUIRE_ALL=1,
+# which turns a skip into a failure: a suite that can quietly skip a tier
+# reports success for the thing it stopped testing.
+.PHONY: test/integration test/integration/docker test/integration/local
+.PHONY: test/integration/k8s test/integration/formats
+
+# Above the sum of the per-scenario timeouts, so a stuck scenario fails by name
+# instead of taking the whole test binary's timeout with it.
+INTEGRATION_TIMEOUT ?= 30m
+
+# -count=1 because every input is external: a cached PASS says nothing about
+# today's provider registry, base image or cluster.
+# -parallel 1 because each scenario is its own cnspec process, and parallel
+# processes race to install providers into a shared PROVIDERS_PATH.
+INTEGRATION_TEST := go test -tags integration -count=1 -parallel 1 \
+	-timeout $(INTEGRATION_TIMEOUT) -v ./test/integration
+
+test/integration:
+	$(INTEGRATION_TEST)
+
+test/integration/docker:
+	$(INTEGRATION_TEST) -run '^TestDockerTargets$$|^TestRiskThresholdExitCodes$$'
+
+test/integration/local:
+	$(INTEGRATION_TEST) -run '^TestLocalTarget$$'
+
+test/integration/k8s:
+	$(INTEGRATION_TEST) -run '^TestKubernetesTarget$$'
+
+test/integration/formats:
+	$(INTEGRATION_TEST) -run '^TestOutputFormat'
+
 .PHONY: test/lint/staticcheck
 test/lint/staticcheck:
 	staticcheck $(shell go list ./... | grep -v /ent/ | grep -v /benchmark/)
