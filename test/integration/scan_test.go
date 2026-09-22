@@ -75,9 +75,8 @@ type scenario struct {
 	// onlyOS restricts the scenario to these GOOS values.
 	onlyOS []string
 
-	timeout time.Duration
-
 	// timeout bounds this scenario. Zero means defaultScenarioTimeout.
+	timeout time.Duration
 
 	// assert runs only when the scan exited 0 and stdout parsed.
 	assert func(t *testing.T, rep *reporter.Report)
