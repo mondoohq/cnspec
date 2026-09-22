@@ -5,10 +5,10 @@ package reporter
 
 import (
 	"context"
-	"os"
 	"strings"
 
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnspec/internal/reportfile"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/reports/hdf"
 	ocsfconvert "go.mondoo.com/cnspec/reports/ocsf/convert"
@@ -23,7 +23,12 @@ type localFileHandler struct {
 // towards a file instead of stdout
 func (h *localFileHandler) WriteReport(ctx context.Context, report *policy.ReportCollection) error {
 	trimmedFile := strings.TrimPrefix(h.file, "file://")
-	f, err := os.Create(trimmedFile)
+	// Not os.Create: it leaves the report 0644 and it follows a symlink. This
+	// handler writes every single-file format -- json, yaml, sarif, junit, csv,
+	// ocsf-json, hdf -- and they all carry the same content the dir handlers do:
+	// account ids and ARNs, the MQL source of every check, rendered assessments
+	// with the observed values. See internal/reportfile.
+	f, err := reportfile.Create(trimmedFile)
 	if err != nil {
 		return err
 	}
