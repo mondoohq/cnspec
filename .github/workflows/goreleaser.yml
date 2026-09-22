@@ -31,6 +31,11 @@ on:
         required: false
         default: true
         type: boolean
+      skip-test-gate:
+        description: "Release even if the tagged commit has no successful test run (emergencies only)"
+        required: false
+        default: false
+        type: boolean
 
 env:
   REGISTRY: docker.io
@@ -41,7 +46,120 @@ permissions:
   contents: read
 
 jobs:
+  # A tag can be created on any commit, including one whose tests never passed,
+  # and nothing downstream re-checks. goreleaser builds whatever the tag points
+  # at, publishes it, and the installer chain copies it to the release bucket.
+  #
+  # cnspec's tags are created by automation -- auto-tag-after-mql-bump.yml tags
+  # the merge commit of a "Bump mql to <version>" pull request -- so no person
+  # is looking at the commit's checks at the moment it becomes a release.
+  #
+  # The mql side of this is mondoohq/mql#10856; the failure that prompted both is
+  # described there.
+  verify-tested:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Require a successful test run for this commit
+        if: ${{ !inputs.goreleaser-snapshot && !inputs.skip-test-gate }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Keyed on workflow file rather than check-run name: a renamed check
+          # would silently drop out of a required-names list.
+          workflows=(pr-test-lint.yml pr-test-generated-files.yaml)
+
+          # A run may still be going when the tag lands. Wait, but not forever.
+          deadline=$(( $(date +%s) + 45 * 60 ))
+          failed=0
+
+          for wf in "${workflows[@]}"; do
+            # Poll interval, doubled up to a cap: a suite that takes the full 45
+            # minutes should not cost 45 API calls to watch.
+            delay=30
+
+            while :; do
+              # A failed call and an absent run both used to arrive as "none
+              # none", so a rate limit or a network blip was reported as "this
+              # commit was never tested" -- true only of the second, and it sends
+              # whoever is releasing to look at the wrong thing. Keep them apart:
+              # the API failing is transient until the deadline says otherwise.
+              if ! api_out=$(
+                gh api "repos/${REPO}/actions/workflows/${wf}/runs?head_sha=${SHA}&per_page=1" \
+                  --jq '.workflow_runs[0] | "\(.status // "none") \(.conclusion // "none")"' 2>&1
+              ); then
+                if [ "$(date +%s)" -ge "$deadline" ]; then
+                  echo "::error::Could not reach the GitHub API for ${wf} on ${SHA} within 45 minutes: ${api_out}"
+                  failed=1
+                  break
+                fi
+                echo "GitHub API call for ${wf} failed (${api_out}); retrying in ${delay}s"
+                sleep "${delay}"
+                [ "${delay}" -lt 120 ] && delay=$(( delay * 2 ))
+                continue
+              fi
+
+              read -r status conclusion <<<"${api_out}"
+
+              if [ "$status" = "none" ]; then
+                # Unlike mql, these workflows are filtered by paths rather than
+                # by branch, so a commit touching nothing they watch has no run
+                # and is not untested -- it is untestable by them. A release
+                # commit always changes go.mod, go.sum and VERSION, so the real
+                # release path never lands here; say what to do rather than
+                # asserting the commit is broken.
+                echo "::error::No ${wf} run for ${SHA}. A release commit normally changes go.mod and go.sum, which triggers it, so this tag is probably not on one. Check the commit, then dispatch with skip-test-gate if releasing it is intended."
+                failed=1
+                break
+              fi
+
+              if [ "$status" = "completed" ]; then
+                if [ "$conclusion" = "success" ]; then
+                  echo "::notice::${wf} succeeded for ${SHA}"
+                else
+                  # `cancelled` is not a milder failure: it means the suite
+                  # never produced a verdict at all.
+                  echo "::error::${wf} for ${SHA} concluded '${conclusion}', not success. Re-run it and re-tag, or dispatch with skip-test-gate if this is an emergency."
+                  failed=1
+                fi
+                break
+              fi
+
+              if [ "$(date +%s)" -ge "$deadline" ]; then
+                echo "::error::${wf} for ${SHA} is still '${status}' after 45 minutes. Refusing to release on an unfinished test run."
+                failed=1
+                break
+              fi
+
+              echo "${wf} is ${status} for ${SHA}; waiting ${delay}s"
+              sleep "${delay}"
+              [ "${delay}" -lt 120 ] && delay=$(( delay * 2 ))
+            done
+          done
+
+          [ "$failed" -eq 0 ] || exit 1
+
+      # Only an explicit skip is worth warning about. A snapshot build does not
+      # publish a release, so the gate not running is the design rather than a
+      # bypass -- warning on it every time is what teaches people to ignore the
+      # warning that matters.
+      - name: Report a bypassed gate
+        if: ${{ inputs.skip-test-gate }}
+        run: |
+          echo "::warning::Test gate bypassed with skip-test-gate. This release has not been checked against its commit's test results."
+
+      - name: Note the gate does not apply to snapshots
+        if: ${{ inputs.goreleaser-snapshot && !inputs.skip-test-gate }}
+        run: |
+          echo "::notice::Snapshot build; the release test gate does not apply."
+
   goreleaser:
+    needs: [verify-tested]
     outputs:
       skip-publish: ${{ steps.skip-publish.outputs.skip-publish }}
       channel: ${{ steps.channel.outputs.channel }}
