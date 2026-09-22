@@ -8,7 +8,7 @@ import (
 	"regexp"
 
 	"github.com/Masterminds/semver"
-	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/v13/policy"
 )
 
 // reResourceID: lowercase letters, digits, dots or hyphens, fewer than 200 chars, more than 5 chars
