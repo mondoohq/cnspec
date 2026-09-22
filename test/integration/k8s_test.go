@@ -79,6 +79,7 @@ func TestKubernetesTarget(t *testing.T) {
 			t.Errorf("asset %q scored only %d checks, want >= 10 (%s)",
 				asset.GetName(), len(checks), histogram(checks))
 		}
+		requireNoCheckErrors(t, rep, mrn)
 		counts := statusCounts(checks)
 		totalPass += counts["pass"]
 		totalFail += counts["fail"]

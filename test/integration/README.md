@@ -123,7 +123,7 @@ service account fails on the incognito assertion rather than passing quietly.
 
 No check-count floor here. The policies come from the space, so how many apply
 is the space's business — what is asserted is that the engine ran them and they
-produced real verdicts rather than a wave of errors.
+produced real verdicts, with no check ending in an error.
 
 ### In CI
 
@@ -154,13 +154,23 @@ generated struct tag carries the proto name (`platform_name`), so
 `encoding/json` silently leaves that field empty and an assertion on it compares
 against `""`. `TestDecodeReportNeedsProtojson` pins this.
 
-## Why the assertions are floors and ratios, not equalities
+## No check may error
+
+Every scenario asserts that no check ended with status `error`. A check's
+outcome is a verdict, pass or fail. `error` means it never reached one: the
+target lacks the resource, the provider returned an error, or the query could
+not run. Each is a defect to fix, in the check's scoping or in the provider,
+never an expected property of the target. A check that cannot apply to a target
+is filtered out of it and reports as skipped. Errored checks do not reach the
+report's error map or the exit code, so nothing else here would see them; the
+failure message lists every errored check.
+
+## Why the assertions are floors, not equalities
 
 | Asserted | Not asserted | Why |
 |---|---|---|
 | `platformName == "alpine"` | an exact OS version | patch releases move under a tag |
 | `len(checks) >= 20` | `len(checks) == 64` | content releases add checks |
-| `errors/total <= 0.20` | `errors == 0` | one check legitimately errors on a minimal image |
 | a check UID prefix is present | a named check *passes* | whether a given check passes on alpine is a content fact, owned by `content/validation` |
 | at least one `pass` **and** one `fail` | an overall score value | the score is a content-weighted number |
 

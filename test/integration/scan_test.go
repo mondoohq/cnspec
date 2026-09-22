@@ -34,7 +34,7 @@ const (
 // tags are mutable, so an upstream security update broke goldens that were
 // still correct about cnspec. That lesson constrains what is asserted, not how
 // images are pinned -- the assertions here are structural (platform family,
-// check floors, error ratio) and survive a patch bump, while a minor tag keeps
+// check floors, no errored check) and survive a patch bump, while a minor tag keeps
 // the suite answering "does cnspec still read a current alpine", which is the
 // point of a release gate.
 const (
@@ -108,7 +108,7 @@ var scenarios = []scenario{
 			requireAssetScored(t, rep, mrn)
 			requireCheckFloor(t, rep, mrn, 30) // observed 64, 2026-09-22
 			requireVerdicts(t, rep, mrn, 20)   // observed 58 pass+fail
-			requireErrorRatioBelow(t, rep, mrn, 0.15)
+			requireNoCheckErrors(t, rep, mrn)
 		},
 	},
 	{
@@ -123,7 +123,7 @@ var scenarios = []scenario{
 			mrn, _ := requireOneAsset(t, rep)
 			requireNoAssetErrors(t, rep)
 			requireCheckPrefixFloor(t, rep, mrn, linuxSecurityUID, 10)
-			requireErrorRatioBelow(t, rep, mrn, 0.20)
+			requireNoCheckErrors(t, rep, mrn)
 		},
 	},
 	{
@@ -139,7 +139,7 @@ var scenarios = []scenario{
 			assert.Equal(t, "ubuntu", asset.GetPlatformName())
 			requireCheckPrefixFloor(t, rep, mrn, linuxSecurityUID, 15) // observed 22, 2026-09-22
 			requireVerdicts(t, rep, mrn, 10)                           // observed 18 pass
-			requireErrorRatioBelow(t, rep, mrn, 0.20)
+			requireNoCheckErrors(t, rep, mrn)
 		},
 	},
 	{
@@ -154,7 +154,7 @@ var scenarios = []scenario{
 			assert.Equal(t, "debian", asset.GetPlatformName())
 			requireCheckPrefixFloor(t, rep, mrn, linuxSecurityUID, 15) // observed 22, 2026-09-22
 			requireVerdicts(t, rep, mrn, 10)                           // observed 20 pass+fail
-			requireErrorRatioBelow(t, rep, mrn, 0.20)
+			requireNoCheckErrors(t, rep, mrn)
 		},
 	},
 	{
@@ -202,7 +202,7 @@ var scenarios = []scenario{
 			requireNoAssetErrors(t, rep)
 			requireCheckPrefixFloor(t, rep, mrn, linuxSecurityUID, 15)
 			requireVerdicts(t, rep, mrn, 10)
-			requireErrorRatioBelow(t, rep, mrn, 0.20)
+			requireNoCheckErrors(t, rep, mrn)
 		},
 	},
 }

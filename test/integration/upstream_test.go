@@ -130,10 +130,10 @@ func TestUpstreamScan(t *testing.T) {
 
 	// Policies came from the space, so the count is the space's business and
 	// not something to pin. That the engine ran them, and that they produced
-	// real verdicts rather than a wave of errors, is.
+	// real verdicts and no errors, is.
 	requireAssetScored(t, rep, mrn)
 	requireVerdicts(t, rep, mrn, 1)
-	requireErrorRatioBelow(t, rep, mrn, 0.25)
+	requireNoCheckErrors(t, rep, mrn)
 
 	// The upload is the last thing that can break and the first thing a broken
 	// client/server pairing breaks. Asserted on stderr because the report on

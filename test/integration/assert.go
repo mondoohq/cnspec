@@ -165,27 +165,32 @@ func requireCheckPrefixFloor(t *testing.T, rep *reporter.Report, assetMrn, prefi
 	}
 }
 
-// requireErrorRatioBelow bounds the share of checks that errored.
+// requireNoCheckErrors fails on any check that ended in an error.
 //
-// Not zero. A check erroring on a minimal base image is normal -- a resource
-// that does not exist in a container is a legitimate error, and alpine:3.20
-// produces one against the default policies today. A large share means the
-// provider or the executor broke, and nothing else in this suite sees it:
-// errored checks do not populate the report's error map and do not move the
-// exit code.
-func requireErrorRatioBelow(t *testing.T, rep *reporter.Report, assetMrn string, max float64) {
+// A check's outcome is a verdict: pass or fail. "error" means it never reached
+// one -- the target lacks the resource, the provider returned an error, or the
+// query could not run -- and each of those is a defect in the check's scoping or
+// in the provider, not a property of the target. A check that does not apply to
+// a target has to be filtered out of it, so it reports as skipped.
+//
+// Only this assertion sees them: errored checks do not populate the report's
+// error map and do not move the exit code. The failure lists every errored
+// check, so the message is the work list.
+func requireNoCheckErrors(t *testing.T, rep *reporter.Report, assetMrn string) {
 	t.Helper()
 	scores := checkScores(t, rep, assetMrn)
-	if len(scores) == 0 {
-		t.Errorf("no checks scored at all")
+	var errored []string
+	for mrn, v := range scores {
+		if v.GetStatus() == "error" {
+			errored = append(errored, mrn)
+		}
+	}
+	if len(errored) == 0 {
 		return
 	}
-	errored := statusCounts(scores)["error"]
-	ratio := float64(errored) / float64(len(scores))
-	if ratio > max {
-		t.Errorf("%d of %d checks errored (%.0f%%), want <= %.0f%% (%s)",
-			errored, len(scores), ratio*100, max*100, histogram(scores))
-	}
+	sort.Strings(errored)
+	t.Errorf("%d of %d checks errored, want none (%s):\n  %s",
+		len(errored), len(scores), histogram(scores), strings.Join(errored, "\n  "))
 }
 
 // requireVerdicts asserts at least min checks reached a real pass/fail verdict.
