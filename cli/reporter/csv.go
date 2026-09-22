@@ -99,8 +99,10 @@ func ConvertToCSV(data *policy.ReportCollection, out iox.OutputHelper) error {
 	}
 
 	var queries map[string]*policy.Mquery
+	var parentOf map[string]*policy.Mquery
 	if data.Bundle != nil {
 		queries = reportdoc.QueryMap(data.Bundle.ToMap())
+		parentOf = variantParents(data.Bundle)
 	}
 
 	for _, assetMrn := range sortedKeys(data.Assets) {
@@ -134,7 +136,7 @@ func ConvertToCSV(data *policy.ReportCollection, out iox.OutputHelper) error {
 				AssetMrn:        assetMrn,
 				Platform:        asset.GetPlatform().GetName(),
 				PlatformVersion: asset.GetPlatform().GetVersion(),
-				Check:           checkIdentifier(query, id),
+				Check:           checkIdentifier(query, parentOf, id),
 				Title:           query.GetTitle(),
 				Status:          gatherScoreValue(score).GetStatus(),
 				Impact:          impactValue(query),
@@ -157,11 +159,53 @@ func ConvertToCSV(data *policy.ReportCollection, out iox.OutputHelper) error {
 	return w.Error()
 }
 
-// checkIdentifier prefers the UID, which is what the check is called in the
-// policy YAML and what someone reading the spreadsheet can search for. An
-// upstream-resolved bundle has MRNs and no UIDs, so the MRN is the fallback,
-// and the score's own id is the last resort.
-func checkIdentifier(query *policy.Mquery, scoreID string) string {
+// variantParents maps a variant's identifier to the check that declares it.
+//
+// A check written with `variants:` carries no MQL of its own; the variant that
+// matches the platform is what actually runs, and its score is what the report
+// records. The variant inherits the parent's title, impact and docs, so
+// everything else in the row already describes the parent.
+func variantParents(bundle *policy.Bundle) map[string]*policy.Mquery {
+	out := map[string]*policy.Mquery{}
+	add := func(queries []*policy.Mquery) {
+		for _, q := range queries {
+			for _, v := range q.GetVariants() {
+				if mrn := v.GetMrn(); mrn != "" {
+					out[mrn] = q
+				}
+				if uid := v.GetUid(); uid != "" {
+					out[uid] = q
+				}
+			}
+		}
+	}
+	add(bundle.GetQueries())
+	for _, p := range bundle.GetPolicies() {
+		for _, g := range p.GetGroups() {
+			add(g.GetChecks())
+			add(g.GetQueries())
+		}
+	}
+	return out
+}
+
+// checkIdentifier returns the identifier a reader can act on.
+//
+// For a variant check this is the parent, not the variant that happened to run.
+// Two reasons. The row's Title, Impact and docs already come from the parent, so
+// naming the variant here would make one row describe two different objects.
+// And the variant is platform-dependent: the same check is "...-debian" on one
+// asset and "...-rhel" on the next, so a spreadsheet pivoted by check would
+// split one check into a column per platform -- which is the main thing anyone
+// exports a CSV to do.
+//
+// The UID is preferred over the MRN: it is what the check is called in the
+// policy YAML and what compliance mappings key on. An upstream-resolved bundle
+// has only MRNs, and the score's own id is the last resort.
+func checkIdentifier(query *policy.Mquery, parentOf map[string]*policy.Mquery, scoreID string) string {
+	if parent, ok := lookupParent(query, parentOf); ok {
+		query = parent
+	}
 	if uid := query.GetUid(); uid != "" {
 		return uid
 	}
@@ -169,6 +213,19 @@ func checkIdentifier(query *policy.Mquery, scoreID string) string {
 		return mrn
 	}
 	return scoreID
+}
+
+func lookupParent(query *policy.Mquery, parentOf map[string]*policy.Mquery) (*policy.Mquery, bool) {
+	if parentOf == nil {
+		return nil, false
+	}
+	if p, ok := parentOf[query.GetMrn()]; ok && p != nil {
+		return p, true
+	}
+	if p, ok := parentOf[query.GetUid()]; ok && p != nil {
+		return p, true
+	}
+	return nil, false
 }
 
 // impactValue renders a check's declared impact, empty when it declares none.

@@ -219,7 +219,58 @@ func TestCSVImpactValue(t *testing.T) {
 func TestCSVCheckIdentifier(t *testing.T) {
 	// The UID is what the check is called in the policy YAML, so it is what a
 	// reader can search for; an upstream-resolved bundle has only MRNs.
-	assert.Equal(t, "my-uid", checkIdentifier(&policy.Mquery{Uid: "my-uid", Mrn: "//m"}, "score-id"))
-	assert.Equal(t, "//m", checkIdentifier(&policy.Mquery{Mrn: "//m"}, "score-id"))
-	assert.Equal(t, "score-id", checkIdentifier(&policy.Mquery{}, "score-id"))
+	assert.Equal(t, "my-uid", checkIdentifier(&policy.Mquery{Uid: "my-uid", Mrn: "//m"}, nil, "score-id"))
+	assert.Equal(t, "//m", checkIdentifier(&policy.Mquery{Mrn: "//m"}, nil, "score-id"))
+	assert.Equal(t, "score-id", checkIdentifier(&policy.Mquery{}, nil, "score-id"))
+}
+
+// TestCSVVariantResolvesToParent covers a check written with `variants:`.
+//
+// The variant that matches the platform is what runs, and its score is what the
+// report records -- but it inherits the parent's title, impact and docs, so
+// naming the variant in the Check column would make one row describe two
+// objects. It is also platform-dependent: the same check is "...-debian" on one
+// asset and "...-rhel" on the next, so a spreadsheet pivoted by check would
+// split one check into a column per platform.
+func TestCSVVariantResolvesToParent(t *testing.T) {
+	parent := &policy.Mquery{
+		Uid:   "login-events-audited",
+		Mrn:   "//queries/login-events-audited",
+		Title: "Ensure login and logout events are audited",
+		Variants: []*policy.ObjectRef{
+			{Mrn: "//queries/login-events-audited-debian"},
+			{Mrn: "//queries/login-events-audited-rhel"},
+		},
+	}
+	// The variant as the report sees it: its own MRN, the parent's title.
+	debian := &policy.Mquery{
+		Mrn:   "//queries/login-events-audited-debian",
+		Title: "Ensure login and logout events are audited",
+	}
+
+	bundle := &policy.Bundle{Queries: []*policy.Mquery{parent, debian}}
+	parents := variantParents(bundle)
+
+	assert.Equal(t, "login-events-audited", checkIdentifier(debian, parents, "score-id"),
+		"a variant must report under the check that declares it")
+	// The parent itself is unaffected, and so is a check with no variants.
+	assert.Equal(t, "login-events-audited", checkIdentifier(parent, parents, "score-id"))
+	plain := &policy.Mquery{Uid: "plain-check"}
+	assert.Equal(t, "plain-check", checkIdentifier(plain, parents, "score-id"))
+}
+
+func TestVariantParentsFindsChecksInPolicyGroups(t *testing.T) {
+	// Variants are declared on checks inside policy groups too, not only in the
+	// bundle's top-level Queries.
+	parent := &policy.Mquery{
+		Uid:      "grouped-check",
+		Variants: []*policy.ObjectRef{{Uid: "grouped-check-debian"}},
+	}
+	bundle := &policy.Bundle{Policies: []*policy.Policy{{
+		Groups: []*policy.PolicyGroup{{Checks: []*policy.Mquery{parent}}},
+	}}}
+
+	parents := variantParents(bundle)
+	child := &policy.Mquery{Uid: "grouped-check-debian"}
+	assert.Equal(t, "grouped-check", checkIdentifier(child, parents, "score-id"))
 }
