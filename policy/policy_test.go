@@ -611,3 +611,111 @@ queries:
 		require.Nil(t, recalculateAt, "recalculateAt should be nil")
 	}
 }
+
+// policyChecksumsFor compiles a one-policy bundle and returns its checksums.
+func policyChecksumsFor(t *testing.T, now time.Time, yaml string) *policy.Policy {
+	t.Helper()
+	bundle, err := policy.BundleFromYAML([]byte(yaml))
+	require.NoError(t, err)
+	p := bundle.Policies[0]
+	p.InvalidateLocalChecksums()
+	bundleMap, err := bundle.Compile(context.Background(), conf.Schema, nil)
+	require.NoError(t, err)
+	_, err = p.UpdateChecksums(context.Background(), now, nil, policy.QueryMap(bundleMap.Queries).GetQuery, bundleMap, conf)
+	require.NoError(t, err)
+	return p
+}
+
+// A query's filters decide which assets run it, so changing them changes what
+// a resolved policy contains. The execution checksum has to move with them:
+// resolved policies are cached under it, and a filter change that leaves it
+// untouched keeps assets on the resolved policy built before the change.
+//
+// This is cnspec#4051's change to mondoo-gcp-inventory: a variant's filter
+// list (an OR, so the asset check alone matched) became one && expression.
+func TestPolicyExecutionChecksumCoversQueryFilters(t *testing.T) {
+	now := time.Now()
+	policyYaml := func(publicFilters, dataFilters, variantDesc string) string {
+		return `
+policies:
+  - uid: inventory
+    name: Inventory
+    version: "1.0.0"
+    groups:
+      - type: chapter
+        queries:
+          - uid: instances-public
+          - uid: instances-data
+            filters: ` + dataFilters + `
+
+queries:
+  - uid: instances-public
+    title: Public instances
+    variants:
+      - uid: instances-public-single
+  - uid: instances-public-single
+    docs:
+      desc: ` + variantDesc + `
+    filters: ` + publicFilters + `
+    mql: asset.name
+  - uid: instances-data
+    title: Instance data
+    mql: asset.platform
+`
+	}
+	const (
+		listFilter = `
+      - mql: asset.platform == "gcp-compute-instance"
+      - mql: asset.name != ""`
+		andFilter = `|
+      asset.platform == "gcp-compute-instance" &&
+      asset.name != ""`
+		dataBefore = `asset.family.contains("unix")`
+		dataAfter  = `asset.family.contains("windows")`
+	)
+
+	before := policyChecksumsFor(t, now, policyYaml(listFilter, dataBefore, "one instance"))
+
+	// Filters live in a map, so the checksum must not depend on iteration
+	// order: recomputing the same content has to land on the same values every
+	// time. The variant carries two filters, which is what exercises the order.
+	t.Run("the same content keeps it", func(t *testing.T) {
+		for i := range 50 {
+			again := policyChecksumsFor(t, now, policyYaml(listFilter, dataBefore, "one instance"))
+			require.Equal(t, getChecksums(before), getChecksums(again), "recomputation %d", i)
+		}
+	})
+
+	t.Run("a variant's filters", func(t *testing.T) {
+		after := policyChecksumsFor(t, now, policyYaml(andFilter, dataBefore, "one instance"))
+		assert.NotEqual(t, before.LocalExecutionChecksum, after.LocalExecutionChecksum)
+		assert.NotEqual(t, before.GraphExecutionChecksum, after.GraphExecutionChecksum)
+	})
+
+	t.Run("a query's own filters", func(t *testing.T) {
+		after := policyChecksumsFor(t, now, policyYaml(listFilter, dataAfter, "one instance"))
+		assert.NotEqual(t, before.LocalExecutionChecksum, after.LocalExecutionChecksum)
+		assert.NotEqual(t, before.GraphExecutionChecksum, after.GraphExecutionChecksum)
+	})
+
+	// A query reference's filters are still keyed by list position when the
+	// checksum runs, so listing the same filters in another order must not
+	// move it.
+	t.Run("filter order leaves it", func(t *testing.T) {
+		unixThenMac := policyChecksumsFor(t, now, policyYaml(listFilter, `
+              - mql: asset.family.contains("unix")
+              - mql: asset.platform == "macos"`, "one instance"))
+		macThenUnix := policyChecksumsFor(t, now, policyYaml(listFilter, `
+              - mql: asset.platform == "macos"
+              - mql: asset.family.contains("unix")`, "one instance"))
+		assert.Equal(t, unixThenMac.LocalExecutionChecksum, macThenUnix.LocalExecutionChecksum)
+		assert.Equal(t, unixThenMac.GraphExecutionChecksum, macThenUnix.GraphExecutionChecksum)
+	})
+
+	t.Run("docs alone leave it", func(t *testing.T) {
+		after := policyChecksumsFor(t, now, policyYaml(listFilter, dataBefore, "a single instance"))
+		assert.Equal(t, before.LocalExecutionChecksum, after.LocalExecutionChecksum)
+		assert.Equal(t, before.GraphExecutionChecksum, after.GraphExecutionChecksum)
+		assert.NotEqual(t, before.GraphContentChecksum, after.GraphContentChecksum)
+	})
+}
