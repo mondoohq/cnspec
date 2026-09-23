@@ -1,7 +1,7 @@
 name: Integration Tests
 
 ## Runs a real cnspec binary against real targets -- container images, the
-## runner's own system, and a kind cluster -- and asserts on the structured JSON
+## runner's own system, and a k3d cluster -- and asserts on the structured JSON
 ## report rather than on the exit code.
 ##
 ## The exit code is deliberately not the gate. cnspec's default --risk-threshold
@@ -124,7 +124,7 @@ jobs:
           retention-days: 7
 
   k8s:
-    name: kind
+    name: k3d
     if: ${{ inputs.tiers != 'docker-local' && inputs.tiers != 'upstream' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -159,14 +159,20 @@ jobs:
       - name: Set provider env
         run: echo "PROVIDERS_PATH=${PWD}/${GITHUB_JOB}/.providers" >> $GITHUB_ENV
 
-      # Sets the current kubectl context to kind-cnspec-integration. The suite
-      # refuses to scan a context that is not a kind one, so a runner with some
-      # other kubeconfig cannot silently point it somewhere real.
-      - name: Create kind cluster
-        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
-        with:
-          cluster_name: cnspec-integration
-          wait: 120s
+      # The k8s tier creates its own k3d cluster and deletes it when the test
+      # ends, with the kubeconfig in a temp file, so the job only provides the
+      # binary. Pinned by version and checksum (checksums.txt of the release).
+      - name: Install k3d
+        env:
+          K3D_VERSION: v5.8.3
+          K3D_SHA256: dbaa79a76ace7f4ca230a1ff41dc7d8a5036a8ad0309e9c54f9bf3836dbe853e
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "${RUNNER_TEMP}/k3d" \
+            "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64"
+          echo "${K3D_SHA256}  ${RUNNER_TEMP}/k3d" | sha256sum --check --strict
+          sudo install -m 0755 "${RUNNER_TEMP}/k3d" /usr/local/bin/k3d
+          k3d version
 
       - name: Resolve binary under test
         env:
@@ -176,13 +182,6 @@ jobs:
 
       - name: Run k8s tier
         run: make test/integration/k8s
-
-      - name: Dump cluster state
-        if: failure()
-        run: |
-          mkdir -p test/integration/artifacts
-          kubectl get all -n cnspec-integration -o yaml > test/integration/artifacts/cluster.yaml || true
-          kubectl describe pods -n cnspec-integration >> test/integration/artifacts/cluster.yaml || true
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()

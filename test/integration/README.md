@@ -31,20 +31,25 @@ The suite is behind the `integration` build tag, so it never runs in
 `go list ./...` at all, which is what `make test/go/plain` iterates.
 
 Tiers skip when their infrastructure is missing, with the reason and the command
-that would fix it. A laptop with Docker runs the docker and local tiers and
-skips kind.
+that would fix it. A laptop with Docker runs the docker and local tiers, and
+the k8s tier too once k3d is installed.
 
-For the k8s tier:
+The k8s tier needs [k3d](https://k3d.io) and nothing else running:
 
 ```bash
-kind create cluster --name cnspec-integration
 make test/integration/k8s
 ```
 
-The suite refuses to scan a kubeconfig context whose name does not start with
-`kind-`. `cnspec scan k8s` reads whatever context is current, and a developer
-running this with a production context active would point a scan at it. Set
-`CNSPEC_IT_K8S_CONTEXT=<name>` to override deliberately.
+It creates a single-node k3d cluster for the test and deletes it when the test
+ends, pass or fail, so no cluster is left running between runs. The cluster's
+kubeconfig goes to a temporary file that only the test's processes see: your
+kubeconfig and current context are never read or changed, so a scan cannot
+land on whatever cluster happens to be current. On a failure the test saves the
+cluster's state to `artifacts/k8s-cluster-state.txt` before it is deleted. The
+whole tier, cluster included, took 31s on a laptop.
+
+To scan an existing cluster instead, make its context current and set
+`CNSPEC_IT_K8S_CONTEXT` to that context's name.
 
 ## Testing a release artifact
 
@@ -218,7 +223,7 @@ developer machine under variable load:
 | CI job | Tiers | Cold providers | Warm |
 |---|---|---|---|
 | `docker-local` | docker (67s) + local (42s) + formats (17s) | 126s | ~98s |
-| `k8s` | kind | 23s + cluster creation | 5s |
+| `k8s` | k3d | 31s, cluster creation and deletion included (laptop) | 5s |
 
 The two jobs run concurrently, so the suite is roughly **two minutes** of wall
 clock and a pre-release run lands around four to five minutes once runner
@@ -230,7 +235,7 @@ Treat these as indicative and confirm them on the first CI run. They were taken
 on a shared machine whose load average reached 349 during later measurements,
 which is enough to distort any of them — `scan local` is the most sensitive,
 since it scans the whole host, and it was observed taking anywhere from 42s to
-over 5 minutes purely on contention. The docker and kind tiers are the stable
+over 5 minutes purely on contention. The docker and k8s tiers are the stable
 numbers.
 
 ## Why serial, and why only one retry
@@ -253,7 +258,7 @@ do not apply, but parallel processes would race to install the same provider
 into a shared `PROVIDERS_PATH`, whose failure mode is a corrupted provider
 directory that reads as a cnspec bug and does not reproduce.
 
-Parallelism that does pay off is already in place: the docker/local and kind
+Parallelism that does pay off is already in place: the docker/local and k8s
 tiers are separate CI jobs and run at the same time.
 
 `docker pull` is retried three times with backoff. **A scan is never retried.**
