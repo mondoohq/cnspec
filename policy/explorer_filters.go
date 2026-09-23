@@ -35,7 +35,7 @@ func NewFilters(queries ...string) *Filters {
 // filter's code ID, in code-ID order. Filters decide which assets run a
 // group's or a query's content, so they belong in the execution checksum of
 // whatever carries them; a filter-only change must move it, or every resolved
-// policy cached under it outlives the change (#4051, server#20526).
+// policy cached under it outlives the change (#4051).
 //
 // Order is by code ID, not by map key: compiled filters are keyed by code ID,
 // but a query reference's filters can still be keyed by list position when
