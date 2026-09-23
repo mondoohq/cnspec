@@ -83,33 +83,72 @@ jobs:
       # the HTTP client on the other end waits out its own 30-second timeout --
       # the same budget the SCM gives the whole process to connect.
       #
-      # Start-Process, not Start-Job: each workflow step is its own shell, and
-      # a job would die with the step that created it.
-      - name: Start the tarpit
+      # It is a compiled Go binary started with Start-Process, for two reasons.
+      # Each workflow step runs in its own shell, so a Start-Job background job
+      # would die with the step that created it. And a detached PowerShell
+      # script that fails to bind reports nothing at all; this one has its
+      # output redirected to files that the check below prints on failure.
+      - name: Build and start the tarpit
         run: |
-          $script = @(
-            '$listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, ' + $env:TARPIT_PORT + ')',
-            '$listener.Start(50)',
-            '$held = New-Object System.Collections.ArrayList',
-            'while ($true) { [void]$held.Add($listener.AcceptTcpClient()) }'
-          )
-          New-Item -ItemType Directory -Force -Path C:\cnspec | Out-Null
-          Set-Content -Path C:\cnspec\tarpit.ps1 -Value $script -Encoding ascii
-          Start-Process -FilePath powershell `
-            -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'C:\cnspec\tarpit.ps1' `
+          New-Item -ItemType Directory -Force -Path C:\cnspec, C:\tarpit | Out-Null
+
+          @('module tarpit', '', 'go 1.24') |
+            Set-Content -Path C:\tarpit\go.mod -Encoding ascii
+
+          # __PORT__ is substituted rather than concatenated so the source
+          # below stays a plain list of literal lines.
+          @(
+            'package main',
+            '',
+            'import (',
+            '	"log"',
+            '	"net"',
+            ')',
+            '',
+            'func main() {',
+            '	ln, err := net.Listen("tcp", "127.0.0.1:__PORT__")',
+            '	if err != nil {',
+            '		log.Fatalf("listen: %v", err)',
+            '	}',
+            '	log.Println("tarpit listening")',
+            '	var held []net.Conn',
+            '	for {',
+            '		c, err := ln.Accept()',
+            '		if err != nil {',
+            '			log.Fatalf("accept: %v", err)',
+            '		}',
+            '		// Hold the connection open and never answer on it.',
+            '		held = append(held, c)',
+            '	}',
+            '}'
+          ) -replace '__PORT__', $env:TARPIT_PORT |
+            Set-Content -Path C:\tarpit\main.go -Encoding ascii
+
+          go build -C C:\tarpit -o C:\cnspec\tarpit.exe .
+          if ($LASTEXITCODE -ne 0) { throw "could not build the tarpit" }
+
+          Start-Process -FilePath C:\cnspec\tarpit.exe `
+            -RedirectStandardOutput C:\cnspec\tarpit.out `
+            -RedirectStandardError C:\cnspec\tarpit.err `
             -WindowStyle Hidden
 
           # Confirm the port is really open, so a tarpit that failed to start
           # cannot be mistaken for a passing test.
           $open = $false
           foreach ($i in 1..20) {
-            if (Test-NetConnection -ComputerName 127.0.0.1 -Port $env:TARPIT_PORT -InformationLevel Quiet) {
+            if (Test-NetConnection -ComputerName 127.0.0.1 -Port $env:TARPIT_PORT -InformationLevel Quiet -WarningAction SilentlyContinue) {
               $open = $true
               break
             }
             Start-Sleep -Milliseconds 500
           }
-          if (-not $open) { throw "tarpit is not listening on 127.0.0.1:$env:TARPIT_PORT" }
+          if (-not $open) {
+            Write-Host "::group::tarpit output"
+            Get-Content C:\cnspec\tarpit.out -ErrorAction SilentlyContinue | Out-Host
+            Get-Content C:\cnspec\tarpit.err -ErrorAction SilentlyContinue | Out-Host
+            Write-Host "::endgroup::"
+            throw "tarpit is not listening on 127.0.0.1:$env:TARPIT_PORT"
+          }
           "tarpit is listening on 127.0.0.1:$env:TARPIT_PORT"
 
       # auth.method=wif with a token already in hand sends setup straight into a
@@ -193,7 +232,6 @@ jobs:
           sc.exe stop cnspec 2>&1 | Out-Host
           Start-Sleep -Seconds 3
           sc.exe delete cnspec 2>&1 | Out-Host
-          Get-Process -Name powershell -ErrorAction SilentlyContinue |
-            Where-Object { $_.CommandLine -like '*tarpit.ps1*' } |
+          Get-Process -Name tarpit -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
           exit 0
