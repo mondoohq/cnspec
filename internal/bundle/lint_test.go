@@ -121,6 +121,28 @@ func TestLinter_Fail(t *testing.T) {
 		assert.Equal(t, "warning", results.Entries[1].Level)
 	})
 
+	// A policy made only of risk factors has no groups by design; the rule must
+	// not report it. Any other finding in this fixture would also be a regression.
+	t.Run("pass-policy-risk-factors-only", func(t *testing.T) {
+		file := "./testdata/pass-policy-risk-factors-only.mql.yaml"
+		results, err := Lint(schema, testLintOptions, file)
+		require.NoError(t, err)
+		for _, e := range results.Entries {
+			assert.NotEqual(t, "policy-missing-checks", e.RuleID, e.Message)
+		}
+		assert.Empty(t, results.Entries)
+	})
+
+	t.Run("fail-policy-no-groups-or-risk-factors", func(t *testing.T) {
+		file := "./testdata/fail-policy-no-groups-or-risk-factors.mql.yaml"
+		results, err := Lint(schema, testLintOptions, file)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(results.Entries))
+		assert.Equal(t, "policy 'example-empty' has no groups or risk factors defined", results.Entries[0].Message)
+		assert.Equal(t, "policy-missing-checks", results.Entries[0].RuleID)
+		assert.Equal(t, "error", results.Entries[0].Level)
+	})
+
 	t.Run("fail-policy-missing-version", func(t *testing.T) {
 		file := "./testdata/fail-policy-missing-version.mql.yaml"
 		results, err := Lint(schema, testLintOptions, file)
