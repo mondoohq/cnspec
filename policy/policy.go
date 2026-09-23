@@ -615,11 +615,11 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 				contentChecksum = contentChecksum.Add(filter.Checksum)
 			}
 
-			var err error
-			executionChecksum, err = group.Filters.addExecutionChecksum(executionChecksum)
+			withFilters, err := group.Filters.addExecutionChecksum(executionChecksum)
 			if err != nil {
 				return recalculateAt, err
 			}
+			executionChecksum = withFilters
 		}
 
 		// REMAINING FIELDS
