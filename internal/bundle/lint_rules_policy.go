@@ -106,7 +106,7 @@ func GetPolicyLintRules() []LintRule {
 		{
 			ID:          PolicyMissingChecksRuleID, // Covers empty groups and empty checks/queries in groups
 			Name:        "Policy Missing Checks or Groups",
-			Description: "Ensures policies have defined groups, and groups have checks or queries.",
+			Description: "Ensures policies define groups or risk factors, and groups have checks or queries.",
 			Severity:    LevelError,
 			Run:         runRulePolicyGroupsAndChecks,
 		},
@@ -331,10 +331,13 @@ func runRulePolicyGroupsAndChecks(ctx *LintContext, item any) []*Entry {
 		return nil
 	}
 	var entries []*Entry
-	if len(p.Groups) == 0 {
+	// A policy that only defines risk factors is complete without groups: its
+	// content is the risk factors and the checks they carry. Only a policy with
+	// neither has nothing to evaluate.
+	if len(p.Groups) == 0 && len(p.RiskFactors) == 0 {
 		entries = append(entries, &Entry{
 			RuleID:  PolicyMissingChecksRuleID, // Using this ID for missing groups too
-			Message: fmt.Sprintf("%s has no groups defined", policyIdentifier(p)),
+			Message: fmt.Sprintf("%s has no groups or risk factors defined", policyIdentifier(p)),
 			Level:   LevelError,
 			Location: []Location{{
 				File:   ctx.FilePath,
