@@ -50,6 +50,24 @@ type GraphNode struct {
 	Impact   int               `json:"impact,omitempty"`
 	Tags     map[string]string `json:"tags,omitempty"`
 	ParentID string            `json:"parent_id,omitempty"`
+	// Filters, Props and Remediations are set for checks and queries.
+	// Filters holds the MQL of each filter, in the order of their keys.
+	Filters      []string           `json:"filters,omitempty"`
+	Props        []GraphProp        `json:"props,omitempty"`
+	Remediations []GraphRemediation `json:"remediations,omitempty"`
+}
+
+// GraphProp is a property a check or query declares.
+type GraphProp struct {
+	UID   string `json:"uid"`
+	Title string `json:"title,omitempty"`
+	MQL   string `json:"mql,omitempty"`
+}
+
+// GraphRemediation is one entry of a check's docs.remediation, e.g. id "bash".
+type GraphRemediation struct {
+	ID   string `json:"id,omitempty"`
+	Desc string `json:"desc"`
 }
 
 type GraphEdge struct {
@@ -350,6 +368,43 @@ func extractBundle(g *PolicyGraph, file string, b *Bundle) {
 	}
 }
 
+// queryDetails returns the filters, props and remediations of a query for its
+// graph node.
+func queryDetails(q *Mquery) ([]string, []GraphProp, []GraphRemediation) {
+	var filters []string
+	if q.Filters != nil && len(q.Filters.Items) > 0 {
+		keys := make([]string, 0, len(q.Filters.Items))
+		for k := range q.Filters.Items {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if f := q.Filters.Items[k]; f != nil && f.Mql != "" {
+				filters = append(filters, f.Mql)
+			}
+		}
+	}
+
+	var props []GraphProp
+	for _, p := range q.Props {
+		if p == nil || p.Uid == "" {
+			continue
+		}
+		props = append(props, GraphProp{UID: p.Uid, Title: p.Title, MQL: p.Mql})
+	}
+
+	var remediations []GraphRemediation
+	if q.Docs != nil && q.Docs.Remediation != nil {
+		for _, item := range q.Docs.Remediation.Items {
+			if item == nil {
+				continue
+			}
+			remediations = append(remediations, GraphRemediation{ID: item.Id, Desc: item.Desc})
+		}
+	}
+	return filters, props, remediations
+}
+
 func extractTopLevelQuery(g *PolicyGraph, file string, q *Mquery) {
 	if q.Uid == "" {
 		return
@@ -367,18 +422,22 @@ func extractTopLevelQuery(g *PolicyGraph, file string, q *Mquery) {
 	if title == "" && q.Docs != nil {
 		title = q.Docs.Desc
 	}
+	filters, props, remediations := queryDetails(q)
 	g.addNode(&GraphNode{
-		ID:       id,
-		Name:     q.Uid,
-		QualName: qualName(kind, q.Uid),
-		Kind:     kind,
-		File:     file,
-		Line:     q.FileContext.Line,
-		Column:   q.FileContext.Column,
-		Title:    title,
-		MQL:      q.Mql,
-		Impact:   impact,
-		Tags:     q.Tags,
+		ID:           id,
+		Name:         q.Uid,
+		QualName:     qualName(kind, q.Uid),
+		Kind:         kind,
+		File:         file,
+		Line:         q.FileContext.Line,
+		Column:       q.FileContext.Column,
+		Title:        title,
+		MQL:          q.Mql,
+		Impact:       impact,
+		Tags:         q.Tags,
+		Filters:      filters,
+		Props:        props,
+		Remediations: remediations,
 	})
 	for _, v := range q.Variants {
 		if v.Uid == "" {
@@ -484,19 +543,23 @@ func extractInlineQuery(g *PolicyGraph, file string, q *Mquery, kind NodeKind, p
 		title = q.Docs.Desc
 	}
 	id := nodeID(file, kind, q.Uid)
+	filters, props, remediations := queryDetails(q)
 	g.addNode(&GraphNode{
-		ID:       id,
-		Name:     q.Uid,
-		QualName: qualName(kind, q.Uid),
-		Kind:     kind,
-		File:     file,
-		Line:     q.FileContext.Line,
-		Column:   q.FileContext.Column,
-		Title:    title,
-		MQL:      q.Mql,
-		Impact:   impact,
-		Tags:     q.Tags,
-		ParentID: parentID,
+		ID:           id,
+		Name:         q.Uid,
+		QualName:     qualName(kind, q.Uid),
+		Kind:         kind,
+		File:         file,
+		Line:         q.FileContext.Line,
+		Column:       q.FileContext.Column,
+		Title:        title,
+		MQL:          q.Mql,
+		Impact:       impact,
+		Tags:         q.Tags,
+		ParentID:     parentID,
+		Filters:      filters,
+		Props:        props,
+		Remediations: remediations,
 	})
 	for _, v := range q.Variants {
 		if v.Uid == "" {

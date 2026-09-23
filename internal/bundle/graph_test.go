@@ -71,6 +71,69 @@ queries:
 	assert.GreaterOrEqual(t, len(groupOut), 1)
 }
 
+func TestBuildGraph_QueryDetails(t *testing.T) {
+	data := []byte(`
+policies:
+  - uid: linux-security
+    name: Linux Security
+    groups:
+      - title: SSH
+        checks:
+          - uid: sshd-ciphers
+queries:
+  - uid: sshd-ciphers
+    title: Ensure strong ciphers
+    filters: asset.family.contains("unix")
+    props:
+      - uid: weakCiphers
+        title: Weak ciphers
+        mql: return ["3des-cbc"]
+    mql: sshd.config.ciphers.containsNone(props.weakCiphers)
+    docs:
+      remediation:
+        - id: bash
+          desc: |
+            ` + "```" + `
+            sed -i 's/^Ciphers .*/Ciphers aes256-ctr/' /etc/ssh/sshd_config
+            ` + "```" + `
+        - desc: Configure strong ciphers.
+  - uid: two-filters
+    title: Two filters
+    filters:
+      - mql: asset.family.contains("unix")
+      - mql: asset.platform == "debian"
+    mql: "true"
+`)
+	b, err := ParseYaml(data)
+	require.NoError(t, err)
+
+	g := BuildGraph(map[string]*Bundle{"test.mql.yaml": b})
+
+	var check, twoFilters *GraphNode
+	for _, n := range g.Nodes {
+		switch n.Name {
+		case "sshd-ciphers":
+			check = n
+		case "two-filters":
+			twoFilters = n
+		}
+	}
+	require.NotNil(t, check)
+	require.NotNil(t, twoFilters)
+
+	assert.Equal(t, []string{`asset.family.contains("unix")`}, check.Filters)
+	assert.Equal(t, []GraphProp{{UID: "weakCiphers", Title: "Weak ciphers", MQL: `return ["3des-cbc"]`}}, check.Props)
+	require.Len(t, check.Remediations, 2)
+	assert.Equal(t, "bash", check.Remediations[0].ID)
+	assert.Contains(t, check.Remediations[0].Desc, "Ciphers aes256-ctr")
+	assert.Equal(t, "", check.Remediations[1].ID)
+	assert.Equal(t, "Configure strong ciphers.", check.Remediations[1].Desc)
+
+	assert.Equal(t, []string{`asset.family.contains("unix")`, `asset.platform == "debian"`}, twoFilters.Filters)
+	assert.Empty(t, twoFilters.Props)
+	assert.Empty(t, twoFilters.Remediations)
+}
+
 func TestBuildGraph_Frameworks(t *testing.T) {
 	data := []byte(`
 frameworks:
