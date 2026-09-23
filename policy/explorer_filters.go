@@ -31,6 +31,33 @@ func NewFilters(queries ...string) *Filters {
 	return res
 }
 
+// addExecutionChecksum folds the filters into an execution checksum: each
+// filter's code ID, in code-ID order. Filters decide which assets run a
+// group's or a query's content, so they belong in the execution checksum of
+// whatever carries them; a filter-only change must move it, or every resolved
+// policy cached under it outlives the change (#4051, server#20526).
+//
+// Order is by code ID, not by map key: compiled filters are keyed by code ID,
+// but a query reference's filters can still be keyed by list position when
+// this runs. A filter without a code ID was never compiled and is an error.
+func (filters *Filters) addExecutionChecksum(c checksums.Fast) (checksums.Fast, error) {
+	if filters == nil || len(filters.Items) == 0 {
+		return c, nil
+	}
+	codeIDs := make([]string, 0, len(filters.Items))
+	for _, filter := range filters.Items {
+		if filter.CodeId == "" {
+			return c, errors.New("failed to get code ID for filter " + filter.Mrn)
+		}
+		codeIDs = append(codeIDs, filter.CodeId)
+	}
+	sort.Strings(codeIDs)
+	for _, id := range codeIDs {
+		c = c.Add(id)
+	}
+	return c, nil
+}
+
 // Checksum computes the checksum for the filters
 func (filters *Filters) Checksum() (checksums.Fast, checksums.Fast) {
 	content := checksums.New

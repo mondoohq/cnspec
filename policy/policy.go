@@ -608,17 +608,17 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 			sort.Strings(keys)
 
 			for i := range keys {
-				key := keys[i]
-				filter := group.Filters.Items[key]
+				filter := group.Filters.Items[keys[i]]
 				if filter.Checksum == "" {
 					return recalculateAt, errors.New("failed to get checksum for filter " + filter.Mrn)
 				}
-				if filter.CodeId == "" {
-					return recalculateAt, errors.New("failed to get code ID for filter " + filter.Mrn)
-				}
-
 				contentChecksum = contentChecksum.Add(filter.Checksum)
-				executionChecksum = executionChecksum.Add(filter.CodeId)
+			}
+
+			var err error
+			executionChecksum, err = group.Filters.addExecutionChecksum(executionChecksum)
+			if err != nil {
+				return recalculateAt, err
 			}
 		}
 
@@ -834,7 +834,10 @@ func variantsExecutionChecksum(q *Mquery, c checksums.Fast, includeImpact bool, 
 	if includeImpact {
 		c = c.AddUint(q.Impact.Checksum())
 	}
-	c = filtersExecutionChecksum(q.Filters, c)
+	c, err := q.Filters.addExecutionChecksum(c)
+	if err != nil {
+		return 0, err
+	}
 
 	for _, ref := range q.Variants {
 		if v, err := getQuery(context.Background(), ref.Mrn); err == nil {
@@ -847,34 +850,4 @@ func variantsExecutionChecksum(q *Mquery, c checksums.Fast, includeImpact bool, 
 		}
 	}
 	return c, nil
-}
-
-// filtersExecutionChecksum folds a query's filters into an execution checksum.
-// Filters decide which assets run the query, so they change what a resolved
-// policy contains even when no query's code does: a variant whose filter list
-// (an OR) became one && expression applies to fewer assets under the same code
-// IDs. Without them a filter-only change keeps every execution checksum, and
-// with it every cached resolved policy (cnspec#4051, server#20526).
-//
-// Compiled filters are keyed by code ID, which is what the group filters above
-// contribute too. A filter that was never compiled falls back to its MQL, so
-// the checksum still moves when its text does.
-func filtersExecutionChecksum(filters *Filters, c checksums.Fast) checksums.Fast {
-	if filters == nil || len(filters.Items) == 0 {
-		return c
-	}
-	ids := make([]string, 0, len(filters.Items))
-	for _, f := range filters.Items {
-		if f.CodeId != "" {
-			ids = append(ids, f.CodeId)
-		} else {
-			ids = append(ids, f.Mql)
-		}
-	}
-	sort.Strings(ids)
-	c = c.Add("filters")
-	for _, id := range ids {
-		c = c.Add(id)
-	}
-	return c
 }
