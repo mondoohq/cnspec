@@ -8,6 +8,11 @@ scan incognito. The network is still used, deliberately — container images are
 pulled and providers are downloaded from the production registry, and those
 paths are part of what a release has to get right.
 
+Policies are not. Every scan loads its bundles from this checkout with `-f`, so
+a result is a statement about this repository's content and not about what a
+service is serving that day. Only the upstream tier resolves policies from a
+service, because that resolution is what it tests.
+
 The one exception is the **upstream tier**, which authenticates against the
 Mondoo Platform. It is opt-in and skips unless asked for; see below.
 
@@ -65,8 +70,8 @@ the same thing via `.github/scripts/resolve-cnspec-artifact.sh`.
 
 | Tier | Covers |
 |---|---|
-| `docker` | provider download and resolution from the production registry; default policy resolution with no bundle; apk and dpkg platform detection; a repo bundle compiling and scoring against a real OS |
-| `local` | the local connector and OS provider on whatever the runner is |
+| `docker` | provider download and resolution from the production registry; every policy and query pack in `content/` against alpine, with no check allowed to error; apk and dpkg platform detection; a repo bundle compiling and scoring against a real OS |
+| `local` | the local connector and OS provider on whatever the runner is, with every bundle in `content/` |
 | `k8s` | the k8s provider, cluster discovery, and the only multi-asset scan in the suite — the one place an aggregation bug (assets discovered, results dropped or collapsed) is visible |
 | `formats` | `-o <name>` wiring from the format registry through the output handler to stdout, for every format a scan supports |
 | `upstream` | registration, policy resolution from the space, the vulnerability service, and report upload — everything incognito skips |
@@ -123,7 +128,7 @@ service account fails on the incognito assertion rather than passing quietly.
 
 No check-count floor here. The policies come from the space, so how many apply
 is the space's business — what is asserted is that the engine ran them and they
-produced real verdicts rather than a wave of errors.
+produced real verdicts, with no check ending in an error.
 
 ### In CI
 
@@ -154,13 +159,30 @@ generated struct tag carries the proto name (`platform_name`), so
 `encoding/json` silently leaves that field empty and an assertion on it compares
 against `""`. `TestDecodeReportNeedsProtojson` pins this.
 
-## Why the assertions are floors and ratios, not equalities
+## No check may error
+
+Every scenario asserts that no check ended with status `error`. A check's
+outcome is a verdict, pass or fail. `error` means it never reached one: the
+target lacks the resource, the provider returned an error, or the query could
+not run. Each is a defect to fix, in the check's scoping or in the provider,
+never an expected property of the target. A check that cannot apply to a target
+is filtered out of it and reports as skipped. Errored checks do not reach the
+report's error map or the exit code, so nothing else here would see them; the
+failure message lists every errored check.
+
+One exception is named in code, not implied: a non-root scan of a Linux host
+may not read other users' home directories, so the AI agent checks error with
+`permission denied` on `/root`. `nonRootForbiddenChecks` lists them for that
+case only. Under ADR-046 (structured provider errors) such a failure is
+`forbidden` and the kind reaches the score; the list is then replaced by
+tolerating only `forbidden` errors in a non-root scan.
+
+## Why the assertions are floors, not equalities
 
 | Asserted | Not asserted | Why |
 |---|---|---|
 | `platformName == "alpine"` | an exact OS version | patch releases move under a tag |
 | `len(checks) >= 20` | `len(checks) == 64` | content releases add checks |
-| `errors/total <= 0.20` | `errors == 0` | one check legitimately errors on a minimal image |
 | a check UID prefix is present | a named check *passes* | whether a given check passes on alpine is a content fact, owned by `content/validation` |
 | at least one `pass` **and** one `fail` | an overall score value | the score is a content-weighted number |
 

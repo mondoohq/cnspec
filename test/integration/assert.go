@@ -165,27 +165,57 @@ func requireCheckPrefixFloor(t *testing.T, rep *reporter.Report, assetMrn, prefi
 	}
 }
 
-// requireErrorRatioBelow bounds the share of checks that errored.
+// requireNoCheckErrors fails on any check that ended in an error.
 //
-// Not zero. A check erroring on a minimal base image is normal -- a resource
-// that does not exist in a container is a legitimate error, and alpine:3.20
-// produces one against the default policies today. A large share means the
-// provider or the executor broke, and nothing else in this suite sees it:
-// errored checks do not populate the report's error map and do not move the
-// exit code.
-func requireErrorRatioBelow(t *testing.T, rep *reporter.Report, assetMrn string, max float64) {
+// A check's outcome is a verdict: pass or fail. "error" means it never reached
+// one -- the target lacks the resource, the provider returned an error, or the
+// query could not run -- and each of those is a defect in the check's scoping or
+// in the provider, not a property of the target. A check that does not apply to
+// a target has to be filtered out of it, so it reports as skipped.
+//
+// Only this assertion sees them: errored checks do not populate the report's
+// error map and do not move the exit code. The failure lists every errored
+// check, so the message is the work list.
+func requireNoCheckErrors(t *testing.T, rep *reporter.Report, assetMrn string) {
+	t.Helper()
+	requireNoCheckErrorsExcept(t, rep, assetMrn, nil)
+}
+
+// requireNoCheckErrorsExcept is requireNoCheckErrors with named exceptions:
+// check UID -> why it may error here. An exception is logged, never silent,
+// and every errored check not in the map still fails the test.
+func requireNoCheckErrorsExcept(t *testing.T, rep *reporter.Report, assetMrn string, except map[string]string) {
 	t.Helper()
 	scores := checkScores(t, rep, assetMrn)
-	if len(scores) == 0 {
-		t.Errorf("no checks scored at all")
+	errored, tolerated := erroredChecks(scores, except)
+	for _, uid := range tolerated {
+		t.Logf("tolerated errored check %s: %s", uid, except[uid])
+	}
+	if len(errored) == 0 {
 		return
 	}
-	errored := statusCounts(scores)["error"]
-	ratio := float64(errored) / float64(len(scores))
-	if ratio > max {
-		t.Errorf("%d of %d checks errored (%.0f%%), want <= %.0f%% (%s)",
-			errored, len(scores), ratio*100, max*100, histogram(scores))
+	t.Errorf("%d of %d checks errored, want none (%s):\n  %s",
+		len(errored), len(scores), histogram(scores), strings.Join(errored, "\n  "))
+}
+
+// erroredChecks splits the errored checks into those that fail the test
+// (sorted MRNs) and those excused by except (sorted UIDs). A check is matched
+// on its UID, the last path segment of its MRN.
+func erroredChecks(scores map[string]*reporter.ScoreValue, except map[string]string) (errored, tolerated []string) {
+	for mrn, v := range scores {
+		if v.GetStatus() != "error" {
+			continue
+		}
+		uid := mrn[strings.LastIndex(mrn, "/")+1:]
+		if _, ok := except[uid]; ok {
+			tolerated = append(tolerated, uid)
+			continue
+		}
+		errored = append(errored, mrn)
 	}
+	sort.Strings(errored)
+	sort.Strings(tolerated)
+	return errored, tolerated
 }
 
 // requireVerdicts asserts at least min checks reached a real pass/fail verdict.

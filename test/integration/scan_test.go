@@ -6,6 +6,9 @@
 package integration
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"testing"
@@ -21,6 +24,37 @@ const (
 	k8sSecurity   = "../../content/mondoo-kubernetes-security.mql.yaml"
 )
 
+// allContent loads every policy and query pack in content/ with -f.
+//
+// The default-policy scenarios use it instead of resolving from the registry,
+// so what they assert -- in particular that no check errors -- is a property of
+// this checkout, not of whatever the registry serves at the time. Filters still
+// decide what runs: a bundle that does not apply to the target contributes
+// nothing. The upstream tier is the one place that resolves from a service, and
+// it has to: cnspec switches to incognito when given -f.
+//
+// Scanning alpine:3.20 with all 122 bundles took 8s on a laptop (2026-09-23).
+var allContent = contentBundleArgs()
+
+func contentBundleArgs() []string {
+	var args []string
+	for _, g := range []string{"../../content/*.mql.yaml", "../../content/querypacks/*.mql.yaml"} {
+		files, err := filepath.Glob(g)
+		if err != nil {
+			panic(err)
+		}
+		for _, f := range files {
+			args = append(args, "-f", f)
+		}
+	}
+	// A glob that silently matched nothing would turn these scenarios into
+	// scans with no policies at all.
+	if len(args)/2 < 100 {
+		panic(fmt.Sprintf("content globs matched %d bundles; is the path still right?", len(args)/2))
+	}
+	return args
+}
+
 // Check identifiers from a bundle loaded with -f are built from the UIDs in the
 // YAML, so the UID prefix is the stable handle for "this bundle resolved".
 const (
@@ -34,7 +68,7 @@ const (
 // tags are mutable, so an upstream security update broke goldens that were
 // still correct about cnspec. That lesson constrains what is asserted, not how
 // images are pinned -- the assertions here are structural (platform family,
-// check floors, error ratio) and survive a patch bump, while a minor tag keeps
+// check floors, no errored check) and survive a patch bump, while a minor tag keeps
 // the suite answering "does cnspec still read a current alpine", which is the
 // point of a release gate.
 const (
@@ -86,29 +120,28 @@ type scenario struct {
 // set, so drift is visible without re-deriving them.
 var scenarios = []scenario{
 	{
-		// The default-policy path: no -f, so policies are resolved from the
-		// production registry. Nothing else in this repo exercises that --
-		// content/validation always passes an explicit bundle -- yet it is what
-		// every new user hits first.
+		// Every policy and query pack in this repo against a pinned image. The
+		// filters pick what applies to alpine, so this is the shipped content
+		// the way a user on that platform meets it, and it must finish without
+		// a single errored check.
 		//
-		// This one keeps a check floor where the local-tier default scenario
-		// does not, because the target is a pinned image: the platform the
-		// registry resolves against is fixed, so the set of applicable policies
-		// is a property of the content rather than of the machine running the
-		// suite. If this floor starts failing, the content or the resolution
-		// really did change.
-		name: "alpine-default-policies",
+		// This one keeps a check floor where the local-tier scenario does not,
+		// because the target is a pinned image: which checks apply is a
+		// property of the content, not of the machine running the suite. If
+		// this floor starts failing, the content or the filters really did
+		// change.
+		name: "alpine-all-content",
 		tier: tierDocker, image: imageAlpine,
-		args:     []string{"scan", "docker", imageAlpine},
+		args:     append([]string{"scan", "docker", imageAlpine}, allContent...),
 		wantExit: 0,
 		assert: func(t *testing.T, rep *reporter.Report) {
 			mrn, asset := requireOneAsset(t, rep)
 			requireNoAssetErrors(t, rep)
 			assert.Equal(t, "alpine", asset.GetPlatformName())
 			requireAssetScored(t, rep, mrn)
-			requireCheckFloor(t, rep, mrn, 30) // observed 64, 2026-09-22
-			requireVerdicts(t, rep, mrn, 20)   // observed 58 pass+fail
-			requireErrorRatioBelow(t, rep, mrn, 0.15)
+			requireCheckFloor(t, rep, mrn, 50) // observed 85, 2026-09-23
+			requireVerdicts(t, rep, mrn, 30)   // observed 57 pass+fail
+			requireNoCheckErrors(t, rep, mrn)
 		},
 	},
 	{
@@ -123,7 +156,7 @@ var scenarios = []scenario{
 			mrn, _ := requireOneAsset(t, rep)
 			requireNoAssetErrors(t, rep)
 			requireCheckPrefixFloor(t, rep, mrn, linuxSecurityUID, 10)
-			requireErrorRatioBelow(t, rep, mrn, 0.20)
+			requireNoCheckErrors(t, rep, mrn)
 		},
 	},
 	{
@@ -139,7 +172,7 @@ var scenarios = []scenario{
 			assert.Equal(t, "ubuntu", asset.GetPlatformName())
 			requireCheckPrefixFloor(t, rep, mrn, linuxSecurityUID, 15) // observed 22, 2026-09-22
 			requireVerdicts(t, rep, mrn, 10)                           // observed 18 pass
-			requireErrorRatioBelow(t, rep, mrn, 0.20)
+			requireNoCheckErrors(t, rep, mrn)
 		},
 	},
 	{
@@ -154,7 +187,7 @@ var scenarios = []scenario{
 			assert.Equal(t, "debian", asset.GetPlatformName())
 			requireCheckPrefixFloor(t, rep, mrn, linuxSecurityUID, 15) // observed 22, 2026-09-22
 			requireVerdicts(t, rep, mrn, 10)                           // observed 20 pass+fail
-			requireErrorRatioBelow(t, rep, mrn, 0.20)
+			requireNoCheckErrors(t, rep, mrn)
 		},
 	},
 	{
@@ -167,22 +200,20 @@ var scenarios = []scenario{
 		wantExit: 1, timeout: 4 * time.Minute,
 	},
 	{
-		// The local connector, against whatever the runner is.
+		// The local connector, against whatever the runner is, with every
+		// policy and query pack in this repo.
 		//
-		// No check-count floor here, deliberately. Without -f the policies come
-		// from the registry and which ones apply is a property of the host, not
-		// of cnspec: a developer laptop resolved 75 checks while a CI runner
-		// resolved 8, because only the groups whose filters matched that host
-		// applied. A floor calibrated on either one is a false failure on the
-		// other, and neither number is something this suite controls.
+		// No check-count floor here, deliberately. Which checks apply is a
+		// property of the host, not of cnspec: a developer laptop and a CI
+		// runner match different groups, and a floor calibrated on either one
+		// is a false failure on the other.
 		//
 		// What is invariant is that the local connector produced an asset, the
-		// engine executed something, and at least one check reached a verdict.
-		// The floors live on the bundle scenarios, where the content is pinned
-		// in this repo and a collapse really is a regression.
-		name:     "local-default-policies",
+		// engine executed something, at least one check reached a verdict, and
+		// none errored -- on whatever host this is.
+		name:     "local-all-content",
 		tier:     tierLocal,
-		args:     []string{"scan", "local"},
+		args:     append([]string{"scan", "local"}, allContent...),
 		wantExit: 0, timeout: 10 * time.Minute,
 		assert: func(t *testing.T, rep *reporter.Report) {
 			mrn, asset := requireOneAsset(t, rep)
@@ -190,6 +221,7 @@ var scenarios = []scenario{
 			assert.NotEmpty(t, asset.GetPlatformName())
 			requireAssetScored(t, rep, mrn)
 			requireVerdicts(t, rep, mrn, 1)
+			requireNoCheckErrorsExcept(t, rep, mrn, nonRootForbiddenChecks())
 		},
 	},
 	{
@@ -202,9 +234,35 @@ var scenarios = []scenario{
 			requireNoAssetErrors(t, rep)
 			requireCheckPrefixFloor(t, rep, mrn, linuxSecurityUID, 15)
 			requireVerdicts(t, rep, mrn, 10)
-			requireErrorRatioBelow(t, rep, mrn, 0.20)
+			requireNoCheckErrors(t, rep, mrn)
 		},
 	},
+}
+
+// nonRootForbiddenChecks names the checks that error in a non-root scan of a
+// Linux host because the scan may not read another user's home directory.
+//
+// The AI agent resources read every user's home, and /root is closed to a
+// regular user: "open /root/.cursor/rules: permission denied". Under ADR-046
+// (structured provider errors, mql#10973) that failure is ERROR_KIND_FORBIDDEN
+// and still scores as an error, but the kind reaches the score. Once it does,
+// this list goes away in favour of tolerating only forbidden errors in a
+// non-root scan. Until then the checks are named here so that every other
+// error still fails the local tier, which CI runs as a regular user.
+//
+// Measured on ubuntu:22.04 as uid 1000 with v14.0.0-rc.11 (2026-09-23).
+func nonRootForbiddenChecks() map[string]string {
+	if runtime.GOOS != "linux" || os.Geteuid() == 0 {
+		return nil
+	}
+	const why = "non-root scan cannot read other users' homes (ADR-046 forbidden)"
+	return map[string]string{
+		"mondoo-ai-security-no-cursor":                 why,
+		"mondoo-ai-security-no-goose":                  why,
+		"mondoo-ai-security-no-unapproved-mcp-servers": why,
+		"mondoo-ai-security-no-windsurf":               why,
+		"mondoo-ai-security-no-zed":                    why,
+	}
 }
 
 func TestDockerTargets(t *testing.T) { runTier(t, tierDocker) }
