@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/viper"
+	"go.mondoo.com/mql/cli/config"
 	"go.mondoo.com/mql/logger"
 	"go.mondoo.com/mql/providers"
 )
@@ -45,6 +47,12 @@ func bundlePath(bundleFile string) string {
 var extraProviders []string
 
 func TestMain(m *testing.M) {
+	// Resolve providers from the preview channel. This test binary carries no
+	// release version, so without it the registry would pick the stable
+	// channel and validate this branch's content against the previous major's
+	// providers, where a field the new major removed still exists.
+	viper.Set(config.KeyUpdateChannel, config.ChannelPreview)
+
 	// ensure providers are loaded
 	providerList := append([]string{"terraform", "k8s", "aws", "azure", "gcp", "cloudformation"}, extraProviders...)
 	for _, p := range providerList {

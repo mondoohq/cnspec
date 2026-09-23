@@ -161,7 +161,10 @@ func childEnv(extra ...string) []string {
 		}
 		env = append(env, e)
 	}
-	env = append(env, "MONDOO_CONFIG_PATH="+absentConfig)
+	// Preview holds the providers this branch is released with. A release
+	// candidate resolves through it anyway; a source build (no VERSION) would
+	// otherwise pick the stable channel.
+	env = append(env, "MONDOO_CONFIG_PATH="+absentConfig, "MONDOO_UPDATE_CHANNEL=preview")
 	return append(env, extra...)
 }
 
