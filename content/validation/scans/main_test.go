@@ -14,12 +14,12 @@
 package scans
 
 import (
-	"github.com/spf13/viper"
-	"go.mondoo.com/mql/cli/config"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/viper"
+	"go.mondoo.com/mql/cli/config"
 	"go.mondoo.com/mql/logger"
 	"go.mondoo.com/mql/providers"
 )

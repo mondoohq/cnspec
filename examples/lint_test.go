@@ -4,14 +4,14 @@
 package examples
 
 import (
-	"github.com/spf13/viper"
-	"go.mondoo.com/mql/cli/config"
 	"os"
 	"testing"
 
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/internal/bundle"
+	"go.mondoo.com/mql/cli/config"
 	"go.mondoo.com/mql/providers"
 	"go.mondoo.com/mql/providers-sdk/v1/testutils"
 )
