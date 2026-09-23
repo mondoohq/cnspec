@@ -676,6 +676,16 @@ queries:
 
 	before := policyChecksumsFor(t, now, policyYaml(listFilter, dataBefore, "one instance"))
 
+	// Filters live in a map, so the checksum must not depend on iteration
+	// order: recomputing the same content has to land on the same values every
+	// time. The variant carries two filters, which is what exercises the order.
+	t.Run("the same content keeps it", func(t *testing.T) {
+		for i := range 50 {
+			again := policyChecksumsFor(t, now, policyYaml(listFilter, dataBefore, "one instance"))
+			require.Equal(t, getChecksums(before), getChecksums(again), "recomputation %d", i)
+		}
+	})
+
 	t.Run("a variant's filters", func(t *testing.T) {
 		after := policyChecksumsFor(t, now, policyYaml(andFilter, dataBefore, "one instance"))
 		assert.NotEqual(t, before.LocalExecutionChecksum, after.LocalExecutionChecksum)
