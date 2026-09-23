@@ -83,106 +83,121 @@ var serveCmd = &cobra.Command{
 		explicitInventory := viper.GetString("inventory-file") != "" ||
 			viper.GetString("inventory-template") != ""
 
-		// Detect the runtime environment (CI/CD or not) once. It's fixed for
-		// the life of the process, so it's computed here rather than on every
-		// scan cycle in loadInventory/reloadInventory.
-		runtimeEnv := execruntime.Detect()
+		// Flags are read here, on the command's own goroutine, rather than
+		// inside the setup closure: cobra's flag set belongs to the command
+		// and the closure runs on the service's goroutine.
+		timerFlag, timerSet := intFlag(cmd, "timer")
+		splayFlag, splaySet := intFlag(cmd, "splay")
 
-		// determine the scan config from pipe or args
-		scanConf, cliConfig, err := getServeConfig(runtimeEnv, explicitInventory)
-		if err != nil {
-			// we return the specific error code to prevent systemd from restarting
-			return cli_errors.NewCommandError(errors.Wrap(err, "could not load configuration"), ConfigurationErrorCode)
-		}
+		// Everything below runs inside the service, after it has reported
+		// itself started to the operating system. It is the slow part of
+		// startup -- reading the config, building the upstream client, and
+		// (by way of the Mondoo-PlatformID request header) fingerprinting the
+		// platform -- and on Windows running it out here first is what cost
+		// the service its 30-second deadline with the Service Control
+		// Manager. See backgroundjob.runService.
+		return backgroundjob.Serve(func() (*backgroundjob.ServiceConfig, error) {
+			// Detect the runtime environment (CI/CD or not) once. It's fixed
+			// for the life of the process, so it's computed here rather than
+			// on every scan cycle in loadInventory/reloadInventory.
+			runtimeEnv := execruntime.Detect()
 
-		// CLI flags override config file values
-		if cmd.Flags().Changed("timer") {
-			v, err := cmd.Flags().GetInt("timer")
+			// determine the scan config from pipe or args
+			scanConf, cliConfig, err := getServeConfig(runtimeEnv, explicitInventory)
 			if err != nil {
-				log.Warn().Err(err).Msg("failed to read --timer flag")
-			} else {
-				cliConfig.ScanInterval.Timer = v
+				// we return the specific error code to prevent systemd from restarting
+				return nil, cli_errors.NewCommandError(errors.Wrap(err, "could not load configuration"), ConfigurationErrorCode)
 			}
-		}
-		if cmd.Flags().Changed("splay") {
-			v, err := cmd.Flags().GetInt("splay")
-			if err != nil {
-				log.Warn().Err(err).Msg("failed to read --splay flag")
-			} else {
-				cliConfig.ScanInterval.Splay = v
+
+			// CLI flags override config file values
+			if timerSet {
+				cliConfig.ScanInterval.Timer = timerFlag
 			}
-		}
-
-		ctx := mql.SetFeatures(context.Background(), mql.DefaultFeatures)
-
-		var checkInHandler *backgroundjob.CheckinHandler
-		if scanConf != nil && scanConf.runtime.UpstreamConfig != nil {
-			client, err := scanConf.runtime.UpstreamConfig.InitClient(ctx)
-			if err != nil {
-				return cli_errors.NewCommandError(errors.Wrap(err, "could not initialize upstream client"), 1)
+			if splaySet {
+				cliConfig.ScanInterval.Splay = splayFlag
 			}
-			checkInHandler, err = backgroundjob.NewCheckInHandlerWithInfo(client.HttpClient, client.ApiEndpoint, scanConf.AgentMrn, scanConf.runtime.UpstreamConfig)
-			if err != nil {
-				log.Debug().Err(err).Msg("could not initialize upstream check-in")
-			} else {
-				pinger := backgroundjob.NewCheckinPinger(ctx, 2*time.Hour, checkInHandler)
-				pinger.Start()
-				defer pinger.Stop()
-			}
-		}
 
-		bj, err := backgroundjob.New(
-			time.Duration(cliConfig.ScanInterval.Timer)*time.Minute,
-			time.Duration(cliConfig.ScanInterval.Splay)*time.Minute,
-		)
-		if err != nil {
-			return cli_errors.NewCommandError(errors.Wrap(err, "could not start background listener"), 1)
-		}
+			ctx := mql.SetFeatures(context.Background(), mql.DefaultFeatures)
 
-		autoUpdate := true
-		if viper.IsSet("auto_update") {
-			autoUpdate = viper.GetBool("auto_update")
-		}
-
-		_ = bj.Run(func() error {
-			// Try to update the os provider before each scan
-			if autoUpdate {
-				err = updateProviders()
+			var checkInHandler *backgroundjob.CheckinHandler
+			var shutdown func()
+			if scanConf != nil && scanConf.runtime.UpstreamConfig != nil {
+				client, err := scanConf.runtime.UpstreamConfig.InitClient(ctx)
 				if err != nil {
-					log.Error().Err(err).Msg("could not update providers")
+					return nil, cli_errors.NewCommandError(errors.Wrap(err, "could not initialize upstream client"), 1)
 				}
-			}
-
-			// Reload the inventory before every cycle so a service that's
-			// already running picks up an inventory.yml that was added or
-			// edited after startup, without requiring a restart.
-			reloadInventory(cliConfig, scanConf, runtimeEnv, explicitInventory)
-
-			// check in the managed client when running a scan
-			if checkInHandler != nil {
-				log.Info().Msg("performing check-in")
-				err = checkInHandler.CheckIn(ctx)
+				checkInHandler, err = backgroundjob.NewCheckInHandlerWithInfo(client.HttpClient, client.ApiEndpoint, scanConf.AgentMrn, scanConf.runtime.UpstreamConfig)
 				if err != nil {
-					log.Error().Err(err).Msg("could not check in")
+					log.Debug().Err(err).Msg("could not initialize upstream check-in")
+				} else {
+					pinger := backgroundjob.NewCheckinPinger(ctx, 2*time.Hour, checkInHandler)
+					pinger.Start()
+					shutdown = pinger.Stop
 				}
-			}
-			// TODO: check in every 5 min via timer, init time in Background job
-			result, err := RunScan(ctx, scanConf, scan.DisableProgressBar(), scan.WithReportType(scan.ReportType_ERROR), scan.WithScanSource(scan.ScanSourceService))
-			if err != nil {
-				return cli_errors.NewCommandError(errors.Wrap(err, "could not successfully complete scan"), 1)
 			}
 
-			// log errors
-			if result != nil && result.GetErrors() != nil && len(result.GetErrors()) > 0 {
-				assetErrors := result.GetErrors()
-				for a, err := range assetErrors {
-					log.Error().Err(errors.New(err)).Str("asset", a).Msg("could not connect to asset")
-				}
+			autoUpdate := true
+			if viper.IsSet("auto_update") {
+				autoUpdate = viper.GetBool("auto_update")
 			}
-			return nil
+
+			return &backgroundjob.ServiceConfig{
+				Timer:          time.Duration(cliConfig.ScanInterval.Timer) * time.Minute,
+				Splay:          time.Duration(cliConfig.ScanInterval.Splay) * time.Minute,
+				FirstScanDelay: backgroundjob.FleetStartDelay(),
+				Shutdown:       shutdown,
+				Scan: func() error {
+					// Try to update the os provider before each scan
+					if autoUpdate {
+						if err := updateProviders(); err != nil {
+							log.Error().Err(err).Msg("could not update providers")
+						}
+					}
+
+					// Reload the inventory before every cycle so a service that's
+					// already running picks up an inventory.yml that was added or
+					// edited after startup, without requiring a restart.
+					reloadInventory(cliConfig, scanConf, runtimeEnv, explicitInventory)
+
+					// check in the managed client when running a scan
+					if checkInHandler != nil {
+						log.Info().Msg("performing check-in")
+						if err := checkInHandler.CheckIn(ctx); err != nil {
+							log.Error().Err(err).Msg("could not check in")
+						}
+					}
+					// TODO: check in every 5 min via timer, init time in Background job
+					result, err := RunScan(ctx, scanConf, scan.DisableProgressBar(), scan.WithReportType(scan.ReportType_ERROR), scan.WithScanSource(scan.ScanSourceService))
+					if err != nil {
+						return cli_errors.NewCommandError(errors.Wrap(err, "could not successfully complete scan"), 1)
+					}
+
+					// log errors
+					if result != nil && result.GetErrors() != nil && len(result.GetErrors()) > 0 {
+						assetErrors := result.GetErrors()
+						for a, err := range assetErrors {
+							log.Error().Err(errors.New(err)).Str("asset", a).Msg("could not connect to asset")
+						}
+					}
+					return nil
+				},
+			}, nil
 		})
-		return nil
 	},
+}
+
+// intFlag reports an int flag's value and whether the operator actually set
+// it, so a flag left at its default does not overwrite the config file.
+func intFlag(cmd *cobra.Command, name string) (int, bool) {
+	if !cmd.Flags().Changed(name) {
+		return 0, false
+	}
+	v, err := cmd.Flags().GetInt(name)
+	if err != nil {
+		log.Warn().Err(err).Msgf("failed to read --%s flag", name)
+		return 0, false
+	}
+	return v, true
 }
 
 func getServeConfig(runtimeEnv *execruntime.RuntimeEnv, explicitInventory bool) (*scanConfig, *cnspec_config.CliConfig, error) {
