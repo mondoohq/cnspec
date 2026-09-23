@@ -306,7 +306,7 @@ test/content/upstream/unit:
 #   🔌 Integration   #
 
 # Runs a real cnspec binary against real targets: container images, the local
-# system, and a kind cluster. Asserts on the structured JSON report -- check
+# system, and a k3d cluster. Asserts on the structured JSON report -- check
 # counts, per-check status, the error map -- not on the exit code, which at the
 # default risk threshold is 0 for any scan that merely connected.
 #
@@ -319,7 +319,7 @@ test/content/upstream/unit:
 # of the suite; see test/integration/README.md.
 #
 # Tiers skip when their infrastructure is missing, so a laptop with Docker runs
-# the docker and local tiers and skips kind. CI sets CNSPEC_IT_REQUIRE_ALL=1,
+# the docker and local tiers and skips k8s without k3d. CI sets CNSPEC_IT_REQUIRE_ALL=1,
 # which turns a skip into a failure: a suite that can quietly skip a tier
 # reports success for the thing it stopped testing.
 .PHONY: test/integration test/integration/docker test/integration/local
