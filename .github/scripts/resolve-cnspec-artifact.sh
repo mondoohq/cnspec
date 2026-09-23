@@ -32,13 +32,28 @@ fi
 asset="cnspec_${VERSION#v}_linux_amd64.tar.gz"
 dest="${RUNNER_TEMP:-/tmp}/cnspec-artifact"
 
+# The release's direct download URL, not `gh release download`. The CLI finds
+# the release through the REST lookup by tag, and GitHub can serve that lookup
+# stale for a while after a release is published: for v14.0.0-rc.13 it reported
+# 0 assets for over half an hour while the release by id, GraphQL and the
+# download URLs all had 26. A download URL is addressed by tag and asset name
+# and does not depend on that lookup.
+#
+# goreleaser's checksum file keeps the leading "v": cnspec_v14.0.0-rc.13_SHA256SUMS.
+repo="${GITHUB_REPOSITORY:-mondoohq/cnspec}"
+base="https://github.com/${repo}/releases/download/${VERSION}"
+sums="cnspec_${VERSION}_SHA256SUMS"
+
 mkdir -p "${dest}"
-echo "downloading ${asset} from ${VERSION}"
-gh release download "${VERSION}" \
-  --repo "${GITHUB_REPOSITORY:-mondoohq/cnspec}" \
-  --pattern "${asset}" \
-  --dir "${dest}" \
-  --clobber
+echo "downloading ${asset} from ${base}"
+curl --fail --silent --show-error --location --retry 3 \
+  --output "${dest}/${asset}" "${base}/${asset}"
+curl --fail --silent --show-error --location --retry 3 \
+  --output "${dest}/${sums}" "${base}/${sums}"
+
+# Verify against the release's own checksums, so a truncated or substituted
+# download fails here rather than as a confusing test failure.
+(cd "${dest}" && grep " ${asset}\$" "${sums}" | sha256sum --check --strict)
 
 tar -xzf "${dest}/${asset}" -C "${dest}"
 chmod +x "${dest}/cnspec"
