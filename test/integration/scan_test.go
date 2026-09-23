@@ -234,34 +234,59 @@ var scenarios = []scenario{
 			requireNoAssetErrors(t, rep)
 			requireCheckPrefixFloor(t, rep, mrn, linuxSecurityUID, 15)
 			requireVerdicts(t, rep, mrn, 10)
-			requireNoCheckErrors(t, rep, mrn)
+			requireNoCheckErrorsExcept(t, rep, mrn, nonRootForbiddenChecks())
 		},
 	},
 }
 
 // nonRootForbiddenChecks names the checks that error in a non-root scan of a
-// Linux host because the scan may not read another user's home directory.
+// Linux host because the data they read is closed to a regular user.
 //
-// The AI agent resources read every user's home, and /root is closed to a
-// regular user: "open /root/.cursor/rules: permission denied". Under ADR-046
-// (structured provider errors, mql#10973) that failure is ERROR_KIND_FORBIDDEN
-// and still scores as an error, but the kind reaches the score. Once it does,
-// this list goes away in favour of tolerating only forbidden errors in a
-// non-root scan. Until then the checks are named here so that every other
-// error still fails the local tier, which CI runs as a regular user.
+// Under ADR-046 (structured provider errors, mql#10973) each of these failures
+// is ERROR_KIND_FORBIDDEN and still scores as an error, but the kind reaches
+// the score. Once it does, this list goes away in favour of tolerating only
+// forbidden errors in a non-root scan. Until then the checks are named here,
+// each with the refusal it hits, so that every other error still fails the
+// local tier, which CI runs as a regular user.
 //
-// Measured on ubuntu:22.04 as uid 1000 with v14.0.0-rc.11 (2026-09-23).
+// Which of them appear depends on what the host has installed: the GitHub
+// runner has PostgreSQL, iptables and sudo, a minimal container has none.
+// Each reason was reproduced as a regular user on ubuntu:24.04 with those
+// packages installed and v14.0.0-rc.12 (2026-09-23).
 func nonRootForbiddenChecks() map[string]string {
 	if runtime.GOOS != "linux" || os.Geteuid() == 0 {
 		return nil
 	}
-	const why = "non-root scan cannot read other users' homes (ADR-046 forbidden)"
+	const (
+		homes    = "reads every user's home; /root is closed to a regular user"
+		iptables = "iptables and nft need root: \"Permission denied (you must be root)\""
+		sudoers  = "/etc/sudoers is 0440 root:root"
+		pgConf   = "PostgreSQL config is 0640 postgres:postgres"
+	)
 	return map[string]string{
-		"mondoo-ai-security-no-cursor":                 why,
-		"mondoo-ai-security-no-goose":                  why,
-		"mondoo-ai-security-no-unapproved-mcp-servers": why,
-		"mondoo-ai-security-no-windsurf":               why,
-		"mondoo-ai-security-no-zed":                    why,
+		"mondoo-ai-security-no-cursor":                 homes,
+		"mondoo-ai-security-no-goose":                  homes,
+		"mondoo-ai-security-no-unapproved-mcp-servers": homes,
+		"mondoo-ai-security-no-windsurf":               homes,
+		"mondoo-ai-security-no-zed":                    homes,
+		"mondoo-linux-users":                           "reads each user's authorized_keys in their home",
+
+		"mondoo-linux-iptables-input":   iptables,
+		"mondoo-linux-iptables-output":  iptables,
+		"mondoo-linux-nftables-ruleset": iptables,
+
+		"mondoo-linux-security-sudo-logging-is-enabled": sudoers,
+
+		"mondoo-postgresql-security-hba-cert-auth-requires-verify-full":   pgConf,
+		"mondoo-postgresql-security-hba-no-md5-auth":                      pgConf,
+		"mondoo-postgresql-security-hba-no-plaintext-password-auth":       pgConf,
+		"mondoo-postgresql-security-hba-no-trust-auth":                    pgConf,
+		"mondoo-postgresql-security-hba-no-unrestricted-client-addresses": pgConf,
+		"mondoo-postgresql-security-hba-remote-connections-require-tls":   pgConf,
+		"mondoo-postgresql-security-hba-replication-restricted":           pgConf,
+		"mondoo-postgresql-security-ident-no-catch-all-mappings":          pgConf,
+		"mondoo-postgresql-security-ident-no-superuser-mappings":          pgConf,
+		"mondoo-postgresql-security-tls-client-ca-configured":             pgConf,
 	}
 }
 
