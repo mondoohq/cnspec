@@ -171,9 +171,12 @@ report's error map or the exit code, so nothing else here would see them; the
 failure message lists every errored check.
 
 One exception is named in code, not implied: a non-root scan of a Linux host
-may not read other users' home directories, so the AI agent checks error with
-`permission denied` on `/root`. `nonRootForbiddenChecks` lists them for that
-case only. Under ADR-046 (structured provider errors) such a failure is
+may not read what only root, another user, or a service account can. The AI
+agent checks read every user's home, iptables and nft need root, and
+`/etc/sudoers` and the PostgreSQL configuration are closed to a regular user.
+`nonRootForbiddenChecks` lists those checks, each with the refusal it hits,
+for a non-root Linux scan only; which of them appear depends on what the host
+has installed. Under ADR-046 (structured provider errors) such a failure is
 `forbidden` and the kind reaches the score; the list is then replaced by
 tolerating only `forbidden` errors in a non-root scan.
 
