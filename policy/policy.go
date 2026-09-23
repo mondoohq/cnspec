@@ -837,22 +837,21 @@ func variantsExecutionChecksum(q *Mquery, c checksums.Fast, includeImpact bool, 
 
 	// Filters decide which assets run the query, so a filter-only change must
 	// move the execution checksum like a code change does (#4051). Same shape
-	// as the group filters in updateAllChecksums.
+	// as the group filters in updateAllChecksums, but sorted by code ID rather
+	// than by map key: a query reference's filters can still be keyed by list
+	// position here, and the order they are listed in must not matter.
 	if q.Filters != nil {
-		keys := make([]string, len(q.Filters.Items))
-		i := 0
-		for k := range q.Filters.Items {
-			keys[i] = k
-			i++
-		}
-		sort.Strings(keys)
-
-		for i := range keys {
-			filter := q.Filters.Items[keys[i]]
+		codeIDs := make([]string, 0, len(q.Filters.Items))
+		for _, filter := range q.Filters.Items {
 			if filter.CodeId == "" {
 				return 0, errors.New("failed to get code ID for filter " + filter.Mrn)
 			}
-			c = c.Add(filter.CodeId)
+			codeIDs = append(codeIDs, filter.CodeId)
+		}
+		sort.Strings(codeIDs)
+
+		for _, codeID := range codeIDs {
+			c = c.Add(codeID)
 		}
 	}
 

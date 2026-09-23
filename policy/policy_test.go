@@ -698,6 +698,20 @@ queries:
 		assert.NotEqual(t, before.GraphExecutionChecksum, after.GraphExecutionChecksum)
 	})
 
+	// A query reference's filters are still keyed by list position when the
+	// checksum runs, so listing the same filters in another order must not
+	// move it.
+	t.Run("filter order leaves it", func(t *testing.T) {
+		unixThenMac := policyChecksumsFor(t, now, policyYaml(listFilter, `
+              - mql: asset.family.contains("unix")
+              - mql: asset.platform == "macos"`, "one instance"))
+		macThenUnix := policyChecksumsFor(t, now, policyYaml(listFilter, `
+              - mql: asset.platform == "macos"
+              - mql: asset.family.contains("unix")`, "one instance"))
+		assert.Equal(t, unixThenMac.LocalExecutionChecksum, macThenUnix.LocalExecutionChecksum)
+		assert.Equal(t, unixThenMac.GraphExecutionChecksum, macThenUnix.GraphExecutionChecksum)
+	})
+
 	t.Run("docs alone leave it", func(t *testing.T) {
 		after := policyChecksumsFor(t, now, policyYaml(listFilter, dataBefore, "a single instance"))
 		assert.Equal(t, before.LocalExecutionChecksum, after.LocalExecutionChecksum)
