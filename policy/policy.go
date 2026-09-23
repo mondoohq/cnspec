@@ -608,18 +608,18 @@ func (p *Policy) updateAllChecksums(ctx context.Context,
 			sort.Strings(keys)
 
 			for i := range keys {
-				filter := group.Filters.Items[keys[i]]
+				key := keys[i]
+				filter := group.Filters.Items[key]
 				if filter.Checksum == "" {
 					return recalculateAt, errors.New("failed to get checksum for filter " + filter.Mrn)
 				}
-				contentChecksum = contentChecksum.Add(filter.Checksum)
-			}
+				if filter.CodeId == "" {
+					return recalculateAt, errors.New("failed to get code ID for filter " + filter.Mrn)
+				}
 
-			withFilters, err := group.Filters.addExecutionChecksum(executionChecksum)
-			if err != nil {
-				return recalculateAt, err
+				contentChecksum = contentChecksum.Add(filter.Checksum)
+				executionChecksum = executionChecksum.Add(filter.CodeId)
 			}
-			executionChecksum = withFilters
 		}
 
 		// REMAINING FIELDS
@@ -834,9 +834,26 @@ func variantsExecutionChecksum(q *Mquery, c checksums.Fast, includeImpact bool, 
 	if includeImpact {
 		c = c.AddUint(q.Impact.Checksum())
 	}
-	c, err := q.Filters.addExecutionChecksum(c)
-	if err != nil {
-		return 0, err
+
+	// Filters decide which assets run the query, so a filter-only change must
+	// move the execution checksum like a code change does (#4051). Same shape
+	// as the group filters in updateAllChecksums.
+	if q.Filters != nil {
+		keys := make([]string, len(q.Filters.Items))
+		i := 0
+		for k := range q.Filters.Items {
+			keys[i] = k
+			i++
+		}
+		sort.Strings(keys)
+
+		for i := range keys {
+			filter := q.Filters.Items[keys[i]]
+			if filter.CodeId == "" {
+				return 0, errors.New("failed to get code ID for filter " + filter.Mrn)
+			}
+			c = c.Add(filter.CodeId)
+		}
 	}
 
 	for _, ref := range q.Variants {
