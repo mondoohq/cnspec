@@ -6,6 +6,8 @@
 package integration
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -124,8 +126,21 @@ func applyWorkload(t *testing.T) {
 	// objects exist in the API as soon as apply returns, which is all the
 	// provider needs.
 	t.Cleanup(func() {
-		// Best effort: in CI the cluster is discarded with the job, and locally
-		// a leftover namespace should not fail the run that noticed it.
+		// On failure, record what the cluster held before anything is torn
+		// down: the k3d cluster is deleted when the test ends, so there is no
+		// later moment to look.
+		if t.Failed() {
+			state, _ := probe(t, time.Minute, "kubectl", "get", "all", "-n", k8sNamespace, "-o", "yaml")
+			pods, _ := probe(t, time.Minute, "kubectl", "describe", "pods", "-n", k8sNamespace)
+			path := filepath.Join(artifactDir, "k8s-cluster-state.txt")
+			if err := os.WriteFile(path, []byte(state+"\n---\n"+pods), 0o644); err != nil {
+				t.Logf("could not save the cluster state: %v", err)
+			} else {
+				t.Logf("saved the cluster state to %s", path)
+			}
+		}
+		// Best effort, and only needed when CNSPEC_IT_K8S_CONTEXT points the
+		// tier at an existing cluster: a k3d cluster is deleted as a whole.
 		if out, err := probe(t, 2*time.Minute, "kubectl", "delete", "-f", k8sWorkload,
 			"--ignore-not-found", "--wait=false"); err != nil {
 			t.Logf("could not clean up %s: %v\n%s", k8sWorkload, err, out)

@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -43,40 +43,81 @@ func requireDocker(t *testing.T) {
 	}
 }
 
-// requireKubernetes skips (or fails) when no cluster is reachable, and refuses
-// a cluster that is not a local one.
+// requireKubernetes provides the cluster the k8s tier scans, and makes it the
+// one every kubectl call and cnspec scan in the test talks to.
 //
-// The context guard is not paranoia: `cnspec scan k8s` reads whatever kubeconfig
-// context is current, and a developer running the suite with a production
-// context active would point a scan at it. The suite creates a kind cluster in
-// CI, so requiring a kind context costs nothing there; CNSPEC_IT_K8S_CONTEXT is
-// the deliberate override for anyone testing against something else.
+// By default it creates a k3d cluster for this test and deletes it when the
+// test ends, pass or fail, so nothing is left running between runs. Its
+// kubeconfig is written to a temporary file and exported as KUBECONFIG for this
+// test only: the developer's kubeconfig and current context are never read or
+// changed, so a scan cannot land on whatever cluster happens to be current.
+//
+// CNSPEC_IT_K8S_CONTEXT is the deliberate override: set it to the name of the
+// current context to scan an existing cluster instead.
 func requireKubernetes(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("kubectl"); err != nil {
-		skipTier(t, "k8s", "kubectl is not on PATH; the CI job installs a kind cluster, "+
-			"locally run: kind create cluster --name cnspec-integration")
-	}
-	if out, err := probe(t, 30*time.Second, "kubectl", "cluster-info", "--request-timeout=10s"); err != nil {
-		skipTier(t, "k8s", fmt.Sprintf("no reachable cluster (%v): %s; "+
-			"run: kind create cluster --name cnspec-integration", err, out))
+		skipTier(t, "k8s", "kubectl is not on PATH")
 	}
 
-	current, err := probe(t, 15*time.Second, "kubectl", "config", "current-context")
-	if err != nil {
-		skipTier(t, "k8s", fmt.Sprintf("could not read the current context: %v", err))
-	}
-	want := os.Getenv("CNSPEC_IT_K8S_CONTEXT")
-	if want != "" {
+	if want := os.Getenv("CNSPEC_IT_K8S_CONTEXT"); want != "" {
+		current, err := probe(t, 15*time.Second, "kubectl", "config", "current-context")
+		if err != nil {
+			skipTier(t, "k8s", fmt.Sprintf("could not read the current context: %v", err))
+		}
 		if current != want {
 			skipTier(t, "k8s", fmt.Sprintf("current context is %q, want %q from %s",
 				current, want, "CNSPEC_IT_K8S_CONTEXT"))
 		}
+		if out, err := probe(t, 30*time.Second, "kubectl", "cluster-info", "--request-timeout=10s"); err != nil {
+			skipTier(t, "k8s", fmt.Sprintf("no reachable cluster (%v): %s", err, out))
+		}
 		return
 	}
-	if !strings.HasPrefix(current, "kind-") {
-		skipTier(t, "k8s", fmt.Sprintf("current context %q is not a kind cluster; "+
-			"refusing to scan it. Set CNSPEC_IT_K8S_CONTEXT=%s to override", current, current))
+
+	startK3dCluster(t)
+}
+
+// startK3dCluster creates a single-node k3d cluster, exports its kubeconfig for
+// the rest of the test, and registers its deletion.
+//
+// One server, no load balancer and no Traefik: the tier deploys one Deployment
+// and one Pod and scans them, and anything else only costs start-up time.
+func startK3dCluster(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("k3d"); err != nil {
+		skipTier(t, "k8s", "k3d is not on PATH; install it (https://k3d.io) to run the k8s tier")
+	}
+
+	// Unique per run, so a cluster left behind by a killed run never collides.
+	name := fmt.Sprintf("cnspec-it-%d", time.Now().UnixNano()%1_000_000_000)
+	out, err := probe(t, 5*time.Minute, "k3d", "cluster", "create", name,
+		"--no-lb", "--wait", "--timeout", "180s",
+		"--k3s-arg", "--disable=traefik@server:0",
+		"--kubeconfig-update-default=false", "--kubeconfig-switch-context=false")
+	// Registered before the error check: a create that fails halfway can still
+	// leave containers behind.
+	t.Cleanup(func() {
+		if out, err := probe(t, 3*time.Minute, "k3d", "cluster", "delete", name); err != nil {
+			t.Logf("could not delete k3d cluster %s: %v\n%s", name, err, out)
+		}
+	})
+	if err != nil {
+		t.Fatalf("could not create k3d cluster %s: %v\n%s", name, err, out)
+	}
+
+	kubeconfig := filepath.Join(t.TempDir(), "kubeconfig")
+	if out, err := probe(t, time.Minute, "k3d", "kubeconfig", "write", name,
+		"--output", kubeconfig); err != nil {
+		t.Fatalf("could not write the kubeconfig of %s: %v\n%s", name, err, out)
+	}
+	// Inherited by probe and by the cnspec child process (childEnv keeps
+	// KUBECONFIG), and restored when the test ends.
+	t.Setenv("KUBECONFIG", kubeconfig)
+
+	if out, err := probe(t, 2*time.Minute, "kubectl", "wait", "--for=condition=Ready",
+		"node", "--all", "--timeout=90s"); err != nil {
+		t.Fatalf("k3d cluster %s did not become ready: %v\n%s", name, err, out)
 	}
 }
 
