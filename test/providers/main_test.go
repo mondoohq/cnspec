@@ -41,6 +41,10 @@ func TestMain(m *testing.M) {
 		}
 	}
 	os.Setenv("MONDOO_CONFIG_PATH", filepath.Join(dir, "absent-mondoo.yml")) //nolint:errcheck
+	// The binary under test is a source build with no release version, which
+	// resolves providers from the stable channel. Preview holds the providers
+	// this branch is released with.
+	os.Setenv("MONDOO_UPDATE_CHANNEL", "preview") //nolint:errcheck
 
 	code := m.Run()
 	os.RemoveAll(dir) //nolint:errcheck

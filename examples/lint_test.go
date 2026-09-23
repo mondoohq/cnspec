@@ -4,6 +4,8 @@
 package examples
 
 import (
+	"github.com/spf13/viper"
+	"go.mondoo.com/mql/cli/config"
 	"os"
 	"testing"
 
@@ -25,6 +27,12 @@ func ensureProviders(ids []string) error {
 }
 
 func TestMain(m *testing.M) {
+	// Resolve providers from the preview channel. This test binary carries no
+	// release version, so without it the registry would pick the stable
+	// channel and validate this branch's content against the previous major's
+	// providers, where a field the new major removed still exists.
+	viper.Set(config.KeyUpdateChannel, config.ChannelPreview)
+
 	dir := ".lint-providers"
 	providers.CustomProviderPath = dir
 	providers.DefaultPath = dir

@@ -6,11 +6,15 @@ on:
     types: [opened, reopened, synchronize]
     paths:
       - "content/**"
+      - "go.mod"
+      - ".github/workflows/policies_lint.yaml"
   push:
     branches:
       - main
     paths:
       - "content/**"
+      - "go.mod"
+      - ".github/workflows/policies_lint.yaml"
   workflow_dispatch:
 
 permissions:
@@ -24,11 +28,31 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Lint cnspec policies and output SARIF
-        uses: mondoohq/actions/cnspec-lint@c38cfdf99da709760f58ff35aa5608688657f2f7 # v13.3.0
+      - name: Import environment variables from file
+        run: cat ".github/env" >> $GITHUB_ENV
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          path: ./content
-          output-file: "results.sarif"
+          go-version: "${{ env.golang-version }}"
+
+      # Lint with the cnspec this branch builds, not a published image: the
+      # content here is released with this code, and a linter from the previous
+      # major validates it against a schema that still has the fields the new
+      # major removed.
+      - name: Build cnspec
+        run: go build -o "${RUNNER_TEMP}/cnspec" ./apps/cnspec
+
+      # A source build carries no release version, so it would resolve providers
+      # from the stable channel. Preview holds the providers this branch is
+      # released with. Linting content/ also covers content/querypacks.
+      - name: Lint cnspec policies and output SARIF
+        env:
+          MONDOO_UPDATE_CHANNEL: preview
+          PROVIDERS_PATH: ${{ runner.temp }}/providers
+        run: |
+          mkdir -p "${PROVIDERS_PATH}"
+          "${RUNNER_TEMP}/cnspec" policy lint ./content -o sarif --output-file results.sarif
       - name: Display SARIF file content
         run: jq . results.sarif
       - name: Upload SARIF results file
