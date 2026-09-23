@@ -16,6 +16,7 @@ func TestBuildGraph_Policies(t *testing.T) {
 policies:
   - uid: linux-security
     name: Linux Security
+    version: 1.2.0
     groups:
       - title: SSH Configuration
         checks:
@@ -49,6 +50,7 @@ queries:
 	policyNodes := findByKind(g, KindPolicy)
 	assert.Len(t, policyNodes, 1)
 	assert.Equal(t, "linux-security", policyNodes[0].Name)
+	assert.Equal(t, "1.2.0", policyNodes[0].Version)
 
 	groupNodes := findByKind(g, KindGroup)
 	assert.Len(t, groupNodes, 1)
