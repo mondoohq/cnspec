@@ -1,0 +1,234 @@
+name: Windows service startup
+
+# Proves on a real Service Control Manager what apps/cnspec/cmd/backgroundjob's
+# unit tests can only prove in the abstract: that `cnspec serve` completes the
+# SCM handshake before it does any of its slow startup work.
+#
+# Windows kills a service that has not connected to the SCM within 30 seconds
+# of process start (error 1053). cnspec used to read its config, build the
+# upstream client and fingerprint the platform first, and on machines busy
+# installing Windows updates that ran past the deadline -- the service died
+# before svc.Run was ever reached.
+#
+# The job reproduces that pressure without needing a busy machine: it points
+# the config at a TCP tarpit that accepts connections and never answers, so the
+# credential exchange in setup blocks for the ranger HTTP client's full
+# 30-second timeout. Measured on the same binary and config outside CI, that
+# puts the pre-fix startup at 30.9s before the service announced itself and the
+# post-fix startup at 1.7s -- one side of the SCM's deadline each.
+#
+# The blocked exchange is logged and startup then continues without an upstream
+# client, so the service stays running and the assertion below is not racing a
+# service that is on its way out.
+
+on:
+  pull_request:
+    paths:
+      - "apps/cnspec/cmd/serve.go"
+      - "apps/cnspec/cmd/backgroundjob/**"
+      - ".github/workflows/windows-service-start.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TARPIT_PORT: "18443"
+
+jobs:
+  scm-handshake:
+    name: Service reports started before setup
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      # This repository does not check out on Windows with git's defaults.
+      # Fixture paths under content/validation reach 241 characters before the
+      # runner's workspace prefix is added, which puts them past MAX_PATH, and
+      # checkout fails with "Filename too long". core.longpaths makes git use
+      # the extended-length API instead.
+      - name: Allow long paths in git
+        run: git config --system core.longpaths true
+
+      # Excluding content/ is the other half: it is the only tree with paths
+      # that long, and nothing this job builds imports it -- the Go files under
+      # it are all _test.go in content/validation, which this job does not run.
+      # It also takes the checkout from 8470 files to a fraction of that.
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            /*
+            !/content
+          sparse-checkout-cone-mode: false
+
+      - name: Import environment variables from file
+        run: Get-Content ".github/env" | Add-Content $env:GITHUB_ENV
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "${{ env.golang-version }}"
+          check-latest: true
+
+      # The startup ordering itself is asserted by ordinary Go tests, which are
+      # platform independent on purpose so they can be run without Windows.
+      # Running them here too keeps the Windows build honest.
+      - name: Run background service tests
+        run: go test ./apps/cnspec/cmd/backgroundjob/... -count=1 -v
+
+      - name: Build cnspec
+        run: go build -o C:\cnspec\cnspec.exe .\apps\cnspec
+
+      # A listener that completes the TCP handshake and then says nothing, so
+      # the HTTP client on the other end waits out its own 30-second timeout --
+      # the same budget the SCM gives the whole process to connect.
+      #
+      # It is a compiled Go binary: Go is already set up above, and a compiled
+      # binary removes the interpreter and execution-policy questions that made
+      # an earlier PowerShell version fail silently.
+      - name: Build the tarpit
+        run: |
+          New-Item -ItemType Directory -Force -Path C:\cnspec, C:\tarpit | Out-Null
+
+          @('module tarpit', '', 'go 1.24') |
+            Set-Content -Path C:\tarpit\go.mod -Encoding ascii
+
+          # __PORT__ is substituted rather than concatenated so the source
+          # below stays a plain list of literal lines.
+          @(
+            'package main',
+            '',
+            'import (',
+            '	"log"',
+            '	"net"',
+            ')',
+            '',
+            'func main() {',
+            '	ln, err := net.Listen("tcp", "127.0.0.1:__PORT__")',
+            '	if err != nil {',
+            '		log.Fatalf("listen: %v", err)',
+            '	}',
+            '	log.Println("tarpit listening")',
+            '	var held []net.Conn',
+            '	for {',
+            '		c, err := ln.Accept()',
+            '		if err != nil {',
+            '			log.Fatalf("accept: %v", err)',
+            '		}',
+            '		// Hold the connection open and never answer on it.',
+            '		held = append(held, c)',
+            '	}',
+            '}'
+          ) -replace '__PORT__', $env:TARPIT_PORT |
+            Set-Content -Path C:\tarpit\main.go -Encoding ascii
+
+          go build -C C:\tarpit -o C:\cnspec\tarpit.exe .
+          if ($LASTEXITCODE -ne 0) { throw "could not build the tarpit" }
+          "built C:\cnspec\tarpit.exe"
+
+      # auth.method=wif with a token already in hand sends setup straight into a
+      # token exchange against api_endpoint -- the tarpit -- with nothing to
+      # short-circuit it. None of this is a test hook in cnspec: it is ordinary
+      # configuration pointed at an address that does not answer.
+      - name: Write a config whose upstream never answers
+        run: |
+          $config = @(
+            'auth:',
+            '  method: wif',
+            'jwtToken: not-a-real-token',
+            "api_endpoint: http://127.0.0.1:$env:TARPIT_PORT",
+            'agent_mrn: //agents.api.mondoo.app/spaces/ci/agents/000000000000000000',
+            'scope_mrn: //captain.api.mondoo.app/spaces/ci'
+          )
+          Set-Content -Path C:\cnspec\mondoo.yml -Value $config -Encoding ascii
+          Get-Content C:\cnspec\mondoo.yml
+
+      - name: Register the service
+        run: |
+          # The name matches backgroundjob.SvcName, which is also the event log
+          # source cnspec opens once it knows it is running under the SCM.
+          sc.exe create cnspec binPath= "C:\cnspec\cnspec.exe serve --config C:\cnspec\mondoo.yml" start= demand
+          if ($LASTEXITCODE -ne 0) { throw "sc.exe create failed with exit code $LASTEXITCODE" }
+          New-EventLog -LogName Application -Source cnspec -ErrorAction SilentlyContinue
+
+      # The tarpit starts here rather than in its own step on purpose: the
+      # runner reaps a step's background processes when the step ends, so a
+      # tarpit started earlier is already gone by the time the service needs it.
+      - name: Start the tarpit and time the service handshake
+        run: |
+          Start-Process -FilePath C:\cnspec\tarpit.exe `
+            -RedirectStandardOutput C:\cnspec\tarpit.out `
+            -RedirectStandardError C:\cnspec\tarpit.err `
+            -WindowStyle Hidden
+
+          # Confirm the port is really open, so a tarpit that failed to start
+          # cannot be mistaken for a passing test.
+          $open = $false
+          foreach ($i in 1..20) {
+            if (Test-NetConnection -ComputerName 127.0.0.1 -Port $env:TARPIT_PORT -InformationLevel Quiet -WarningAction SilentlyContinue) {
+              $open = $true
+              break
+            }
+            Start-Sleep -Milliseconds 500
+          }
+          if (-not $open) {
+            Write-Host "::group::tarpit output"
+            Get-Content C:\cnspec\tarpit.out, C:\cnspec\tarpit.err -ErrorAction SilentlyContinue | Out-Host
+            Write-Host "::endgroup::"
+            throw "tarpit is not listening on 127.0.0.1:$env:TARPIT_PORT"
+          }
+          "tarpit is listening on 127.0.0.1:$env:TARPIT_PORT"
+
+          # sc.exe start returns as soon as the SCM accepts the request, so the
+          # handshake is timed by polling rather than by this call.
+          $started = Get-Date
+          sc.exe start cnspec | Out-Host
+
+          $deadline = $started.AddSeconds(20)
+          $runningAt = $null
+          while ((Get-Date) -lt $deadline) {
+            if ((Get-Service cnspec -ErrorAction SilentlyContinue).Status -eq 'Running') {
+              $runningAt = Get-Date
+              break
+            }
+            Start-Sleep -Milliseconds 200
+          }
+
+          if (-not $runningAt) {
+            Write-Host "::group::System event log"
+            Get-WinEvent -FilterHashtable @{LogName='System'; StartTime=$started} -ErrorAction SilentlyContinue |
+              Where-Object { $_.Message -match 'cnspec' } |
+              Format-List TimeCreated, Id, LevelDisplayName, Message | Out-Host
+            Write-Host "::endgroup::"
+            throw "cnspec never reached Running: startup work is blocking the SCM handshake. This is issue 285."
+          }
+
+          $elapsed = [math]::Round(($runningAt - $started).TotalSeconds, 2)
+          "cnspec reported Running after ${elapsed}s"
+
+          # The handshake is a status write and waits on nothing. Ten seconds is
+          # slack for a cold runner loading a large binary, not a target: the
+          # point is that it lands well inside the 30 seconds setup is spending
+          # in the tarpit right now. Outside CI the same startup took 0.5s.
+          if ($elapsed -gt 10) {
+            throw "cnspec took ${elapsed}s to report Running; the handshake is waiting on startup work"
+          }
+
+          # 7009 is "A timeout was reached (30000 milliseconds) while waiting
+          # for the cnspec service to connect" -- the error from the report.
+          $timeouts = Get-WinEvent -FilterHashtable @{LogName='System'; StartTime=$started} -ErrorAction SilentlyContinue |
+            Where-Object { ($_.Id -in @(7000, 7009, 7011)) -and $_.Message -match 'cnspec' }
+          if ($timeouts) {
+            $timeouts | Format-List TimeCreated, Id, Message | Out-Host
+            throw "the SCM logged a start timeout for cnspec"
+          }
+
+      - name: Stop and remove the service
+        if: always()
+        run: |
+          sc.exe stop cnspec 2>&1 | Out-Host
+          Start-Sleep -Seconds 3
+          sc.exe delete cnspec 2>&1 | Out-Host
+          Get-Process -Name tarpit -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          exit 0

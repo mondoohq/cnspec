@@ -7,7 +7,6 @@
 package backgroundjob
 
 import (
-	"math/rand"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -16,12 +15,24 @@ import (
 	"golang.org/x/sys/windows/svc/debug"
 )
 
-func Serve(timer time.Duration, splay time.Duration, handler JobRunner) {
+// shutdownGrace is how long Execute waits for the scan loop to unwind after
+// the SCM asks the service to stop, so the check-in pinger gets torn down in
+// the common case. It is deliberately short: a scan already in flight runs to
+// completion, and the SCM has its own stop deadline that we must not sit on.
+const shutdownGrace = 5 * time.Second
+
+// Serve runs the background scan service, either under the Service Control
+// Manager or, when started from a console, in the foreground.
+//
+// setup is not run here. It is handed to the service and run only after the
+// SCM handshake completes -- see runService for why that order is not
+// negotiable on Windows.
+func Serve(setup Setup) error {
 	isService, err := svc.IsWindowsService()
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to determine if we are running in an interactive session")
 	}
-	// if it is an service ...
+	// if it is a service ...
 	if isService {
 		// set windows eventlogger
 		w, err := eventlog.NewEventlogWriter(SvcName)
@@ -30,17 +41,18 @@ func Serve(timer time.Duration, splay time.Duration, handler JobRunner) {
 		}
 		log.Logger = log.Output(w)
 
-		// run service
-		runService(false, timer, splay, handler)
-		return
+		return dispatch(false, setup)
 	}
-	runService(true, timer, splay, handler)
+	return dispatch(true, setup)
 }
 
 type windowsService struct {
-	Timer   time.Duration
-	Handler JobRunner
-	Splay   time.Duration
+	Setup Setup
+
+	// err holds a setup failure. Execute cannot return it -- the SCM only
+	// takes an exit code -- so dispatch reads it back off the handler once
+	// svc.Run returns.
+	err error
 }
 
 // NOTE: we do not support svc.AcceptPauseAndContinue yet, we may reconsider this later
@@ -48,78 +60,73 @@ func (m *windowsService) Execute(args []string, r <-chan svc.ChangeRequest, chan
 	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown
 	changes <- svc.Status{State: svc.StartPending}
 
-	t := time.NewTimer(time.Duration(rand.Int63n(int64(time.Minute))))
-	defer t.Stop()
+	stop := make(chan struct{})
+	done := make(chan error, 1)
 
-	log.Info().Msg("schedule background scan")
-	changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
-
-	runChan := make(chan struct{})
 	go func() {
-		// This goroutine doesn't stop cleanly.
-		// This isn't great, but we cannot block the service event loop.
-		// It would be good to make sure this shuts down cleanly, but
-		// that's not possible right now and requires wiring through
-		// context throughout the execution.
-		for range runChan {
-			log.Info().Msg("starting background scan")
-			err := m.Handler()
-			if err != nil {
-				log.Error().Err(err).Send()
-			} else {
-				log.Info().Msg("scan completed")
-			}
-		}
+		// Reporting Running is the handshake the SCM is waiting on, and
+		// runService performs it before it touches setup. Everything slow --
+		// config, upstream client, platform fingerprinting -- happens after
+		// this status write, which is what keeps a busy machine from losing
+		// the service to the 30-second connect deadline.
+		done <- runService(func() {
+			changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
+		}, m.Setup, stop)
 	}()
+
 loop:
 	for {
 		select {
-		case <-t.C:
-			select {
-			case runChan <- struct{}{}:
-			default:
-				log.Error().Msg("scan not started. may be stuck")
-			}
-			splayDur := time.Duration(0)
-			if m.Splay > 0 {
-				splayDur = time.Duration(rand.Int63n(int64(m.Splay)))
-			}
-			nextRun := m.Timer + splayDur
-			log.Info().Time("next scan", time.Now().Add(nextRun)).Msgf("next scan in %v", nextRun)
-			t.Reset(nextRun)
+		case err := <-done:
+			// Setup failed, so there is no service left to control.
+			m.err = err
+			break loop
 		case c := <-r:
 			switch c.Cmd {
 			case svc.Interrogate:
 				changes <- c.CurrentStatus
 			case svc.Stop, svc.Shutdown:
 				log.Info().Msg("stopping cnspec service")
+				close(stop)
+				select {
+				case m.err = <-done:
+				case <-time.After(shutdownGrace):
+					// A scan is still running. It does not stop cleanly
+					// today, so report stopped and let the process exit take
+					// it down rather than sitting on the SCM's deadline.
+					log.Warn().Msg("scan still running at shutdown; stopping anyway")
+				}
 				break loop
 			default:
 				log.Error().Msgf("unexpected control request #%d", c)
 			}
 		}
 	}
-	close(runChan)
+
 	changes <- svc.Status{State: svc.StopPending}
-	return
+	if m.err != nil {
+		log.Error().Err(m.err).Msg("cnspec service failed")
+		return false, 1
+	}
+	return false, 0
 }
 
-func runService(isDebug bool, timer time.Duration, splay time.Duration, handler JobRunner) {
-	var err error
-
+func dispatch(isDebug bool, setup Setup) error {
 	log.Info().Msgf("starting %s service", SvcName)
 	run := svc.Run
 	if isDebug {
 		run = debug.Run
 	}
-	err = run(SvcName, &windowsService{
-		Handler: handler,
-		Timer:   timer,
-		Splay:   splay,
-	})
-	if err != nil {
+
+	handler := &windowsService{Setup: setup}
+	if err := run(SvcName, handler); err != nil {
 		log.Info().Msgf("%s service failed: %v", SvcName, err)
-		return
+		return err
 	}
+	if handler.err != nil {
+		return handler.err
+	}
+
 	log.Info().Msgf("%s service stopped", SvcName)
+	return nil
 }
