@@ -83,12 +83,10 @@ jobs:
       # the HTTP client on the other end waits out its own 30-second timeout --
       # the same budget the SCM gives the whole process to connect.
       #
-      # It is a compiled Go binary started with Start-Process, for two reasons.
-      # Each workflow step runs in its own shell, so a Start-Job background job
-      # would die with the step that created it. And a detached PowerShell
-      # script that fails to bind reports nothing at all; this one has its
-      # output redirected to files that the check below prints on failure.
-      - name: Build and start the tarpit
+      # It is a compiled Go binary: Go is already set up above, and a compiled
+      # binary removes the interpreter and execution-policy questions that made
+      # an earlier PowerShell version fail silently.
+      - name: Build the tarpit
         run: |
           New-Item -ItemType Directory -Force -Path C:\cnspec, C:\tarpit | Out-Null
 
@@ -126,30 +124,7 @@ jobs:
 
           go build -C C:\tarpit -o C:\cnspec\tarpit.exe .
           if ($LASTEXITCODE -ne 0) { throw "could not build the tarpit" }
-
-          Start-Process -FilePath C:\cnspec\tarpit.exe `
-            -RedirectStandardOutput C:\cnspec\tarpit.out `
-            -RedirectStandardError C:\cnspec\tarpit.err `
-            -WindowStyle Hidden
-
-          # Confirm the port is really open, so a tarpit that failed to start
-          # cannot be mistaken for a passing test.
-          $open = $false
-          foreach ($i in 1..20) {
-            if (Test-NetConnection -ComputerName 127.0.0.1 -Port $env:TARPIT_PORT -InformationLevel Quiet -WarningAction SilentlyContinue) {
-              $open = $true
-              break
-            }
-            Start-Sleep -Milliseconds 500
-          }
-          if (-not $open) {
-            Write-Host "::group::tarpit output"
-            Get-Content C:\cnspec\tarpit.out -ErrorAction SilentlyContinue | Out-Host
-            Get-Content C:\cnspec\tarpit.err -ErrorAction SilentlyContinue | Out-Host
-            Write-Host "::endgroup::"
-            throw "tarpit is not listening on 127.0.0.1:$env:TARPIT_PORT"
-          }
-          "tarpit is listening on 127.0.0.1:$env:TARPIT_PORT"
+          "built C:\cnspec\tarpit.exe"
 
       # auth.method=wif with a token already in hand sends setup straight into a
       # token exchange against api_endpoint -- the tarpit -- with nothing to
@@ -176,11 +151,33 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "sc.exe create failed with exit code $LASTEXITCODE" }
           New-EventLog -LogName Application -Source cnspec -ErrorAction SilentlyContinue
 
-      - name: Start the service and time the handshake
+      # The tarpit starts here rather than in its own step on purpose: the
+      # runner reaps a step's background processes when the step ends, so a
+      # tarpit started earlier is already gone by the time the service needs it.
+      - name: Start the tarpit and time the service handshake
         run: |
-          if (-not (Test-NetConnection -ComputerName 127.0.0.1 -Port $env:TARPIT_PORT -InformationLevel Quiet)) {
-            throw "tarpit died before the service started; this run would prove nothing"
+          Start-Process -FilePath C:\cnspec\tarpit.exe `
+            -RedirectStandardOutput C:\cnspec\tarpit.out `
+            -RedirectStandardError C:\cnspec\tarpit.err `
+            -WindowStyle Hidden
+
+          # Confirm the port is really open, so a tarpit that failed to start
+          # cannot be mistaken for a passing test.
+          $open = $false
+          foreach ($i in 1..20) {
+            if (Test-NetConnection -ComputerName 127.0.0.1 -Port $env:TARPIT_PORT -InformationLevel Quiet -WarningAction SilentlyContinue) {
+              $open = $true
+              break
+            }
+            Start-Sleep -Milliseconds 500
           }
+          if (-not $open) {
+            Write-Host "::group::tarpit output"
+            Get-Content C:\cnspec\tarpit.out, C:\cnspec\tarpit.err -ErrorAction SilentlyContinue | Out-Host
+            Write-Host "::endgroup::"
+            throw "tarpit is not listening on 127.0.0.1:$env:TARPIT_PORT"
+          }
+          "tarpit is listening on 127.0.0.1:$env:TARPIT_PORT"
 
           # sc.exe start returns as soon as the SCM accepts the request, so the
           # handshake is timed by polling rather than by this call.
@@ -212,7 +209,7 @@ jobs:
           # The handshake is a status write and waits on nothing. Ten seconds is
           # slack for a cold runner loading a large binary, not a target: the
           # point is that it lands well inside the 30 seconds setup is spending
-          # in the tarpit right now. Outside CI the same startup took 1.7s.
+          # in the tarpit right now. Outside CI the same startup took 0.5s.
           if ($elapsed -gt 10) {
             throw "cnspec took ${elapsed}s to report Running; the handshake is waiting on startup work"
           }
