@@ -45,6 +45,7 @@ type GraphNode struct {
 	Line     int               `json:"line"`
 	Column   int               `json:"column"`
 	Title    string            `json:"title,omitempty"`
+	Version  string            `json:"version,omitempty"`
 	MQL      string            `json:"mql,omitempty"`
 	Impact   int               `json:"impact,omitempty"`
 	Tags     map[string]string `json:"tags,omitempty"`
@@ -405,6 +406,7 @@ func extractPolicy(g *PolicyGraph, file string, p *Policy) {
 		Line:     p.FileContext.Line,
 		Column:   p.FileContext.Column,
 		Title:    p.Name,
+		Version:  p.Version,
 	})
 	for i, grp := range p.Groups {
 		extractPolicyGroup(g, file, grp, pID, p.Uid, i)
@@ -522,6 +524,7 @@ func extractFramework(g *PolicyGraph, file string, fw *Framework) {
 		Line:     fw.FileContext.Line,
 		Column:   fw.FileContext.Column,
 		Title:    fw.Name,
+		Version:  fw.Version,
 	})
 	for _, dep := range fw.Dependencies {
 		if dep.Uid == "" {
