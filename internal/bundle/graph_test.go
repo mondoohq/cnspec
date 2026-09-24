@@ -134,6 +134,42 @@ queries:
 	assert.Empty(t, twoFilters.Remediations)
 }
 
+func TestBuildGraph_GroupFilters(t *testing.T) {
+	data := []byte(`
+policies:
+  - uid: linux-firewall
+    name: Linux Firewall
+    groups:
+      - title: nftables
+        filters: |
+          service("firewalld").enabled == false
+          service("nftables").enabled
+        checks:
+          - uid: nft-installed
+      - title: No filters
+        checks:
+          - uid: nft-installed
+queries:
+  - uid: nft-installed
+    title: nftables is installed
+    mql: package("nftables").installed
+`)
+	b, err := ParseYaml(data)
+	require.NoError(t, err)
+
+	g := BuildGraph(map[string]*Bundle{"test.mql.yaml": b})
+
+	groups := map[string]*GraphNode{}
+	for _, n := range findByKind(g, KindGroup) {
+		groups[n.Title] = n
+	}
+	require.Len(t, groups, 2)
+	require.Len(t, groups["nftables"].Filters, 1)
+	assert.Contains(t, groups["nftables"].Filters[0], `service("firewalld").enabled == false`)
+	assert.Contains(t, groups["nftables"].Filters[0], `service("nftables").enabled`)
+	assert.Empty(t, groups["No filters"].Filters)
+}
+
 func TestBuildGraph_Frameworks(t *testing.T) {
 	data := []byte(`
 frameworks:
