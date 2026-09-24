@@ -5,11 +5,14 @@ package scan
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/policy/scanwarnings"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 )
 
@@ -145,4 +148,38 @@ func TestReportCriticalErrors_NoErrorsIsNoOp(t *testing.T) {
 
 	assert.Empty(t, r.Warnings())
 	assert.NotContains(t, r.assets, asset.Mrn)
+}
+
+// TestReportCriticalErrors_CapsCount is the regression test for this
+// call site not applying scanwarnings.Max: previously the terminal/JSON
+// report (AddScanWarning here) could carry more warnings than
+// StoreResultsReq.scan_warnings and the scan database, which both cap via
+// the same shared helper.
+func TestReportCriticalErrors_CapsCount(t *testing.T) {
+	asset := &inventory.Asset{Mrn: "//assets/1", Name: "crash-storm-host"}
+	r := NewAggregateReporter()
+
+	errs := make([]error, 0, scanwarnings.Max+10)
+	for i := 0; i < scanwarnings.Max+10; i++ {
+		errs = append(errs, fmt.Errorf("distinct crash #%d", i))
+	}
+
+	reportCriticalErrors(r, asset, errs)
+
+	assert.Len(t, r.Warnings()[asset.Mrn], scanwarnings.Max)
+}
+
+// TestReportCriticalErrors_CapsMessageLength is the regression test for
+// this call site not truncating an individual message, unlike the
+// StoreResultsReq and scan-database paths.
+func TestReportCriticalErrors_CapsMessageLength(t *testing.T) {
+	asset := &inventory.Asset{Mrn: "//assets/1", Name: "verbose-crash-host"}
+	r := NewAggregateReporter()
+
+	long := strings.Repeat("x", scanwarnings.MaxLen+500)
+	reportCriticalErrors(r, asset, []error{errors.New(long)})
+
+	warnings := r.Warnings()[asset.Mrn]
+	require.Len(t, warnings, 1)
+	assert.Len(t, warnings[0], scanwarnings.MaxLen)
 }

@@ -12,6 +12,7 @@ import (
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/executor/internal"
 	"go.mondoo.com/cnspec/policy/scanstats"
+	"go.mondoo.com/cnspec/policy/scanwarnings"
 	"go.mondoo.com/mql"
 	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/mqlc"
@@ -56,46 +57,6 @@ func RescoreResolvedPolicy(
 // has no notion of it (a mock, an embedder's own) is unaffected.
 type criticalErrorsSource interface {
 	CriticalErrors() []error
-}
-
-const (
-	// maxScanWarnings caps how many distinct crash messages are attached to
-	// a StoreResultsReq, so a crash storm on one asset can't bloat the
-	// upload.
-	maxScanWarnings = 20
-	// maxScanWarningLen caps each message's length in bytes.
-	maxScanWarningLen = 1024
-)
-
-// dedupeAndCapScanWarnings converts recovered-panic errors into the
-// deduplicated, size-capped message list StoreResultsReq.ScanWarnings
-// expects. mql's own dedup (collapsing repeated failures on one crashed
-// provider into a single CriticalErrors() entry) cannot be assumed here:
-// cnspec pins mql independently, so an older build may not have it.
-func dedupeAndCapScanWarnings(errs []error) []string {
-	if len(errs) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(errs))
-	out := make([]string, 0, len(errs))
-	for _, err := range errs {
-		if err == nil {
-			continue
-		}
-		msg := err.Error()
-		if len(msg) > maxScanWarningLen {
-			msg = msg[:maxScanWarningLen]
-		}
-		if _, dup := seen[msg]; dup {
-			continue
-		}
-		seen[msg] = struct{}{}
-		out = append(out, msg)
-		if len(out) >= maxScanWarnings {
-			break
-		}
-	}
-	return out
 }
 
 func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSvc policy.PolicyResolver, assetMrn string,
@@ -164,7 +125,7 @@ func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSv
 		counter.recordTo(stats)
 	}
 	if critSrc, ok := runtime.(criticalErrorsSource); ok {
-		scanWarnings = dedupeAndCapScanWarnings(critSrc.CriticalErrors())
+		scanWarnings = scanwarnings.DedupeAndCap(critSrc.CriticalErrors())
 	}
 	return err
 }

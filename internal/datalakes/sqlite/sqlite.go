@@ -16,6 +16,7 @@ import (
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/scandb"
 	"go.mondoo.com/cnspec/policy/scanstats"
+	"go.mondoo.com/cnspec/policy/scanwarnings"
 	"go.mondoo.com/cnspec/upload"
 	mql "go.mondoo.com/mql"
 	"go.mondoo.com/mql/llx"
@@ -169,45 +170,6 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 	return nil
 }
 
-const (
-	// maxScanWarnings and maxScanWarningLen mirror the caps
-	// policy/executor/graph.go applies to StoreResultsReq.scan_warnings --
-	// kept as a separate copy rather than a shared export because the two
-	// packages have no other coupling and this is the same small,
-	// independently-testable dedup logic policy/scan's reportCriticalErrors
-	// also keeps to itself.
-	maxScanWarnings   = 20
-	maxScanWarningLen = 1024
-)
-
-// dedupeAndCapCriticalErrors converts recovered-panic errors into the
-// deduplicated, size-capped message list WriteScanWarnings expects.
-func dedupeAndCapCriticalErrors(errs []error) []string {
-	if len(errs) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(errs))
-	out := make([]string, 0, len(errs))
-	for _, err := range errs {
-		if err == nil {
-			continue
-		}
-		msg := err.Error()
-		if len(msg) > maxScanWarningLen {
-			msg = msg[:maxScanWarningLen]
-		}
-		if _, dup := seen[msg]; dup {
-			continue
-		}
-		seen[msg] = struct{}{}
-		out = append(out, msg)
-		if len(out) >= maxScanWarnings {
-			break
-		}
-	}
-	return out
-}
-
 // writeCriticalErrorsToScanDB captures provider crashes recorded during this
 // asset's scan (runtime.CriticalErrors(), if the runtime supports it -- the
 // same optional-interface pattern as criticalErrorsSource in
@@ -233,7 +195,7 @@ func writeCriticalErrorsToScanDB(ctx context.Context, runtime llx.Runtime, store
 	if !ok {
 		return
 	}
-	warnings := dedupeAndCapCriticalErrors(critSrc.CriticalErrors())
+	warnings := scanwarnings.DedupeAndCap(critSrc.CriticalErrors())
 	if len(warnings) == 0 {
 		return
 	}

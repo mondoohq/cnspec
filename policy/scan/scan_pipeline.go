@@ -19,6 +19,7 @@ import (
 	"go.mondoo.com/cnspec/cli/progress"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/scanstats"
+	"go.mondoo.com/cnspec/policy/scanwarnings"
 	"go.mondoo.com/mql/cli/config"
 	"go.mondoo.com/mql/discovery"
 	"go.mondoo.com/mql/llx"
@@ -330,42 +331,40 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 // non-empty (`if len(report.Errors) > 0 { os.Exit(1) }`) -- flipping the
 // run's exit code for what is otherwise a successful scan.
 //
-// Deduped by message: mql already collapses repeated failures on one
-// crashed provider into a single CriticalErrors() entry, but a scan can hit
-// more than one crashed provider, and an older mql build may not dedup at
-// all (cnspec pins mql versions independently, so this cannot assume the
-// dedup landed).
+// Deduped and capped via the shared policy/scanwarnings package: mql already
+// collapses repeated failures on one crashed provider into a single
+// CriticalErrors() entry, but a scan can hit more than one crashed
+// provider, and an older mql build may not dedup at all (cnspec pins mql
+// versions independently, so this cannot assume the dedup landed). Using
+// the same scanwarnings.DedupeAndCap that policy/executor and
+// internal/datalakes/sqlite apply to StoreResultsReq.scan_warnings and the
+// scan database keeps this terminal/JSON report from carrying more or
+// longer warnings than what actually reaches the upload.
 func reportCriticalErrors(reporter Reporter, asset *inventory.Asset, errs []error) {
 	if len(errs) == 0 {
 		return
 	}
 
-	seen := make(map[string]struct{}, len(errs))
-	warnings := make([]string, 0, len(errs))
-	for _, critErr := range errs {
-		msg := critErr.Error()
-		if _, dup := seen[msg]; dup {
-			continue
-		}
-		seen[msg] = struct{}{}
-		warnings = append(warnings, msg)
+	warnings := scanwarnings.DedupeAndCap(errs)
+	if len(warnings) == 0 {
+		return
+	}
 
-		tags := map[string]string{
-			"assetMrn":  asset.Mrn,
-			"assetName": asset.Name,
-		}
-		if asset.Platform != nil {
-			tags["platformIDs"] = strings.Join(asset.PlatformIds, ",")
-			tags["assetPlatform"] = asset.Platform.Name
-			tags["assetPlatformVersion"] = asset.Platform.Version
-		}
+	tags := map[string]string{
+		"assetMrn":  asset.Mrn,
+		"assetName": asset.Name,
+	}
+	if asset.Platform != nil {
+		tags["platformIDs"] = strings.Join(asset.PlatformIds, ",")
+		tags["assetPlatform"] = asset.Platform.Name
+		tags["assetPlatformVersion"] = asset.Platform.Version
+	}
+	for _, msg := range warnings {
 		health.ReportError("cnspec", cnspec.Version, cnspec.Build, msg, health.WithTags(tags))
 		log.Warn().Str("asset", asset.Name).Str("assetMrn", asset.Mrn).Msg(msg)
 	}
 
-	if len(warnings) > 0 {
-		reporter.AddScanWarning(asset, warnings)
-	}
+	reporter.AddScanWarning(asset, warnings)
 }
 
 // logResourceStats emits memory diagnostics after an asset scan completes.

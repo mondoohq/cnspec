@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	_ "github.com/glebarez/go-sqlite"
@@ -92,26 +91,6 @@ func TestWriteCriticalErrorsToScanDB_AbsentOtherwise(t *testing.T) {
 	})
 }
 
-// TestDedupeAndCapCriticalErrors mirrors policy/executor's
-// TestDedupeAndCapScanWarnings for this package's independent copy of the
-// same dedup/cap logic.
-func TestDedupeAndCapCriticalErrors(t *testing.T) {
-	t.Run("empty input returns nil", func(t *testing.T) {
-		assert.Nil(t, dedupeAndCapCriticalErrors(nil))
-	})
-
-	t.Run("count is capped", func(t *testing.T) {
-		errs := make([]error, 0, maxScanWarnings+5)
-		for i := 0; i < maxScanWarnings+5; i++ {
-			errs = append(errs, errors.New("distinct crash "+string(rune('a'+i%26))))
-		}
-		assert.Len(t, dedupeAndCapCriticalErrors(errs), maxScanWarnings)
-	})
-
-	t.Run("message length is capped", func(t *testing.T) {
-		long := strings.Repeat("x", maxScanWarningLen+100)
-		out := dedupeAndCapCriticalErrors([]error{errors.New(long)})
-		require.Len(t, out, 1)
-		assert.Len(t, out[0], maxScanWarningLen)
-	})
-}
+// dedupeAndCapCriticalErrors moved to the shared policy/scanwarnings
+// package (scanwarnings.DedupeAndCap), which policy/executor and
+// policy/scan also use; its cap/dedupe behavior is covered there.

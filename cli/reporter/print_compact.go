@@ -342,12 +342,10 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 		// Non-fatal: unlike an error above, a warning never skips the rest
 		// of this asset's report -- it is visibility into a degraded
 		// collection (e.g. a crashed provider), not a failure signal.
-		if w, ok := r.data.Warnings[assetMrn]; ok && w != nil {
+		if w, ok := r.data.Warnings[assetMrn]; ok && w != nil && len(w.Messages) > 0 {
+			r.beginAssetSection()
 			for _, msg := range w.Messages {
 				r.out(r.Printer.Warn(msg))
-				r.out(NewLineCharacter)
-			}
-			if len(w.Messages) > 0 {
 				r.out(NewLineCharacter)
 			}
 		}
