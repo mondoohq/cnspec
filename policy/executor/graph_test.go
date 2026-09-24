@@ -98,8 +98,3 @@ func TestFilterScoreTracker_Passing(t *testing.T) {
 		assert.Empty(t, tracker.passing())
 	})
 }
-
-// dedupeAndCapScanWarnings moved to the shared policy/scanwarnings package
-// (scanwarnings.DedupeAndCap), which policy/scan and
-// internal/datalakes/sqlite also use; its cap/dedupe behavior is covered
-// there.

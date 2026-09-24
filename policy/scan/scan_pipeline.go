@@ -295,7 +295,7 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 
 	// Surface any recovered provider panics/crashes without treating the
 	// asset as failed.
-	reportCriticalErrors(d.reporter, asset, runtime.CriticalErrors())
+	reportCriticalErrors(asset, runtime.CriticalErrors())
 
 	// Close asset after scanning to free the gRPC connection.
 	if err := d.explorer.CloseAsset(tracked); err != nil {
@@ -316,13 +316,27 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 	}
 }
 
+// reportErrorFn is a seam over health.ReportError so tests can observe what
+// this package reports to the Mondoo Platform without a configured service
+// account or a live network call. health.ReportError is a package-level
+// function, not a method, so it cannot be swapped via an interface; this
+// package-level func var is the minimal seam. It takes tags as a plain map
+// rather than a health.ReportOption, since health.ReportOption closes over
+// an unexported type that a test in another package can neither construct
+// nor inspect.
+var reportErrorFn = func(product, version, build, errMsg string, tags map[string]string) {
+	health.ReportError(product, version, build, errMsg, health.WithTags(tags))
+}
+
 // reportCriticalErrors surfaces recovered provider panics/crashes (mql's
 // runtime.CriticalErrors(), e.g. a provider subprocess dying mid-scan) for
 // one asset: it reports each distinct error to the Mondoo Platform's error
-// tracker (Sentry), logs one warning line per distinct message, and records
-// them on the reporter via AddScanWarning -- all without treating the asset
-// as failed. CriticalErrors() fires while execution continued, so the asset
-// commonly still has a real (if incomplete) report from AddReport.
+// tracker (Sentry, via health.ReportError -- the platform parses a message
+// of the form "the '<provider>' provider crashed (resource=..., field=...)"
+// into a dedicated provider.crashed record) and logs one warning line per
+// distinct message, all without treating the asset as failed. CriticalErrors()
+// fires while execution continued, so the asset commonly still has a real
+// (if incomplete) report from AddReport.
 //
 // AddScanError is deliberately not used here: AggregateReporter keeps
 // assetReports and assetErrors in separate maps, so the report is not
@@ -331,16 +345,15 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 // non-empty (`if len(report.Errors) > 0 { os.Exit(1) }`) -- flipping the
 // run's exit code for what is otherwise a successful scan.
 //
-// Deduped and capped via the shared policy/scanwarnings package: mql already
-// collapses repeated failures on one crashed provider into a single
-// CriticalErrors() entry, but a scan can hit more than one crashed
-// provider, and an older mql build may not dedup at all (cnspec pins mql
-// versions independently, so this cannot assume the dedup landed). Using
-// the same scanwarnings.DedupeAndCap that policy/executor and
-// internal/datalakes/sqlite apply to StoreResultsReq.scan_warnings and the
-// scan database keeps this terminal/JSON report from carrying more or
-// longer warnings than what actually reaches the upload.
-func reportCriticalErrors(reporter Reporter, asset *inventory.Asset, errs []error) {
+// Deduped and capped via the shared policy/scanwarnings package (Max 20,
+// MaxLen 1 KiB): mql already collapses repeated failures on one crashed
+// provider into a single CriticalErrors() entry, but a scan can hit more
+// than one crashed provider, and an older mql build may not dedup at all
+// (cnspec pins mql versions independently, so this cannot assume the dedup
+// landed). Without this cap, one crash storm on a single asset could send
+// one health.ReportError call per field instead of one per distinct crash
+// message.
+func reportCriticalErrors(asset *inventory.Asset, errs []error) {
 	if len(errs) == 0 {
 		return
 	}
@@ -360,11 +373,9 @@ func reportCriticalErrors(reporter Reporter, asset *inventory.Asset, errs []erro
 		tags["assetPlatformVersion"] = asset.Platform.Version
 	}
 	for _, msg := range warnings {
-		health.ReportError("cnspec", cnspec.Version, cnspec.Build, msg, health.WithTags(tags))
+		reportErrorFn("cnspec", cnspec.Version, cnspec.Build, msg, tags)
 		log.Warn().Str("asset", asset.Name).Str("assetMrn", asset.Mrn).Msg(msg)
 	}
-
-	reporter.AddScanWarning(asset, warnings)
 }
 
 // logResourceStats emits memory diagnostics after an asset scan completes.

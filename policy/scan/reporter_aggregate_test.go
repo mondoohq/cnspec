@@ -43,87 +43,39 @@ func TestAggregateReport(t *testing.T) {
 	assert.Equal(t, r.bundle, policy.Merge(b, b2))
 }
 
-// TestAggregateReporter_AddScanWarning_DoesNotFailAnAssetWithAReport is the
-// regression test for the choice made in scan_pipeline.go: a provider crash
-// discovered after RunAssetJob must not turn an otherwise-successful scan
-// into a failed one. AddScanError would: Reports().Result.Full.Errors would
-// gain an entry for this asset and apps/cnspec/cmd/scan.go exits non-zero
-// whenever that map is non-empty. AddScanWarning must do neither.
-func TestAggregateReporter_AddScanWarning_DoesNotFailAnAssetWithAReport(t *testing.T) {
-	asset := &inventory.Asset{Mrn: "//assets/1", Name: "crashed-but-scored"}
+// withReportErrorFnSpy replaces the package-level reportErrorFn seam for the
+// duration of a test, restoring the original afterward. reportErrorFn is
+// the only way reportCriticalErrors talks to the Mondoo Platform
+// (health.ReportError), so this is how a test observes what would have
+// been sent without a configured service account or a live network call.
+func withReportErrorFnSpy(t *testing.T, spy func(product, version, build, errMsg string, tags map[string]string)) {
+	t.Helper()
+	original := reportErrorFn
+	reportErrorFn = spy
+	t.Cleanup(func() { reportErrorFn = original })
+}
 
-	r := NewAggregateReporter()
-	r.AddReport(asset, &AssetReport{
-		Mrn:    asset.Mrn,
-		Report: &policy.Report{Score: &policy.Score{Value: 80}},
+// TestReportCriticalErrors_DedupesCapsAndReportsWithAssetTags is the
+// regression test for what reaches health.ReportError -- and therefore the
+// platform's provider.crashed record -- when an asset's provider crashes:
+// one call per deduplicated message, each carrying the asset's identifying
+// tags.
+func TestReportCriticalErrors_DedupesCapsAndReportsWithAssetTags(t *testing.T) {
+	asset := &inventory.Asset{
+		Mrn:         "//assets/1",
+		Name:        "flaky-host",
+		PlatformIds: []string{"platform-id-1"},
+		Platform:    &inventory.Platform{Name: "windows", Version: "10.0.19045"},
+	}
+
+	type call struct {
+		msg  string
+		tags map[string]string
+	}
+	var calls []call
+	withReportErrorFnSpy(t, func(product, version, build, errMsg string, tags map[string]string) {
+		calls = append(calls, call{msg: errMsg, tags: tags})
 	})
-	r.AddScanWarning(asset, []string{"the 'os' provider crashed: connection refused"})
-
-	result := r.Reports()
-	require.True(t, result.Ok, "a warning must not flip Reports().Ok")
-
-	full := result.GetFull()
-	require.NotNil(t, full)
-	assert.Empty(t, full.Errors, "a warning must not appear in the errors map that drives the CLI exit code")
-	assert.Contains(t, full.Reports, asset.Mrn, "the report must survive the warning, not be dropped")
-	assert.Equal(t, uint32(80), full.Reports[asset.Mrn].Score.Value)
-
-	require.Contains(t, full.Warnings, asset.Mrn, "the warning must be carried onto the wire-serialized ReportCollection")
-	assert.Equal(t, []string{"the 'os' provider crashed: connection refused"}, full.Warnings[asset.Mrn].Messages)
-}
-
-// TestAggregateReporter_Reports_OmitsWarningsFieldWhenThereAreNone keeps the
-// wire message unchanged for the common case (no crash): Warnings should be
-// nil, not an empty-but-present map.
-func TestAggregateReporter_Reports_OmitsWarningsFieldWhenThereAreNone(t *testing.T) {
-	asset := &inventory.Asset{Mrn: "//assets/1", Name: "clean-host"}
-
-	r := NewAggregateReporter()
-	r.AddReport(asset, &AssetReport{
-		Mrn:    asset.Mrn,
-		Report: &policy.Report{Score: &policy.Score{Value: 100}},
-	})
-
-	full := r.Reports().GetFull()
-	require.NotNil(t, full)
-	assert.Nil(t, full.Warnings)
-}
-
-func TestAggregateReporter_AddScanWarning_RecordsAgainstWarnings(t *testing.T) {
-	asset := &inventory.Asset{Mrn: "//assets/1", Name: "crashed-but-scored"}
-
-	r := NewAggregateReporter()
-	r.AddScanWarning(asset, []string{"first crash", "second crash"})
-
-	warnings := r.Warnings()
-	require.Contains(t, warnings, asset.Mrn)
-	assert.Equal(t, []string{"first crash", "second crash"}, warnings[asset.Mrn])
-
-	// Mutating the returned slice must not corrupt the reporter's own copy.
-	warnings[asset.Mrn][0] = "tampered"
-	assert.Equal(t, "first crash", r.Warnings()[asset.Mrn][0])
-}
-
-func TestAggregateReporter_AddScanWarning_EmptyIsNoOp(t *testing.T) {
-	asset := &inventory.Asset{Mrn: "//assets/1", Name: "no-warnings"}
-
-	r := NewAggregateReporter()
-	r.AddScanWarning(asset, nil)
-
-	assert.Empty(t, r.Warnings())
-	// No AddReport/AddScanError call either, so the asset must not have been
-	// registered just because AddScanWarning saw it with nothing to add.
-	assert.NotContains(t, r.assets, asset.Mrn)
-}
-
-// TestReportCriticalErrors_DedupesByMessage covers the dedup this PR adds:
-// mql may hand back the same crash diagnostic more than once (an older mql
-// build without its own dedup, or two distinct provider crashes), and
-// reportCriticalErrors must collapse repeats into one warning entry and one
-// log line rather than reporting the same crash N times.
-func TestReportCriticalErrors_DedupesByMessage(t *testing.T) {
-	asset := &inventory.Asset{Mrn: "//assets/1", Name: "flaky-host"}
-	r := NewAggregateReporter()
 
 	errs := []error{
 		errors.New("the 'os' provider crashed: connection refused"),
@@ -132,54 +84,98 @@ func TestReportCriticalErrors_DedupesByMessage(t *testing.T) {
 		errors.New("the 'aws' provider crashed: EOF"),
 	}
 
-	reportCriticalErrors(r, asset, errs)
+	reportCriticalErrors(asset, errs)
 
-	warnings := r.Warnings()[asset.Mrn]
-	require.Len(t, warnings, 2, "3 repeats of one crash + 1 distinct crash = 2 unique warnings")
-	assert.Contains(t, warnings, "the 'os' provider crashed: connection refused")
-	assert.Contains(t, warnings, "the 'aws' provider crashed: EOF")
+	require.Len(t, calls, 2, "3 repeats of one crash + 1 distinct crash = 2 deduplicated reports")
+	msgs := []string{calls[0].msg, calls[1].msg}
+	assert.Contains(t, msgs, "the 'os' provider crashed: connection refused")
+	assert.Contains(t, msgs, "the 'aws' provider crashed: EOF")
+
+	for _, c := range calls {
+		assert.Equal(t, asset.Mrn, c.tags["assetMrn"])
+		assert.Equal(t, asset.Name, c.tags["assetName"])
+		assert.Equal(t, "platform-id-1", c.tags["platformIDs"])
+		assert.Equal(t, "windows", c.tags["assetPlatform"])
+		assert.Equal(t, "10.0.19045", c.tags["assetPlatformVersion"])
+	}
 }
 
 func TestReportCriticalErrors_NoErrorsIsNoOp(t *testing.T) {
 	asset := &inventory.Asset{Mrn: "//assets/1", Name: "healthy-host"}
-	r := NewAggregateReporter()
 
-	reportCriticalErrors(r, asset, nil)
+	var called bool
+	withReportErrorFnSpy(t, func(product, version, build, errMsg string, tags map[string]string) {
+		called = true
+	})
 
-	assert.Empty(t, r.Warnings())
-	assert.NotContains(t, r.assets, asset.Mrn)
+	reportCriticalErrors(asset, nil)
+	assert.False(t, called, "no critical errors must mean no report to the platform")
 }
 
-// TestReportCriticalErrors_CapsCount is the regression test for this
-// call site not applying scanwarnings.Max: previously the terminal/JSON
-// report (AddScanWarning here) could carry more warnings than
-// StoreResultsReq.scan_warnings and the scan database, which both cap via
-// the same shared helper.
+// TestReportCriticalErrors_CapsCount is the regression test for this call
+// site applying scanwarnings.Max: a crash storm on one asset must send at
+// most Max reports to the platform, not one per underlying error.
 func TestReportCriticalErrors_CapsCount(t *testing.T) {
 	asset := &inventory.Asset{Mrn: "//assets/1", Name: "crash-storm-host"}
-	r := NewAggregateReporter()
+
+	var calls int
+	withReportErrorFnSpy(t, func(product, version, build, errMsg string, tags map[string]string) {
+		calls++
+	})
 
 	errs := make([]error, 0, scanwarnings.Max+10)
 	for i := 0; i < scanwarnings.Max+10; i++ {
 		errs = append(errs, fmt.Errorf("distinct crash #%d", i))
 	}
 
-	reportCriticalErrors(r, asset, errs)
-
-	assert.Len(t, r.Warnings()[asset.Mrn], scanwarnings.Max)
+	reportCriticalErrors(asset, errs)
+	assert.Equal(t, scanwarnings.Max, calls)
 }
 
 // TestReportCriticalErrors_CapsMessageLength is the regression test for
-// this call site not truncating an individual message, unlike the
-// StoreResultsReq and scan-database paths.
+// this call site applying scanwarnings.MaxLen to each message before it
+// reaches the platform.
 func TestReportCriticalErrors_CapsMessageLength(t *testing.T) {
 	asset := &inventory.Asset{Mrn: "//assets/1", Name: "verbose-crash-host"}
-	r := NewAggregateReporter()
+
+	var captured string
+	withReportErrorFnSpy(t, func(product, version, build, errMsg string, tags map[string]string) {
+		captured = errMsg
+	})
 
 	long := strings.Repeat("x", scanwarnings.MaxLen+500)
-	reportCriticalErrors(r, asset, []error{errors.New(long)})
+	reportCriticalErrors(asset, []error{errors.New(long)})
 
-	warnings := r.Warnings()[asset.Mrn]
-	require.Len(t, warnings, 1)
-	assert.Len(t, warnings[0], scanwarnings.MaxLen)
+	assert.Len(t, captured, scanwarnings.MaxLen)
+}
+
+// TestReportCriticalErrors_DoesNotAffectReporterOrExitCode guards against a
+// future regression that wires a crashed provider back into AddScanError (or
+// any other Reporter call): reportCriticalErrors takes no Reporter at all,
+// so a reporter that already has a successful report for this asset must be
+// completely unaffected by it running -- Ok stays true, Errors stays empty,
+// and the report survives. apps/cnspec/cmd/scan.go's exit code comes
+// straight from Reports().Result.Full.Errors, so this is what keeps a crash
+// warning from flipping a successful scan's exit code.
+func TestReportCriticalErrors_DoesNotAffectReporterOrExitCode(t *testing.T) {
+	asset := &inventory.Asset{Mrn: "//assets/1", Name: "crashed-but-scored"}
+
+	r := NewAggregateReporter()
+	r.AddReport(asset, &AssetReport{
+		Mrn:    asset.Mrn,
+		Report: &policy.Report{Score: &policy.Score{Value: 80}},
+	})
+
+	withReportErrorFnSpy(t, func(product, version, build, errMsg string, tags map[string]string) {})
+
+	reportCriticalErrors(asset, []error{errors.New("the 'os' provider crashed: connection refused")})
+
+	result := r.Reports()
+	require.True(t, result.Ok, "a crash warning must not flip Reports().Ok / the CLI exit code")
+
+	full := result.GetFull()
+	require.NotNil(t, full)
+	assert.Empty(t, full.Errors, "a crash warning must never appear in the errors map that drives the exit code")
+	assert.Contains(t, full.Reports, asset.Mrn, "the report must survive the crash, not be dropped")
+	assert.Equal(t, uint32(80), full.Reports[asset.Mrn].Score.Value)
 }

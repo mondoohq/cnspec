@@ -23,11 +23,6 @@ type AggregateReporter struct {
 	assetReports     map[string]*policy.Report
 	assetVulnReports map[string]*mvd.VulnReport
 	assetErrors      map[string]error
-	// assetWarnings holds non-fatal issues (AddScanWarning) keyed by asset
-	// MRN, kept separate from assetErrors so a warning never makes Reports()
-	// report the asset as failed. Serialized into policy.ReportCollection's
-	// Warnings field -- see Reports().
-	assetWarnings    map[string][]string
 	bundle           *policy.Bundle
 	resolvedPolicies map[string]*policy.ResolvedPolicy
 	worstScore       *policy.Score
@@ -38,7 +33,6 @@ func NewAggregateReporter() *AggregateReporter {
 		assets:           make(map[string]*inventory.Asset),
 		assetReports:     map[string]*policy.Report{},
 		assetErrors:      map[string]error{},
-		assetWarnings:    map[string][]string{},
 		resolvedPolicies: map[string]*policy.ResolvedPolicy{},
 		assetVulnReports: map[string]*mvd.VulnReport{},
 	}
@@ -92,50 +86,12 @@ func (r *AggregateReporter) AddScanError(asset *inventory.Asset, err error) {
 	r.assetErrors[asset.Mrn] = err
 }
 
-// AddScanWarning records non-fatal issues for an asset that still produced a
-// report. Kept out of assetErrors deliberately: Reports() derives Ok and the
-// asset's presence in the error collection from assetErrors alone, and the
-// CLI exits non-zero whenever that collection is non-empty (see
-// apps/cnspec/cmd/scan.go), so folding a warning in there would flip the run
-// to a failing exit code for a scan that mostly succeeded.
-func (r *AggregateReporter) AddScanWarning(asset *inventory.Asset, warnings []string) {
-	if len(warnings) == 0 {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.assets[asset.Mrn] = asset
-	r.assetWarnings[asset.Mrn] = append(r.assetWarnings[asset.Mrn], warnings...)
-}
-
-// Warnings returns the non-fatal issues recorded via AddScanWarning, keyed
-// by asset MRN. Also reachable via Reports().Result.Full.Warnings, this is
-// the in-process shortcut -- e.g. for a test asserting a crash was recorded
-// without being treated as a scan failure.
-func (r *AggregateReporter) Warnings() map[string][]string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	out := make(map[string][]string, len(r.assetWarnings))
-	for k, v := range r.assetWarnings {
-		out[k] = append([]string(nil), v...)
-	}
-	return out
-}
-
 func (r *AggregateReporter) Reports() *ScanResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	errors := make(map[string]string, len(r.assetErrors))
 	for k, v := range r.assetErrors {
 		errors[k] = v.Error()
-	}
-
-	var warnings map[string]*policy.ScanWarnings
-	if len(r.assetWarnings) > 0 {
-		warnings = make(map[string]*policy.ScanWarnings, len(r.assetWarnings))
-		for k, v := range r.assetWarnings {
-			warnings[k] = &policy.ScanWarnings{Messages: append([]string(nil), v...)}
-		}
 	}
 
 	return &ScanResult{
@@ -149,7 +105,6 @@ func (r *AggregateReporter) Reports() *ScanResult {
 				Bundle:           r.bundle,
 				ResolvedPolicies: r.resolvedPolicies,
 				VulnReports:      r.assetVulnReports,
-				Warnings:         warnings,
 			},
 		},
 	}

@@ -9,8 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/internal/reportfixture"
-	"go.mondoo.com/cnspec/policy"
-	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 )
 
 func TestProtoConversion(t *testing.T) {
@@ -39,24 +37,5 @@ func TestProtoConversion(t *testing.T) {
 		score := report.Scores[assetMrn].Values["//policy.api.mondoo.app/queries/mondoo-linux-security-permissions-on-etcgshadow-are-configured"]
 		assert.Equal(t, 0, int(score.RiskScore))
 		assert.Equal(t, "pass", score.Status)
-	})
-
-	t.Run("carries scan warnings (v2 JSON/YAML path)", func(t *testing.T) {
-		yr := &policy.ReportCollection{
-			Assets: map[string]*inventory.Asset{},
-			Warnings: map[string]*policy.ScanWarnings{
-				"//assets/1": {Messages: []string{"the 'os' provider crashed: connection refused"}},
-				// An entry with no messages must not produce an empty
-				// Warnings value in the proto report.
-				"//assets/2": {},
-			},
-		}
-
-		report, err := ConvertToProto(yr)
-		require.NoError(t, err)
-
-		require.Contains(t, report.Warnings, "//assets/1")
-		assert.Equal(t, []string{"the 'os' provider crashed: connection refused"}, report.Warnings["//assets/1"].Messages)
-		assert.NotContains(t, report.Warnings, "//assets/2")
 	})
 }

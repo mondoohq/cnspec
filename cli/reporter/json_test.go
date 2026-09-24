@@ -16,7 +16,6 @@ import (
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/cli/printer"
 	"go.mondoo.com/mql/cli/theme/colors"
-	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/utils/iox"
 )
 
@@ -95,47 +94,4 @@ func TestJsonOutputOnlyErrors(t *testing.T) {
 	assert.NotContains(t, buf.String(), "\"errors\":{}\"")
 
 	assert.Contains(t, buf.String(), "\"data\":{},\"scores\":{},\"errors\":{\"//policy")
-}
-
-// TestJsonOutput_RendersScanWarnings covers ConvertToJSON's rendering of
-// ReportCollection.Warnings (the -o json / -o yaml path). Unlike errors,
-// warnings must be visible without implying the scan failed -- there is no
-// exit-code assertion here because ConvertToJSON never touches it; that
-// guarantee lives in apps/cnspec/cmd/scan.go, which only ever reads
-// report.Errors.
-func TestJsonOutput_RendersScanWarnings(t *testing.T) {
-	yr := &policy.ReportCollection{
-		Assets: map[string]*inventory.Asset{},
-		Warnings: map[string]*policy.ScanWarnings{
-			"//assets/1": {Messages: []string{"the 'os' provider crashed: connection refused"}},
-		},
-	}
-
-	buf := bytes.Buffer{}
-	writer := iox.IOWriter{Writer: &buf}
-
-	err := ConvertToJSON(yr, &writer)
-	require.NoError(t, err)
-	require.True(t, json.Valid(buf.Bytes()))
-
-	var parsed struct {
-		Warnings map[string][]string `json:"warnings"`
-	}
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &parsed))
-	assert.Equal(t, []string{"the 'os' provider crashed: connection refused"}, parsed.Warnings["//assets/1"])
-}
-
-// TestJsonOutput_EmptyWarningsIsAnEmptyObject keeps the shape stable (an
-// object, never a missing key or null) when nothing crashed -- the common
-// case.
-func TestJsonOutput_EmptyWarningsIsAnEmptyObject(t *testing.T) {
-	yr := &policy.ReportCollection{Assets: map[string]*inventory.Asset{}}
-
-	buf := bytes.Buffer{}
-	writer := iox.IOWriter{Writer: &buf}
-
-	err := ConvertToJSON(yr, &writer)
-	require.NoError(t, err)
-	require.True(t, json.Valid(buf.Bytes()))
-	assert.Contains(t, buf.String(), "\"warnings\":{}")
 }

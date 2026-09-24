@@ -458,22 +458,3 @@ func (q *Queries) StreamScores(ctx context.Context) ([]StreamScoresRow, error) {
 	}
 	return items, nil
 }
-
-const upsertMetadata = `-- name: UpsertMetadata :exec
-INSERT INTO metadata (key, value) VALUES (?, ?)
-ON CONFLICT(key) DO UPDATE SET value = excluded.value
-`
-
-type UpsertMetadataParams struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-}
-
-// UpsertMetadata is InsertMetadata's upsert counterpart: for a key a
-// finalize step may run more than once for the same store (e.g.
-// scan_warnings, written right before Finalize/upload), a plain INSERT
-// fails the PRIMARY KEY on the second write.
-func (q *Queries) UpsertMetadata(ctx context.Context, arg UpsertMetadataParams) error {
-	_, err := q.exec(ctx, q.upsertMetadataStmt, upsertMetadata, arg.Key, arg.Value)
-	return err
-}

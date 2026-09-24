@@ -12,7 +12,6 @@ import (
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/executor/internal"
 	"go.mondoo.com/cnspec/policy/scanstats"
-	"go.mondoo.com/cnspec/policy/scanwarnings"
 	"go.mondoo.com/mql"
 	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/mqlc"
@@ -50,15 +49,6 @@ func RescoreResolvedPolicy(
 	return ge.Execute()
 }
 
-// criticalErrorsSource is the optional interface a llx.Runtime may implement
-// to report recovered provider panics/crashes (mql's *providers.Runtime;
-// see its CriticalErrors method). Checked via type assertion, following the
-// same optional-interface pattern as llx.AssetRootSource, so a runtime that
-// has no notion of it (a mock, an embedder's own) is unaffected.
-type criticalErrorsSource interface {
-	CriticalErrors() []error
-}
-
 func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSvc policy.PolicyResolver, assetMrn string,
 	resolvedPolicy *policy.ResolvedPolicy, features mql.Features, progressReporter progress.Progress,
 ) error {
@@ -76,22 +66,7 @@ func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSv
 		internal.NewPolicyServiceCollector(assetMrn, collectorSvc),
 		opts...,
 	)
-	// scanWarnings is populated below, right after ge.Execute() returns --
-	// the point at which this asset's execution has finished and
-	// runtime.CriticalErrors() (if the runtime supports it) holds whatever
-	// was recorded during it. Read here rather than after RunAssetJob
-	// returns: FlushAndStop below sends the final (IsLastBatch=true)
-	// StoreResultsReq batch, and that send completes before this function
-	// -- and therefore RunAssetJob -- returns. A crash recorded in the
-	// narrow window between ge.Execute() returning and RunAssetJob
-	// returning (asset cleanup only, no further provider calls) would miss
-	// this batch; the local report (AggregateReporter.Warnings /
-	// ReportCollection.Warnings) reads CriticalErrors() again after
-	// RunAssetJob returns and is authoritative for that case.
-	var scanWarnings []string
-	defer func() {
-		collector.FlushAndStop(scanWarnings)
-	}()
+	defer collector.FlushAndStop()
 
 	builder := builderFromResolvedPolicy(resolvedPolicy)
 	builder.AddDatapointCollector(collector)
@@ -123,9 +98,6 @@ func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSv
 	err = ge.Execute()
 	if counter != nil {
 		counter.recordTo(stats)
-	}
-	if critSrc, ok := runtime.(criticalErrorsSource); ok {
-		scanWarnings = scanwarnings.DedupeAndCap(critSrc.CriticalErrors())
 	}
 	return err
 }

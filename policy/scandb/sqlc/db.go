@@ -81,9 +81,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.streamScoresStmt, err = db.PrepareContext(ctx, streamScores); err != nil {
 		return nil, fmt.Errorf("error preparing query StreamScores: %w", err)
 	}
-	if q.upsertMetadataStmt, err = db.PrepareContext(ctx, upsertMetadata); err != nil {
-		return nil, fmt.Errorf("error preparing query UpsertMetadata: %w", err)
-	}
 	return &q, nil
 }
 
@@ -184,11 +181,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing streamScoresStmt: %w", cerr)
 		}
 	}
-	if q.upsertMetadataStmt != nil {
-		if cerr := q.upsertMetadataStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing upsertMetadataStmt: %w", cerr)
-		}
-	}
 	return err
 }
 
@@ -247,7 +239,6 @@ type Queries struct {
 	streamResourcesStmt    *sql.Stmt
 	streamRiskFactorsStmt  *sql.Stmt
 	streamScoresStmt       *sql.Stmt
-	upsertMetadataStmt     *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
@@ -273,6 +264,5 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		streamResourcesStmt:    q.streamResourcesStmt,
 		streamRiskFactorsStmt:  q.streamRiskFactorsStmt,
 		streamScoresStmt:       q.streamScoresStmt,
-		upsertMetadataStmt:     q.upsertMetadataStmt,
 	}
 }

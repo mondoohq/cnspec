@@ -122,16 +122,6 @@ func newMaxParallelConnTransport(transport http.RoundTripper, parallel int64) *m
 	}
 }
 
-// NoStoreResults wraps a PolicyResolver and turns StoreResults into a no-op
-// while forwarding every other method unchanged. Used when a scan also
-// writes a local scan database (--output-scan-db): that mode uploads the
-// finished database wholesale (UPLOAD_URL_KIND_SCAN_DATABASE_V0), so the
-// per-batch StoreResultsReq stream -- including its ScanWarnings field --
-// would otherwise be sent to the platform twice. A crash recorded during a
-// scan that uses this wrapper still reaches the platform: it rides in the
-// uploaded database's own metadata table instead (scandb.MetaScanWarnings,
-// written by scandb.SqliteScanDataStore.WriteScanWarnings before Finalize;
-// see internal/datalakes/sqlite.WithServices).
 type NoStoreResults struct {
 	PolicyResolver
 }

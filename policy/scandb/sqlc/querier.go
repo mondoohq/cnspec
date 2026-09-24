@@ -39,11 +39,6 @@ type Querier interface {
 	StreamResources(ctx context.Context) ([]StreamResourcesRow, error)
 	StreamRiskFactors(ctx context.Context) ([]StreamRiskFactorsRow, error)
 	StreamScores(ctx context.Context) ([]StreamScoresRow, error)
-	// UpsertMetadata is InsertMetadata's upsert counterpart: for a key a
-	// finalize step may run more than once for the same store (e.g.
-	// scan_warnings, written right before Finalize/upload), a plain INSERT
-	// fails the PRIMARY KEY on the second write.
-	UpsertMetadata(ctx context.Context, arg UpsertMetadataParams) error
 }
 
 var _ Querier = (*Queries)(nil)

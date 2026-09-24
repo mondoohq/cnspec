@@ -186,23 +186,6 @@ func ConvertToJSON(data *policy.ReportCollection, out iox.OutputHelper) error {
 		_ = out.WriteString(pre + llx.PrettyPrintString(id) + ":" + llx.PrettyPrintString(err))
 		pre = ","
 	}
-	_ = out.WriteString("}")
-
-	_ = out.WriteString("," +
-		"\"warnings\":" +
-		"{")
-	pre = ""
-	for id, w := range data.Warnings {
-		if w == nil || len(w.Messages) == 0 {
-			continue
-		}
-		msgs, err := json.Marshal(w.Messages)
-		if err != nil {
-			return err
-		}
-		_ = out.WriteString(pre + llx.PrettyPrintString(id) + ":" + string(msgs))
-		pre = ","
-	}
 	_ = out.WriteString("}}")
 
 	return nil

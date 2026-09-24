@@ -51,13 +51,6 @@ func (c *ErrorReporter) AddScanError(asset *inventory.Asset, err error) {
 	c.errors[name] = errMsg
 }
 
-// AddScanWarning is a no-op here: ReportType_ERROR only ever collects
-// asset-level failures (see Reports()'s ErrorCollection), which a warning on
-// an otherwise-successful asset is not. The crash is still made visible via
-// the deduplicated log line and health.ReportError call in scan_pipeline.go
-// regardless of which reporter is in use.
-func (c *ErrorReporter) AddScanWarning(asset *inventory.Asset, warnings []string) {}
-
 func (r *ErrorReporter) Reports() *ScanResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()

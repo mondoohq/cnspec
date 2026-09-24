@@ -25,17 +25,8 @@ type Reporter interface {
 	AddBundle(bundle *policy.Bundle)
 	// AddReport adds the scan results to the reporter
 	AddReport(asset *inventory.Asset, results *AssetReport)
-	// AddScanError adds the scan error to the reporter. It marks the asset as
-	// having failed to scan: implementations may exclude it from a
-	// successful-looking result and flip the run's exit code. Use it only
-	// when the asset produced no usable report.
+	// AddScanError adds the scan error to the reporter
 	AddScanError(asset *inventory.Asset, err error)
-	// AddScanWarning records a non-fatal issue observed while scanning an
-	// asset that still produced a report via AddReport -- e.g. a provider
-	// that crashed partway through and left some fields errored. Unlike
-	// AddScanError, this must never exclude the asset's report or flip the
-	// run's exit code; it is visibility, not a failure signal.
-	AddScanWarning(asset *inventory.Asset, warnings []string)
 	// Reports returns the scan results
 	Reports() *ScanResult
 }
