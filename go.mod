@@ -47,7 +47,7 @@ require (
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/zclconf/go-cty v1.19.0
 	go.mondoo.com/mondoo-go v0.0.0-20260912001156-c395844c0d2f
-	go.mondoo.com/mql v0.0.0-20260923162945-d077281a1f8f
+	go.mondoo.com/mql v0.0.0-20260924095508-9b1b97d91269
 	go.mondoo.com/ranger-rpc v0.8.1
 	gocloud.dev v0.46.0
 	golang.org/x/sync v0.23.0
