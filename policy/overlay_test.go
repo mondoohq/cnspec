@@ -345,3 +345,163 @@ policies:
 	assert.True(t, qrIds["//policy.api.mondoo.app/queries/kms-key-no-public-access-terraform"],
 		"the overridden variant is missing: %v", qrIds)
 }
+
+// The docs tell authors to reference content that lives outside the bundle by
+// its full MRN. That form has to work: an override naming the check directly is
+// a reference just like a uid is, and must not be published as a definition of
+// the check it only meant to adjust.
+func TestOverlay_ExplicitMrnOverride(t *testing.T) {
+	ctx := context.Background()
+	srv := overlayServices(t)
+
+	_, err := srv.SetBundle(ctx, parseBundle(t, overlayBasePolicy))
+	require.NoError(t, err)
+
+	_, err = srv.SetBundle(ctx, parseBundle(t, `
+owner_mrn: //captain.api.mondoo.app/spaces/acme
+policies:
+- uid: overlay-mrn
+  name: Overlay by mrn
+  version: 1.0.0
+  groups:
+  - type: import
+    policies:
+    - mrn: //policy.api.mondoo.app/policies/mondoo-aws-security
+  - type: override
+    title: corrected checks
+    filters: "true"
+    checks:
+    - mrn: `+baseCheckMrn+`
+      action: modify
+      impact: 15
+`))
+	require.NoError(t, err)
+
+	base, err := srv.DataLake.GetQuery(ctx, baseCheckMrn)
+	require.NoError(t, err)
+	assert.Equal(t, "false", base.Mql, "the imported policy's check was rewritten")
+	assert.Nil(t, base.Impact.GetValue(), "the imported policy's impact was rewritten")
+
+	overlayMrn := "//captain.api.mondoo.app/spaces/acme/policies/overlay-mrn"
+	_, err = srv.Assign(ctx, &policy.PolicyAssignment{
+		AssetMrn: "asset-mrn-override", PolicyMrns: []string{overlayMrn},
+	})
+	require.NoError(t, err)
+
+	rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+		PolicyMrn: "asset-mrn-override", AssetFilters: []*policy.Mquery{{Mql: "true"}},
+	})
+	require.NoError(t, err)
+
+	var checkJob *policy.ReportingJob
+	for _, rj := range rp.CollectorJob.ReportingJobs {
+		if rj.QrId == baseCheckMrn {
+			checkJob = rj
+		}
+	}
+	require.NotNil(t, checkJob, "the imported check is missing from the resolved policy")
+	var found bool
+	for _, impact := range checkJob.ChildJobs {
+		if impact.GetValue().GetValue() == 15 {
+			found = true
+		}
+	}
+	assert.True(t, found, "the override's impact did not reach the check: %v", checkJob.ChildJobs)
+}
+
+// A self-contained bundle has no other scope that could own the check, so a
+// typo'd override target is a mistake that can be named without asking the
+// Library anything. This is what keeps `cnspec policy lint` - which has no
+// Library at all - able to report it.
+func TestOverlay_UnresolvableOverrideInSelfContainedBundle(t *testing.T) {
+	ctx := context.Background()
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: base-policy
+  name: Base
+  version: 1.0.0
+  groups:
+  - title: g
+    filters: "true"
+    checks:
+    - uid: real-check
+      title: real
+      mql: "true"
+- uid: overlay-policy
+  name: Overlay
+  version: 1.0.0
+  groups:
+  - type: import
+    policies:
+    - uid: base-policy
+  - type: override
+    title: typo
+    checks:
+    - uid: raal-check
+      action: modify
+      impact: 90
+`)
+	// no Library, exactly as the linter compiles
+	_, err := b.Compile(ctx, testutils.LinuxMock().Schema(), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "override targets check 'raal-check'")
+}
+
+// An applied override is keyed by the check's MRN for the whole resolved
+// policy, so enabling the base policy alongside the overlay does not produce a
+// second, un-overridden copy of the check - both policies report the same one.
+func TestOverlay_BasePolicyAlsoAssigned(t *testing.T) {
+	ctx := context.Background()
+	srv := overlayServices(t)
+
+	_, err := srv.SetBundle(ctx, parseBundle(t, overlayBasePolicy))
+	require.NoError(t, err)
+	_, err = srv.SetBundle(ctx, parseBundle(t, `
+owner_mrn: //captain.api.mondoo.app/spaces/acme
+policies:
+- uid: overlay-both
+  name: Overlay both
+  version: 1.0.0
+  groups:
+  - type: import
+    policies:
+    - mrn: //policy.api.mondoo.app/policies/mondoo-aws-security
+  - type: override
+    title: corrected checks
+    filters: "true"
+    checks:
+    - uid: kms-key-no-public-access
+      action: modify
+      mql: "true"
+`))
+	require.NoError(t, err)
+
+	_, err = srv.Assign(ctx, &policy.PolicyAssignment{
+		AssetMrn: "asset-both",
+		PolicyMrns: []string{
+			"//policy.api.mondoo.app/policies/mondoo-aws-security",
+			"//captain.api.mondoo.app/spaces/acme/policies/overlay-both",
+		},
+	})
+	require.NoError(t, err)
+
+	rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+		PolicyMrn: "asset-both", AssetFilters: []*policy.Mquery{{Mql: "true"}},
+	})
+	require.NoError(t, err)
+
+	// one execution query, running the override - not one per policy
+	require.Len(t, rp.ExecutionJob.Queries, 1)
+	for _, q := range rp.ExecutionJob.Queries {
+		assert.Equal(t, "true", q.Query)
+	}
+	// and exactly one reporting job for the check
+	var n int
+	for _, rj := range rp.CollectorJob.ReportingJobs {
+		if rj.QrId == baseCheckMrn {
+			n++
+		}
+	}
+	assert.Equal(t, 1, n, "the check should be reported once, not once per policy")
+}

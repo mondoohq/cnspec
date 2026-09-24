@@ -1323,9 +1323,7 @@ func (cache *bundleCache) prepareMRNs(ctx context.Context) error {
 
 	resolveOverrideRefs := func(policy *Policy, group *PolicyGroup, queries []*Mquery, scopes []string) {
 		for _, query := range queries {
-			// An explicit mrn is taken as written, and an entry without a uid
-			// has nothing to resolve.
-			if query.Mrn != "" || query.Uid == "" {
+			if query.Mrn == "" && query.Uid == "" {
 				continue
 			}
 			// Mirrors the resolver's isOverride: whatever compile treats as a
@@ -1334,6 +1332,26 @@ func (cache *bundleCache) prepareMRNs(ctx context.Context) error {
 			if !isOverride(query.Action, group.Type) {
 				continue
 			}
+
+			// An explicit mrn names the check directly - that is the form the
+			// docs use for content that lives outside the bundle, and it needs
+			// no resolving. It still has to be classified as a reference, or it
+			// gets published as a definition of the check it only meant to
+			// adjust and then fails to compile for having no MQL of its own.
+			if query.Mrn != "" {
+				if _, inBundle := cache.lookupQuery[query.Mrn]; inBundle {
+					// This bundle defines it; keep the in-bundle behavior.
+					continue
+				}
+				cache.overrideRefs[query] = struct{}{}
+				if cache.conf.Library != nil && !libraryHasQuery(query.Mrn) {
+					cache.errors = append(cache.errors, fmt.Errorf(
+						"policy %s, group '%s': override targets check '%s', which is not defined in this bundle and does not exist",
+						policy.Mrn, group.Title, query.Mrn))
+				}
+				continue
+			}
+
 			// Defined in this bundle - keep the existing in-bundle behavior:
 			// fillOutLookupQuery's merge path already folds it, and the bundle
 			// owns both sides so writing the merged query is legitimate.
@@ -1347,7 +1365,19 @@ func (cache *bundleCache) prepareMRNs(ctx context.Context) error {
 			// content, and it does not depend on the Library.
 			cache.overrideRefs[query] = struct{}{}
 
-			// Resolving the scope, on the other hand, does: only the Library
+			// If this policy imports nothing from outside the bundle, there is
+			// no other scope that could own the check, so an unresolved uid is
+			// a mistake we can name without asking anything - which is what
+			// keeps `cnspec policy lint` able to catch a typo'd override target
+			// in a self-contained bundle.
+			if len(scopes) == 0 {
+				cache.errors = append(cache.errors, fmt.Errorf(
+					"policy %s, group '%s': override targets check '%s', which this bundle does not define (the policy imports no other policy that could own it)",
+					policy.Mrn, group.Title, query.Uid))
+				continue
+			}
+
+			// Resolving against an imported scope needs the Library: only it
 			// can say whether a candidate exists. It is absent when linting and
 			// for self-contained local bundles, so there we can neither resolve
 			// nor complain - fall back to the owner scope as before.
