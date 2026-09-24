@@ -330,11 +330,11 @@ var reportErrorFn = func(product, version, build, errMsg string, tags map[string
 
 // reportCriticalErrors surfaces recovered provider panics/crashes (mql's
 // runtime.CriticalErrors(), e.g. a provider subprocess dying mid-scan) for
-// one asset: it reports each distinct error to the Mondoo Platform's error
-// tracker (Sentry, via health.ReportError -- the platform parses a message
-// of the form "the '<provider>' provider crashed (resource=..., field=...)"
-// into a dedicated provider.crashed record) and logs one warning line per
-// distinct message, all without treating the asset as failed. CriticalErrors()
+// one asset: it reports each distinct error to the Mondoo Platform via
+// health.ReportError (the ErrorReporting.SendError RPC; the platform turns a
+// message of the form "the '<provider>' provider crashed (resource=...,
+// field=...)" into a dedicated provider.crashed record) and logs one warning
+// line per distinct message, all without treating the asset as failed. CriticalErrors()
 // fires while execution continued, so the asset commonly still has a real
 // (if incomplete) report from AddReport.
 //
