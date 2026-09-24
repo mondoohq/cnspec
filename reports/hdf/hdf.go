@@ -421,23 +421,59 @@ func hdfTargetID(assetObj *inventory.Asset, assetMrn string) string {
 	return assetMrn
 }
 
+// A report timestamp is Unix seconds, and these bound the range this reporter
+// believes: 2000-01-01 through 2100-01-01. The bound catches a value that is not in
+// seconds at all, since the same instant expressed in milliseconds lands past the
+// year 50000. An OHDF document is a compliance artifact, so a finding dated
+// centuries out is worse than one dated when it was converted.
+const (
+	hdfMinEpochSeconds int64 = 946684800  // 2000-01-01T00:00:00Z
+	hdfMaxEpochSeconds int64 = 4102444800 // 2100-01-01T00:00:00Z
+)
+
+// hdfEpochSeconds reports whether a report timestamp is a plausible time in Unix
+// seconds. No cnspec code path populates these fields today, so an implausible value
+// most likely means the producer writes a different unit.
+func hdfEpochSeconds(value int64) (int64, bool) {
+	if value < hdfMinEpochSeconds || value > hdfMaxEpochSeconds {
+		return 0, false
+	}
+	return value, true
+}
+
 // hdfStatisticsFor reports how long the asset took to scan, when its report carries
 // the timestamps to derive it from. It stays null otherwise - OHDF consumers treat a
-// missing duration as "not reported", but would read a 0 as an instant scan.
+// missing duration as "not reported", but would read a 0 as an instant scan. Both
+// ends are checked, so a pair in milliseconds reports nothing rather than a duration
+// a thousand times too long.
 func hdfStatisticsFor(report *policy.Report) hdfStatistics {
-	if report == nil || report.Created <= 0 || report.Modified <= report.Created {
+	if report == nil {
 		return hdfStatistics{}
 	}
-	duration := float64(report.Modified - report.Created)
+
+	created, createdOK := hdfEpochSeconds(report.Created)
+	modified, modifiedOK := hdfEpochSeconds(report.Modified)
+	if !createdOK || !modifiedOK || modified <= created {
+		return hdfStatistics{}
+	}
+
+	duration := float64(modified - created)
 	return hdfStatistics{Duration: &duration}
 }
 
 // hdfStartTime is the time the checks of an asset ran, formatted the way OHDF
-// expects. It falls back to the current time for reports that carry no timestamp
-// (local scans do not set one).
+// expects. It falls back to the conversion time for a report that carries no usable
+// timestamp: local scans set none, and a value outside the plausible range is
+// treated the same way rather than rendered as a date centuries out.
 func hdfStartTime(report *policy.Report) string {
-	if report != nil && report.Created > 0 {
-		return time.Unix(report.Created, 0).UTC().Format(time.RFC3339)
+	if report != nil {
+		if created, ok := hdfEpochSeconds(report.Created); ok {
+			return time.Unix(created, 0).UTC().Format(time.RFC3339)
+		}
+		if report.Created != 0 {
+			log.Debug().Int64("created", report.Created).
+				Msg("report timestamp is not a plausible Unix seconds value, stamping the conversion time instead")
+		}
 	}
 	return hdfTimeNow().UTC().Format(time.RFC3339)
 }
