@@ -5,14 +5,20 @@ package scan
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"go.mondoo.com/cnspec/internal/datalakes/sqlite"
 	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/policy/scandb"
 	"go.mondoo.com/mql"
+	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/mqlc"
 	"go.mondoo.com/mql/providers"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
@@ -258,6 +264,91 @@ func (s *LocalScannerSuite) TestRunIncognito_SharedQuery() {
 		}
 		s.ElementsMatch(expectedQueries, executedQueries)
 	}
+}
+
+// runtimeWithInjectedCriticalErrors wraps a real llx.Runtime, delegating
+// every method to it via embedding except CriticalErrors, which returns
+// canned errors instead -- simulating "this runtime's provider crashed"
+// without a real crash, on top of a runtime that otherwise scans for real.
+type runtimeWithInjectedCriticalErrors struct {
+	llx.Runtime
+	errs []error
+}
+
+func (r *runtimeWithInjectedCriticalErrors) CriticalErrors() []error { return r.errs }
+
+// TestRunIncognito_ScanDBWarnings_UsesPerAssetRuntime is the regression test
+// for the bug a real-Windows verification of this PR found: runMotorizedAsset
+// was passing LocalScanner's own template runtime (its runtime field, built
+// once from providers.DefaultRuntime() and never connected to any asset's
+// providers) to WithServices instead of the per-asset runtime the dispatcher
+// actually connected (AssetJob.runtime, from discovery.TrackedAsset.Runtime).
+// runtime.CriticalErrors() read at writeCriticalErrorsToScanDB was therefore
+// always empty, and metadata['scan_warnings'] was never written -- not even
+// when the asset's own provider genuinely crashed mid-scan.
+//
+// Runs the real chain end to end -- RunIncognito -> dispatcher ->
+// runMotorizedAsset -> withServicesFunc -> sqlite.WithServices ->
+// writeCriticalErrorsToScanDB -- the same wiring `cnspec scan
+// --output-scan-db` uses, spying on withServicesFunc to (a) assert the
+// runtime it receives is never LocalScanner's own template, and (b) inject
+// canned critical errors onto whichever runtime IS selected, so the
+// resulting scan database's scan_warnings key proves the fix all the way
+// through to the artifact the platform reads.
+func (s *LocalScannerSuite) TestRunIncognito_ScanDBWarnings_UsesPerAssetRuntime() {
+	loader := policy.DefaultBundleLoader()
+	bundle, err := loader.BundleFromPaths("./testdata/shared-query.mql.yaml")
+	s.Require().NoError(err)
+
+	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
+		CompilerConfig: s.conf,
+		RemoveFailing:  true,
+	})
+	s.Require().NoError(err)
+
+	s.job.Bundle = bundle
+
+	outDir := s.T().TempDir()
+	features, err := mql.InitFeatures("UploadResultsV2")
+	s.Require().NoError(err)
+	ctx := mql.SetFeatures(context.Background(), features)
+	ctx = sqlite.WithOutputDir(ctx, outDir)
+
+	scanner := NewLocalScanner(DisableProgressBar())
+	templateRuntime := scanner.runtime
+
+	injectedErr := errors.New("the 'os' provider crashed: connection refused")
+	var capturedRuntimes []llx.Runtime
+	realWithServices := scanner.withServicesFunc
+	scanner.withServicesFunc = func(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(context.Context, *policy.LocalServices) error) error {
+		capturedRuntimes = append(capturedRuntimes, runtime)
+		wrapped := &runtimeWithInjectedCriticalErrors{Runtime: runtime, errs: []error{injectedErr}}
+		return realWithServices(ctx, wrapped, asset, upstreamClient, f)
+	}
+
+	res, err := scanner.RunIncognito(ctx, s.job)
+	s.Require().NoError(err)
+	s.Require().NotNil(res)
+	s.Require().NotEmpty(res.GetFull().GetReports(), "the scan itself must still succeed")
+
+	s.Require().Len(capturedRuntimes, 1)
+	s.NotSame(templateRuntime, capturedRuntimes[0],
+		"withServicesFunc must receive the per-asset runtime the dispatcher connected, not LocalScanner's own template -- passing the template is the exact regression this test guards")
+
+	dbFiles, err := filepath.Glob(filepath.Join(outDir, "cnspec-scan-*.db"))
+	s.Require().NoError(err)
+	s.Require().Len(dbFiles, 1, "expected exactly one scan database in the output dir")
+
+	reader, err := scandb.NewSqliteScanDataStoreReader(dbFiles[0])
+	s.Require().NoError(err)
+	defer reader.Close()
+
+	raw, err := reader.GetMetadataByKey(context.Background(), scandb.MetaScanWarnings)
+	s.Require().NoError(err, "metadata['scan_warnings'] must be present after a scan whose runtime reported critical errors")
+
+	var warnings []string
+	s.Require().NoError(json.Unmarshal([]byte(raw), &warnings))
+	s.Equal([]string{injectedErr.Error()}, warnings)
 }
 
 func (s *LocalScannerSuite) TestRunIncognito_ExceptionGroups() {

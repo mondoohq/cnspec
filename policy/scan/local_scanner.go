@@ -67,7 +67,17 @@ type LocalScanner struct {
 	upstreamOnce    sync.Once
 	upstreamErr     error
 	recording       llx.Recording
-	runtime         llx.Runtime
+	// runtime is LocalScanner's own template, built once (providers.DefaultRuntime()
+	// unless overridden via WithRuntime) and never connected to any asset's
+	// providers. Never pass this to WithServices/withServicesFunc for a
+	// specific asset -- use the job's own runtime (see runMotorizedAsset).
+	runtime llx.Runtime
+	// withServicesFunc is the WithServices dispatcher runMotorizedAsset calls
+	// for each asset. A field (defaulting to the package-level WithServices)
+	// rather than a direct call so tests can capture the runtime argument
+	// runMotorizedAsset actually chooses to pass, without needing a real
+	// crash to make that choice observable.
+	withServicesFunc func(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(context.Context, *policy.LocalServices) error) error
 
 	// allows setting the upstream credentials from a job
 	allowJobCredentials bool
@@ -166,7 +176,8 @@ func NewLocalScanner(opts ...ScannerOption) *LocalScanner {
 		ctx:     context.Background(),
 		// By default, auto-update is enabled. It can be explicitly disabled
 		// by passing WithAutoUpdate(false)
-		autoUpdate: true,
+		autoUpdate:       true,
+		withServicesFunc: WithServices,
 	}
 
 	for i := range opts {
@@ -1008,7 +1019,19 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 		}
 	}
 
-	runtimeErr := WithServices(job.Ctx, s.runtime, job.Asset, client, func(ctx context.Context, services *policy.LocalServices) error {
+	// job.runtime (not s.runtime): s.runtime is LocalScanner's own template,
+	// built once from providers.DefaultRuntime() and never connected to any
+	// asset's providers. job.runtime is the per-asset runtime the dispatcher
+	// already connected before calling RunAssetJob (see
+	// scanDispatcher.scanSingleAsset in scan_pipeline.go, which sets
+	// AssetJob.runtime from discovery.TrackedAsset.Runtime). It is the same
+	// runtime localAssetScanner.Runtime uses a few lines below to actually
+	// execute this asset's queries, and the same one
+	// executor.ExecuteResolvedPolicy reads CriticalErrors() from -- passing
+	// the wrong one here left runtime.CriticalErrors() permanently empty for
+	// anything downstream of WithServices, including the scan-database
+	// metadata write (writeCriticalErrorsToScanDB).
+	runtimeErr := s.withServicesFunc(job.Ctx, job.runtime, job.Asset, client, func(ctx context.Context, services *policy.LocalServices) error {
 		// Adopt the ctx returned from WithServices so any values the datalake
 		// stack injected (e.g. sqlite.WithOutputDir for --output-scan-db)
 		// flow into runPolicy via job.Ctx.
