@@ -1303,20 +1303,15 @@ func (s *localAssetScanner) prepareAsset() error {
 		return errors.New("no bundle provided to run")
 	}
 
-	// Every asset gets its own copy of the bundle. The job's bundle is one
-	// pointer shared by all assets, and the work below writes to it: CompileExt
-	// fills in MRNs and checksums on the policies and queries it walks, its
-	// RemoveFailing option deletes the queries that would not compile ("we do
-	// this to the original bundle, because the intent is to clean it up with
-	// this option"), and SetBundleMap goes on to replace ComputedFilters on
-	// every policy it stores. Sharing the bundle across concurrently scanning
-	// assets crashes the process outright with a concurrent map write.
-	//
-	// Cloning also keeps assets independent when they run one after another:
-	// the compiler schema is process-global and grows as providers load lazily,
-	// so a pruned bundle would otherwise carry an early asset's idea of what
-	// compiles into every asset that follows it.
-	bundle := s.job.Bundle.CloneVT()
+	// CompileExt mutates its input, so scans without a cache compile an
+	// asset-local copy. The cache compiles its own private copy and returns
+	// isolated bundle maps, so it can use the shared job bundle as its key.
+	bundle := s.job.Bundle
+	if s.job.BundleCompileCache == nil {
+		// Cloning keeps assets independent when the compiler prunes queries
+		// that do not apply to the current asset's provider schema.
+		bundle = s.job.Bundle.CloneVT()
+	}
 
 	// Ensure any required providers declared in the bundle are installed
 	// before we try to compile it. This handles bundles with Require metadata.
@@ -1329,12 +1324,21 @@ func (s *localAssetScanner) prepareAsset() error {
 	// Compile the bundle tolerating queries for unavailable providers.
 	// The upstream bundle may contain queries for all providers in the space,
 	// but we only need the ones relevant to this asset's platform.
-	conf := s.services.NewCompilerConfig()
-	bundleMap, err := bundle.CompileExt(s.job.Ctx, policy.BundleCompileConf{
-		CompilerConfig: conf,
+	conf := policy.BundleCompileConf{
+		CompilerConfig: s.services.NewCompilerConfig(),
 		Library:        s.services.DataLake,
 		RemoveFailing:  true,
-	})
+	}
+
+	// Reuse the compiled bundle across assets that share a resource schema.
+	// Without the cache every asset recompiles the whole bundle.
+	var bundleMap *policy.PolicyBundleMap
+	var err error
+	if s.job.BundleCompileCache != nil {
+		bundleMap, err = s.job.BundleCompileCache.compile(s.job.Ctx, s.job.Bundle, conf)
+	} else {
+		bundleMap, err = bundle.CompileExt(s.job.Ctx, conf)
+	}
 	if err != nil {
 		return err
 	}
@@ -1342,11 +1346,16 @@ func (s *localAssetScanner) prepareAsset() error {
 		return err
 	}
 
-	policyMrns := filterPolicyMrns(bundle, s.job.PolicyFilters)
+	bundleForSelection := bundle
+	if s.job.BundleCompileCache != nil {
+		bundleForSelection = bundleMap.ToList()
+	}
 
-	frameworkMrns := make([]string, len(bundle.Frameworks))
-	for i := range bundle.Frameworks {
-		frameworkMrns[i] = bundle.Frameworks[i].Mrn
+	policyMrns := filterPolicyMrns(bundleForSelection, s.job.PolicyFilters)
+
+	frameworkMrns := make([]string, len(bundleForSelection.Frameworks))
+	for i := range bundleForSelection.Frameworks {
+		frameworkMrns[i] = bundleForSelection.Frameworks[i].Mrn
 	}
 
 	var resolver policy.PolicyResolver = s.services
@@ -1361,7 +1370,7 @@ func (s *localAssetScanner) prepareAsset() error {
 	}
 
 	if len(s.job.Props) != 0 {
-		propsReq, err := s.mapPropOverrides(bundle)
+		propsReq, err := s.mapPropOverrides(bundleForSelection)
 		if err != nil {
 			return fmt.Errorf("failed to map property overrides: %w", err)
 		}
