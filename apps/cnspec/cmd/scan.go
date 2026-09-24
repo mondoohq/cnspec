@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"os"
 	"os/signal"
@@ -40,7 +41,7 @@ import (
 func init() {
 	rootCmd.AddCommand(scanCmd)
 
-	_ = scanCmd.Flags().StringP("output", "o", "compact", "Set the output format: "+reporter.AllFormats())
+	_ = scanCmd.Flags().StringP("output", "o", "compact", reporter.OutputFlagHelp())
 	_ = scanCmd.Flags().BoolP("json", "j", false, "Run the query and return the object in a JSON structure")
 	_ = scanCmd.Flags().String("platform-id", "", "Select a specific target asset by providing its platform ID")
 
@@ -91,20 +92,17 @@ func init() {
 	_ = scanCmd.Flags().String("support-bundle-dir", "", "Directory to write the support bundle into. Only used when --collect-support-bundle is set. Defaults to ./cnspec-support-bundle-<timestamp>/.")
 }
 
+// scanCmdDocs is the long description of the scan command, in the Markdown the
+// docs site renders. The terminal gets plainText of it; see markdown.go for why
+// this is the direction the two are derived in.
+//
+//go:embed scan_docs.md
+var scanCmdDocs string
+
 var scanCmd = &cobra.Command{
 	Use:   "scan",
 	Short: "Scan assets with one or more policies",
-	Long: `
-This command scans an asset using a policy. For example, you can scan
-the local system with its pre-configured policies:
-
-		$ cnspec scan local
-
-To manually configure a policy, use this:
-
-		$ cnspec scan local -f bundle.mql.yaml --incognito
-
-`,
+	Long:  plainText(scanCmdDocs),
 	PreRun: func(cmd *cobra.Command, _ []string) {
 		// Special handling for users that want to see what output options are
 		// available. We have to do this before printing the help because we

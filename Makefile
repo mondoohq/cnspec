@@ -64,7 +64,7 @@ prep/tools:
 
 #   🌙 cnspec   #
 
-cnspec/generate: clean/proto cli/generate policy/generate reporter/generate
+cnspec/generate: clean/proto cli/generate policy/generate reporter/generate docs/generate
 
 .PHONY: cli
 cli/generate:
@@ -79,6 +79,13 @@ policy/generate:
 
 reporter/generate:
 	go generate ./cli/reporter
+
+# The CLI reference under docs/cli is generated from the command definitions,
+# so a new flag or a reworded help string reaches the docs by regenerating
+# rather than by editing a page.
+.PHONY: docs
+docs/generate:
+	go run ./apps/gen-docs --docs-path ./docs/cli
 
 #   🏗 Binary   #
 

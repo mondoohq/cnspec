@@ -247,19 +247,24 @@ var reMdName = regexp.MustCompile(`/([^/]+)\.md$`)
 
 // GenerateMarkdown writes one page per command into dir, for the docs site.
 //
-// It overwrites whatever is there. Every page is generated in full except
-// docs/cli/cnspec_scan.md, which carries hand-written prose -- the per-target
-// examples and the links into the rest of the docs -- above its "### Options"
-// heading. That prose is not in the command's Long description and cannot be:
-// it uses docs-site relative links, which would be noise in `cnspec scan --help`.
-// After regenerating, restore everything above that heading from the previous
-// revision and keep the flag tables cobra produced.
+// It overwrites whatever is there, and every page is generated in full, so the
+// pages are only ever edited through the command definitions they come from.
+// Where a page needs more than terminal help does, the command's description is
+// written in Markdown and the terminal is given a rendering of it; see
+// markdown.go.
 func GenerateMarkdown(dir string) error {
 	rootCmd.DisableAutoGenTag = true
 
 	// We need to remove our fancy logo from the markdown output,
 	// since it messes with the formatting.
 	rootCmd.Long = rootCmdDesc
+
+	// The pages render the Markdown these descriptions are written in; the
+	// terminal gets plainText of it, which is what the commands carry. See
+	// markdown.go.
+	// Trimmed for the same reason plainText trims: cobra supplies the blank line
+	// between the description and the usage block that follows it.
+	scanCmd.Long = strings.TrimSpace(scanCmdDocs)
 
 	files := []string{}
 	err := doc.GenMarkdownTreeCustom(rootCmd, dir, func(s string) string {

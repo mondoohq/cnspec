@@ -233,6 +233,18 @@ func AllFormats() string {
 	return strings.Join(res, ", ")
 }
 
+// OutputFlagHelp is the help of the -o flag.
+//
+// It carries the options as well as the formats, because the flag's help is
+// what the generated CLI reference shows: an option only reachable through
+// `-o help` is one a reader of the docs never finds. The example is there
+// because the comma-separated form is not guessable from a list.
+func OutputFlagHelp() string {
+	return "Set the output format: " + AllFormats() +
+		". Append options with commas: " + AllOptions() +
+		". For example: -o ocsf-json," + OptionOcsfVersion + "=" + ocsf.DefaultVersion.String()
+}
+
 func AllOptions() string {
 	return "[no]" + OptionPrintChecks + ", " +
 		"[no]" + OptionPrintControls + ", " +
