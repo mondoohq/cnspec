@@ -6,6 +6,7 @@ package scan
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	goruntime "runtime"
 	"runtime/debug"
@@ -373,7 +374,9 @@ func reportCriticalErrors(asset *inventory.Asset, errs []error) {
 		tags["assetPlatformVersion"] = asset.Platform.Version
 	}
 	for _, msg := range warnings {
-		reportErrorFn("cnspec", cnspec.Version, cnspec.Build, msg, tags)
+		// Each report gets its own copy, so a reporter that keeps or mutates
+		// the map can't affect the next one.
+		reportErrorFn("cnspec", cnspec.Version, cnspec.Build, msg, maps.Clone(tags))
 		log.Warn().Str("asset", asset.Name).Str("assetMrn", asset.Mrn).Msg(msg)
 	}
 }

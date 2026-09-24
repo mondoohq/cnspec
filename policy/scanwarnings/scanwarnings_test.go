@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,5 +51,16 @@ func TestDedupeAndCap(t *testing.T) {
 		out := DedupeAndCap([]error{errors.New(long)})
 		require.Len(t, out, 1)
 		assert.Len(t, out[0], MaxLen)
+	})
+
+	t.Run("truncation never splits a multi-byte character", func(t *testing.T) {
+		// "ü" is 2 bytes; MaxLen-1 ASCII bytes followed by "ü" puts the byte
+		// cut in the middle of it.
+		msg := strings.Repeat("x", MaxLen-1) + "ü" + strings.Repeat("y", 10)
+		out := DedupeAndCap([]error{errors.New(msg)})
+		require.Len(t, out, 1)
+		assert.True(t, utf8.ValidString(out[0]), "truncated message must be valid UTF-8")
+		assert.LessOrEqual(t, len(out[0]), MaxLen)
+		assert.Equal(t, strings.Repeat("x", MaxLen-1), out[0])
 	})
 }

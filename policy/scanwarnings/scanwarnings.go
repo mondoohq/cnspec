@@ -1,20 +1,13 @@
 // Copyright Mondoo, Inc. 2024, 2026
 // SPDX-License-Identifier: BUSL-1.1
 
-// Package scanwarnings holds the dedupe/cap logic shared by every path that
-// turns recovered provider panics/crashes (mql's runtime.CriticalErrors(),
-// e.g. a provider subprocess dying mid-scan) into a bounded, reportable
-// message list:
-//
-//   - the terminal/JSON report (policy/scan.reportCriticalErrors)
-//   - the upstream StoreResultsReq.scan_warnings field
-//     (policy/executor.ExecuteResolvedPolicy)
-//   - the --output-scan-db scan database
-//     (internal/datalakes/sqlite.writeCriticalErrorsToScanDB)
-//
-// All three need the same caps, or one path can carry more or longer
-// warnings than the others for the same asset.
+// Package scanwarnings turns recovered provider panics/crashes (mql's
+// runtime.CriticalErrors(), e.g. a provider subprocess dying mid-scan) into a
+// bounded, deduplicated message list before they are reported to the Mondoo
+// Platform and logged (policy/scan.reportCriticalErrors).
 package scanwarnings
+
+import "strings"
 
 const (
 	// Max caps how many distinct crash messages are attached to a report,
@@ -27,7 +20,9 @@ const (
 // DedupeAndCap converts recovered-panic errors into a deduplicated,
 // size-capped message list. Nil errors are skipped. Messages are
 // deduplicated by their exact string, in the order first seen, each
-// truncated to MaxLen bytes, and the whole list capped to Max entries.
+// truncated to at most MaxLen bytes without splitting a multi-byte UTF-8
+// character (error text can be localized, e.g. Windows socket errors), and
+// the whole list capped to Max entries.
 //
 // mql's own dedup (collapsing repeated failures on one crashed provider
 // into a single CriticalErrors() entry) cannot be assumed here: cnspec pins
@@ -44,7 +39,9 @@ func DedupeAndCap(errs []error) []string {
 		}
 		msg := err.Error()
 		if len(msg) > MaxLen {
-			msg = msg[:MaxLen]
+			// A byte cut can end mid-rune; ToValidUTF8 drops that trailing
+			// partial sequence, so the result stays valid and <= MaxLen bytes.
+			msg = strings.ToValidUTF8(msg[:MaxLen], "")
 		}
 		if _, dup := seen[msg]; dup {
 			continue
