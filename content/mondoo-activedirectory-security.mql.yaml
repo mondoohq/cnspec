@@ -1,0 +1,361 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-activedirectory-security
+    name: Mondoo Active Directory Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: activedirectory
+    require:
+      - provider: activedirectory
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Harden Active Directory password policy, account authentication, and privileged access
+    docs:
+      desc: |
+        The Mondoo Active Directory Security policy connects to a domain and reads the default domain password policy together with the domain's user accounts, so its checks reflect the settings the directory actually enforces rather than a documented intent.
+
+        From the password policy it evaluates the minimum length and whether reversible password encryption is enabled. From the user accounts it inspects the `userAccountControl` flags (accounts allowed to have an empty password, accounts exempt from Kerberos pre-authentication), privileged-group membership, and logon recency to find dormant standing privilege.
+
+        This policy provides security checks across three areas:
+        - Password policy strength
+        - Account authentication hygiene
+        - Privileged access
+
+        Learn more about scanning with cnspec in the [cnspec documentation](https://mondoo.com/docs/cnspec).
+    groups:
+      - title: Password Policy
+        filters: asset.platform == "activedirectory"
+        checks:
+          - uid: mondoo-activedirectory-security-password-min-length
+          - uid: mondoo-activedirectory-security-no-reversible-encryption
+      - title: Authentication
+        filters: asset.platform == "activedirectory"
+        checks:
+          - uid: mondoo-activedirectory-security-no-passwordless-accounts
+          - uid: mondoo-activedirectory-security-kerberos-preauth-required
+      - title: Privileged Access
+        filters: asset.platform == "activedirectory"
+        checks:
+          - uid: mondoo-activedirectory-security-no-stale-privileged-accounts
+    scoring_system: highest impact
+queries:
+  - uid: mondoo-activedirectory-security-password-min-length
+    filters: asset.platform == "activedirectory"
+    title: Ensure the domain password policy requires at least 14 characters
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    mql: |
+      activedirectory.passwordPolicy.minPasswordLength >= 14
+    docs:
+      desc: |-
+        This check ensures that the default domain password policy sets a minimum password length of at least 14 characters. A short minimum lets users choose passwords that offline cracking and online guessing can recover quickly.
+
+        **Why this matters**
+
+        - **Cracking resistance:** Each additional required character multiplies the search space an attacker must exhaust to recover a hash offline.
+        - **Guessing resistance:** Longer minimums push users away from short, predictable passwords that spraying attacks target first.
+        - **Baseline for the whole domain:** The default domain policy governs every account that is not covered by a stricter fine-grained policy, so it sets the floor for the environment.
+
+        **Risk mitigation**
+
+        - **Higher work factor:** A 14-character floor makes bulk offline cracking of captured hashes substantially more expensive.
+        - **Fewer trivial credentials:** Enforcing length at the domain level removes the weakest passwords without relying on user judgment.
+      audit: |-
+        ### Audit via PowerShell
+
+        1. On a domain-joined host with the ActiveDirectory module available, read the default domain password policy:
+
+           ```powershell
+           Get-ADDefaultDomainPasswordPolicy | Select-Object MinPasswordLength
+           ```
+
+        If `MinPasswordLength` is 14 or greater, the check passes. If it is less than 14, the check fails.
+      remediation:
+        - id: gui
+          desc: |-
+            To raise the minimum password length using the Group Policy Management Console:
+
+            1. Open the Group Policy Management Console and edit the **Default Domain Policy**.
+            2. Navigate to **Computer Configuration > Policies > Windows Settings > Security Settings > Account Policies > Password Policy**.
+            3. Set **Minimum password length** to `14` (or higher) and close the editor so the policy replicates.
+        - id: cli
+          desc: |-
+            To raise the minimum password length using the ActiveDirectory PowerShell module:
+
+            ```powershell
+            Set-ADDefaultDomainPasswordPolicy -Identity <domain> -MinPasswordLength 14
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/windows/security/threat-protection/security-policy-settings/minimum-password-length
+        title: Minimum password length
+  - uid: mondoo-activedirectory-security-no-reversible-encryption
+    filters: asset.platform == "activedirectory"
+    title: Ensure reversible password encryption is disabled domain-wide
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ekm-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-10
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    mql: |
+      activedirectory.passwordPolicy.reversibleEncryption == false
+    docs:
+      desc: |-
+        This check ensures that the default domain password policy does not store passwords using reversible encryption. Reversible encryption keeps a form of the password that can be decrypted back to the original, which is functionally equivalent to storing the password in plaintext.
+
+        **Why this matters**
+
+        - **Plaintext-equivalent storage:** A password held under reversible encryption can be recovered in full by anyone who obtains the stored value and the key.
+        - **Rarely needed:** The setting exists only for a few legacy protocols (such as CHAP or Digest authentication) and should stay off unless one of those explicitly requires it.
+        - **Domain-wide blast radius:** Enabling it in the default domain policy exposes every affected account's real password, not just a single hash to crack.
+
+        **Risk mitigation**
+
+        - **No recoverable secrets:** Disabling reversible encryption ensures stored credentials cannot be decrypted back to usable passwords.
+        - **Reduced breach impact:** A leaked directory database yields only hashes to attack offline, not directly usable plaintext.
+      audit: |-
+        ### Audit via PowerShell
+
+        1. On a domain-joined host with the ActiveDirectory module available, read the default domain password policy:
+
+           ```powershell
+           Get-ADDefaultDomainPasswordPolicy | Select-Object ReversibleEncryptionEnabled
+           ```
+
+        If `ReversibleEncryptionEnabled` is `False`, the check passes. If it is `True`, the check fails.
+      remediation:
+        - id: gui
+          desc: |-
+            To disable reversible password encryption using the Group Policy Management Console:
+
+            1. Open the Group Policy Management Console and edit the **Default Domain Policy**.
+            2. Navigate to **Computer Configuration > Policies > Windows Settings > Security Settings > Account Policies > Password Policy**.
+            3. Set **Store passwords using reversible encryption** to **Disabled** and close the editor so the policy replicates.
+        - id: cli
+          desc: |-
+            To disable reversible password encryption using the ActiveDirectory PowerShell module:
+
+            ```powershell
+            Set-ADDefaultDomainPasswordPolicy -Identity <domain> -ReversibleEncryptionEnabled $false
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/windows/security/threat-protection/security-policy-settings/store-passwords-using-reversible-encryption
+        title: Store passwords using reversible encryption
+  - uid: mondoo-activedirectory-security-no-passwordless-accounts
+    filters: asset.platform == "activedirectory"
+    title: Ensure no enabled account is allowed to have an empty password
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    mql: |
+      activedirectory.users.where(enabled == true).all(passwordNotRequired == false)
+    docs:
+      desc: |-
+        This check ensures that no enabled user account carries the `PASSWD_NOTREQD` flag in its `userAccountControl`. An account with that flag set is exempt from the domain password policy and can be left with a blank password, allowing anyone who knows the account name to authenticate.
+
+        **Why this matters**
+
+        - **Authentication bypass:** An enabled account with an empty password is an open door that requires no credential to walk through.
+        - **Policy exemption:** The flag overrides length and complexity requirements, so a strong domain policy does not protect these accounts.
+        - **Easy to overlook:** The flag is often set on old service or migration accounts and lingers long after it is needed.
+
+        **Risk mitigation**
+
+        - **Credential required:** Clearing the flag forces every enabled account back under the domain password policy.
+        - **Smaller attack surface:** Removing passwordless accounts eliminates a class of logins that need no secret at all.
+      audit: |-
+        ### Audit via PowerShell
+
+        1. On a domain-joined host with the ActiveDirectory module available, list enabled accounts that are allowed to have no password:
+
+           ```powershell
+           Get-ADUser -Filter "Enabled -eq 'True' -and PasswordNotRequired -eq 'True'"
+           ```
+
+        If the command returns no accounts, the check passes. If it returns one or more accounts, the check fails.
+      remediation:
+        - id: gui
+          desc: |-
+            To require a password for an affected account using the Active Directory Administrative Center:
+
+            1. Open the Active Directory Administrative Center and locate the affected user account.
+            2. Open the account's properties and clear the option that exempts it from requiring a password (the `PASSWD_NOTREQD` user account control flag).
+            3. Reset the account's password so it complies with the domain password policy, then save.
+        - id: cli
+          desc: |-
+            To require a password for every affected account using the ActiveDirectory PowerShell module:
+
+            ```powershell
+            Get-ADUser -Filter "PasswordNotRequired -eq 'True'" | Set-ADUser -PasswordNotRequired $false
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/windows/win32/adschema/a-useraccountcontrol
+        title: User-Account-Control attribute
+  - uid: mondoo-activedirectory-security-kerberos-preauth-required
+    filters: asset.platform == "activedirectory"
+    title: Ensure Kerberos pre-authentication is required for every account
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    mql: |
+      activedirectory.users.where(enabled == true).all(kerberosPreAuthNotRequired == false)
+    docs:
+      desc: |-
+        This check ensures that no enabled account has the "Do not require Kerberos preauthentication" flag set. Accounts without pre-authentication are vulnerable to AS-REP roasting: an attacker can request authentication material for the account and take the encrypted response offline to crack the password.
+
+        **Why this matters**
+
+        - **AS-REP roasting:** Without pre-authentication, the key distribution center returns encrypted material to any requester, handing an attacker crackable data without a single login attempt.
+        - **Silent offline attack:** The cracking happens away from the domain, so it generates no failed-logon events to alert defenders.
+        - **Rarely justified:** The setting exists for a handful of legacy interoperability cases and is almost never needed in a modern domain.
+
+        **Risk mitigation**
+
+        - **No free ciphertext:** Requiring pre-authentication forces a requester to prove knowledge of the password before the KDC returns any encrypted material.
+        - **Restored visibility:** Authentication attempts are tied to a credential, keeping brute-force activity on the domain where it can be logged.
+      audit: |-
+        ### Audit via PowerShell
+
+        1. On a domain-joined host with the ActiveDirectory module available, list accounts that do not require Kerberos pre-authentication:
+
+           ```powershell
+           Get-ADUser -Filter "DoesNotRequirePreAuth -eq 'True'"
+           ```
+
+        If the command returns no accounts, the check passes. If it returns one or more accounts, the check fails.
+      remediation:
+        - id: gui
+          desc: |-
+            To require Kerberos pre-authentication for an affected account using the Active Directory Administrative Center:
+
+            1. Open the Active Directory Administrative Center and locate the affected user account.
+            2. Open the account's properties and go to the **Account** options.
+            3. Clear **Do not require Kerberos preauthentication** and save.
+        - id: cli
+          desc: |-
+            To require Kerberos pre-authentication for every affected account using the ActiveDirectory PowerShell module:
+
+            ```powershell
+            Get-ADUser -Filter "DoesNotRequirePreAuth -eq 'True'" | Set-ADAccountControl -DoesNotRequirePreAuth $false
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/windows/win32/adschema/a-useraccountcontrol
+        title: User-Account-Control attribute
+  - uid: mondoo-activedirectory-security-no-stale-privileged-accounts
+    filters: asset.platform == "activedirectory"
+    title: Ensure privileged accounts are not stale or dormant
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      activedirectory.users.where(isPrivileged == true).all(isStale == false)
+    docs:
+      desc: |-
+        This check ensures that members of privileged groups such as Domain Admins, Enterprise Admins, and Schema Admins have logged on recently. A privileged account that has not authenticated in over 90 days is dormant standing privilege: high-value access that no one is using but an attacker still can.
+
+        **Why this matters**
+
+        - **Unwatched high-value targets:** Dormant admin accounts hold the most powerful rights in the domain while no legitimate user is watching them for misuse.
+        - **Attractive to attackers:** An unused privileged credential can be compromised and exercised without disrupting a real user who would notice being locked out.
+        - **Least privilege drift:** Membership in the most powerful groups should be minimal and current, not a collection of accounts kept "just in case."
+
+        **Risk mitigation**
+
+        - **Smaller privileged footprint:** Removing or disabling dormant admins shrinks the set of accounts that can take over the domain.
+        - **Current, accountable access:** Keeping privileged membership to actively used accounts makes each grant justifiable and auditable.
+      audit: |-
+        ### Audit via PowerShell
+
+        1. On a domain-joined host with the ActiveDirectory module available, enumerate members of a privileged group and review their last logon:
+
+           ```powershell
+           Get-ADGroupMember "Domain Admins" | Get-ADUser -Properties LastLogonDate | Select-Object Name, LastLogonDate
+           ```
+
+        If every privileged member has a `LastLogonDate` within the last 90 days, the check passes. If any member has not logged on in over 90 days (or has never logged on), the check fails.
+      remediation:
+        - id: gui
+          desc: |-
+            To remove dormant members from a privileged group using the Active Directory Administrative Center:
+
+            1. Open the Active Directory Administrative Center and locate the privileged group (for example **Domain Admins**).
+            2. Review each member's last logon and identify accounts that have been dormant for more than 90 days.
+            3. Remove the dormant accounts from the group, or disable them if the identity is no longer needed, then save.
+        - id: cli
+          desc: |-
+            To find and remove dormant privileged members using the ActiveDirectory PowerShell module:
+
+            ```powershell
+            Get-ADGroupMember "Domain Admins" | Get-ADUser -Properties LastLogonDate | Select-Object Name, LastLogonDate
+            Remove-ADGroupMember -Identity "Domain Admins" -Members <dormant-account>
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/plan/security-best-practices/appendix-b--privileged-accounts-and-groups-in-active-directory
+        title: Privileged accounts and groups in Active Directory
