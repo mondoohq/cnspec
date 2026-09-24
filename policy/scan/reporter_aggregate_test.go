@@ -64,6 +64,26 @@ func TestAggregateReporter_AddScanWarning_DoesNotFailAnAssetWithAReport(t *testi
 	assert.Empty(t, full.Errors, "a warning must not appear in the errors map that drives the CLI exit code")
 	assert.Contains(t, full.Reports, asset.Mrn, "the report must survive the warning, not be dropped")
 	assert.Equal(t, uint32(80), full.Reports[asset.Mrn].Score.Value)
+
+	require.Contains(t, full.Warnings, asset.Mrn, "the warning must be carried onto the wire-serialized ReportCollection")
+	assert.Equal(t, []string{"the 'os' provider crashed: connection refused"}, full.Warnings[asset.Mrn].Messages)
+}
+
+// TestAggregateReporter_Reports_OmitsWarningsFieldWhenThereAreNone keeps the
+// wire message unchanged for the common case (no crash): Warnings should be
+// nil, not an empty-but-present map.
+func TestAggregateReporter_Reports_OmitsWarningsFieldWhenThereAreNone(t *testing.T) {
+	asset := &inventory.Asset{Mrn: "//assets/1", Name: "clean-host"}
+
+	r := NewAggregateReporter()
+	r.AddReport(asset, &AssetReport{
+		Mrn:    asset.Mrn,
+		Report: &policy.Report{Score: &policy.Score{Value: 100}},
+	})
+
+	full := r.Reports().GetFull()
+	require.NotNil(t, full)
+	assert.Nil(t, full.Warnings)
 }
 
 func TestAggregateReporter_AddScanWarning_RecordsAgainstWarnings(t *testing.T) {

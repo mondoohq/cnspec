@@ -73,6 +73,28 @@ func (r *reportRenderer) print() error {
 		}
 	}
 
+	// print warnings -- non-fatal issues (e.g. a crashed provider) on assets
+	// that still produced a report. Deliberately never affects the exit
+	// code; see AggregateReporter.AddScanWarning.
+	if len(r.data.Warnings) > 0 {
+		res.WriteString(r.printer.Primary("Scan Warnings" + NewLineCharacter + NewLineCharacter))
+
+		for name, w := range r.data.Warnings {
+			if w == nil || len(w.Messages) == 0 {
+				continue
+			}
+			assetLine := termenv.String(fmt.Sprintf("■ Asset: %s%s", name, NewLineCharacter)).
+				Foreground(colors.DefaultColorTheme.Medium).String()
+			res.WriteString(assetLine)
+			for _, msg := range w.Messages {
+				warnLine := termenv.String(stringx.Indent(2, fmt.Sprintf("Warning: %s%s", msg, NewLineCharacter))).
+					Foreground(colors.DefaultColorTheme.Medium).String()
+				warnLine = strings.ReplaceAll(warnLine, "\n", NewLineCharacter)
+				res.WriteString(warnLine)
+			}
+		}
+	}
+
 	fmt.Fprintln(r.out, res.String())
 	return nil
 }

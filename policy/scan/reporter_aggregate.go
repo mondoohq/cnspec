@@ -25,8 +25,8 @@ type AggregateReporter struct {
 	assetErrors      map[string]error
 	// assetWarnings holds non-fatal issues (AddScanWarning) keyed by asset
 	// MRN, kept separate from assetErrors so a warning never makes Reports()
-	// report the asset as failed. Not currently part of the wire-serialized
-	// policy.ReportCollection -- see AddScanWarning.
+	// report the asset as failed. Serialized into policy.ReportCollection's
+	// Warnings field -- see Reports().
 	assetWarnings    map[string][]string
 	bundle           *policy.Bundle
 	resolvedPolicies map[string]*policy.ResolvedPolicy
@@ -109,10 +109,9 @@ func (r *AggregateReporter) AddScanWarning(asset *inventory.Asset, warnings []st
 }
 
 // Warnings returns the non-fatal issues recorded via AddScanWarning, keyed
-// by asset MRN. policy.ReportCollection has no wire field for these yet, so
-// this is how a caller reaches them today -- e.g. a CLI that wants to print
-// a "Warnings:" section, or a test asserting a crash was recorded without
-// being treated as a scan failure.
+// by asset MRN. Also reachable via Reports().Result.Full.Warnings, this is
+// the in-process shortcut -- e.g. for a test asserting a crash was recorded
+// without being treated as a scan failure.
 func (r *AggregateReporter) Warnings() map[string][]string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -131,6 +130,14 @@ func (r *AggregateReporter) Reports() *ScanResult {
 		errors[k] = v.Error()
 	}
 
+	var warnings map[string]*policy.ScanWarnings
+	if len(r.assetWarnings) > 0 {
+		warnings = make(map[string]*policy.ScanWarnings, len(r.assetWarnings))
+		for k, v := range r.assetWarnings {
+			warnings[k] = &policy.ScanWarnings{Messages: append([]string(nil), v...)}
+		}
+	}
+
 	return &ScanResult{
 		Ok:         len(errors) == 0,
 		WorstScore: r.worstScore,
@@ -142,6 +149,7 @@ func (r *AggregateReporter) Reports() *ScanResult {
 				Bundle:           r.bundle,
 				ResolvedPolicies: r.resolvedPolicies,
 				VulnReports:      r.assetVulnReports,
+				Warnings:         warnings,
 			},
 		},
 	}

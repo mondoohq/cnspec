@@ -4,9 +4,13 @@
 package executor
 
 import (
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/policy"
 )
 
@@ -96,5 +100,45 @@ func TestFilterScoreTracker_Passing(t *testing.T) {
 		tracker := newFilterScoreTracker()
 		tracker.record(nil)
 		assert.Empty(t, tracker.passing())
+	})
+}
+
+func TestDedupeAndCapScanWarnings(t *testing.T) {
+	t.Run("empty input returns nil", func(t *testing.T) {
+		assert.Nil(t, dedupeAndCapScanWarnings(nil))
+	})
+
+	t.Run("nil errors are skipped", func(t *testing.T) {
+		out := dedupeAndCapScanWarnings([]error{nil, nil})
+		assert.Empty(t, out)
+	})
+
+	t.Run("duplicate messages collapse to one", func(t *testing.T) {
+		errs := []error{
+			errors.New("the 'os' provider crashed: connection refused"),
+			errors.New("the 'os' provider crashed: connection refused"),
+			errors.New("the 'aws' provider crashed: EOF"),
+		}
+		out := dedupeAndCapScanWarnings(errs)
+		assert.ElementsMatch(t, []string{
+			"the 'os' provider crashed: connection refused",
+			"the 'aws' provider crashed: EOF",
+		}, out)
+	})
+
+	t.Run("count is capped", func(t *testing.T) {
+		errs := make([]error, 0, maxScanWarnings+10)
+		for i := 0; i < maxScanWarnings+10; i++ {
+			errs = append(errs, fmt.Errorf("distinct crash #%d", i))
+		}
+		out := dedupeAndCapScanWarnings(errs)
+		assert.Len(t, out, maxScanWarnings)
+	})
+
+	t.Run("message length is capped", func(t *testing.T) {
+		long := strings.Repeat("x", maxScanWarningLen+500)
+		out := dedupeAndCapScanWarnings([]error{errors.New(long)})
+		require.Len(t, out, 1)
+		assert.Len(t, out[0], maxScanWarningLen)
 	})
 }

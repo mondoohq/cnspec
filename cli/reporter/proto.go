@@ -18,10 +18,11 @@ import (
 
 func ConvertToProto(data *policy.ReportCollection) (*Report, error) {
 	protoReport := &Report{
-		Assets: map[string]*cr.Asset{},
-		Data:   map[string]*cr.DataValues{},
-		Errors: map[string]string{},
-		Scores: map[string]*ScoreValues{},
+		Assets:   map[string]*cr.Asset{},
+		Data:     map[string]*cr.DataValues{},
+		Errors:   map[string]string{},
+		Scores:   map[string]*ScoreValues{},
+		Warnings: map[string]*Warnings{},
 	}
 
 	if data == nil {
@@ -210,6 +211,14 @@ func ConvertToProto(data *policy.ReportCollection) (*Report, error) {
 		assetMrn := prettyPrintString(id)
 		errorMsg := errStatus
 		protoReport.Errors[assetMrn] = errorMsg
+	}
+
+	for id, w := range data.Warnings {
+		if w == nil || len(w.Messages) == 0 {
+			continue
+		}
+		assetMrn := prettyPrintString(id)
+		protoReport.Warnings[assetMrn] = &Warnings{Messages: w.Messages}
 	}
 
 	return protoReport, nil

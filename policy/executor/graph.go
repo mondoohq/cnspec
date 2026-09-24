@@ -49,6 +49,55 @@ func RescoreResolvedPolicy(
 	return ge.Execute()
 }
 
+// criticalErrorsSource is the optional interface a llx.Runtime may implement
+// to report recovered provider panics/crashes (mql's *providers.Runtime;
+// see its CriticalErrors method). Checked via type assertion, following the
+// same optional-interface pattern as llx.AssetRootSource, so a runtime that
+// has no notion of it (a mock, an embedder's own) is unaffected.
+type criticalErrorsSource interface {
+	CriticalErrors() []error
+}
+
+const (
+	// maxScanWarnings caps how many distinct crash messages are attached to
+	// a StoreResultsReq, so a crash storm on one asset can't bloat the
+	// upload.
+	maxScanWarnings = 20
+	// maxScanWarningLen caps each message's length in bytes.
+	maxScanWarningLen = 1024
+)
+
+// dedupeAndCapScanWarnings converts recovered-panic errors into the
+// deduplicated, size-capped message list StoreResultsReq.ScanWarnings
+// expects. mql's own dedup (collapsing repeated failures on one crashed
+// provider into a single CriticalErrors() entry) cannot be assumed here:
+// cnspec pins mql independently, so an older build may not have it.
+func dedupeAndCapScanWarnings(errs []error) []string {
+	if len(errs) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(errs))
+	out := make([]string, 0, len(errs))
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+		msg := err.Error()
+		if len(msg) > maxScanWarningLen {
+			msg = msg[:maxScanWarningLen]
+		}
+		if _, dup := seen[msg]; dup {
+			continue
+		}
+		seen[msg] = struct{}{}
+		out = append(out, msg)
+		if len(out) >= maxScanWarnings {
+			break
+		}
+	}
+	return out
+}
+
 func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSvc policy.PolicyResolver, assetMrn string,
 	resolvedPolicy *policy.ResolvedPolicy, features mql.Features, progressReporter progress.Progress,
 ) error {
@@ -66,7 +115,22 @@ func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSv
 		internal.NewPolicyServiceCollector(assetMrn, collectorSvc),
 		opts...,
 	)
-	defer collector.FlushAndStop()
+	// scanWarnings is populated below, right after ge.Execute() returns --
+	// the point at which this asset's execution has finished and
+	// runtime.CriticalErrors() (if the runtime supports it) holds whatever
+	// was recorded during it. Read here rather than after RunAssetJob
+	// returns: FlushAndStop below sends the final (IsLastBatch=true)
+	// StoreResultsReq batch, and that send completes before this function
+	// -- and therefore RunAssetJob -- returns. A crash recorded in the
+	// narrow window between ge.Execute() returning and RunAssetJob
+	// returning (asset cleanup only, no further provider calls) would miss
+	// this batch; the local report (AggregateReporter.Warnings /
+	// ReportCollection.Warnings) reads CriticalErrors() again after
+	// RunAssetJob returns and is authoritative for that case.
+	var scanWarnings []string
+	defer func() {
+		collector.FlushAndStop(scanWarnings)
+	}()
 
 	builder := builderFromResolvedPolicy(resolvedPolicy)
 	builder.AddDatapointCollector(collector)
@@ -98,6 +162,9 @@ func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSv
 	err = ge.Execute()
 	if counter != nil {
 		counter.recordTo(stats)
+	}
+	if critSrc, ok := runtime.(criticalErrorsSource); ok {
+		scanWarnings = dedupeAndCapScanWarnings(critSrc.CriticalErrors())
 	}
 	return err
 }

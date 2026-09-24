@@ -122,6 +122,15 @@ func newMaxParallelConnTransport(transport http.RoundTripper, parallel int64) *m
 	}
 }
 
+// NoStoreResults wraps a PolicyResolver and turns StoreResults into a no-op
+// while forwarding every other method unchanged. Used when a scan also
+// writes a local scan database (--output-scan-db): that mode uploads the
+// finished database wholesale (UPLOAD_URL_KIND_SCAN_DATABASE_V0), so the
+// per-batch StoreResultsReq stream -- including its ScanWarnings field --
+// would otherwise be sent to the platform twice. The scan database itself
+// has no column for ScanWarnings today, so a crash recorded during a scan
+// that uses this wrapper reaches the platform only via the local CLI/JSON
+// report (policy.ReportCollection.Warnings), not via the uploaded database.
 type NoStoreResults struct {
 	PolicyResolver
 }

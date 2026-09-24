@@ -199,7 +199,13 @@ func listScoredRisks(risksIdx map[string]bool) []*policy.ScoredRiskFactor {
 	return risks
 }
 
-func (c *BufferedCollector) FlushAndStop() {
+// FlushAndStop drains any buffered results/scores and sends the final
+// (IsLastBatch=true) StoreResultsReq for this asset. warnings, when
+// non-empty, is attached to that final batch -- see
+// PolicyServiceCollector.Sink. Must be called only after every producer
+// (SinkData/SinkScore) is done for this asset.
+func (c *BufferedCollector) FlushAndStop(warnings []string) {
+	c.collector.setScanWarnings(warnings)
 	close(c.stopChan)
 	c.wg.Wait()
 }
@@ -225,6 +231,10 @@ func (c *BufferedCollector) SinkScore(scores []*policy.Score) {
 type PolicyServiceCollector struct {
 	assetMrn string
 	resolver policy.PolicyResolver
+	// scanWarnings is attached to the final (IsLastBatch=true) StoreResultsReq
+	// sent by Sink. Set once via setScanWarnings, before FlushAndStop closes
+	// the BufferedCollector's stopChan -- see setScanWarnings.
+	scanWarnings []string
 }
 
 func NewPolicyServiceCollector(assetMrn string, resolver policy.PolicyResolver) *PolicyServiceCollector {
@@ -232,6 +242,16 @@ func NewPolicyServiceCollector(assetMrn string, resolver policy.PolicyResolver) 
 		assetMrn: assetMrn,
 		resolver: resolver,
 	}
+}
+
+// setScanWarnings records the warnings to attach to this asset's final
+// StoreResultsReq batch. Not synchronized with a lock: the only reader is
+// the BufferedCollector.run goroutine's isDone branch, which only executes
+// after receiving from stopChan; FlushAndStop always calls this before
+// closing that channel, and a channel close happens-before a receive that
+// observes it (Go memory model), so the write is visible without one.
+func (c *PolicyServiceCollector) setScanWarnings(warnings []string) {
+	c.scanWarnings = warnings
 }
 
 func toResult(assetMrn string, rr *llx.RawResult) *llx.Result {
@@ -340,15 +360,23 @@ func (c *PolicyServiceCollector) Sink(ctx context.Context, results []*llx.RawRes
 		}
 	}
 
-	if len(scores) > 0 || len(risks) > 0 {
+	// The final batch (isDone) is sent even when it would otherwise be empty,
+	// as long as there are scan warnings to deliver -- otherwise an asset
+	// whose crash left no trailing scores/risks would silently never send
+	// its warnings at all.
+	if len(scores) > 0 || len(risks) > 0 || (isDone && len(c.scanWarnings) > 0) {
 		log.Debug().Msg("Sending scores")
-		_, err := c.resolver.StoreResults(ctx, &policy.StoreResultsReq{
+		req := &policy.StoreResultsReq{
 			AssetMrn:       c.assetMrn,
 			Scores:         scores,
 			Risks:          risks,
 			IsPreprocessed: true,
 			IsLastBatch:    isDone,
-		})
+		}
+		if isDone {
+			req.ScanWarnings = c.scanWarnings
+		}
+		_, err := c.resolver.StoreResults(ctx, req)
 		if err != nil {
 			log.Error().Err(err).Msg("failed to send datapoints and scores")
 			health.ReportError("cnspec", cnspec.Version, cnspec.Build, fmt.Sprintf("%s (asset=%s, scores=%d)", err.Error(), c.assetMrn, len(scores)))
