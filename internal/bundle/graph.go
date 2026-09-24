@@ -50,8 +50,9 @@ type GraphNode struct {
 	Impact   int               `json:"impact,omitempty"`
 	Tags     map[string]string `json:"tags,omitempty"`
 	ParentID string            `json:"parent_id,omitempty"`
-	// Filters, Props and Remediations are set for checks and queries.
-	// Filters holds the MQL of each filter, in the order of their keys.
+	// Filters are set for checks, queries and policy groups; Props and
+	// Remediations for checks and queries. Filters holds the MQL of each
+	// filter, in the order of their keys.
 	Filters      []string           `json:"filters,omitempty"`
 	Props        []GraphProp        `json:"props,omitempty"`
 	Remediations []GraphRemediation `json:"remediations,omitempty"`
@@ -368,22 +369,29 @@ func extractBundle(g *PolicyGraph, file string, b *Bundle) {
 	}
 }
 
+// filterMQL returns the MQL of each filter, in the order of their keys.
+func filterMQL(f *Filters) []string {
+	if f == nil || len(f.Items) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(f.Items))
+	for k := range f.Items {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var filters []string
+	for _, k := range keys {
+		if item := f.Items[k]; item != nil && item.Mql != "" {
+			filters = append(filters, item.Mql)
+		}
+	}
+	return filters
+}
+
 // queryDetails returns the filters, props and remediations of a query for its
 // graph node.
 func queryDetails(q *Mquery) ([]string, []GraphProp, []GraphRemediation) {
-	var filters []string
-	if q.Filters != nil && len(q.Filters.Items) > 0 {
-		keys := make([]string, 0, len(q.Filters.Items))
-		for k := range q.Filters.Items {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			if f := q.Filters.Items[k]; f != nil && f.Mql != "" {
-				filters = append(filters, f.Mql)
-			}
-		}
-	}
+	filters := filterMQL(q.Filters)
 
 	var props []GraphProp
 	for _, p := range q.Props {
@@ -489,6 +497,7 @@ func extractPolicyGroup(g *PolicyGraph, file string, grp *PolicyGroup, policyID 
 		Column:   grp.FileContext.Column,
 		Title:    title,
 		ParentID: policyID,
+		Filters:  filterMQL(grp.Filters),
 	})
 	g.addEdge(&GraphEdge{Source: policyID, Target: gID, Kind: EdgeContains})
 
