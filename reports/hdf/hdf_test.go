@@ -239,6 +239,76 @@ func TestHDFControlImpact(t *testing.T) {
 	}
 }
 
+// TestHDFReportTimestamps covers the epoch guard. No cnspec code path populates
+// these fields today, so the risk is a producer that writes a different unit: the
+// same instant in milliseconds reads as a year past 50000, and an OHDF document is a
+// compliance artifact where an absurd date is worse than the conversion time.
+func TestHDFReportTimestamps(t *testing.T) {
+	pinHDFClock(t)
+
+	// A scan time distinct from the pinned clock, so a case that should render the
+	// report's own timestamp cannot pass by falling back to the conversion time.
+	const conversionTime = "2026-08-22T10:30:00Z"
+	const scanTime = "2025-03-04T05:06:07Z"
+	const seconds int64 = 1741064767
+	const milliseconds = seconds * 1000
+
+	t.Run("start time", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			report *policy.Report
+			want   string
+		}{
+			{"no report", nil, conversionTime},
+			{"unset", &policy.Report{}, conversionTime},
+			{"seconds", &policy.Report{Created: seconds}, scanTime},
+			{"milliseconds", &policy.Report{Created: milliseconds}, conversionTime},
+			{"negative", &policy.Report{Created: -1}, conversionTime},
+			{"before 2000", &policy.Report{Created: 1}, conversionTime},
+			{"after 2100", &policy.Report{Created: hdfMaxEpochSeconds + 1}, conversionTime},
+			{"lower bound", &policy.Report{Created: hdfMinEpochSeconds}, "2000-01-01T00:00:00Z"},
+			{"upper bound", &policy.Report{Created: hdfMaxEpochSeconds}, "2100-01-01T00:00:00Z"},
+		}
+
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				assert.Equal(t, test.want, hdfStartTime(test.report))
+			})
+		}
+	})
+
+	t.Run("duration", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			report *policy.Report
+			want   *float64
+		}{
+			{"no report", nil, nil},
+			{"unset", &policy.Report{}, nil},
+			{"seconds", &policy.Report{Created: seconds, Modified: seconds + 42}, hdfTestPtr(42.0)},
+			{"milliseconds", &policy.Report{Created: milliseconds, Modified: milliseconds + 42000}, nil},
+			{"modified before created", &policy.Report{Created: seconds, Modified: seconds - 1}, nil},
+			{"modified equals created", &policy.Report{Created: seconds, Modified: seconds}, nil},
+			{"modified unset", &policy.Report{Created: seconds}, nil},
+			{"created unset", &policy.Report{Modified: seconds}, nil},
+		}
+
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				got := hdfStatisticsFor(test.report)
+				if test.want == nil {
+					assert.Nil(t, got.Duration)
+					return
+				}
+				require.NotNil(t, got.Duration)
+				assert.Equal(t, *test.want, *got.Duration)
+			})
+		}
+	})
+}
+
+func hdfTestPtr[T any](v T) *T { return &v }
+
 // TestHDFSeverityLabel pins the bands Heimdall and the SAF CLI bucket findings by.
 func TestHDFSeverityLabel(t *testing.T) {
 	tests := []struct {
