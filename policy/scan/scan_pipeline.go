@@ -292,19 +292,9 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 		runtime:          runtime,
 	})
 
-	// Report any recovered provider panics to the Mondoo Platform.
-	for _, critErr := range runtime.CriticalErrors() {
-		tags := map[string]string{
-			"assetMrn":  asset.Mrn,
-			"assetName": asset.Name,
-		}
-		if asset.Platform != nil {
-			tags["platformIDs"] = strings.Join(asset.PlatformIds, ",")
-			tags["assetPlatform"] = asset.Platform.Name
-			tags["assetPlatformVersion"] = asset.Platform.Version
-		}
-		health.ReportError("cnspec", cnspec.Version, cnspec.Build, critErr.Error(), health.WithTags(tags))
-	}
+	// Surface any recovered provider panics/crashes without treating the
+	// asset as failed.
+	reportCriticalErrors(d.reporter, asset, runtime.CriticalErrors())
 
 	// Close asset after scanning to free the gRPC connection.
 	if err := d.explorer.CloseAsset(tracked); err != nil {
@@ -322,6 +312,59 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 
 	if os.Getenv("DEBUG_PROVIDER_MEMORY") != "" {
 		d.logResourceStats(asset)
+	}
+}
+
+// reportCriticalErrors surfaces recovered provider panics/crashes (mql's
+// runtime.CriticalErrors(), e.g. a provider subprocess dying mid-scan) for
+// one asset: it reports each distinct error to the Mondoo Platform's error
+// tracker (Sentry), logs one warning line per distinct message, and records
+// them on the reporter via AddScanWarning -- all without treating the asset
+// as failed. CriticalErrors() fires while execution continued, so the asset
+// commonly still has a real (if incomplete) report from AddReport.
+//
+// AddScanError is deliberately not used here: AggregateReporter keeps
+// assetReports and assetErrors in separate maps, so the report is not
+// dropped, but Reports().Result.Full.Errors would gain an entry for this
+// asset and apps/cnspec/cmd/scan.go exits non-zero whenever that map is
+// non-empty (`if len(report.Errors) > 0 { os.Exit(1) }`) -- flipping the
+// run's exit code for what is otherwise a successful scan.
+//
+// Deduped by message: mql already collapses repeated failures on one
+// crashed provider into a single CriticalErrors() entry, but a scan can hit
+// more than one crashed provider, and an older mql build may not dedup at
+// all (cnspec pins mql versions independently, so this cannot assume the
+// dedup landed).
+func reportCriticalErrors(reporter Reporter, asset *inventory.Asset, errs []error) {
+	if len(errs) == 0 {
+		return
+	}
+
+	seen := make(map[string]struct{}, len(errs))
+	warnings := make([]string, 0, len(errs))
+	for _, critErr := range errs {
+		msg := critErr.Error()
+		if _, dup := seen[msg]; dup {
+			continue
+		}
+		seen[msg] = struct{}{}
+		warnings = append(warnings, msg)
+
+		tags := map[string]string{
+			"assetMrn":  asset.Mrn,
+			"assetName": asset.Name,
+		}
+		if asset.Platform != nil {
+			tags["platformIDs"] = strings.Join(asset.PlatformIds, ",")
+			tags["assetPlatform"] = asset.Platform.Name
+			tags["assetPlatformVersion"] = asset.Platform.Version
+		}
+		health.ReportError("cnspec", cnspec.Version, cnspec.Build, msg, health.WithTags(tags))
+		log.Warn().Str("asset", asset.Name).Str("assetMrn", asset.Mrn).Msg(msg)
+	}
+
+	if len(warnings) > 0 {
+		reporter.AddScanWarning(asset, warnings)
 	}
 }
 

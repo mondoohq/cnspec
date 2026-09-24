@@ -22,6 +22,9 @@ func (r *NoOpReporter) AddReport(asset *inventory.Asset, results *AssetReport) {
 func (r *NoOpReporter) AddScanError(asset *inventory.Asset, err error) {
 }
 
+func (r *NoOpReporter) AddScanWarning(asset *inventory.Asset, warnings []string) {
+}
+
 func (r *NoOpReporter) Reports() *ScanResult {
 	return &ScanResult{
 		Result: &ScanResult_None{},
