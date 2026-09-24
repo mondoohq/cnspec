@@ -1,27 +1,20 @@
 ---
-id: cnspec_logout
-title: cnspec logout
+id: cnspec_policy_graph_export
+title: cnspec policy graph export
 ---
 
 
-Log out from Mondoo Platform
-
-### Synopsis
-
-
-This process also revokes the Mondoo Platform service account to
-ensure the credentials cannot be used in the future.
-
+Export the full policy graph
 
 ```bash
-cnspec logout [flags]
+cnspec policy graph export <path> [flags]
 ```
 
 ### Options
 
 ```
-      --force   Force the logout without confirmation
-  -h, --help    help for logout
+      --format string   Output format: json, dot (default "json")
+  -h, --help            help for export
 ```
 
 ### Options inherited from parent commands
@@ -38,5 +31,5 @@ cnspec logout [flags]
 
 ### SEE ALSO
 
-* [cnspec](cnspec.md)	 - cnspec CLI
+* [cnspec policy graph](cnspec_policy_graph.md)	 - Navigate policy bundle structure via graph commands
 

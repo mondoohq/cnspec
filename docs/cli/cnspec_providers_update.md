@@ -1,42 +1,40 @@
 ---
-id: cnspec_providers_install
-title: cnspec providers install
+id: cnspec_providers_update
+title: cnspec providers update
 ---
 
 
-Install or update a provider
+Update installed providers to their latest versions
 
 ### Synopsis
 
-Install or update a provider.
+Update installed providers to their latest versions.
 
-With --schema-only, only the provider's config and resource schema are
-installed, skipping the (much larger) binary download. That is enough to
-compile queries against the provider's resources, but not to connect to
-assets; for that, install the provider fully.
+With no arguments, every installed provider is updated. Pass one or more
+provider names to update just those. Providers already on the latest version
+are skipped, and naming a provider that isn't installed is reported and skipped
+rather than treated as an error.
 
 --channel resolves this one command from a different release channel, without
-changing any configuration. It has no effect when a version is pinned
-(NAME@VERSION) or when installing from --file or --url, since none of those
-consult a channel.
+changing any configuration. On a stable install that is how you try a
+pre-release provider: the override lasts for this command only, so the next
+update goes back to whatever is configured.
 
 Examples:
-  mql providers install aws                     # the configured channel
-  mql providers install aws --channel preview   # one-off, from the pre-release track
-  mql providers install aws@13.53.4             # exact version, channel ignored
+  mql providers update              # update every installed provider
+  mql providers update aws          # update just the aws provider
+  mql providers update aws gcp      # update the aws and gcp providers
+  mql providers update aws --channel preview   # one-off, from the pre-release track
 
 ```bash
-cnspec providers install <NAME[@VERSION]> [flags]
+cnspec providers update [<NAME>...] [flags]
 ```
 
 ### Options
 
 ```
       --channel string   Release channel to resolve from: stable or preview (default: the configured update_channel, or the channel this build belongs to)
-  -f, --file string      Install a provider via a file
-  -h, --help             help for install
-      --schema-only      Install only the provider's config and resource schema, without its binary
-      --url string       Install a provider via a URL
+  -h, --help             help for update
 ```
 
 ### Options inherited from parent commands

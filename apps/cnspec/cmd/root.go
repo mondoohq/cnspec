@@ -245,6 +245,15 @@ func initLogger(cmd *cobra.Command) {
 
 var reMdName = regexp.MustCompile(`/([^/]+)\.md$`)
 
+// GenerateMarkdown writes one page per command into dir, for the docs site.
+//
+// It overwrites whatever is there. Every page is generated in full except
+// docs/cli/cnspec_scan.md, which carries hand-written prose -- the per-target
+// examples and the links into the rest of the docs -- above its "### Options"
+// heading. That prose is not in the command's Long description and cannot be:
+// it uses docs-site relative links, which would be noise in `cnspec scan --help`.
+// After regenerating, restore everything above that heading from the previous
+// revision and keep the flag tables cobra produced.
 func GenerateMarkdown(dir string) error {
 	rootCmd.DisableAutoGenTag = true
 
@@ -297,7 +306,7 @@ func GenerateMarkdown(dir string) error {
 			}
 		}
 
-		res := append(raw[0:start], raw[end:]...)
+		res := tidyGeneratedMarkdown(append(raw[0:start], raw[end:]...))
 		err = os.WriteFile(file, res, 0o644)
 		if err != nil {
 			return err
@@ -305,4 +314,22 @@ func GenerateMarkdown(dir string) error {
 	}
 
 	return nil
+}
+
+var (
+	// usageFence matches the unlabelled fence cobra puts around a command's usage
+	// line. Every other shell block on these pages is tagged, and the docs site
+	// highlights by language, so an untagged one renders as plain text.
+	usageFence = regexp.MustCompile("(?m)^```\n(cnspec )")
+	// trailingSpace matches whitespace at the end of a line. A command's long
+	// description is written as an indented Go string, so its blank lines carry
+	// the indentation into the page.
+	trailingSpace = regexp.MustCompile(`(?m)[ \t]+$`)
+)
+
+// tidyGeneratedMarkdown applies the conventions of these pages to what cobra
+// wrote, so that regenerating them is not a diff of its formatting against ours.
+func tidyGeneratedMarkdown(raw []byte) []byte {
+	raw = usageFence.ReplaceAll(raw, []byte("```bash\n$1"))
+	return trailingSpace.ReplaceAll(raw, nil)
 }

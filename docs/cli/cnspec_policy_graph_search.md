@@ -1,27 +1,28 @@
 ---
-id: cnspec_logout
-title: cnspec logout
+id: cnspec_policy_graph_search
+title: cnspec policy graph search
 ---
 
 
-Log out from Mondoo Platform
+Search for nodes by name, title, or UID
 
 ### Synopsis
 
-
-This process also revokes the Mondoo Platform service account to
-ensure the credentials cannot be used in the future.
-
+Find policy graph nodes using multi-strategy search: exact name, prefix, or substring match across names, qualified names, and titles.
 
 ```bash
-cnspec logout [flags]
+cnspec policy graph search <query> <path> [flags]
 ```
 
 ### Options
 
 ```
-      --force   Force the logout without confirmation
-  -h, --help    help for logout
+  -h, --help          help for search
+      --impact int    Minimum impact score
+      --json          Output as JSON
+      --kind string   Filter by node kind (policy, check, group, query, framework, control)
+      --limit int     Maximum results (default 50)
+      --tag string    Filter by tag key
 ```
 
 ### Options inherited from parent commands
@@ -38,5 +39,5 @@ cnspec logout [flags]
 
 ### SEE ALSO
 
-* [cnspec](cnspec.md)	 - cnspec CLI
+* [cnspec policy graph](cnspec_policy_graph.md)	 - Navigate policy bundle structure via graph commands
 

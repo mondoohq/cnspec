@@ -1,27 +1,24 @@
 ---
-id: cnspec_logout
-title: cnspec logout
+id: cnspec_providers_info
+title: cnspec providers info
 ---
 
 
-Log out from Mondoo Platform
+Show detailed information about one or more providers
 
 ### Synopsis
 
-
-This process also revokes the Mondoo Platform service account to
-ensure the credentials cannot be used in the future.
-
+Show detailed information about one or more providers including connectors and their flags.
 
 ```bash
-cnspec logout [flags]
+cnspec providers info <provider> [<provider>...] [flags]
 ```
 
 ### Options
 
 ```
-      --force   Force the logout without confirmation
-  -h, --help    help for logout
+  -h, --help   help for info
+      --json   Output in JSON format
 ```
 
 ### Options inherited from parent commands
@@ -38,5 +35,5 @@ cnspec logout [flags]
 
 ### SEE ALSO
 
-* [cnspec](cnspec.md)	 - cnspec CLI
+* [cnspec providers](cnspec_providers.md)	 - Providers add connectivity to all assets
 

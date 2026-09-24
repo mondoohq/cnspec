@@ -1,27 +1,32 @@
 ---
-id: cnspec_logout
-title: cnspec logout
+id: cnspec_providers_delete
+title: cnspec providers delete
 ---
 
 
-Log out from Mondoo Platform
+Remove an installed provider from disk
 
 ### Synopsis
 
+Remove an installed provider plugin from disk. The provider is
+re-downloaded automatically the next time it's needed.
 
-This process also revokes the Mondoo Platform service account to
-ensure the credentials cannot be used in the future.
+Use the special target "all" to remove every installed provider at once. Because
+that wipes your whole provider footprint, it requires the --yes flag to confirm.
 
+Examples:
+  mql providers delete aws          # remove the aws provider
+  mql providers delete all --yes    # remove every installed provider
 
 ```bash
-cnspec logout [flags]
+cnspec providers delete <NAME> [flags]
 ```
 
 ### Options
 
 ```
-      --force   Force the logout without confirmation
-  -h, --help    help for logout
+  -h, --help   help for delete
+      --yes    Confirm removal of all providers when using the 'all' target
 ```
 
 ### Options inherited from parent commands
@@ -38,5 +43,5 @@ cnspec logout [flags]
 
 ### SEE ALSO
 
-* [cnspec](cnspec.md)	 - cnspec CLI
+* [cnspec providers](cnspec_providers.md)	 - Providers add connectivity to all assets
 

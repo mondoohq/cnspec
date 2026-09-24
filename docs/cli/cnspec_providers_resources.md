@@ -1,27 +1,31 @@
 ---
-id: cnspec_logout
-title: cnspec logout
+id: cnspec_providers_resources
+title: cnspec providers resources
 ---
 
 
-Log out from Mondoo Platform
+List resources or show resource details for a provider
 
 ### Synopsis
 
+List all resources available in a provider, or show detailed field information
+for a specific resource. The schema includes core and network resources.
 
-This process also revokes the Mondoo Platform service account to
-ensure the credentials cannot be used in the future.
-
+Examples:
+  cnspec providers resources aws              # list all resources
+  cnspec providers resources aws --json       # list all resources as JSON
+  cnspec providers resources aws aws.ec2.instance         # show resource details
+  cnspec providers resources aws aws.ec2.instance --json  # show resource details as JSON
 
 ```bash
-cnspec logout [flags]
+cnspec providers resources <provider> [<resource>] [flags]
 ```
 
 ### Options
 
 ```
-      --force   Force the logout without confirmation
-  -h, --help    help for logout
+  -h, --help   help for resources
+      --json   Output in JSON format
 ```
 
 ### Options inherited from parent commands
@@ -38,5 +42,5 @@ cnspec logout [flags]
 
 ### SEE ALSO
 
-* [cnspec](cnspec.md)	 - cnspec CLI
+* [cnspec providers](cnspec_providers.md)	 - Providers add connectivity to all assets
 

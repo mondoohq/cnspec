@@ -1,27 +1,19 @@
 ---
-id: cnspec_logout
-title: cnspec logout
+id: cnspec_lsp
+title: cnspec lsp
 ---
 
 
-Log out from Mondoo Platform
-
-### Synopsis
-
-
-This process also revokes the Mondoo Platform service account to
-ensure the credentials cannot be used in the future.
-
+Launch the MQL Language Server
 
 ```bash
-cnspec logout [flags]
+cnspec lsp [flags]
 ```
 
 ### Options
 
 ```
-      --force   Force the logout without confirmation
-  -h, --help    help for logout
+  -h, --help   help for lsp
 ```
 
 ### Options inherited from parent commands

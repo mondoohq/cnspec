@@ -3,6 +3,7 @@ id: cnspec_serve
 title: cnspec serve
 ---
 
+
 Start cnspec in background mode
 
 ```bash
@@ -14,20 +15,23 @@ cnspec serve [flags]
 ```
   -h, --help                    help for serve
       --inventory-file string   Set the path to the inventory file
-      --splay int               randomize the timer by up to this many minutes (default 60)
-      --timer int               scan interval in minutes (default 60)
+      --splay int               Randomize the timer by up to this many minutes (default 60)
+      --timer int               Set the scan interval in minutes (default 60)
 ```
 
 ### Options inherited from parent commands
 
 ```
-      --api-proxy string   Set proxy for communications with Mondoo API
-      --auto-update        Enable automatic provider installation and update (default true)
-      --config string      Set config file path (default $HOME/.config/mondoo/mondoo.yml)
-      --log-level string   Set log level: error, warn, info, debug, trace (default "info")
-  -v, --verbose            Enable verbose output
+      --api-proxy string        Set the proxy for communications with Mondoo Platform API
+      --auto-update             Enable automatic provider installation and update (default true)
+      --config string           Set config file path (default $HOME/.config/mondoo/mondoo.yml)
+      --log-level string        Set the log level: error, warn, info, debug, trace (default "info")
+      --logging-config string   Path to a logging configuration file (YAML or JSON) that selects the log writer, level, and writer-specific options
+      --strict                  Default MQL strict mode for policies that do not declare one: every link in an MQL chain must resolve
+  -v, --verbose                 Enable verbose output
 ```
 
 ### SEE ALSO
 
-- [cnspec](cnspec) - cnspec CLI
+* [cnspec](cnspec.md)	 - cnspec CLI
+

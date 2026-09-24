@@ -1,27 +1,26 @@
 ---
-id: cnspec_logout
-title: cnspec logout
+id: cnspec_discover
+title: cnspec discover
 ---
 
 
-Log out from Mondoo Platform
+Discover assets
 
 ### Synopsis
 
-
-This process also revokes the Mondoo Platform service account to
-ensure the credentials cannot be used in the future.
-
+Discover assets defined by an inventory file's discovery targets/filters or via CLI parameters. Prints a per-platform asset count to stdout. Pass --output-full <path> to additionally write every discovered asset to a file; pick the file format with --output-format json|jsonl|yaml (default json). No queries are executed.
 
 ```bash
-cnspec logout [flags]
+cnspec discover [flags]
 ```
 
 ### Options
 
 ```
-      --force   Force the logout without confirmation
-  -h, --help    help for logout
+  -h, --help                    help for discover
+      --inventory-file string   Set the path to the inventory file
+  -f, --output-format string    Format for --output-full: json (default), jsonl, or yaml. (default "json")
+  -o, --output-full string      Write every discovered asset to this path. When empty, only the per-platform count summary is printed.
 ```
 
 ### Options inherited from parent commands

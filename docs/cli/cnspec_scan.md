@@ -181,34 +181,40 @@ cnspec scan --inventory-file FILENAME
 
 ```
       --annotation stringToString     Add an annotation to the asset in the form KEY=VALUE (default [])
-      --asset-name string             User-override for the asset name
-      --detect-cicd                   Try to detect CI/CD environments. If detected, set the asset category to 'cicd'. (default true)
+      --asset-name string             Override the asset name
+      --collect-support-bundle        Collect a support bundle (debug logs, asset bundle, inventory, resolved policy, report, provider versions) for sharing with Mondoo support. By default writes to a timestamped directory in the current working dir; override with --support-bundle-dir.
+      --detect-cicd                   Try to detect CI/CD environments. If detected, set the asset category to 'cicd' (default true)
   -h, --help                          help for scan
-      --incognito                     Run in incognito mode. Do not report scan results to Mondoo Platform.
-      --inventory-file string         Set the path to the inventory file.
-      --inventory-format-ansible      Set the inventory format to Ansible.
-      --inventory-format-domainlist   Set the inventory format to domain list.
-  -j, --json                          Run the query and return the object in a JSON structure.
-  -o, --output string                 Set output format: compact, csv, full, json, json-v1, json-v2, junit, report, summary, yaml, yaml-v1, yaml-v2 (default "compact")
-      --output-target string          Set the output target for the asset report: a local file, an AWS SQS topic URL, or - with -o hdf - a directory to write one OHDF file per asset into
-      --platform-id string            Select a specific target asset by providing its platform ID.
-      --policy strings                Lists policies to execute. This requires --policy-bundle. You can pass multiple policies using --policy POLICY.
-  -f, --policy-bundle strings         Path to local policy file
-      --props stringToString          Custom values for properties (default [])
-      --risk-threshold int            If any risk is greater or equal to this, exit status is 1. (default 101)
-      --trace-id string               Trace identifier
+      --incognito                     Run in incognito mode. Do not report scan results to Mondoo Platform
+      --inventory-file string         Set the path to the inventory file
+      --inventory-format-ansible      Set the inventory format to Ansible
+      --inventory-format-domainlist   Set the inventory format to domain list
+  -j, --json                          Run the query and return the object in a JSON structure
+  -o, --output string                 Set the output format: compact, csv, full, hdf, json, json-v1, json-v2, junit, ocsf-json, ocsf-parquet, report, sarif, summary, yaml, yaml-v1, yaml-v2 (default "compact")
+      --output-target string          Set the output target for the asset report: an AWS SQS topic URL, a local file, or a local directory (with -o hdf, one OHDF file per asset; with the OCSF formats, one file per event class)
+      --parallelism int               Set the number of assets to scan in parallel. Defaults to a per-provider value capped by the CPUs available on this machine. Use 1 for sequential
+      --platform-id string            Select a specific target asset by providing its platform ID
+      --policy strings                Specify policies to execute. This requires --policy-bundle. You can pass multiple policies using --policy POLICY
+  -f, --policy-bundle strings         Set the path to a policy file. Supports local paths, s3:// URIs, and http(s):// URLs
+      --props stringToString          Set custom values for properties (default [])
+      --risk-threshold int            Set the risk threshold. Exit with status 1 if any risk meets or exceeds this value (default 101)
+      --support-bundle-dir string     Directory to write the support bundle into. Only used when --collect-support-bundle is set. Defaults to ./cnspec-support-bundle-<timestamp>/.
+      --trace-id string               Set a trace identifier
 ```
 
 ### Options inherited from parent commands
 
 ```
-      --api-proxy string   Set proxy for communications with Mondoo API
-      --auto-update        Enable automatic provider installation and update (default true)
-      --config string      Set config file path (default $HOME/.config/mondoo/mondoo.yml)
-      --log-level string   Set log level: error, warn, info, debug, trace (default "info")
-  -v, --verbose            Enable verbose output
+      --api-proxy string        Set the proxy for communications with Mondoo Platform API
+      --auto-update             Enable automatic provider installation and update (default true)
+      --config string           Set config file path (default $HOME/.config/mondoo/mondoo.yml)
+      --log-level string        Set the log level: error, warn, info, debug, trace (default "info")
+      --logging-config string   Path to a logging configuration file (YAML or JSON) that selects the log writer, level, and writer-specific options
+      --strict                  Default MQL strict mode for policies that do not declare one: every link in an MQL chain must resolve
+  -v, --verbose                 Enable verbose output
 ```
 
 ### SEE ALSO
 
-- [cnspec](cnspec) - cnspec CLI
+* [cnspec](cnspec.md)	 - cnspec CLI
+
