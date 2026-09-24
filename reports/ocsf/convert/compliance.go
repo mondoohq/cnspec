@@ -32,6 +32,7 @@ func (c *converter) complianceFinding(resolved *policy.ResolvedPolicy, report *p
 	finding.Compliance = c.compliance(resolved, report, query, score, ctx)
 	finding.FindingInfo = c.findingInfo(query, score, title, ctx)
 	finding.Resources = []ocsf.ResourceDetails{ctx.resource}
+	finding.Observables = ctx.observables()
 	finding.Device = ctx.device
 	finding.Cloud = ctx.cloud
 	finding.Time = c.now
@@ -116,6 +117,7 @@ func (c *converter) complianceAssetError(errMsg string, ctx *assetContext) ocsf.
 	finding.Compliance = c.errorCompliance(errMsg)
 	finding.FindingInfo = c.assetErrorInfo(ctx)
 	finding.Resources = []ocsf.ResourceDetails{ctx.resource}
+	finding.Observables = ctx.observables()
 	finding.Device = ctx.device
 	finding.Cloud = ctx.cloud
 	return finding

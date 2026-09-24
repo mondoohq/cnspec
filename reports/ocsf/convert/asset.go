@@ -9,6 +9,7 @@ package convert
 
 import (
 	"maps"
+	"net/netip"
 	"slices"
 	"strings"
 
@@ -42,13 +43,57 @@ func buildResource(asset *inventory.Asset) ocsf.ResourceDetails {
 	return res
 }
 
+// hostnamePlatformID is the platform id the os provider gives an asset it can
+// identify only by the name the host calls itself.
+const hostnamePlatformID = "//platformid.api.mondoo.app/hostname/"
+
+// deviceHostname is the name the asset answers to on a network.
+//
+// Fqdn is the qualified form and is preferred, but most connections never set
+// it. The os provider falls back to a platform id built from the host's own
+// hostname, which is the same value unqualified, and is what a SIEM correlating
+// this finding with an agent's events has to match on.
+func deviceHostname(asset *inventory.Asset) string {
+	if asset.Fqdn != "" {
+		return asset.Fqdn
+	}
+	for _, id := range asset.PlatformIds {
+		if name, ok := strings.CutPrefix(id, hostnamePlatformID); ok && name != "" {
+			return name
+		}
+	}
+	return ""
+}
+
+// deviceIP is the address the scan reached the asset at, when that is an address
+// at all.
+//
+// A connection's host is whatever was on the command line: an address for
+// `cnspec scan ssh 10.0.0.4`, a name for `ssh web-01`, and neither for the
+// container and cloud connections, where it holds an image reference or nothing.
+// Only a value that parses as an address is one, so the rest are left out rather
+// than filed under device.ip, where a consumer would match them against real
+// addresses.
+func deviceIP(asset *inventory.Asset) string {
+	for _, conn := range asset.Connections {
+		if conn == nil {
+			continue
+		}
+		if addr, err := netip.ParseAddr(conn.Host); err == nil {
+			return addr.String()
+		}
+	}
+	return ""
+}
+
 // buildDevice describes the scanned asset as an endpoint.
 func buildDevice(asset *inventory.Asset, version ocsf.Version) *ocsf.Device {
 	res := &ocsf.Device{
 		TypeID:   ocsf.DeviceTypeOther,
 		UID:      asset.Mrn,
 		Name:     asset.Name,
-		Hostname: asset.Fqdn,
+		Hostname: deviceHostname(asset),
+		IP:       deviceIP(asset),
 	}
 	if res.UID == "" && len(asset.PlatformIds) > 0 {
 		res.UID = asset.PlatformIds[0]

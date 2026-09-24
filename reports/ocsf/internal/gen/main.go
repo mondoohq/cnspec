@@ -584,18 +584,23 @@ func (g *generator) enums() ([]byte, error) {
 	// Enum constants and caption lookups.
 	for _, e := range g.enumAttributes() {
 		b.WriteString("// " + e.prefix + " values of " + e.source + ", from the OCSF schema.\nconst (\n")
+		names := map[string]string{}
 		for _, id := range e.sortedIDs() {
 			value := e.values[id]
 			if value.Description != "" {
 				b.WriteString("\t// " + oneLine(value.Description) + "\n")
 			}
-			// type_uid captions repeat the class ("Compliance Finding: Create"),
-			// which the prefix already carries.
-			caption := value.Caption
-			if _, rest, found := strings.Cut(caption, ": "); found {
-				caption = rest
+			name := e.prefix + goName(trimRedundantHead(value.Caption, e.caption))
+			// A caption that collapses onto another one would emit a constant
+			// declared twice, which fails to compile with the duplicate as the
+			// only clue. Name both captions instead.
+			if other, clash := names[name]; clash {
+				return nil, fmt.Errorf(
+					"%s: captions %q and %q both name the constant %s; teach trimRedundantHead or initialisms to tell them apart",
+					e.source, other, value.Caption, name)
 			}
-			b.WriteString("\t" + e.prefix + goName(caption) + " = " + id + "\n")
+			names[name] = value.Caption
+			b.WriteString("\t" + name + " = " + id + "\n")
 		}
 		b.WriteString(")\n\n")
 
@@ -614,7 +619,9 @@ func (g *generator) enums() ([]byte, error) {
 type enumDef struct {
 	prefix string
 	source string
-	values map[string]enumValue
+	// caption is the owning entity's OCSF caption; see enumOccurrence.
+	caption string
+	values  map[string]enumValue
 }
 
 func (e enumDef) sortedIDs() []string {
@@ -642,14 +649,16 @@ func (g *generator) enumAttributes() []enumDef {
 				continue
 			}
 			if a, in := g.lookupClass(name, attribute); len(in) > 0 && len(a.Enum) > 0 {
-				all = append(all, enumOccurrence{owner: "class", goName: cs.Go, attr: attribute, values: a.Enum})
+				e, _ := g.entityIn("class", name)
+				all = append(all, enumOccurrence{owner: "class", goName: cs.Go, caption: e.Caption, attr: attribute, values: a.Enum})
 			}
 		}
 	}
 	for _, name := range sortedKeys(g.spec.Objects) {
 		for _, attribute := range g.spec.Objects[name] {
 			if a, in := g.lookupObject(name, attribute); len(in) > 0 && len(a.Enum) > 0 {
-				all = append(all, enumOccurrence{owner: "object", goName: goName(name), attr: attribute, values: a.Enum})
+				e, _ := g.entityIn("object", name)
+				all = append(all, enumOccurrence{owner: "object", goName: goName(name), caption: e.Caption, attr: attribute, values: a.Enum})
 			}
 		}
 	}
@@ -683,7 +692,7 @@ func (g *generator) enumAttributes() []enumDef {
 			continue
 		}
 		seen[prefix] = true
-		res = append(res, enumDef{prefix: prefix, source: source, values: o.values})
+		res = append(res, enumDef{prefix: prefix, source: source, caption: o.caption, values: o.values})
 	}
 	sort.Slice(res, func(i, j int) bool { return res[i].prefix < res[j].prefix })
 	return res
@@ -695,10 +704,15 @@ var identityAttributes = map[string]bool{"class_uid": true, "category_uid": true
 
 // enumOccurrence is one place an enum attribute shows up in the spec.
 type enumOccurrence struct {
-	owner  string
+	owner string
+	// goName is the Go name of the owning class or object.
 	goName string
-	attr   string
-	values map[string]enumValue
+	// caption is the owning entity's OCSF caption, which is what an enum
+	// caption repeats when it names its own entity. It is not always the Go
+	// name: the Device Inventory Info class is InventoryInfo here.
+	caption string
+	attr    string
+	values  map[string]enumValue
 }
 
 // sameEnum reports whether every occurrence of an attribute carries the same
@@ -786,6 +800,28 @@ var initialisms = map[string]string{
 	"id": "ID", "ip": "IP", "json": "JSON", "os": "OS", "purl": "PURL",
 	"ids": "IDS", "iot": "IOT", "ips": "IPS",
 	"tlp": "TLP", "uid": "UID", "url": "URL", "uuid": "UUID",
+}
+
+// trimRedundantHead drops the part of an enum caption before a colon when it
+// only repeats the entity the enum belongs to.
+//
+// The head means different things in the two shapes. A type_uid caption names
+// its own class ("Device Inventory Info: Log"), which the constant already
+// carries, so the head is noise. An observable type_id caption uses the head to
+// say which observable it is ("CVE Object: uid" against "CWE Object: uid") under
+// one shared prefix, so dropping it would name both constants the same.
+//
+// Comparison is on the Go name rather than the text, so that spacing and
+// punctuation do not decide it.
+func trimRedundantHead(caption, owner string) string {
+	head, rest, found := strings.Cut(caption, ": ")
+	if !found {
+		return caption
+	}
+	if goName(head) == goName(owner) {
+		return rest
+	}
+	return caption
 }
 
 func goName(s string) string {

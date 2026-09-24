@@ -44,6 +44,9 @@ func TestOcsfSchemaValidation(t *testing.T) {
 		"cloud":      cloudAssetReportCollection(),
 		"gcp":        gcpAssetReportCollection(),
 		"advisories": advisoryReportCollection(),
+		// The only fixture with an address, so the only one that validates
+		// device.ip and the observable pointing at it.
+		"ssh":        sshAssetReportCollection(),
 		"scan error": erroredReportCollection(),
 		// The recorded scan is the only fixture with an ExecutionJob, so it is the
 		// only one that exercises checkAssessment -- the rendered "expected vs

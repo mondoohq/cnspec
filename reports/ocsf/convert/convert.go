@@ -164,6 +164,20 @@ type assetContext struct {
 	device       *ocsf.Device
 	cloud        *ocsf.Cloud
 	resource     ocsf.ResourceDetails
+	// deviceObs is what observables() hands out; see there.
+	deviceObs []ocsf.Observable
+}
+
+// observables are the pivot points every event of this asset carries. They are
+// derived once and shared, because they are the same for all of them.
+//
+// Derived here rather than at each of the three places an assetContext is built,
+// so that adding a fourth cannot leave its events without them.
+func (a *assetContext) observables() []ocsf.Observable {
+	if a.deviceObs == nil {
+		a.deviceObs = deviceObservables(a.device)
+	}
+	return a.deviceObs
 }
 
 // stream converts the scan one asset at a time and hands each asset's events to

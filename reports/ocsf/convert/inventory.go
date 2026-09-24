@@ -22,6 +22,7 @@ import (
 func (c *converter) inventoryInfo(r *policy.ReportCollection, ctx *assetContext) ocsf.InventoryInfo {
 	res := ocsf.NewInventoryInfo(ocsf.InventoryInfoActivityCollect)
 	res.Cloud = ctx.cloud
+	res.Observables = ctx.observables()
 	if ctx.device != nil {
 		res.Device = *ctx.device
 	}

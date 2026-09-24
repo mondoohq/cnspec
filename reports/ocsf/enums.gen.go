@@ -485,6 +485,146 @@ func OSTypeName(id int) string {
 	return ""
 }
 
+// ObservableType values of Observable.type_id, from the OCSF schema.
+const (
+	// Unknown observable data type.
+	ObservableTypeUnknown = 0
+	// Observable by Dictionary Type.Unique name assigned to a device connected to a computer network. A domain name in general is an Internet address that can be resolved through the Domain Name System (DNS). For example: r2-d2.example.com.
+	ObservableTypeHostname = 1
+	// Observable by Dictionary Type.Internet Protocol address (IP address), in either IPv4 or IPv6 format. For example, 192.168.200.24 or 2001:0db8:85a3:0000:0000:8a2e:0370:7334.
+	ObservableTypeIPAddress = 2
+	// Observable by Dictionary Type.Media Access Control (MAC) address. For example: 18:36:F3:98:4F:9A.
+	ObservableTypeMACAddress = 3
+	// Observable by Dictionary Type.User name. For example: john_doe.
+	ObservableTypeUserName = 4
+	// Observable by Dictionary Type.Email address. For example: john_doe@example.com.
+	ObservableTypeEmailAddress = 5
+	// Observable by Dictionary Type.Uniform Resource Locator (URL) string. For example: http://www.example.com/download/trouble.exe.
+	ObservableTypeURLString = 6
+	// Observable by Dictionary Type.File name. For example: text-file.txt.
+	ObservableTypeFileName = 7
+	// Observable by Dictionary Type.Hash. A unique value that corresponds to the content of the file, image, ja3_hash or hassh found in the schema. For example MD5: 3172ac7e2b55cbb81f04a6e65855a628.
+	ObservableTypeHash = 8
+	// Observable by Dictionary Type.Process name. For example: Notepad.
+	ObservableTypeProcessName = 9
+	// Observable by Dictionary Type.Resource unique identifier. For example, S3 Bucket name or EC2 Instance ID.
+	ObservableTypeResourceUID = 10
+	// Observable by Dictionary Type.The TCP/UDP port number. For example: 80 or 22.
+	ObservableTypePort = 11
+	// Observable by Dictionary Type.The subnet represented in a CIDR notation, using the format network_address/prefix_length. The network_address can be in either IPv4 or IPv6 format. The prefix length indicates the number of bits used for the network portion, and the remaining bits are available for host addresses within that subnet. For example:192.168.1.0/242001:0db8:85a3:0000::/64
+	ObservableTypeSubnet = 12
+	// Observable by Dictionary Attribute.The full command line used to launch an application, service, process, or job. For example: ssh user@10.0.0.10. If the command line is unavailable or missing, the empty string '' is to be used.
+	ObservableTypeCommandLine = 13
+	// Observable by Dictionary Attribute.The ISO 3166-1 Alpha-2 country code. For the complete list of country codes see ISO 3166-1 alpha-2 codes. Note: The two letter country code should be capitalized. For example: US or CA.
+	ObservableTypeCountry = 14
+	// Observable by Dictionary Attribute.The process identifier, as reported by the operating system. Process ID (PID) is a number used by the operating system to uniquely identify an active process.
+	ObservableTypeProcessID = 15
+	// Observable by Dictionary Attribute.The request header that identifies the operating system and web browser.
+	ObservableTypeHTTPUserAgent = 16
+	// Observable by Object-Specific Attribute.Object-specific attribute "uid" for the CWE Object.
+	ObservableTypeCWEObjectUID = 17
+	// Observable by Object-Specific Attribute.Object-specific attribute "uid" for the CVE Object.
+	ObservableTypeCVEObjectUID = 18
+	// Observable by Dictionary Attribute.The unique identifier of the user's credential. For example, AWS Access Key ID.
+	ObservableTypeUserCredentialID = 19
+	// Observable by Object.The Endpoint object describes a physical or virtual device that connects to and exchanges information with a computer network. Some examples of endpoints are mobile devices, desktop computers, virtual machines, embedded devices, and servers. Internet-of-Things devices—like cameras, lighting, refrigerators, security systems, smart speakers, and thermostats—are also endpoints.
+	ObservableTypeEndpoint = 20
+	// Observable by Object.The User object describes the characteristics of a user/person or a security principal. Defined by D3FEND d3f:UserAccount.
+	ObservableTypeUser = 21
+	// Observable by Object.The Email object describes the email metadata such as sender, recipients, and direction. Defined by D3FEND d3f:Email.
+	ObservableTypeEmail = 22
+	// Observable by Object.The Uniform Resource Locator(URL) object describes the characteristics of a URL. Defined in RFC 1738 and by D3FEND d3f:URL.
+	ObservableTypeUniformResourceLocator = 23
+	// Observable by Object.The File object represents the metadata associated with a file stored in a computer system. It encompasses information about the file itself, including its attributes, properties, and organizational details. Defined by D3FEND d3f:File.
+	ObservableTypeFile = 24
+	// Observable by Object.The Process object describes a running instance of a launched program. Defined by D3FEND d3f:Process.
+	ObservableTypeProcess = 25
+	// Observable by Object.The Geo Location object describes a geographical location, usually associated with an IP address. Defined by D3FEND d3f:PhysicalLocation.
+	ObservableTypeGeoLocation = 26
+	// Observable by Object.The Container object describes an instance of a specific container. A container is a prepackaged, portable system image that runs isolated on an existing system using a container runtime like containerd.
+	ObservableTypeContainer = 27
+	// Observable by Object.The registry key object describes a Windows registry key. Defined by D3FEND d3f:WindowsRegistryKey.
+	ObservableTypeRegistryKey = 28
+	// Observable by Object.The registry value object describes a Windows registry value.
+	ObservableTypeRegistryValue = 29
+	// Observable by Object.The Fingerprint object provides detailed information about a digital fingerprint, which is a compact representation of data used to identify a longer piece of information, such as a public key or file content. It contains the algorithm and value of the fingerprint, enabling efficient and reliable identification of the associated data.
+	ObservableTypeFingerprint = 30
+	// The observable data type is not mapped. See the type attribute, which may contain data source specific value.
+	ObservableTypeOther = 99
+)
+
+// ObservableTypeName is the OCSF caption of a Observable.type_id value. It is what the
+// string sibling of the identifier has to carry.
+func ObservableTypeName(id int) string {
+	switch id {
+	case 0:
+		return "Unknown"
+	case 1:
+		return "Hostname"
+	case 2:
+		return "IP Address"
+	case 3:
+		return "MAC Address"
+	case 4:
+		return "User Name"
+	case 5:
+		return "Email Address"
+	case 6:
+		return "URL String"
+	case 7:
+		return "File Name"
+	case 8:
+		return "Hash"
+	case 9:
+		return "Process Name"
+	case 10:
+		return "Resource UID"
+	case 11:
+		return "Port"
+	case 12:
+		return "Subnet"
+	case 13:
+		return "Command Line"
+	case 14:
+		return "Country"
+	case 15:
+		return "Process ID"
+	case 16:
+		return "HTTP User-Agent"
+	case 17:
+		return "CWE Object: uid"
+	case 18:
+		return "CVE Object: uid"
+	case 19:
+		return "User Credential ID"
+	case 20:
+		return "Endpoint"
+	case 21:
+		return "User"
+	case 22:
+		return "Email"
+	case 23:
+		return "Uniform Resource Locator"
+	case 24:
+		return "File"
+	case 25:
+		return "Process"
+	case 26:
+		return "Geo Location"
+	case 27:
+		return "Container"
+	case 28:
+		return "Registry Key"
+	case 29:
+		return "Registry Value"
+	case 30:
+		return "Fingerprint"
+	case 99:
+		return "Other"
+	}
+	return ""
+}
+
 // RiskLevel values of risk_level_id, from the OCSF schema.
 const (
 	RiskLevelInfo     = 0

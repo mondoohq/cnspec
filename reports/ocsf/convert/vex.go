@@ -133,6 +133,7 @@ func (c *converter) vexFinding(id string, rows []fex.VulnRow, ctx *assetContext)
 		DataSources: []string{productName},
 	}
 	finding.Vulnerabilities = []ocsf.Vulnerability{vuln}
+	finding.Observables = withCVEObservables(ctx.observables(), finding.Vulnerabilities)
 	finding.Device = ctx.device
 	finding.Cloud = ctx.cloud
 	if ctx.resource.UID != "" || ctx.resource.Name != "" {

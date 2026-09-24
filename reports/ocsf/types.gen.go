@@ -135,6 +135,11 @@ type ComplianceFinding struct {
 	// issue(s).
 	Remediation *Remediation `json:"remediation,omitempty" parquet:"remediation,optional"`
 
+	// Observables
+	//
+	// The observables associated with the event or a finding.
+	Observables []Observable `json:"observables,omitempty" parquet:"observables,list"`
+
 	// Resources Array
 	//
 	// Describes details about the resource/resouces that are the subject of
@@ -326,6 +331,11 @@ type DetectionFinding struct {
 	// issue(s).
 	Remediation *Remediation `json:"remediation,omitempty" parquet:"remediation,optional"`
 
+	// Observables
+	//
+	// The observables associated with the event or a finding.
+	Observables []Observable `json:"observables,omitempty" parquet:"observables,list"`
+
 	// Affected Resources
 	//
 	// Describes details about resources that were the target of the activity
@@ -448,6 +458,11 @@ type InventoryInfo struct {
 	// The attributes that are not mapped to the event schema. The names and
 	// values of those attributes are specific to the event source.
 	Unmapped map[string]string `json:"unmapped,omitempty" parquet:"unmapped"`
+
+	// Observables
+	//
+	// The observables associated with the event or a finding.
+	Observables []Observable `json:"observables,omitempty" parquet:"observables,list"`
 
 	// Device
 	//
@@ -592,6 +607,11 @@ type VulnerabilityFinding struct {
 	//
 	// This object describes vulnerabilities reported in a security finding.
 	Vulnerabilities []Vulnerability `json:"vulnerabilities,omitempty" parquet:"vulnerabilities,list"`
+
+	// Observables
+	//
+	// The observables associated with the event or a finding.
+	Observables []Observable `json:"observables,omitempty" parquet:"observables,list"`
 
 	// Affected Resources
 	//
@@ -1016,6 +1036,11 @@ type Device struct {
 	// The device hostname.
 	Hostname string `json:"hostname,omitempty" parquet:"hostname,optional"`
 
+	// IP Address
+	//
+	// The device IP address, in either IPv4 or IPv6 format.
+	IP string `json:"ip,omitempty" parquet:"ip,optional"`
+
 	// Domain
 	//
 	// The network domain where the device resides. For example:
@@ -1180,6 +1205,37 @@ type Metadata struct {
 	// normalization time.For example: ["network", "connection.ip:destination",
 	// "device.ip:source"]
 	Labels []string `json:"labels,omitempty" parquet:"labels,list"`
+}
+
+// Observable is the OCSF Observable object.
+//
+// The observable object is a pivot element that contains related information
+// found in many places in the event.
+type Observable struct {
+	// Name
+	//
+	// The full name of the observable attribute. The name is a
+	// pointer/reference to an attribute within the event data. For example:
+	// file.name.
+	Name string `json:"name" parquet:"name"`
+
+	// Type ID
+	//
+	// The observable value type identifier.
+	TypeID int `json:"type_id" parquet:"type_id"`
+
+	// Type
+	//
+	// The observable value type name.
+	Type string `json:"type,omitempty" parquet:"type,optional"`
+
+	// Value
+	//
+	// The value associated with the observable attribute. The meaning of the
+	// value depends on the observable type.If the name refers to a scalar
+	// attribute, then the value is the value of the attribute.If the name
+	// refers to an object attribute, then the value is not populated.
+	Value string `json:"value,omitempty" parquet:"value,optional"`
 }
 
 // OS is the OCSF Operating System (OS) object.

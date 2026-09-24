@@ -39,6 +39,10 @@ func testEvents() *Events {
 	}
 	failing.FindingInfo = FindingInfo{UID: "check-b", Title: "Root account has no access key"}
 	failing.Resources = []ResourceDetails{{UID: "//assets/1", Name: "prod", Labels: []string{"env=prod"}}}
+	failing.Observables = []Observable{
+		{Name: "device.uid", TypeID: ObservableTypeResourceUID, Type: "Resource UID", Value: "//assets/1"},
+		{Name: "device.ip", TypeID: ObservableTypeIPAddress, Type: "IP Address", Value: "10.0.0.4"},
+	}
 
 	passing := NewComplianceFinding(ComplianceFindingActivityCreate)
 	passing.Time = 1700000000001
@@ -123,6 +127,13 @@ func TestWriteParquetRoundTrip(t *testing.T) {
 	assert.Equal(t, "//assets/1", rows[1].Resources[0].UID)
 	assert.Equal(t, map[string]string{"score": "0"}, rows[1].Unmapped)
 	assert.Nil(t, rows[0].Device, "an unset optional group must read back as nil")
+	// A repeated group of structs, which is how a consumer gets the pivot list
+	// back out of a column store.
+	assert.Equal(t, []Observable{
+		{Name: "device.uid", TypeID: ObservableTypeResourceUID, Type: "Resource UID", Value: "//assets/1"},
+		{Name: "device.ip", TypeID: ObservableTypeIPAddress, Type: "IP Address", Value: "10.0.0.4"},
+	}, rows[1].Observables)
+	assert.Empty(t, rows[0].Observables, "a finding with no observables reads back empty")
 
 	file, err := parquet.OpenFile(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
 	require.NoError(t, err)

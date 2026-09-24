@@ -84,6 +84,7 @@ func (c *converter) detectionFinding(resolved *policy.ResolvedPolicy, report *po
 		finding.Remediation = &ocsf.Remediation{Desc: rem, References: refURLs(query)}
 	}
 	finding.Resources = []ocsf.ResourceDetails{ctx.resource}
+	finding.Observables = ctx.observables()
 	finding.Device = ctx.device
 	finding.Cloud = ctx.cloud
 	return finding
@@ -122,6 +123,7 @@ func (c *converter) detectionAssetError(errMsg string, ctx *assetContext) ocsf.D
 	finding.Unmapped = assetErrorUnmapped(ctx)
 	finding.FindingInfo = c.assetErrorInfo(ctx)
 	finding.Resources = []ocsf.ResourceDetails{ctx.resource}
+	finding.Observables = ctx.observables()
 	finding.Device = ctx.device
 	finding.Cloud = ctx.cloud
 	return finding

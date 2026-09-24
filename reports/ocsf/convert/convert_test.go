@@ -464,6 +464,18 @@ func erroredReportCollection() *policy.ReportCollection {
 // a full advisory, which is the shape the vulnerability API actually returns:
 // every affected package is accounted for by an advisory, and every advisory
 // names its CVEs.
+// sshAssetReportCollection is a host reached over the network, which is the only
+// shape that carries an address: the container and cloud fixtures have an image
+// reference or nothing where this has a host.
+func sshAssetReportCollection() *policy.ReportCollection {
+	report := reportfixture.Sample()
+	for _, asset := range report.Assets {
+		asset.Fqdn = "web-01.example.com"
+		asset.Connections = []*inventory.Config{{Type: "ssh", Host: "10.0.0.4", Port: 22}}
+	}
+	return report
+}
+
 func advisoryReportCollection() *policy.ReportCollection {
 	report := reportfixture.Sample()
 	report.VulnReports[reportfixture.AssetMrn].Advisories = []*mvd.Advisory{
