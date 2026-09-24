@@ -144,6 +144,12 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 		// not this asset's cost — see ADR-0004.
 		recordResourceStats(scanCtx, stats)
 
+		// Provider crashes recorded during this asset's scan are captured
+		// into the scan database's metadata now, after f has fully finished
+		// and before the store is finalized or closed -- see
+		// writeCriticalErrorsToScanDB.
+		writeCriticalErrorsToScanDB(scanCtx, runtime, scanDataStore, assetMrn)
+
 		if upstream != nil {
 			scanDataPath, err := scanDataStore.Finalize()
 			if err != nil {
@@ -161,6 +167,80 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 	}
 
 	return nil
+}
+
+const (
+	// maxScanWarnings and maxScanWarningLen mirror the caps
+	// policy/executor/graph.go applies to StoreResultsReq.scan_warnings --
+	// kept as a separate copy rather than a shared export because the two
+	// packages have no other coupling and this is the same small,
+	// independently-testable dedup logic policy/scan's reportCriticalErrors
+	// also keeps to itself.
+	maxScanWarnings   = 20
+	maxScanWarningLen = 1024
+)
+
+// dedupeAndCapCriticalErrors converts recovered-panic errors into the
+// deduplicated, size-capped message list WriteScanWarnings expects.
+func dedupeAndCapCriticalErrors(errs []error) []string {
+	if len(errs) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(errs))
+	out := make([]string, 0, len(errs))
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+		msg := err.Error()
+		if len(msg) > maxScanWarningLen {
+			msg = msg[:maxScanWarningLen]
+		}
+		if _, dup := seen[msg]; dup {
+			continue
+		}
+		seen[msg] = struct{}{}
+		out = append(out, msg)
+		if len(out) >= maxScanWarnings {
+			break
+		}
+	}
+	return out
+}
+
+// writeCriticalErrorsToScanDB captures provider crashes recorded during this
+// asset's scan (runtime.CriticalErrors(), if the runtime supports it -- the
+// same optional-interface pattern as criticalErrorsSource in
+// policy/executor/graph.go) into the scan database's metadata table. Called
+// from WithServices after f has fully finished and before the store is
+// finalized or closed -- this is the scan-database equivalent of
+// StoreResultsReq.scan_warnings: for a scan that also writes
+// --output-scan-db with an upstream configured, NoStoreResults makes the
+// streaming StoreResults RPC (and the scan_warnings field that rides on it)
+// a no-op, because the finished database uploads wholesale via
+// UPLOAD_URL_KIND_SCAN_DATABASE_V0 instead -- so this is the only way such a
+// scan's crash reaches the platform at all.
+//
+// Same window caveat as StoreResultsReq.scan_warnings: a crash recorded
+// after this read (asset cleanup only, no further provider calls follow
+// before RunAssetJob returns) would miss it; the local CLI/JSON report is
+// unaffected, since AggregateReporter reads CriticalErrors() independently,
+// later, after RunAssetJob returns. A store write failure is logged, never
+// returned -- exactly like every other best-effort stat/metadata write in
+// this function, it can never fail the scan.
+func writeCriticalErrorsToScanDB(ctx context.Context, runtime llx.Runtime, store *scandb.SqliteScanDataStore, assetMrn string) {
+	critSrc, ok := runtime.(interface{ CriticalErrors() []error })
+	if !ok {
+		return
+	}
+	warnings := dedupeAndCapCriticalErrors(critSrc.CriticalErrors())
+	if len(warnings) == 0 {
+		return
+	}
+	if err := store.WriteScanWarnings(ctx, warnings); err != nil {
+		log.Warn().Err(err).Str("asset", assetMrn).
+			Msg("failed to write scan warnings to scan database")
+	}
 }
 
 func withSqliteDataStore(ctx context.Context, assetMrn string, enableChecksums bool, f func(scanDataStore *scandb.SqliteScanDataStore) error) error {

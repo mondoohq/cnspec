@@ -5,6 +5,14 @@
 -- name: InsertMetadata :exec
 INSERT INTO metadata (key, value) VALUES (?, ?);
 
+-- UpsertMetadata is InsertMetadata's upsert counterpart: for a key a
+-- finalize step may run more than once for the same store (e.g.
+-- scan_warnings, written right before Finalize/upload), a plain INSERT
+-- fails the PRIMARY KEY on the second write.
+-- name: UpsertMetadata :exec
+INSERT INTO metadata (key, value) VALUES (?, ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+
 -- name: GetMetadata :many
 SELECT key, value FROM metadata;
 

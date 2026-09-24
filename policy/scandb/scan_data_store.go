@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -78,6 +79,19 @@ type ScanDataStore interface {
 // checksum support. Checksum presence is announced by the
 // checksum_algo_version metadata key instead.
 const SchemaVersion = "1.0"
+
+// MetaScanWarnings is the metadata key holding non-fatal issues observed
+// while scanning this asset (e.g. a provider plugin that crashed mid-scan)
+// as a JSON array of strings -- the scan-database equivalent of
+// StoreResultsReq.scan_warnings, for uploads that go out as a finished
+// database (UPLOAD_URL_KIND_SCAN_DATABASE_V0) rather than the streaming
+// StoreResults RPC. Like every other metadata key, it is not part of the
+// checksum/manifest system: checksum.go's checksumTargets names only the
+// four row tables, and the manifest projection (see
+// policy/checksum.ManifestSchema and its client) copies metadata
+// key-by-key, never wholesale, so a reader that doesn't know this key
+// simply never looks for it. Absent when the scan had nothing to report.
+const MetaScanWarnings = "scan_warnings"
 
 // readOnlyDSN builds a DSN that SQLite itself enforces as read-only. The
 // file: URI form is required: with a plain-path DSN the driver ignores the
@@ -428,6 +442,37 @@ func (s *SqliteScanDataStore) WriteAsset(ctx context.Context, asset *inventory.A
 	return nil
 }
 
+// WriteScanWarnings stores the given warning messages as a JSON array under
+// the MetaScanWarnings metadata key. A no-op for an empty slice -- the key
+// is simply absent, the same way an asset with no crash never sees
+// AddScanWarning. Uses UpsertMetadata (not InsertMetadata) because the
+// caller (WithServices, right before Finalize/upload) may run more than
+// once for the same store in principle; InsertMetadata would fail the
+// metadata table's PRIMARY KEY on a second write to this key.
+//
+// Callers are expected to have already deduplicated and capped warnings
+// (see policy/executor's dedupeAndCapScanWarnings) -- this method stores
+// whatever it is given, it does not re-enforce those limits.
+func (s *SqliteScanDataStore) WriteScanWarnings(ctx context.Context, warnings []string) error {
+	if s.readOnly {
+		return fmt.Errorf("cannot write scan warnings in read-only mode")
+	}
+	if len(warnings) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(warnings)
+	if err != nil {
+		return fmt.Errorf("failed to marshal scan warnings: %w", err)
+	}
+	if err := s.queries.UpsertMetadata(ctx, sqlc.UpsertMetadataParams{
+		Key:   MetaScanWarnings,
+		Value: string(data),
+	}); err != nil {
+		return fmt.Errorf("failed to write scan warnings: %w", err)
+	}
+	return nil
+}
+
 // WriteRisk writes a single risk factor
 func (s *SqliteScanDataStore) WriteRisk(ctx context.Context, risk *policy.ScoredRiskFactor) error {
 	if s.readOnly {
@@ -511,6 +556,16 @@ func (s *SqliteScanDataStore) GetMetadata() (*UploadFileMetadata, error) {
 	}
 
 	return metadata, nil
+}
+
+// GetMetadataByKey reads a single metadata value by key -- the general
+// counterpart to GetMetadata's fixed set of well-known keys, used for keys
+// like MetaScanWarnings that are only conditionally present. Returns
+// sql.ErrNoRows when the key is absent, which callers should treat as
+// meaningful (MetaScanWarnings absent means "nothing to report", not
+// "reported nothing").
+func (s *SqliteScanDataStore) GetMetadataByKey(ctx context.Context, key string) (string, error) {
+	return s.queries.GetMetadataByKey(ctx, key)
 }
 
 // StreamScores reads all scores with a callback function for memory-efficient processing

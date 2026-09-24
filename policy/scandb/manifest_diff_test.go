@@ -166,3 +166,59 @@ func TestManifestMinimalDiffAssertion(t *testing.T) {
 	assert.ElementsMatch(t, []string{"data:d-new"}, diff.added)
 	assert.ElementsMatch(t, []string{"risk://r/2"}, diff.removed)
 }
+
+// TestManifestDiff_UnaffectedByScanWarningsMetadata proves the
+// scan_warnings metadata key (see WriteScanWarnings) plays no part in the
+// unchanged-scan short-circuit: buildManifest copies metadata key-by-key
+// (only ManifestMetaAlgoVersion), never wholesale, and diffAgainstManifest
+// never queries the metadata table at all. A scan whose row content matches
+// the manifest reads as unchanged whether or not it carries a
+// scan_warnings key the manifest's source scan didn't.
+func TestManifestDiff_UnaffectedByScanWarningsMetadata(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	// Scan A (the manifest's source) has no crash.
+	pathA := filepath.Join(dir, "a.db")
+	wa, err := NewSqliteScanDataStore(pathA, "//assets/a1", WithWriteTimeChecksums())
+	require.NoError(t, err)
+	writeParityCorpus(t, ctx, wa)
+	wa.StampChecksums()
+	_, err = wa.Finalize()
+	require.NoError(t, err)
+	require.NoError(t, wa.Close())
+
+	manifestPath := filepath.Join(dir, "a.manifest.db")
+	buildManifest(t, pathA, manifestPath, "//assets/a1")
+
+	// Scan B: identical row content, but its provider crashed -- it carries
+	// a scan_warnings metadata entry Scan A never had.
+	pathB := filepath.Join(dir, "b.db")
+	wb, err := NewSqliteScanDataStore(pathB, "//assets/a1", WithWriteTimeChecksums())
+	require.NoError(t, err)
+	writeParityCorpus(t, ctx, wb)
+	require.NoError(t, wb.WriteScanWarnings(ctx, []string{"the 'os' provider crashed: connection refused"}))
+	wb.StampChecksums()
+	_, err = wb.Finalize()
+	require.NoError(t, err)
+	require.NoError(t, wb.Close())
+
+	diff := diffAgainstManifest(t, pathB, manifestPath)
+	assert.True(t, diff.unchanged(),
+		"a scan_warnings metadata entry must not surface as a content diff, got changed=%v added=%v removed=%v",
+		diff.changed, diff.added, diff.removed)
+
+	// Server-side backfill (ComputeChecksums) must behave identically too:
+	// it names only the four row tables (checksumTargets), so a metadata
+	// key it has never heard of cannot fail or alter its output. The file
+	// already carries write-time checksums (WithWriteTimeChecksums), so
+	// this just confirms the pass still runs cleanly -- bit-identical
+	// recompute, per TestWriteTimeChecksumParity -- against a file
+	// carrying scan_warnings.
+	reopened, err := OpenForChecksums(pathB)
+	require.NoError(t, err)
+	defer reopened.Close()
+	counts, err := reopened.ComputeChecksums(ctx)
+	require.NoError(t, err)
+	assert.NotZero(t, counts.Data+counts.Scores+counts.Risks+counts.Resources)
+}
