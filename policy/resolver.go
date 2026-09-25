@@ -236,6 +236,16 @@ func (s *LocalServices) StoreResults(ctx context.Context, req *StoreResultsReq) 
 	return globalEmpty, nil
 }
 
+// ReportAssetScanFailed tells upstream that scanning an asset failed. There is
+// nothing to record locally: local output already has the failure from the
+// scan's reporter.
+func (s *LocalServices) ReportAssetScanFailed(ctx context.Context, req *ReportAssetScanFailedReq) (*Empty, error) {
+	if s.Upstream != nil && !s.Incognito {
+		return s.Upstream.ReportAssetScanFailed(ctx, req)
+	}
+	return globalEmpty, nil
+}
+
 // GetUploadURL provides signed URLs for uploading data to the server
 func (s *LocalServices) GetUploadURL(ctx context.Context, req *GetUploadURLReq) (*GetUploadURLResp, error) {
 	// Only forward to upstream if we have one and are not in incognito mode

@@ -242,7 +242,7 @@ var scenarios = []scenario{
 // nonRootForbiddenChecks names the checks that error in a non-root scan of a
 // Linux host because the data they read is closed to a regular user.
 //
-// Under ADR-046 (structured provider errors, mql#10973) each of these failures
+// Under mql ADR-46 (structured provider errors, mql#10973) each of these failures
 // is ERROR_KIND_FORBIDDEN and still scores as an error, but the kind reaches
 // the score. Once it does, this list goes away in favour of tolerating only
 // forbidden errors in a non-root scan. Until then the checks are named here,

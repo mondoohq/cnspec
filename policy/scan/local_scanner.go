@@ -1039,6 +1039,9 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 		}
 		log.Debug().Str("asset", job.Asset.Name).Msg("run scan")
 		res, policyErr = scanner.run()
+		if policyErr != nil {
+			reportAssetScanFailed(ctx, services, job.Asset.Mrn, policyErr)
+		}
 		return policyErr
 	})
 	if runtimeErr != nil {
@@ -1046,6 +1049,21 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 	}
 
 	return res, policyErr
+}
+
+// reportAssetScanFailed tells upstream that scanning a synced asset failed,
+// with the failure's classification (mql ADR-46). Best effort: the scan has
+// already failed and is reported locally either way, and a server that predates
+// the RPC answers NotFound.
+func reportAssetScanFailed(ctx context.Context, services policy.PolicyResolver, assetMrn string, scanErr error) {
+	_, err := services.ReportAssetScanFailed(ctx, &policy.ReportAssetScanFailedReq{
+		AssetMrn:    assetMrn,
+		Error:       scanErr.Error(),
+		ErrorDetail: llx.ErrorDetailOf(scanErr),
+	})
+	if err != nil {
+		log.Debug().Err(err).Str("asset", assetMrn).Msg("could not report the failed scan upstream")
+	}
 }
 
 func (s *LocalScanner) RunAdmissionReview(ctx context.Context, job *AdmissionReviewJob) (*ScanResult, error) {

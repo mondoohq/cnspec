@@ -213,6 +213,14 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 	// print assets by platform
 	r.printAssetsByPlatform(assetsByPlatform)
 
+	// what could not be assessed, and why
+	if lines := newCoverageReport(r.data).lines(); len(lines) != 0 {
+		r.out(NewLineCharacter)
+		for _, line := range lines {
+			r.out(termenv.String(line).Foreground(r.Colors.Disabled).String() + NewLineCharacter)
+		}
+	}
+
 	// print distributions
 	if len(orderedAssets) > 1 {
 		r.printSummaryHeader()
@@ -334,6 +342,10 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 
 		errorMsg, ok := r.data.Errors[assetMrn]
 		if ok {
+			// A classified failure leads with its kind, the way mql prints one.
+			if d := r.data.ErrorDetails[assetMrn]; d != nil {
+				errorMsg = describeErrorDetail(d) + ": " + errorMsg
+			}
 			r.out(r.Printer.Error(errorMsg))
 			r.out(NewLineCharacter + NewLineCharacter)
 			continue
@@ -467,6 +479,9 @@ type simpleScore struct {
 	Message string
 	Success bool
 	Rating  policy.ScoreRating
+	// What the check's data is missing, or why it could not be assessed
+	// (mql ADR-46).
+	ErrorDetails []*llx.ErrorDetail
 }
 
 type previewGroup struct {
@@ -568,10 +583,11 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			}
 
 			score := simpleScore{
-				Value:   pscore.Value,
-				Type:    pscore.Type,
-				Message: pscore.Message,
-				Rating:  pscore.Rating(),
+				Value:        pscore.Value,
+				Type:         pscore.Type,
+				Message:      pscore.Message,
+				Rating:       pscore.Rating(),
+				ErrorDetails: pscore.ErrorDetails,
 				// FIXME v12: this is incorrect because the score value is 100 for failing checks whose impact is 0
 				Success: isSuccess,
 			}
@@ -826,6 +842,12 @@ func (r *defaultReporter) printCheck(score simpleScore, query *policy.Mquery, re
 
 	case policy.ScoreType_Result:
 		r.out(r.printScore(title, score, query, faint))
+		// A result assessed on incomplete data says so right below it, or it
+		// reads as complete (mql ADR-46 §8).
+		for _, line := range coverageGapLines(score.ErrorDetails) {
+			r.out(r.styled("  "+line, faint).Foreground(r.Colors.Disabled).String())
+			r.out(NewLineCharacter)
+		}
 
 		// additional information about the failed query
 		if !r.Conf.isCompact && score.Value != 100 {
