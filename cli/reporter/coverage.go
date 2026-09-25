@@ -127,6 +127,8 @@ func newCoverageReport(data *policy.ReportCollection) *coverageReport {
 		if report == nil {
 			continue
 		}
+		// Reports and ResolvedPolicies share the asset MRN as key; both are
+		// written together in AggregateReporter.AddReport.
 		resolved := data.ResolvedPolicies[mrn]
 		if resolved == nil || resolved.CollectorJob == nil {
 			continue
