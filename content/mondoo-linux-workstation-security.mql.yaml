@@ -475,18 +475,13 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-10
       compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: |
-      lsblk.list.any( fstype == /crypt/ )
-      lsblk.list.where( fstype == /crypt/).all(
-        parse.json(
-          content: command('cryptsetup --dump-json-metadata luksDump /dev/disk/by-uuid/' + uuid).stdout
-        ).params['segments']['0']['encryption'].contains('aes-xts') ||
-        command('cryptsetup luksDump /dev/disk/by-uuid/' + uuid).stdout.lines.where( _ == /Cipher\:/).all(/aes/)
-      )
+      luks.volumes != empty
+      luks.volumes.all(cipher.name == "aes" && cipher.mode == /^xts-/)
     docs:
       desc: |
         This check verifies that every LUKS-encrypted volume uses AES in XTS mode.
 
-        XTS is the mode designed for storage. A disk cipher has to encrypt each sector independently, because sectors are read and written in any order, and it has to do so without letting two sectors holding identical plaintext produce identical ciphertext. XTS achieves that by tweaking the encryption with the sector number. The check reads the cipher from each LUKS header and accepts an AES cipher in XTS mode, written as `aes-xts-plain64` on current systems and `aes-xts-benbi` on some older ones. `cryptsetup luksDump` shows the value in the Cipher field.
+        XTS is the mode designed for storage. A disk cipher has to encrypt each sector independently, because sectors are read and written in any order, and it has to do so without letting two sectors holding identical plaintext produce identical ciphertext. XTS achieves that by tweaking the encryption with the sector number. The check reads the cipher from each LUKS header and accepts an AES cipher in XTS mode, written as `aes-xts-plain64` on current systems and `aes-xts-benbi` on some older ones. The same rule applies to LUKS1 and LUKS2 headers, so a LUKS1 volume using `aes-cbc-essiv:sha256` fails.
 
         **Why this matters**
 
@@ -502,7 +497,7 @@ queries:
         cryptsetup luksDump /dev/disk/by-uuid/<device-uuid>
         ```
 
-        A passing result shows the `Cipher` field set to an `aes-xts` variant. A failing result shows a non-AES cipher or a mode other than XTS.
+        On a LUKS2 volume, read the `cipher` field under `Data segments`. On a LUKS1 volume, read the `Cipher name` and `Cipher mode` fields. A passing result shows AES in an XTS mode, such as `aes-xts-plain64` on LUKS2, or `Cipher name: aes` with `Cipher mode: xts-plain64` on LUKS1. A failing result shows a non-AES cipher or a mode other than XTS, such as `cbc-essiv:sha256`.
       remediation:
         - id: cli
           desc: |
