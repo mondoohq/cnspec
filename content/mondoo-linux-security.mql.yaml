@@ -18611,14 +18611,14 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: false
     mql: |
-      groups.where(name == "root").all(members.all(uid < 1000))
+      groups.where(name == "root").all(members.all(system))
     docs:
       desc: |
-        This check verifies that no interactive account, meaning UID 1000 or above, is a member of the `root` group, whether through the primary GID field in `/etc/passwd` or as a supplementary member in `/etc/group`.
+        This check verifies that no regular user account is a member of the `root` group, whether through the primary GID field in `/etc/passwd` or as a supplementary member in `/etc/group`.
 
-        Distribution-provided system accounts below UID 1000, such as `sync`, `shutdown`, `halt`, and `operator`, ship with `root` as their primary group by design on some distributions. These are non-interactive and are not flagged; they should not be removed or reassigned.
+        A regular user account is one whose UID falls between `UID_MIN` and `UID_MAX` in `/etc/login.defs`, or in `/usr/etc/login.defs` on distributions that ship no `/etc` copy, which default to 1000 and 60000. UIDs above 65535 and the systemd-homed range from 60001 to 60513 also hold people and count as regular users. Every other UID is a system account. Distribution-provided system accounts such as `sync`, `shutdown`, `halt`, and `operator` ship with `root` as their primary group by design on some distributions. These are non-interactive and are not flagged; they should not be removed or reassigned.
 
-        Identifying members by UID rather than by an allowlist of account names keeps the check robust across distributions, since system account names differ between Debian, RHEL, SUSE, and Alpine. The tradeoff is that a system account manually added to the `root` group is tolerated. That is a deliberate accepted gap: the `SYS_UID_MAX` boundary in `/etc/login.defs` reserves UIDs below 1000 for non-interactive accounts at creation time.
+        Identifying members by UID rather than by an allowlist of account names keeps the check robust across distributions, since system account names differ between Debian, RHEL, SUSE, and Alpine. The tradeoff is that a system account manually added to the `root` group is tolerated. That is a deliberate accepted gap, because `useradd` allocates UIDs outside the regular range only for non-interactive accounts.
 
         **Why this matters**
 
@@ -18636,19 +18636,25 @@ queries:
         getent group root
         ```
 
-        List every account whose *primary* group is root (GID 0):
+        List every account whose *primary* group is root (GID 0), with its UID:
 
         ```bash
-        awk -F: '$4 == 0 {print $1}' /etc/passwd
+        awk -F: '$4 == 0 {print $1, $3}' /etc/passwd
         ```
 
-        A passing result shows only `root` and distribution-provided system accounts (UID below 1000, e.g. `sync`, `shutdown`, `halt`, `operator`). A failing result lists an interactive user account (UID 1000 or above) — that is the account you need to remediate. System accounts with root as their primary group are expected and should be left in place.
+        Read the regular user range the UIDs are compared against. An absent value means the default of 1000 for `UID_MIN` and 60000 for `UID_MAX`:
+
+        ```bash
+        grep -E '^\s*UID_(MIN|MAX)\s' /etc/login.defs
+        ```
+
+        A passing result shows only `root` and distribution-provided system accounts such as `sync`, `shutdown`, `halt`, and `operator`. A failing result lists a regular user account, and that is the account you need to remediate. System accounts with root as their primary group are expected and should be left in place.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            This check only flags **interactive** user accounts (UID 1000 and above). Distribution-provided system accounts (UID below 1000, such as `sync`, `shutdown`, `halt`, and `operator`) are expected to have `root` as their primary group and must **not** be changed — reassigning them can break the system.
+            This check only flags **regular** user accounts, whose UID falls between `UID_MIN` and `UID_MAX` in `/etc/login.defs`. Distribution-provided system accounts such as `sync`, `shutdown`, `halt`, and `operator` are expected to have `root` as their primary group and must **not** be changed, because reassigning them can break the system.
 
             1. To remove an interactive user from the `root` group (supplementary membership), run:
 
@@ -18667,26 +18673,42 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            **Warning: review the affected accounts before running.** This script only touches **interactive** accounts (UID 1000 and above); it deliberately leaves distribution-provided system accounts (UID below 1000) alone, since those are expected to belong to the `root` group. It reassigns the primary group of any interactive user whose primary group is `root` (GID 0) to `users` — confirm that is the correct replacement group for your environment first. List the affected users with `awk -F: '$4==0 && $3>=1000 {print $1}' /etc/passwd` before running.
+            **Warning: review the affected accounts before running.** This script only touches **regular** user accounts, whose UID falls between `UID_MIN` and `UID_MAX` in `/etc/login.defs`. It deliberately leaves distribution-provided system accounts alone, since those are expected to belong to the `root` group. It reassigns the primary group of any regular user whose primary group is `root` to `users`, so confirm that is the correct replacement group for your environment first. List every account whose primary group is `root` with `awk -F: '$4 == 0 {print $1, $3}' /etc/passwd` before running.
 
             ```bash
             #!/bin/bash
             set -e
 
-            echo "Removing interactive users from root group"
+            defs=/etc/login.defs
+            [ -f "$defs" ] || defs=/usr/etc/login.defs
+            uid_min=$(awk '$1 == "UID_MIN" {v = $2} END {print v}' "$defs" 2>/dev/null || true)
+            uid_max=$(awk '$1 == "UID_MAX" {v = $2} END {print v}' "$defs" 2>/dev/null || true)
+            uid_min=${uid_min:-1000}
+            uid_max=${uid_max:-60000}
+
+            # Mirrors how the check classifies accounts: a UID below UID_MIN, or above
+            # UID_MAX and at most 65535 outside the systemd-homed range, is a system account.
+            is_system_uid() {
+              [ "$1" -lt "$uid_min" ] && return 0
+              [ "$1" -gt "$uid_max" ] && [ "$1" -le 65535 ] &&
+                { [ "$1" -lt 60001 ] || [ "$1" -gt 60513 ]; } && return 0
+              return 1
+            }
+
+            echo "Removing regular users from root group"
             for user in $(getent group root | cut -d: -f4 | tr ',' ' '); do
-              # Default to a high UID so stale entries (in /etc/group but not /etc/passwd)
-              # are treated as interactive and removed, rather than silently skipped.
-              uid=$(id -u "$user" 2>/dev/null || echo 65534)
-              if [ "$user" != "root" ] && [ "$uid" -ge 1000 ]; then
+              # Default to a regular UID so stale entries in /etc/group with no /etc/passwd
+              # line are removed, rather than silently skipped.
+              uid=$(id -u "$user" 2>/dev/null || echo "$uid_min")
+              if [ "$user" != "root" ] && ! is_system_uid "$uid"; then
                 echo "Removing $user from root group"
                 gpasswd -d "$user" root || true
               fi
             done
 
-            echo "Changing primary group for interactive users whose primary group is root"
-            awk -F: '$4 == 0 && $3 >= 1000 {print $1}' /etc/passwd | while IFS= read -r user; do
-              if [ "$user" != "root" ]; then
+            echo "Changing primary group for regular users whose primary group is root"
+            awk -F: '$4 == 0 {print $1, $3}' /etc/passwd | while read -r user uid; do
+              if [ "$user" != "root" ] && ! is_system_uid "$uid"; then
                 # Replace users with the desired primary group before running this loop
                 usermod -g users "$user"
               fi
@@ -18749,12 +18771,12 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: false
     mql: |
-      users.where( name.notIn(["root", "sync", "shutdown", "halt"]) ).where( uid < 1000 ).list {
-        shell.in(["/usr/bin/nologin", "/sbin/nologin", "/usr/sbin/nologin"])
-      }
+      users.where(system && name.notIn(["root", "sync", "shutdown", "halt"])).all(hasLoginShell == false)
     docs:
       desc: |
-        This check verifies that accounts with a UID below 1000, other than `root`, `sync`, `shutdown`, and `halt`, have a shell of `/sbin/nologin`, `/usr/sbin/nologin`, or `/usr/bin/nologin`.
+        This check verifies that system accounts, other than `root`, `sync`, `shutdown`, and `halt`, cannot start an interactive login session.
+
+        A system account is one whose UID falls outside the range the host reserves for regular users. That range runs from `UID_MIN` to `UID_MAX` in `/etc/login.defs`, or in `/usr/etc/login.defs` on distributions that ship no `/etc` copy, and defaults to 1000 through 60000 when neither file sets it. UIDs from 60001 up to 65535 also count as system accounts, because they hold `nobody` at 65534, the static package accounts Debian allocates from 60000 to 64999, and systemd's dynamic service users. The systemd-homed range from 60001 to 60513 is the exception and counts as regular users. A shell of `nologin`, `false`, or `true` in `/bin`, `/sbin`, `/usr/bin`, or `/usr/sbin` passes. Any other shell fails, and so does an empty shell field, which means `/bin/sh`.
 
         **Why this matters**
 
@@ -18764,27 +18786,41 @@ queries:
 
         `nologin` refuses the login, prints a message, and exits. It does not prevent the service from running, because daemons are started by systemd or an init script rather than by logging in, and it does not block `su - <account> -s /bin/bash` for an administrator who genuinely needs to run something as that account.
 
-        Use `nologin` rather than `/bin/false`, since it produces a clear message and a logged, distinguishable event.
+        Prefer `nologin` over `/bin/false` when setting a shell, since it produces a clear message and a logged, distinguishable event. Both pass this check.
       audit: |
-        Run this command to find system accounts (UID below 1000) with an interactive login shell:
+        Run these commands to find system accounts with an interactive login shell. They read `UID_MIN` and `UID_MAX` from `/etc/login.defs`, or from `/usr/etc/login.defs` when `/etc` has none, and fall back to 1000 and 60000:
 
         ```bash
-        awk -F: '($3 < 1000 && $1 !~ /^(root|sync|shutdown|halt)$/ && $7 !~ /nologin|false/) {print $1, $7}' /etc/passwd
+        defs=/etc/login.defs
+        [ -f "$defs" ] || defs=/usr/etc/login.defs
+        uid_min=$(awk '$1 == "UID_MIN" {v = $2} END {print v}' "$defs" 2>/dev/null)
+        uid_max=$(awk '$1 == "UID_MAX" {v = $2} END {print v}' "$defs" 2>/dev/null)
+        awk -F: -v min="${uid_min:-1000}" -v max="${uid_max:-60000}" '
+          ($3 < min || ($3 > max && $3 <= 65535 && ($3 < 60001 || $3 > 60513))) &&
+          $1 !~ /^(root|sync|shutdown|halt)$/ &&
+          $7 !~ /^\/(usr\/)?s?bin\/(nologin|false|true)$/ {print $1, $7}' /etc/passwd
         ```
 
-        A passing result returns no output. A failing result lists system accounts with a login shell.
+        A passing result returns no output. A failing result lists each system account that has a login shell, with that shell.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            1. To list all system accounts with a UID below 1000, other than `root`, `sync`, `shutdown`, and `halt`, that still have a login shell, run:
+            1. To list the system accounts other than `root`, `sync`, `shutdown`, and `halt` that still have a login shell, run:
 
                 ```bash
-                awk -F: '($3 < 1000 && $1 !~ /^(root|sync|shutdown|halt)$/ && $7 !~ /nologin|false/) {print $1}' /etc/passwd
+                defs=/etc/login.defs
+                [ -f "$defs" ] || defs=/usr/etc/login.defs
+                uid_min=$(awk '$1 == "UID_MIN" {v = $2} END {print v}' "$defs" 2>/dev/null)
+                uid_max=$(awk '$1 == "UID_MAX" {v = $2} END {print v}' "$defs" 2>/dev/null)
+                awk -F: -v min="${uid_min:-1000}" -v max="${uid_max:-60000}" '
+                  ($3 < min || ($3 > max && $3 <= 65535 && ($3 < 60001 || $3 > 60513))) &&
+                  $1 !~ /^(root|sync|shutdown|halt)$/ &&
+                  $7 !~ /^\/(usr\/)?s?bin\/(nologin|false|true)$/ {print $1}' /etc/passwd
                 ```
 
-            2. To set the shell for each listed system account to `/usr/sbin/nologin`, run:
+            2. To set the shell for each listed system account to `nologin`, run the following. Alpine ships `nologin` as `/sbin/nologin` instead.
 
                 ```bash
                 usermod -s /usr/sbin/nologin <user>
@@ -18807,14 +18843,23 @@ queries:
             #!/bin/bash
             set -e
 
+            defs=/etc/login.defs
+            [ -f "$defs" ] || defs=/usr/etc/login.defs
+            uid_min=$(awk '$1 == "UID_MIN" {v = $2} END {print v}' "$defs" 2>/dev/null || true)
+            uid_max=$(awk '$1 == "UID_MAX" {v = $2} END {print v}' "$defs" 2>/dev/null || true)
+
+            nologin_shell=/usr/sbin/nologin
+            [ -x "$nologin_shell" ] || nologin_shell=/sbin/nologin
+
             echo "Setting shell for system accounts to nologin"
-            while IFS=: read -r user _ uid _ _ _ _; do
-              case "$user" in root|sync|shutdown|halt) continue ;; esac
-              if [ "$uid" -lt 1000 ]; then
-                echo "Setting nologin shell for user: $user"
-                usermod -s /usr/sbin/nologin "$user"
-              fi
-            done < /etc/passwd
+            awk -F: -v min="${uid_min:-1000}" -v max="${uid_max:-60000}" '
+              ($3 < min || ($3 > max && $3 <= 65535 && ($3 < 60001 || $3 > 60513))) &&
+              $1 !~ /^(root|sync|shutdown|halt)$/ &&
+              $7 !~ /^\/(usr\/)?s?bin\/(nologin|false|true)$/ {print $1}' /etc/passwd |
+            while IFS= read -r user; do
+              echo "Setting nologin shell for user: $user"
+              usermod -s "$nologin_shell" "$user"
+            done
 
             # Only Red Hat family distributions ship the shutdown and halt accounts, so
             # check each one exists before locking it. Without the guard usermod exits
@@ -18841,7 +18886,14 @@ queries:
               tasks:
                 - name: Find system accounts with a login shell
                   ansible.builtin.shell: |
-                    awk -F: '($3 < 1000 && $1 !~ /^(root|sync|shutdown|halt)$/ && $7 !~ /nologin|false/) {print $1}' /etc/passwd
+                    defs=/etc/login.defs
+                    [ -f "$defs" ] || defs=/usr/etc/login.defs
+                    uid_min=$(awk '$1 == "UID_MIN" {v = $2} END {print v}' "$defs" 2>/dev/null)
+                    uid_max=$(awk '$1 == "UID_MAX" {v = $2} END {print v}' "$defs" 2>/dev/null)
+                    awk -F: -v min="${uid_min:-1000}" -v max="${uid_max:-60000}" '
+                      ($3 < min || ($3 > max && $3 <= 65535 && ($3 < 60001 || $3 > 60513))) &&
+                      $1 !~ /^(root|sync|shutdown|halt)$/ &&
+                      $7 !~ /^\/(usr\/)?s?bin\/(nologin|false|true)$/ {print $1}' /etc/passwd
                   register: system_accounts
                   changed_when: false
 
@@ -18873,12 +18925,26 @@ queries:
             ```ruby
             nologin_shell = ::File.exist?('/usr/sbin/nologin') ? '/usr/sbin/nologin' : '/sbin/nologin'
 
+            login_defs = %w(/etc/login.defs /usr/etc/login.defs).find { |path| ::File.exist?(path) }
+            settings = {}
+            if login_defs
+              ::File.foreach(login_defs) do |line|
+                key, value = line.split
+                settings[key] = value if key && value
+              end
+            end
+            uid_min = Integer(settings.fetch('UID_MIN', '1000'), exception: false) || 1000
+            uid_max = Integer(settings.fetch('UID_MAX', '60000'), exception: false) || 60_000
+
             ::File.readlines('/etc/passwd').each do |entry|
               account, _password, uid, _gid, _comment, _home, shell = entry.chomp.split(':')
+              uid = uid.to_i
 
+              system_account = uid < uid_min ||
+                               (uid > uid_max && uid <= 65_535 && !(60_001..60_513).cover?(uid))
+              next unless system_account
               next if %w(root sync shutdown halt).include?(account)
-              next if uid.to_i >= 1000
-              next if shell.to_s.match?(/nologin|false/)
+              next if shell.to_s.match?(%r{\A/(usr/)?s?bin/(nologin|false|true)\z})
 
               user account do
                 shell nologin_shell
