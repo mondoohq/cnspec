@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-linux-security
     name: Mondoo Linux Security
-    version: 2.8.4
+    version: 2.9.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -11360,76 +11360,121 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     mql: |
-      rsyslog.conf.params["FileCreateMode"] == "0640"
+      rsyslog.conf.actions != empty
+      rsyslog.conf.actions.where(type == "omfile").all(fileCreateMode == /^0?[0246][04]0$/)
     docs:
       desc: |
         This check verifies that log files rsyslog creates are not readable by every account on the host.
 
-        `$FileCreateMode` sets the permissions rsyslog applies to log files it creates itself, which is separate from the permissions on files that already exist. The check reads that directive, which must be `0640`, giving the owner read and write, the group read, and other users nothing.
+        rsyslog sets the permissions of a log file at the moment it creates the file, which is separate from the permissions on files that already exist. Two settings control that mode, and which one applies depends on how the rule that writes the file is written. A rule in the traditional selector form, such as `auth.* /var/log/auth.log`, takes the mode from the most recent `$FileCreateMode` line above it. A rule written as `action(type="omfile" ...)` ignores `$FileCreateMode` entirely. It takes the mode from its own `fileCreateMode` parameter, else from `module(load="builtin:omfile" fileCreateMode="...")`, and falls back to `0644` when neither is set.
+
+        The check works out the mode that applies to every rule that writes a file, reading included files at the point rsyslog includes them, and requires `0640` or a stricter mode such as `0600` for each one. `0640` gives the owner read and write, the group read, and other users nothing. A host with no rsyslog configuration fails.
 
         **Why this matters**
 
-        `rsyslog` creates log files on demand as new facilities and rulesets produce output, and it applies `$FileCreateMode` at that moment. If the value is permissive, every new log file arrives world-readable, and it arrives that way without anyone making a decision.
+        `rsyslog` creates log files on demand as new facilities and rulesets produce output, and it applies the configured mode at that moment. If the mode is permissive, every new log file arrives world-readable, and it arrives that way without anyone making a decision.
 
         That matters because of what lands in these files. Authentication logs carry account names, source addresses, and passwords typed into a username prompt. Application logs carry request URLs with tokens in the query string, database errors quoting the failing statement, and stack traces exposing internal structure. Any local account can read all of it as soon as the file is created.
 
-        The distinction from a one-time permission fix is the point of the check. Correcting the mode on today's files does nothing about the file `rsyslog` creates next week when a new service starts logging. `$FileCreateMode` is what makes the correct permissions the default going forward.
+        The distinction from a one-time permission fix is the point of the check. Correcting the mode on today's files does nothing about the file `rsyslog` creates next week when a new service starts logging. The configured creation mode is what makes the correct permissions the default going forward.
 
-        `0640` gives the owner read and write, the group read, and other users nothing, which lets an operations group with membership in `adm` read logs without exposing them to every account on the host.
+        Distributions write their stock rules in different forms, so the setting that matters differs too. Debian and Ubuntu use the selector form and set `$FileCreateMode 0640` above their rules. Current releases of Red Hat Enterprise Linux 9 and 10, and the distributions built from them, write every stock rule as `action(type="omfile" ...)`. Adding `$FileCreateMode 0640` there leaves every rule at `0644`, and only the `builtin:omfile` module setting changes it.
+
+        The mode rsyslog requests is further reduced by the umask of the `rsyslogd` process. The systemd unit Red Hat ships sets `UMask=0066`, so files on those hosts are created `0600` even while the configuration requests `0644`. The check reads the rsyslog configuration, not the service unit, so a host that relies on the unit's umask fails until the configuration itself requests a restrictive mode. That keeps the result correct when rsyslogd is started some other way or the unit is overridden.
       audit: |
-        Run this command to confirm the rsyslog default file creation mode:
+        Run this command to list every line that sets the creation mode of rsyslog log files, and every rule written as an `omfile` action:
 
         ```bash
-        grep -r 'FileCreateMode' /etc/rsyslog.conf /etc/rsyslog.d/
+        grep -rniE 'FileCreateMode|builtin:omfile|type="omfile"' /etc/rsyslog.conf /etc/rsyslog.d/
         ```
 
-        A passing result shows `$FileCreateMode 0640`. A failing result shows the directive absent or set to a more permissive mode.
+        A passing result shows all of the following:
+
+        - `$FileCreateMode 0640` above the first rule in selector form, including the rules in included files, with no later `$FileCreateMode` line setting a more permissive mode.
+        - When any rule is written as `action(type="omfile" ...)`, `fileCreateMode="0640"` on the `module(load="builtin:omfile" ...)` line.
+        - No `action(type="omfile" ...)` rule setting a more permissive `fileCreateMode` of its own.
+
+        A failing result shows a rule whose mode resolves to something more permissive than `0640`, including an `action(type="omfile" ...)` rule with no `builtin:omfile` module setting, which rsyslog creates as `0644`. The `FileCreateMode` parameter of `module(load="imjournal" ...)` sets the mode of the journal state file, not of log files, and does not affect the result.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            `$FileCreateMode` sets the permissions rsyslog applies to log files it creates that do not already exist. The target is `0640` so that root can write, the log group can read, and other users have no access. This keeps sensitive log contents from being world-readable while still allowing log-processing tools that run as the log group to read them, which a stricter `0600` would prevent.
+            The target mode is `0640` so that root can write, the log group can read, and other users have no access. This keeps sensitive log contents from being world-readable while still allowing log-processing tools that run as the log group to read them, which a stricter `0600` would prevent. rsyslog needs the mode in two places, one for each form a rule can be written in.
 
-            To set the default file permissions for `rsyslog`, add the following line at the top of `/etc/rsyslog.conf`, above every rule line and above the `$IncludeConfig` or `include()` statement. The directive applies only to the rule lines that follow it, so a line appended to the end of the file leaves the mode of every log file unchanged. If the file already contains a `$FileCreateMode` line, move it there and set it to `0640`:
+            To set the mode rsyslog creates log files with:
 
-            ```ini
-            $FileCreateMode 0640
-            ```
+            1. Add `$FileCreateMode 0640` at the top of `/etc/rsyslog.conf`, above every rule line and above the `$IncludeConfig` or `include()` statement. This covers rules in selector form, such as `auth.* /var/log/auth.log`. The directive applies only to the rules that follow it, so a line appended to the end of the file changes nothing. If the file already contains a `$FileCreateMode` line, move it there and set it to `0640`:
 
-            A drop-in that sets its own `$FileCreateMode` overrides this value for the rules after it. Find those lines and change each one to `0640`:
+               ```ini
+               $FileCreateMode 0640
+               ```
 
-            ```bash
-            grep -rn 'FileCreateMode' /etc/rsyslog.d/
-            ```
+            2. Set the default for rules written as `action(type="omfile" ...)`, which ignore `$FileCreateMode`. If the configuration already contains a `module(load="builtin:omfile" ...)` line, add `fileCreateMode="0640"` to that line. rsyslog refuses to load the same module twice, so edit the existing line rather than adding a second one. On Red Hat Enterprise Linux 9 the stock line becomes:
 
-            Restart the `rsyslog` service to apply the changes:
+               ```ini
+               module(load="builtin:omfile" fileCreateMode="0640" Template="RSYSLOG_TraditionalFileFormat")
+               ```
 
-            ```bash
-            systemctl restart rsyslog
-            ```
+               If there is no such line, add one directly below `$FileCreateMode`:
+
+               ```ini
+               module(load="builtin:omfile" fileCreateMode="0640")
+               ```
+
+            3. Find any drop-in `$FileCreateMode` line and any `omfile` action that sets its own mode, and change each one to `0640`:
+
+               ```bash
+               grep -rniE 'FileCreateMode' /etc/rsyslog.conf /etc/rsyslog.d/
+               ```
+
+            4. Validate the configuration, then restart the `rsyslog` service to apply it:
+
+               ```bash
+               rsyslogd -N1
+               systemctl restart rsyslog
+               ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            To set the default file permissions for `rsyslog`, you can run the following bash script:
+            To set the mode rsyslog creates log files with, you can run the following bash script. It handles an `omfile` action whose `fileCreateMode` is on the same line as `type="omfile"`. Review any action that spans several lines by hand:
 
             ```bash
             #!/bin/bash
             set -e
 
-            echo "Setting default file permissions for rsyslog..."
+            conf=/etc/rsyslog.conf
+            omfile_module='^[[:space:]]*module\(load="builtin:omfile"'
 
-            # $FileCreateMode applies only to the rule lines that follow it, so it has to
-            # sit at the top of /etc/rsyslog.conf rather than be appended to the end.
-            sed -i '/^\$FileCreateMode/d' /etc/rsyslog.conf
-            sed -i '1i $FileCreateMode 0640' /etc/rsyslog.conf
+            echo "Setting the mode rsyslog creates log files with..."
 
-            # Correct any value a drop-in sets for the rules that follow it
-            for file in /etc/rsyslog.d/*.conf; do
+            # $FileCreateMode applies only to the selector rules that follow it, so it
+            # has to sit at the top of /etc/rsyslog.conf rather than be appended to the end.
+            sed -i '/^[[:space:]]*\$FileCreateMode/d' "$conf"
+            sed -i '1i $FileCreateMode 0640' "$conf"
+
+            # action(type="omfile") rules ignore $FileCreateMode and take the builtin:omfile
+            # module default. rsyslog refuses a second load of the module, so edit the
+            # existing statement when there is one.
+            module_file=$(grep -El "$omfile_module" "$conf" /etc/rsyslog.d/*.conf 2>/dev/null | head -n 1 || true)
+            if [ -n "$module_file" ]; then
+              sed -i -E "/$omfile_module/{s/[[:space:]]+fileCreateMode=\"[0-7]+\"//I; s/module\(load=\"builtin:omfile\"/module(load=\"builtin:omfile\" fileCreateMode=\"0640\"/}" "$module_file"
+            else
+              sed -i '1a module(load="builtin:omfile" fileCreateMode="0640")' "$conf"
+            fi
+
+            # Correct any mode a drop-in or a single omfile action sets for itself
+            for file in "$conf" /etc/rsyslog.d/*.conf; do
               [ -e "$file" ] || continue
-              sed -i 's/^\$FileCreateMode.*/\$FileCreateMode 0640/' "$file"
+              if [ "$file" != "$conf" ]; then
+                sed -i 's/^[[:space:]]*\$FileCreateMode.*/$FileCreateMode 0640/' "$file"
+              fi
+              sed -i -E '/type="omfile"/I s/fileCreateMode="[0-7]+"/fileCreateMode="0640"/I' "$file"
             done
+
+            echo "Validating the rsyslog configuration..."
+            rsyslogd -N1
 
             echo "Restarting rsyslog service..."
             systemctl restart rsyslog
@@ -11438,13 +11483,13 @@ queries:
           desc: |
             **Using Ansible**
 
-            To set the default file permissions for `rsyslog`, use the following Ansible playbook:
+            To set the mode rsyslog creates log files with, use the following Ansible playbook:
 
             ```yaml
             ---
-            - name: Set default file permissions for rsyslog
+            - name: Set the mode rsyslog creates log files with
               hosts: all
-              become: yes
+              become: true
               tasks:
                 - name: Remove any $FileCreateMode line below the top of /etc/rsyslog.conf
                   ansible.builtin.replace:
@@ -11459,7 +11504,8 @@ queries:
                     line: '$FileCreateMode 0640'
                     state: present
                     insertbefore: BOF
-                    create: yes
+                    create: true
+                    mode: "0644"
 
                 - name: Find the /etc/rsyslog.d/*.conf files
                   ansible.builtin.find:
@@ -11468,12 +11514,52 @@ queries:
                     file_type: file
                   register: rsyslog_conf_files
 
+                - name: Find the file that loads the builtin:omfile module
+                  ansible.builtin.command:
+                    cmd: grep -rlE '^\s*module\(load="builtin:omfile"' /etc/rsyslog.conf /etc/rsyslog.d
+                  register: omfile_module
+                  changed_when: false
+                  failed_when: omfile_module.rc > 1
+
+                - name: Remove any other mode from the builtin:omfile module statement
+                  ansible.builtin.replace:
+                    path: "{{ item }}"
+                    regexp: '(?i)^(\s*module\(load="builtin:omfile".*?)\s+filecreatemode="(?!0640")[0-7]+"'
+                    replace: '\1'
+                  loop: "{{ omfile_module.stdout_lines }}"
+
+                - name: Set fileCreateMode 0640 on the builtin:omfile module statement
+                  ansible.builtin.replace:
+                    path: "{{ item }}"
+                    regexp: '(?i)^(\s*module\(load="builtin:omfile")(?!.*filecreatemode="0640")'
+                    replace: '\1 fileCreateMode="0640"'
+                  loop: "{{ omfile_module.stdout_lines }}"
+
+                - name: Add a builtin:omfile module statement when the configuration has none
+                  ansible.builtin.lineinfile:
+                    path: /etc/rsyslog.conf
+                    line: 'module(load="builtin:omfile" fileCreateMode="0640")'
+                    insertafter: '^\$FileCreateMode'
+                  when: omfile_module.stdout_lines | length == 0
+
                 - name: Correct any $FileCreateMode an rsyslog.d file sets
                   ansible.builtin.replace:
                     path: "{{ item.path }}"
-                    regexp: '^\$FileCreateMode.*$'
+                    regexp: '^\s*\$FileCreateMode.*$'
                     replace: '$FileCreateMode 0640'
                   loop: "{{ rsyslog_conf_files.files }}"
+
+                - name: Correct any mode a single omfile action sets for itself
+                  ansible.builtin.replace:
+                    path: "{{ item }}"
+                    regexp: '(?i)^(.*type="omfile".*filecreatemode=")(?!0640")[0-7]+"'
+                    replace: '\g<1>0640"'
+                  loop: "{{ ['/etc/rsyslog.conf'] + (rsyslog_conf_files.files | map(attribute='path') | list) }}"
+
+                - name: Validate the rsyslog configuration
+                  ansible.builtin.command:
+                    cmd: rsyslogd -N1
+                  changed_when: false
 
                 - name: Restart rsyslog service
                   ansible.builtin.systemd:
@@ -11484,42 +11570,68 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to set the mode rsyslog creates new log files with. The directive applies only to the rule lines that follow it, so it goes at the top of the main configuration file, and any value a drop-in sets is corrected so that it cannot override it:
+            Use this Chef Infra recipe code to set the mode rsyslog creates new log files with. `$FileCreateMode` applies only to the selector rules that follow it, so it goes at the top of the main configuration file. Rules written as `omfile` actions take the mode from the `builtin:omfile` module statement instead, which rsyslog allows only once, so the recipe edits that statement where it exists and adds it otherwise. The configuration is validated before rsyslog restarts:
 
             ```ruby
             service 'rsyslog' do
               action :nothing
             end
 
-            directive = '$FileCreateMode 0640'
-            mode_line = /^[ \t]*\$FileCreateMode[ \t].*\n?/
-
-            ruby_block 'set $FileCreateMode at the top of /etc/rsyslog.conf' do
-              block do
-                body = ::File.read('/etc/rsyslog.conf')
-                ::File.write('/etc/rsyslog.conf', "#{directive}\n#{body.gsub(mode_line, '')}")
-              end
-              only_if { ::File.exist?('/etc/rsyslog.conf') }
-              not_if do
-                body = ::File.read('/etc/rsyslog.conf')
-                body.start_with?("#{directive}\n") && body.scan(mode_line).one?
-              end
-              notifies :restart, 'service[rsyslog]', :delayed
+            execute 'validate rsyslog configuration' do
+              command 'rsyslogd -N1'
+              action :nothing
+              notifies :restart, 'service[rsyslog]', :immediately
             end
 
-            ::Dir.glob('/etc/rsyslog.d/*.conf').each do |config|
-              ruby_block "correct $FileCreateMode in #{config}" do
+            main = '/etc/rsyslog.conf'
+            directive = '$FileCreateMode 0640'
+            mode_line = /^[ \t]*\$FileCreateMode[ \t].*\n?/
+            omfile_module = /^([ \t]*module\(load="builtin:omfile")(.*)$/
+            omfile_action_mode = /^(.*type="omfile".*fileCreateMode=")[0-7]+"/i
+
+            fix_modes = lambda do |body|
+              body = body.gsub(omfile_module) do
+                m = Regexp.last_match
+                "#{m[1]} fileCreateMode=\"0640\"#{m[2].gsub(/[ \t]+fileCreateMode="[0-7]+"/i, '')}"
+              end
+              body.gsub(omfile_action_mode) { "#{Regexp.last_match(1)}0640\"" }
+            end
+
+            drop_ins = ::Dir.glob('/etc/rsyslog.d/*.conf')
+            module_declared = ([main] + drop_ins).any? { |f| ::File.exist?(f) && ::File.read(f).match?(omfile_module) }
+
+            ruby_block "set the log file creation mode in #{main}" do
+              block do
+                header = "#{directive}\n"
+                header += "module(load=\"builtin:omfile\" fileCreateMode=\"0640\")\n" unless module_declared
+                ::File.write(main, header + fix_modes.call(::File.read(main).gsub(mode_line, '')))
+              end
+              only_if { ::File.exist?(main) }
+              not_if do
+                body = ::File.read(main)
+                module_declared && body.start_with?("#{directive}\n") && body.scan(mode_line).one? && fix_modes.call(body) == body
+              end
+              notifies :run, 'execute[validate rsyslog configuration]', :delayed
+            end
+
+            drop_ins.each do |config|
+              ruby_block "set the log file creation mode in #{config}" do
                 block do
-                  ::File.write(config, ::File.read(config).gsub(/^[ \t]*\$FileCreateMode[ \t].*$/, directive))
+                  ::File.write(config, fix_modes.call(::File.read(config).gsub(/^[ \t]*\$FileCreateMode[ \t].*$/, directive)))
                 end
-                not_if { ::File.read(config).scan(/^[ \t]*\$FileCreateMode[ \t].*$/).all? { |line| line == directive } }
-                notifies :restart, 'service[rsyslog]', :delayed
+                not_if do
+                  body = ::File.read(config)
+                  fix_modes.call(body.gsub(/^[ \t]*\$FileCreateMode[ \t].*$/, directive)) == body
+                end
+                notifies :run, 'execute[validate rsyslog configuration]', :delayed
               end
             end
             ```
     refs:
       - url: https://docs.rsyslog.com/
         title: rsyslog Documentation
+      - url: https://www.rsyslog.com/doc/configuration/modules/omfile.html
+        title: "omfile: File Output Module"
   - uid: mondoo-linux-security-journald-is-configured-to-send-logs-to-rsyslog
     title: Ensure journald is configured to send logs to rsyslog
     impact: 50
