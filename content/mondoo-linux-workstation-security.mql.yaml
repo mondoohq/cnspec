@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-linux-workstation-security
     name: Mondoo Linux Workstation Security
-    version: 1.1.1
+    version: 1.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -393,21 +393,13 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-10
       compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: |-
-      mount.list.where( path == '/') {
-        lsblkDevice = parse.json(content: command('lsblk -a --json -s ' + _.device).stdout).params
-        lsblkDevice['blockdevices'][0]['children'][0]['type'] == 'crypt' || lsblkDevice['blockdevices'][0]['type'] == 'crypt'
-      }
-      if( mount.list.where( path == /home/) != [] ) {
-        mount.list.where( path == '/home') {
-          lsblkDevice = parse.json(content: command('lsblk -a --json -s ' + _.device).stdout).params
-          lsblkDevice['blockdevices'][0]['children'][0]['type'] == 'crypt' || lsblkDevice['blockdevices'][0]['type'] == 'crypt'
-        }
-      }
+      mount.point(path: "/").blockDevice.encrypted == true
+      mount.list.where(path == "/home").all(blockDevice.encrypted == true)
     docs:
       desc: |
         This check verifies that the filesystems holding the operating system and the users' data sit on encrypted block devices.
 
-        It resolves the devices backing `/` and, where it is mounted separately, `/home`, then walks the device stack for each and requires a `crypt` layer, the device-mapper target that an unlocked LUKS volume presents. `lsblk` shows the same relationship, with the crypt device sitting between the physical partition and the mounted filesystem. Where `/home` is part of the root filesystem rather than a separate mount, encrypting the root volume covers both.
+        It resolves the block devices backing `/` and, where it is mounted separately, `/home`, then walks each device stack down to physical storage and requires every path through it to pass a `crypt` layer, the device-mapper target that an unlocked LUKS volume presents. An LVM volume on a LUKS mapping passes, however many layers sit between them. An LVM volume that spans an encrypted and an unencrypted physical volume fails, because part of its data is written in plaintext. A filesystem that no block device backs, such as a ZFS dataset or a network mount, also fails, because its encryption cannot be confirmed from the device stack. Where `/home` is part of the root filesystem rather than a separate mount, encrypting the root volume covers both.
 
         **Why this matters**
 
@@ -422,12 +414,12 @@ queries:
         Run these commands to identify the devices serving `/` and `/home` and confirm they are encrypted:
 
         ```bash
-        df /  /home
-        lsblk -o NAME,TYPE,MOUNTPOINT
-        dmsetup status
+        findmnt -n -o SOURCE /
+        findmnt -n -o SOURCE /home
+        lsblk -s -o NAME,TYPE,MOUNTPOINTS "$(findmnt -n -o SOURCE /)"
         ```
 
-        A passing result shows the devices backing `/` and `/home` mapped through a `crypt` device. A failing result shows either filesystem on a plain, unencrypted device.
+        The `-s` option prints the device stack upside down, from the mounted device down to the disk. Repeat the last command with the `/home` source when `/home` is a separate mount. A passing result shows a `crypt` device on every branch of each stack. A failing result shows a branch that reaches a disk, partition, or loop device without passing through a `crypt` device.
       remediation:
         - id: cli
           desc: |
