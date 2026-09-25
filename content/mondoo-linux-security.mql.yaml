@@ -727,15 +727,15 @@ queries:
       limits.entries.any(domain == "*" && type == "hard" && item == "core" && value == "0")
 
       kernel.parameters['fs.suid_dumpable'] == 0
-      if(service("coredump").enabled || service("coredump").running) {
-        parse.ini("/etc/systemd/coredump.conf").sections['Coredump']['ProcessSizeMax'] == 0
-        parse.ini("/etc/systemd/coredump.conf").sections['Coredump']['Storage'] == 'none'
+      if (systemd.coredump.active) {
+        systemd.coredump.storage == "none"
+        systemd.coredump.processSizeMax == 0
       }
     docs:
       desc: |
         This check verifies that the system does not write core dumps.
 
-        A core dump is a copy of a process's memory saved to disk when it crashes, and suppressing it requires settings in three separate places. The check reads all three: a hard limit of `0` on core file size for all users in `/etc/security/limits.conf`, the kernel parameter `fs.suid_dumpable` set to `0` so that set-user-ID programs never dump, and, where the systemd `coredump` service is present, `ProcessSizeMax=0` and `Storage=none` in `/etc/systemd/coredump.conf`.
+        A core dump is a copy of a process's memory saved to disk when it crashes, and suppressing it requires settings in three separate places. The check reads all three: a hard limit of `0` on core file size for all users in `/etc/security/limits.conf`, the kernel parameter `fs.suid_dumpable` set to `0` so that set-user-ID programs never dump, and, where the kernel core pattern hands core dumps to systemd-coredump, `Storage=none` and `ProcessSizeMax=0` in its effective configuration. systemd-coredump reads `coredump.conf` and then every `coredump.conf.d/*.conf` drop-in under `/etc/systemd`, `/run/systemd`, `/usr/local/lib/systemd`, and `/usr/lib/systemd`, and the last assignment wins. When nothing sets `Storage`, systemd-coredump stores dumps under `/var/lib/systemd/coredump`, so an absent setting fails the check.
 
         **Why this matters**
 
@@ -745,7 +745,7 @@ queries:
 
         Set-user-ID programs deserve the separate control. They run with privileges the invoking user does not have, so a dump from one can expose material the user was never entitled to see. An attacker can also crash such a program deliberately to produce the dump.
 
-        All three settings are needed because they cover different paths. The resource limit governs the kernel writing a core file, `fs.suid_dumpable` governs the privileged case the limit does not reach, and the systemd service intercepts dumps and stores them in its own journal independently of both.
+        All three settings are needed because they cover different paths. The resource limit governs the kernel writing a core file, `fs.suid_dumpable` governs the privileged case the limit does not reach, and when the kernel pipes dumps to systemd-coredump, its own settings decide whether they are kept on disk or in the journal.
 
         Where crash analysis is required, capture dumps on a dedicated non-production host rather than enabling them in production.
       audit: |
@@ -754,10 +754,11 @@ queries:
         ```bash
         grep -E '^\s*\*\s+hard\s+core' /etc/security/limits.conf /etc/security/limits.d/*.conf
         sysctl fs.suid_dumpable
-        grep -E '^(Storage|ProcessSizeMax)' /etc/systemd/coredump.conf
+        cat /proc/sys/kernel/core_pattern
+        systemd-analyze cat-config systemd/coredump.conf | grep -E '^(Storage|ProcessSizeMax)='
         ```
 
-        A passing result shows a `* hard core 0` limit, `fs.suid_dumpable = 0`, and (where systemd-coredump is active) `Storage=none` with `ProcessSizeMax=0`. A failing result shows any of these settings missing or set to a permissive value.
+        A passing result shows a `* hard core 0` limit and `fs.suid_dumpable = 0`. When the core pattern starts with `|` and names `systemd-coredump`, the last `Storage=` line printed must be `Storage=none` and the last `ProcessSizeMax=` line must be `ProcessSizeMax=0`. `systemd-analyze cat-config` prints the main file and its drop-ins in the order systemd applies them. A failing result shows any of these settings missing or set to a permissive value. systemd matches `Storage` case-sensitively, so a value such as `None` is ignored.
       remediation:
         - id: cli
           desc: |
@@ -792,7 +793,7 @@ queries:
 
             3. Configure systemd-coredump if present:
 
-                If the file `/etc/systemd/coredump.conf` exists, set these options in the `[Coredump]` section:
+                If `/usr/lib/systemd/systemd-coredump` or `/lib/systemd/systemd-coredump` exists, create the drop-in file `/etc/systemd/coredump.conf.d/99-disable-coredump.conf` with these settings. Drop-ins are applied after `coredump.conf` in file name order, so a drop-in overrides the main file wherever the distribution installs it:
 
                 ```ini
                 [Coredump]
@@ -800,11 +801,7 @@ queries:
                 ProcessSizeMax=0
                 ```
 
-                Run this command to apply the change:
-
-                ```bash
-                systemctl daemon-reload
-                ```
+                systemd-coredump reads its configuration each time it handles a crash, so no service restart is needed.
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -831,30 +828,12 @@ queries:
             # Reload persisted sysctl drop-in files so the saved value takes effect.
             sysctl --system
 
-            # Configure systemd-coredump if present
-            if [ -f /etc/systemd/coredump.conf ]; then
-              echo "Setting systemd-coredump configuration"
-
-              # Ensure a [Coredump] section header exists exactly once.
-              if ! grep -q '^\[Coredump\]' /etc/systemd/coredump.conf; then
-                printf '\n[Coredump]\n' | tee -a /etc/systemd/coredump.conf
-              fi
-
-              # Update the keys in place if they are present, otherwise add them under the
-              # existing [Coredump] header. This avoids appending a second, duplicate section.
-              if grep -qE '^\s*#?\s*Storage=' /etc/systemd/coredump.conf; then
-                sed -i 's/^\s*#\?\s*Storage=.*/Storage=none/' /etc/systemd/coredump.conf
-              else
-                sed -i '/^\[Coredump\]/a Storage=none' /etc/systemd/coredump.conf
-              fi
-
-              if grep -qE '^\s*#?\s*ProcessSizeMax=' /etc/systemd/coredump.conf; then
-                sed -i 's/^\s*#\?\s*ProcessSizeMax=.*/ProcessSizeMax=0/' /etc/systemd/coredump.conf
-              else
-                sed -i '/^\[Coredump\]/a ProcessSizeMax=0' /etc/systemd/coredump.conf
-              fi
-
-              systemctl daemon-reexec
+            # Configure systemd-coredump if present. A drop-in is applied after coredump.conf,
+            # wherever the distribution installs the main file, so it overrides both.
+            if [ -e /usr/lib/systemd/systemd-coredump ] || [ -e /lib/systemd/systemd-coredump ]; then
+              echo "Setting systemd-coredump configuration in /etc/systemd/coredump.conf.d/99-disable-coredump.conf"
+              mkdir -p /etc/systemd/coredump.conf.d
+              printf '[Coredump]\nStorage=none\nProcessSizeMax=0\n' | tee /etc/systemd/coredump.conf.d/99-disable-coredump.conf
             fi
 
             echo "Core dump restrictions applied."
@@ -890,26 +869,35 @@ queries:
                     sysctl_set: true
                     reload: yes
 
-                - name: Check if systemd-coredump config exists
+                - name: Check if systemd-coredump is installed
                   ansible.builtin.stat:
-                    path: /etc/systemd/coredump.conf
-                  register: coredump_conf
+                    path: "{{ item }}"
+                  loop:
+                    - /usr/lib/systemd/systemd-coredump
+                    - /lib/systemd/systemd-coredump
+                  register: coredump_binary
 
-                - name: Set systemd-coredump options if applicable
+                - name: Disable systemd-coredump storage and processing if installed
+                  when: coredump_binary.results | selectattr('stat.exists') | list | length > 0
                   block:
-                    - name: Ensure /etc/systemd/coredump.conf exists with correct settings
-                      ansible.builtin.ini_file:
-                        path: /etc/systemd/coredump.conf
-                        section: Coredump
-                        option: "{{ item.option }}"
-                        value: "{{ item.value }}"
-                      loop:
-                        - { option: 'Storage', value: 'none' }
-                        - { option: 'ProcessSizeMax', value: '0' }
+                    - name: Create the systemd-coredump drop-in directory
+                      ansible.builtin.file:
+                        path: /etc/systemd/coredump.conf.d
+                        state: directory
+                        owner: root
+                        group: root
+                        mode: '0755'
 
-                    - name: Reload systemd daemon after coredump config change
-                      ansible.builtin.command: systemctl daemon-reexec
-                  when: coredump_conf.stat.exists
+                    - name: Write the systemd-coredump drop-in
+                      ansible.builtin.copy:
+                        dest: /etc/systemd/coredump.conf.d/99-disable-coredump.conf
+                        owner: root
+                        group: root
+                        mode: '0644'
+                        content: |
+                          [Coredump]
+                          Storage=none
+                          ProcessSizeMax=0
             ```
         - id: chef
           desc: |
@@ -927,23 +915,21 @@ queries:
               value 0
             end
 
-            coredump_conf = '/etc/systemd/coredump.conf'
+            coredump_installed = %w(/usr/lib/systemd/systemd-coredump /lib/systemd/systemd-coredump).any? { |p| ::File.exist?(p) }
 
-            { 'Storage' => 'none', 'ProcessSizeMax' => '0' }.each do |keyword, value|
-              ruby_block "set #{keyword} in coredump.conf" do
-                block do
-                  body = ::File.read(coredump_conf)
-                  directive = "#{keyword}=#{value}"
-                  body = if body.match?(/^\s*#?\s*#{keyword}=/)
-                           body.gsub(/^\s*#?\s*#{keyword}=.*$/, directive)
-                         else
-                           body.sub(/^\[Coredump\]$/, "[Coredump]\n#{directive}")
-                         end
-                  ::File.write(coredump_conf, body)
-                end
-                not_if { ::File.read(coredump_conf).match?(/^#{keyword}=#{Regexp.escape(value)}\s*$/) }
-                only_if { ::File.exist?(coredump_conf) }
-              end
+            directory '/etc/systemd/coredump.conf.d' do
+              owner 'root'
+              group 'root'
+              mode '0755'
+              only_if { coredump_installed }
+            end
+
+            file '/etc/systemd/coredump.conf.d/99-disable-coredump.conf' do
+              content "[Coredump]\nStorage=none\nProcessSizeMax=0\n"
+              owner 'root'
+              group 'root'
+              mode '0644'
+              only_if { coredump_installed }
             end
             ```
     refs:
