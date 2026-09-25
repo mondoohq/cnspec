@@ -5,6 +5,8 @@ package scan
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"testing"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql"
+	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/mqlc"
 	"go.mondoo.com/mql/providers"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
@@ -817,4 +820,38 @@ func TestResolveScanParallelismServerOutranksTheClient(t *testing.T) {
 		// No roots means no provider opted in, which resolves to sequential.
 		assert.Equal(t, 1, resolveScanParallelism(0, nil, 16))
 	})
+}
+
+// failedScanRecorder is a resolver that only records ReportAssetScanFailed.
+type failedScanRecorder struct {
+	policy.PolicyResolver
+	got []*policy.ReportAssetScanFailedReq
+	err error
+}
+
+func (r *failedScanRecorder) ReportAssetScanFailed(_ context.Context, req *policy.ReportAssetScanFailedReq) (*policy.Empty, error) {
+	r.got = append(r.got, req)
+	return &policy.Empty{}, r.err
+}
+
+func TestReportAssetScanFailedCarriesTheKind(t *testing.T) {
+	r := &failedScanRecorder{}
+	scanErr := fmt.Errorf("resolving policies: %w", llx.Unauthenticated(errors.New("token expired")))
+	reportAssetScanFailed(context.Background(), r, "//assets/a", scanErr)
+
+	require.Len(t, r.got, 1)
+	assert.Equal(t, "//assets/a", r.got[0].AssetMrn)
+	assert.Equal(t, "resolving policies: token expired", r.got[0].Error)
+	require.NotNil(t, r.got[0].ErrorDetail)
+	assert.Equal(t, llx.ErrorKind_ERROR_KIND_UNAUTHENTICATED, r.got[0].ErrorDetail.Kind)
+
+	// Unclassified: the message alone.
+	reportAssetScanFailed(context.Background(), r, "//assets/b", errors.New("boom"))
+	require.Len(t, r.got, 2)
+	assert.Nil(t, r.got[1].ErrorDetail)
+
+	// A server that predates the RPC: nothing to do, and nothing panics.
+	r.err = errors.New("not found")
+	reportAssetScanFailed(context.Background(), r, "//assets/c", errors.New("boom"))
+	assert.Len(t, r.got, 3)
 }

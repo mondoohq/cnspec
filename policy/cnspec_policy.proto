@@ -999,8 +999,9 @@ message ReportCollection {
   map<string, ResolvedPolicy> resolved_policies = 5;
   map<string, mondoo.mvd.v1.VulnReport> vuln_reports = 6;
   // Asset-level failures, structured (mql ADR-46), keyed like errors. Only a
-  // classified failure has an entry; errors keeps every message. Local output
-  // only, asset errors do not travel through StoreResults.
+  // classified failure has an entry; errors keeps every message. The report
+  // collection is local output; a synced asset's failure reaches upstream
+  // through ReportAssetScanFailed.
   map<string, mql.llx.ErrorDetail> error_details = 7;
 }
 
@@ -1244,6 +1245,12 @@ service PolicyResolver {
   rpc GetResolvedPolicy(Mrn) returns (ResolvedPolicy) {}
 
   rpc StoreResults(StoreResultsReq) returns (Empty) {}
+  // Reports that scanning a synced asset failed, so the failure is known
+  // upstream and not only in local output (mql ADR-46). Sent instead of
+  // results, never beside them: it does not count as a scan. Servers that
+  // predate this RPC answer NotFound (ranger's unknown-method response), and
+  // clients ignore any error here: the scan has already failed.
+  rpc ReportAssetScanFailed(ReportAssetScanFailedReq) returns (Empty) {}
 
   // Signed URL upload flow
   rpc GetUploadURL(GetUploadURLReq) returns (GetUploadURLResp) {}
@@ -1318,6 +1325,14 @@ message StoreResultsReq {
 
   // Determines if this is the last batch of results for the asset
   bool is_last_batch = 23;
+}
+
+message ReportAssetScanFailedReq {
+  string asset_mrn = 1;
+  // The failure's message, verbatim.
+  string error = 2;
+  // Its classification (mql ADR-46), or unset when it is unclassified.
+  mql.llx.ErrorDetail error_detail = 3;
 }
 
 enum UploadURLKind {
