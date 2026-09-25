@@ -3,7 +3,7 @@
 policies:
   - uid: linux-operational-policy
     name: Linux Server Operational Policy
-    version: 1.1.1
+    version: 1.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: best-practices
@@ -162,12 +162,12 @@ queries:
     impact: 60
     filters: mondoo.capabilities.contains("run-command")
     mql: |
-      command("LC_ALL=C free | awk '/^Mem:/ {print $3/$2 * 100.0}'").stdout.trim < 80.0
+      memory.available * 100.0 / memory.total > 20.0
     docs:
       desc: |
         This check verifies that the host is using less than 80 percent of its physical memory.
 
-        The check reads the totals the kernel reports and compares used memory against the total as a percentage. Memory the kernel holds as page cache and reclaimable buffers is not counted as used, so the figure reflects what processes have actually committed rather than everything that is occupied. A host at 80 percent is not failing; it is running with a margin thin enough that the next allocation spike has nowhere to come from.
+        The check reads `MemTotal` and `MemAvailable` from `/proc/meminfo` and requires more than 20 percent of the total to be available. `MemAvailable` is the kernel's estimate of the memory it can hand to new allocations without swapping: free memory plus the page cache and reclaimable buffers it can drop at once. Memory held that way is not counted as used, so the figure reflects what processes have actually claimed rather than everything that is occupied. It is the same figure `free` prints in its available column. A host at 80 percent is not failing; it is running with a margin thin enough that the next allocation spike has nowhere to come from.
 
         **Why this matters**
 
@@ -185,7 +185,7 @@ queries:
         free -m
         ```
 
-        A passing result shows used memory below 80 percent of the total. A failing result shows used memory at or above 80 percent of the total.
+        A passing result shows the value in the available column above 20 percent of the total. A failing result shows it at or below 20 percent of the total.
       remediation:
         - id: cli
           desc: |
@@ -226,8 +226,8 @@ queries:
             # List the top 20 memory consumers
             ps -eo pid,user,%mem,rss,command --sort=-%mem | head -20
 
-            # Print the current memory utilization percentage
-            LC_ALL=C free | awk '/^Mem:/ { printf "Memory usage: %.1f%%\n", $3 / $2 * 100 }'
+            # Print the current memory utilization percentage, counting available memory as unused
+            awk '/^MemTotal:/ { t = $2 } /^MemAvailable:/ { a = $2 } END { printf "Memory usage: %.1f%%\n", (t - a) / t * 100 }' /proc/meminfo
             ```
         - id: ansible
           desc: |
