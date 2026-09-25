@@ -5,7 +5,6 @@ package internal
 
 import (
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/cockroachdb/errors"
@@ -478,6 +477,10 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 	// errors of its own.
 	var err multierr.Errors
 	var foreignErr multierr.Errors
+	// Coverage gaps of the results this score is computed from (mql ADR-46 §8):
+	// the score stands on the data that was read, the gaps say what it is
+	// missing.
+	var gaps []*llx.Error
 
 	// Iterate the results in sorted-checksum order, NOT map order: everything
 	// this loop accumulates positionally — the sub-error order inside the
@@ -501,9 +504,10 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 			break
 		}
 
+		gaps = llx.UnionCoverageGaps(gaps, cur.Data.CoverageGaps)
+
 		if cur.Data.Error != nil {
-			msg := cur.Data.Error.Error()
-			if strings.HasPrefix(msg, "could not find resource") {
+			if errors.Is(cur.Data.Error, llx.ErrAssetVanished) {
 				assetVanishedDuringScan = true
 			} else {
 				allSkipped = false
@@ -546,6 +550,7 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 	}
 
 	if allFound {
+		errorDetails := scoreErrorDetails(err.Errors, gaps)
 		if assetVanishedDuringScan {
 			return &policy.Score{
 				QrId:            nodeData.queryID,
@@ -554,6 +559,7 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 				ScoreCompletion: 100,
 				Weight:          1,
 				Message:         err.Deduplicate().Error(),
+				ErrorDetails:    errorDetails,
 			}
 		} else if foundError {
 			return &policy.Score{
@@ -563,6 +569,7 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 				ScoreCompletion: 100,
 				Weight:          1,
 				Message:         err.Deduplicate().Error(),
+				ErrorDetails:    errorDetails,
 			}
 		} else if allSkipped {
 			return &policy.Score{
@@ -572,6 +579,7 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 				ScoreCompletion: 100,
 				Weight:          1,
 				Message:         "",
+				ErrorDetails:    errorDetails,
 			}
 		} else {
 			if scoreFound == nil {
@@ -588,10 +596,36 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 				ScoreCompletion: 100,
 				Weight:          1,
 				Message:         "",
+				ErrorDetails:    errorDetails,
 			}
 		}
 	}
 	return nil
+}
+
+// scoreErrorDetails is what a score carries beside its message (mql ADR-46): the
+// classification of each error that produced it, and the coverage gaps of the
+// data it was computed from. Deduplicated on (kind, scope, scope_id,
+// permissions), in the order the results were read. An unclassified error adds
+// nothing, its message already says everything that is known; an unclassified
+// gap is kept, since the partition it names is still worth knowing.
+func scoreErrorDetails(errs []error, gaps []*llx.Error) []*llx.ErrorDetail {
+	var classified []*llx.Error
+	for _, err := range errs {
+		var e *llx.Error
+		if errors.As(err, &e) && e.Kind != llx.ErrorKind_ERROR_KIND_UNSPECIFIED {
+			classified = append(classified, e)
+		}
+	}
+	all := llx.UnionCoverageGaps(classified, gaps)
+	if len(all) == 0 {
+		return nil
+	}
+	res := make([]*llx.ErrorDetail, len(all))
+	for i, gap := range llx.CoverageGapsToProto(all) {
+		res[i] = gap.Detail
+	}
+	return res
 }
 
 // StaticReportingJobNodeData holds a pre-computed score and emits it once on

@@ -16,6 +16,7 @@ import (
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/cli/printer"
 	"go.mondoo.com/mql/cli/theme/colors"
+	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/utils/iox"
 )
 
@@ -94,4 +95,45 @@ func TestJsonOutputOnlyErrors(t *testing.T) {
 	assert.NotContains(t, buf.String(), "\"errors\":{}\"")
 
 	assert.Contains(t, buf.String(), "\"data\":{},\"scores\":{},\"errors\":{\"//policy")
+}
+
+func TestJsonOutputErrorDetails(t *testing.T) {
+	reportCollectionRaw, err := os.ReadFile("./testdata/simple-report.json")
+	require.NoError(t, err)
+
+	yr := &policy.ReportCollection{}
+	require.NoError(t, json.Unmarshal(reportCollectionRaw, yr))
+
+	// A passing check over data with one refused region: the score stands and
+	// says what it is missing (mql ADR-46 §8).
+	for _, report := range yr.Reports {
+		for _, score := range report.Scores {
+			score.ErrorDetails = []*llx.ErrorDetail{{
+				Kind:        llx.ErrorKind_ERROR_KIND_FORBIDDEN,
+				Scope:       llx.ErrorScope_ERROR_SCOPE_PARTITION,
+				ScopeId:     "eu-west-1",
+				Permissions: []string{"ec2:DescribeVpcs", "ec2:DescribeAddresses"},
+			}}
+		}
+	}
+	yr.ErrorDetails = map[string]*llx.ErrorDetail{
+		"//assets/throttled": {Kind: llx.ErrorKind_ERROR_KIND_TOO_MANY_REQUESTS, RetryAfterMs: 2000},
+	}
+
+	buf := bytes.Buffer{}
+	conf := defaultPrintConfig()
+	conf.format = FormatJSONv1
+	r := &Reporter{
+		Conf:    conf,
+		Printer: &printer.DefaultPrinter,
+		Colors:  &colors.DefaultColorTheme,
+		out:     &iox.IOWriter{Writer: &buf},
+	}
+	require.NoError(t, r.WriteReport(context.Background(), yr))
+	require.True(t, json.Valid(buf.Bytes()))
+
+	assert.Contains(t, buf.String(), "custom-query-passing-1\":{\"score\":100,\"riskScore\":0,\"status\":\"pass\","+
+		"\"errorDetails\":[{\"kind\":\"forbidden\",\"scope\":\"partition\",\"scopeId\":\"eu-west-1\","+
+		"\"permissions\":[\"ec2:DescribeAddresses\",\"ec2:DescribeVpcs\"]}]}")
+	assert.Contains(t, buf.String(), "\"errors\":{},\"errorDetails\":{\"//assets/throttled\":{\"kind\":\"too_many_requests\",\"retryAfterMs\":2000}}}")
 }

@@ -6,6 +6,8 @@ package reporter
 import (
 	"encoding/json"
 	"errors"
+	"slices"
+	"sort"
 	"strconv"
 
 	"go.mondoo.com/cnspec/policy"
@@ -33,8 +35,46 @@ func printScore(score *policy.Score, mrn string, out iox.OutputHelper, prefix st
 	_ = out.WriteString(prefix + llx.PrettyPrintString(mrn) +
 		":{\"score\":" + strconv.FormatUint(uint64(score.Value), 10) + "," +
 		"\"riskScore\":" + strconv.FormatUint(uint64(100-score.Value), 10) + "," +
-		"\"status\":\"" + status + "\"}")
+		"\"status\":\"" + status + "\"")
+	if len(score.ErrorDetails) != 0 {
+		details := make([]errorDetailJSON, len(score.ErrorDetails))
+		for i, d := range score.ErrorDetails {
+			details[i] = toErrorDetailJSON(d)
+		}
+		if raw, err := json.Marshal(details); err == nil {
+			_ = out.WriteString(",\"errorDetails\":" + string(raw))
+		}
+	}
+	_ = out.WriteString("}")
 	return true
+}
+
+// errorDetailJSON is an ErrorDetail as JSON output writes it (mql ADR-46), in the
+// spelling mql uses for coverage gaps: kind and scope by their machine names,
+// permissions sorted.
+type errorDetailJSON struct {
+	Kind         string   `json:"kind"`
+	Scope        string   `json:"scope,omitempty"`
+	ScopeID      string   `json:"scopeId,omitempty"`
+	Permissions  []string `json:"permissions,omitempty"`
+	RetryAfterMs int64    `json:"retryAfterMs,omitempty"`
+}
+
+func toErrorDetailJSON(d *llx.ErrorDetail) errorDetailJSON {
+	res := errorDetailJSON{
+		Kind:         d.GetKind().Name(),
+		ScopeID:      d.GetScopeId(),
+		RetryAfterMs: d.GetRetryAfterMs(),
+	}
+	if scope := d.GetScope(); scope != llx.ErrorScope_ERROR_SCOPE_UNSPECIFIED {
+		res.Scope = scope.Name()
+	}
+	if len(d.GetPermissions()) != 0 {
+		// A copy: the detail belongs to the report.
+		res.Permissions = slices.Clone(d.GetPermissions())
+		slices.Sort(res.Permissions)
+	}
+	return res
 }
 
 // assetPrintable is a snapshot of the fields that get exported
@@ -186,7 +226,30 @@ func ConvertToJSON(data *policy.ReportCollection, out iox.OutputHelper) error {
 		_ = out.WriteString(pre + llx.PrettyPrintString(id) + ":" + llx.PrettyPrintString(err))
 		pre = ","
 	}
-	_ = out.WriteString("}}")
+	_ = out.WriteString("}")
+
+	// Asset errors that were classified, beside the messages above. A scan
+	// without any writes nothing here, so its output keeps today's shape.
+	if len(data.ErrorDetails) != 0 {
+		ids := make([]string, 0, len(data.ErrorDetails))
+		for id := range data.ErrorDetails {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		_ = out.WriteString(",\"errorDetails\":{")
+		for i, id := range ids {
+			raw, err := json.Marshal(toErrorDetailJSON(data.ErrorDetails[id]))
+			if err != nil {
+				return err
+			}
+			if i != 0 {
+				_ = out.WriteString(",")
+			}
+			_ = out.WriteString(llx.PrettyPrintString(id) + ":" + string(raw))
+		}
+		_ = out.WriteString("}")
+	}
+	_ = out.WriteString("}")
 
 	return nil
 }

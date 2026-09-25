@@ -181,7 +181,7 @@ agent checks read every user's home, iptables and nft need root, and
 `/etc/sudoers` and the PostgreSQL configuration are closed to a regular user.
 `nonRootForbiddenChecks` lists those checks, each with the refusal it hits,
 for a non-root Linux scan only; which of them appear depends on what the host
-has installed. Under ADR-046 (structured provider errors) such a failure is
+has installed. Under mql ADR-46 (structured provider errors) such a failure is
 `forbidden` and the kind reaches the score; the list is then replaced by
 tolerating only `forbidden` errors in a non-root scan.
 

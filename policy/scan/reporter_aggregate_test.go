@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/scanwarnings"
+	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 )
 
@@ -178,4 +179,37 @@ func TestReportCriticalErrors_DoesNotAffectReporterOrExitCode(t *testing.T) {
 	assert.Empty(t, full.Errors, "a crash warning must never appear in the errors map that drives the exit code")
 	assert.Contains(t, full.Reports, asset.Mrn, "the report must survive the crash, not be dropped")
 	assert.Equal(t, uint32(80), full.Reports[asset.Mrn].Score.Value)
+}
+
+func TestAggregateReportKeepsAssetErrorKinds(t *testing.T) {
+	r := NewAggregateReporter()
+	throttled := &inventory.Asset{Mrn: "//assets/throttled", Name: "throttled"}
+	broken := &inventory.Asset{Mrn: "//assets/broken", Name: "broken"}
+	r.AddScanError(throttled, fmt.Errorf("connecting: %w", llx.TooManyRequests(errors.New("slow down"),
+		llx.WithScope(llx.ErrorScope_ERROR_SCOPE_ASSET, "index.docker.io"))))
+	r.AddScanError(broken, errors.New("boom"))
+
+	full := r.Reports().GetFull()
+	require.NotNil(t, full)
+	// Every message stays where it was.
+	assert.Equal(t, "connecting: slow down", full.Errors[throttled.Mrn])
+	assert.Equal(t, "boom", full.Errors[broken.Mrn])
+	// Only the classified one has a detail.
+	require.Len(t, full.ErrorDetails, 1)
+	assert.Equal(t, llx.ErrorKind_ERROR_KIND_TOO_MANY_REQUESTS, full.ErrorDetails[throttled.Mrn].Kind)
+	assert.Equal(t, "index.docker.io", full.ErrorDetails[throttled.Mrn].ScopeId)
+}
+
+func TestAggregateReportWithoutClassifiedErrorsHasNoDetails(t *testing.T) {
+	r := NewAggregateReporter()
+	r.AddScanError(&inventory.Asset{Mrn: "//assets/broken"}, errors.New("boom"))
+	assert.Nil(t, r.Reports().GetFull().ErrorDetails)
+}
+
+func TestPullsFromRegistry(t *testing.T) {
+	for _, typ := range []string{"docker-image", "docker-registry", "container-registry", "registry-image"} {
+		assert.True(t, pullsFromRegistry(&inventory.Asset{Connections: []*inventory.Config{{Type: typ}}}), typ)
+	}
+	assert.False(t, pullsFromRegistry(&inventory.Asset{Connections: []*inventory.Config{{Type: "aws"}}}))
+	assert.False(t, pullsFromRegistry(&inventory.Asset{}))
 }

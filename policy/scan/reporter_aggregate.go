@@ -4,12 +4,12 @@
 package scan
 
 import (
-	"strings"
 	"sync"
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
@@ -77,7 +77,7 @@ func (r *AggregateReporter) AddVulnReport(asset *inventory.Asset, vulnReport *gq
 
 func (r *AggregateReporter) AddScanError(asset *inventory.Asset, err error) {
 	log.Debug().Err(err).Str("asset", asset.Name).Msg("add scan error to report")
-	if err != nil && strings.Contains(strings.ToUpper(err.Error()), "TOOMANYREQUESTS") {
+	if llx.KindOf(err) == llx.ErrorKind_ERROR_KIND_TOO_MANY_REQUESTS && pullsFromRegistry(asset) {
 		log.Warn().Msg("container registry rate limit reached. Configure registry credentials to authenticate and increase your pull rate limit. See https://www.docker.com/increase-rate-limit")
 	}
 	r.mu.Lock()
@@ -86,12 +86,31 @@ func (r *AggregateReporter) AddScanError(asset *inventory.Asset, err error) {
 	r.assetErrors[asset.Mrn] = err
 }
 
+// pullsFromRegistry reports whether scanning asset pulls an image from a
+// container registry, where a rate limit usually means anonymous pulls.
+func pullsFromRegistry(asset *inventory.Asset) bool {
+	for _, conn := range asset.GetConnections() {
+		switch conn.GetType() {
+		case "docker-image", "docker-registry", "container-registry", "registry-image":
+			return true
+		}
+	}
+	return false
+}
+
 func (r *AggregateReporter) Reports() *ScanResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	errors := make(map[string]string, len(r.assetErrors))
+	var errorDetails map[string]*llx.ErrorDetail
 	for k, v := range r.assetErrors {
 		errors[k] = v.Error()
+		if detail := llx.ErrorDetailOf(v); detail != nil {
+			if errorDetails == nil {
+				errorDetails = map[string]*llx.ErrorDetail{}
+			}
+			errorDetails[k] = detail
+		}
 	}
 
 	return &ScanResult{
@@ -102,6 +121,7 @@ func (r *AggregateReporter) Reports() *ScanResult {
 				Assets:           r.assets,
 				Reports:          r.assetReports,
 				Errors:           errors,
+				ErrorDetails:     errorDetails,
 				Bundle:           r.bundle,
 				ResolvedPolicies: r.resolvedPolicies,
 				VulnReports:      r.assetVulnReports,
