@@ -3,7 +3,7 @@
 policies:
   - uid: linux-snmp-policy
     name: Linux Server SNMP Policy
-    version: 1.1.3
+    version: 1.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: best-practices
@@ -238,12 +238,12 @@ queries:
     title: Ensure no unauthenticated SNMP write access is configured
     impact: 100
     mql: |-
-      snmpd.config.content.lines.none(/(?i)^\s*rwuser\s+(-s\s+\S+\s+)?\S+\s+noauth(nopriv)?\b/)
+      snmpd.config.users.none(access == "rw" && securityLevel == "noauth")
     docs:
       desc: |
         This check verifies that no SNMPv3 user is granted write access without having to authenticate.
 
-        An `rwuser` line names a user and the security level required of its requests. Given `rwuser ... noauth`, or its longer spelling `noauthnopriv`, the daemon accepts write requests carrying that user name with no keyed hash to verify and no encryption, which reproduces the weakness of a community string while wearing the version of the protocol that was meant to fix it. The check requires that no `rwuser` directive in `/etc/snmp/snmpd.conf` or under `/etc/snmp/snmpd.conf.d` specifies that level.
+        An `rwuser` line, or an `authuser` line whose access types include `write`, names a user and the security level required of its requests. Given `rwuser ... noauth`, or its longer spelling `noauthnopriv`, the daemon accepts write requests carrying that user name with no keyed hash to verify and no encryption, which reproduces the weakness of a community string while wearing the version of the protocol that was meant to fix it. The check requires that no directive granting write access in `/etc/snmp/snmpd.conf`, under `/etc/snmp/snmpd.conf.d`, or in a file either one includes specifies that level. A directive that omits the level requires `auth`, and lines the daemon rejects grant no access, so neither fails the check.
 
         **Why this matters**
 
@@ -258,21 +258,21 @@ queries:
         Run this command to search for unauthenticated SNMP write directives:
 
         ```bash
-        grep -riE '^\s*rwuser\s+(-s\s+\S+\s+)?\S+\s+noauth(nopriv)?' /etc/snmp/snmpd.conf /etc/snmp/snmpd.conf.d/ 2>/dev/null
+        grep -riE '^\s*(rwuser|authuser\s+\S*write\S*)\s+(-s\s+\S+\s+)?\S+\s+noauth(nopriv)?' /etc/snmp/snmpd.conf /etc/snmp/snmpd.conf.d/ 2>/dev/null
         ```
 
-        A passing result returns no output. A failing result lists one or more `rwuser` directives that specify the `noauth` security level.
+        A passing result returns no output. A failing result lists one or more `rwuser` or write-granting `authuser` directives that specify the `noauth` security level. The command does not follow `includeFile` or `includeDir` directives, so search any file they name as well.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            Remove or reconfigure any `rwuser` directives that specify the `noauth` or `noauthnopriv` security level in `/etc/snmp/snmpd.conf` or files in `/etc/snmp/snmpd.conf.d/`. Either delete these lines or change them to use the `auth` or `priv` security levels, which require authentication. Before switching a user to `auth` or `priv`, make sure the SNMPv3 user was created with an authentication passphrase and, for `priv`, a privacy passphrase; otherwise that user loses SNMP access.
+            Remove or reconfigure any `rwuser` directives, and any `authuser` directives granting `write`, that specify the `noauth` or `noauthnopriv` security level in `/etc/snmp/snmpd.conf` or files in `/etc/snmp/snmpd.conf.d/`. Either delete these lines or change them to use the `auth` or `priv` security levels, which require authentication. Before switching a user to `auth` or `priv`, make sure the SNMPv3 user was created with an authentication passphrase and, for `priv`, a privacy passphrase. Otherwise that user loses SNMP access.
 
             ```bash
-            sed -i '/^[[:space:]]*rwuser[[:space:]]\+\(-s[[:space:]]\+[^[:space:]]\+[[:space:]]\+\)\?[^[:space:]]\+[[:space:]]\+noauth\(nopriv\)\?/Id' /etc/snmp/snmpd.conf
+            sed -i '/^[[:space:]]*\(rwuser\|authuser[[:space:]]\+[^[:space:]]*write[^[:space:]]*\)[[:space:]]\+\(-s[[:space:]]\+[^[:space:]]\+[[:space:]]\+\)\?[^[:space:]]\+[[:space:]]\+noauth\(nopriv\)\?\([[:space:]]\|$\)/Id' /etc/snmp/snmpd.conf
             if [ -d /etc/snmp/snmpd.conf.d ]; then
-              find /etc/snmp/snmpd.conf.d -type f -exec sed -i '/^[[:space:]]*rwuser[[:space:]]\+\(-s[[:space:]]\+[^[:space:]]\+[[:space:]]\+\)\?[^[:space:]]\+[[:space:]]\+noauth\(nopriv\)\?/Id' {} +
+              find /etc/snmp/snmpd.conf.d -type f -exec sed -i '/^[[:space:]]*\(rwuser\|authuser[[:space:]]\+[^[:space:]]*write[^[:space:]]*\)[[:space:]]\+\(-s[[:space:]]\+[^[:space:]]\+[[:space:]]\+\)\?[^[:space:]]\+[[:space:]]\+noauth\(nopriv\)\?\([[:space:]]\|$\)/Id' {} +
             fi
             systemctl restart snmpd
             ```
@@ -286,9 +286,9 @@ queries:
             #!/bin/bash
             set -euo pipefail
 
-            remove_noauth='/^[[:space:]]*rwuser[[:space:]]\+\(-s[[:space:]]\+[^[:space:]]\+[[:space:]]\+\)\?[^[:space:]]\+[[:space:]]\+noauth\(nopriv\)\?/Id'
+            remove_noauth='/^[[:space:]]*\(rwuser\|authuser[[:space:]]\+[^[:space:]]*write[^[:space:]]*\)[[:space:]]\+\(-s[[:space:]]\+[^[:space:]]\+[[:space:]]\+\)\?[^[:space:]]\+[[:space:]]\+noauth\(nopriv\)\?\([[:space:]]\|$\)/Id'
 
-            echo "Removing unauthenticated rwuser directives from snmpd configuration"
+            echo "Removing unauthenticated rwuser and authuser write directives from snmpd configuration"
             sed -i "$remove_noauth" /etc/snmp/snmpd.conf
 
             if [ -d /etc/snmp/snmpd.conf.d ]; then
@@ -310,10 +310,10 @@ queries:
               become: true
 
               tasks:
-                - name: Remove rwuser noauth lines from /etc/snmp/snmpd.conf
+                - name: Remove noauth write user lines from /etc/snmp/snmpd.conf
                   ansible.builtin.lineinfile:
                     path: /etc/snmp/snmpd.conf
-                    regexp: '(?i)^\s*rwuser\s+(-s\s+\S+\s+)?\S+\s+noauth(nopriv)?'
+                    regexp: '(?i)^\s*(rwuser|authuser\s+\S*write\S*)\s+(-s\s+\S+\s+)?\S+\s+noauth(nopriv)?(\s|$)'
                     state: absent
                   notify: Restart snmpd
 
@@ -323,10 +323,10 @@ queries:
                     file_type: file
                   register: snmp_conf_files
 
-                - name: Remove rwuser noauth lines from snmpd.conf.d files
+                - name: Remove noauth write user lines from snmpd.conf.d files
                   ansible.builtin.lineinfile:
                     path: "{{ item.path }}"
-                    regexp: '(?i)^\s*rwuser\s+(-s\s+\S+\s+)?\S+\s+noauth(nopriv)?'
+                    regexp: '(?i)^\s*(rwuser|authuser\s+\S*write\S*)\s+(-s\s+\S+\s+)?\S+\s+noauth(nopriv)?(\s|$)'
                     state: absent
                   loop: "{{ snmp_conf_files.files }}"
                   notify: Restart snmpd
