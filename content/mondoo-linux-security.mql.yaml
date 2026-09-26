@@ -269,10 +269,13 @@ queries:
 
             ### Debian/Ubuntu and derivatives
 
-            Skip the recommended packages. `aide-common` recommends a mail client, which depends on a mail transfer agent, so a default install also installs and starts Postfix listening on every network interface, which fails the check that the mail transfer agent accepts only local connections:
+            Install `aide-common` by name alongside `aide`. It provides `/etc/aide/aide.conf`, the `aideinit` wrapper, and the daily check, and `aide` only recommends it, so installing `aide` alone without recommended packages leaves the binary unusable.
+
+            Skip the other recommended packages, and preseed Postfix to accept local mail only. `aide-common` needs a mail client, as a dependency on Ubuntu 22.04 and earlier and on Debian 11 and as a recommendation on later releases, and the mail client depends on a mail transfer agent. On Ubuntu that agent is Postfix, which a default install configures to listen on every network interface, failing the check that the mail transfer agent accepts only local connections. The preseed has no effect where Postfix is not installed:
 
             ```bash
-            apt-get install --no-install-recommends aide
+            echo "postfix postfix/main_mailer_type select Local only" | debconf-set-selections
+            apt-get install --no-install-recommends aide aide-common
             ```
 
             ### SLES and openSUSE
@@ -298,8 +301,11 @@ queries:
               dnf install -y aide
             elif command -v apt-get >/dev/null 2>&1; then
               echo "Detected apt-based system. Installing aide..."
+              # aide-common carries the configuration and aideinit; the mail client it needs
+              # pulls in Postfix on Ubuntu, so keep Postfix to local delivery only.
+              echo "postfix postfix/main_mailer_type select Local only" | debconf-set-selections
               apt-get update
-              apt-get install -y --no-install-recommends aide
+              apt-get install -y --no-install-recommends aide aide-common
             elif command -v zypper >/dev/null 2>&1; then
               echo "Detected zypper-based system. Installing aide..."
               zypper install -y aide
@@ -329,10 +335,21 @@ queries:
                     state: present
                   when: ansible_facts['os_family'] != 'Debian'
 
-                # aide-common recommends a mail client that pulls in Postfix listening on every interface
+                # The mail client aide-common needs pulls in Postfix on Ubuntu; keep it local-only
+                - name: Preseed Postfix to accept local mail only
+                  ansible.builtin.debconf:
+                    name: postfix
+                    question: postfix/main_mailer_type
+                    value: Local only
+                    vtype: select
+                  when: ansible_facts['os_family'] == 'Debian'
+
+                # aide only recommends aide-common, which carries the configuration and aideinit
                 - name: Ensure AIDE is installed without recommended packages on Debian and Ubuntu
                   ansible.builtin.apt:
-                    name: aide
+                    name:
+                      - aide
+                      - aide-common
                     state: present
                     install_recommends: false
                   when: ansible_facts['os_family'] == 'Debian'
@@ -344,10 +361,22 @@ queries:
             Use this Chef Infra recipe code to install AIDE:
 
             ```ruby
-            package 'aide' do
-              # aide-common recommends a mail client that pulls in Postfix listening on every interface
-              options '--no-install-recommends' if platform_family?('debian')
-              action :install
+            if platform_family?('debian')
+              # The mail client aide-common needs pulls in Postfix on Ubuntu; keep it local-only
+              execute 'preseed postfix local only' do
+                command 'echo "postfix postfix/main_mailer_type select Local only" | debconf-set-selections'
+                not_if 'debconf-show postfix 2>/dev/null | grep -q "main_mailer_type: Local only"'
+              end
+
+              # aide only recommends aide-common, which carries the configuration and aideinit
+              package %w(aide aide-common) do
+                options '--no-install-recommends'
+                action :install
+              end
+            else
+              package 'aide' do
+                action :install
+              end
             end
             ```
     refs:
@@ -377,12 +406,13 @@ queries:
       file("/etc/default/aide").exists && ["/etc/default/aide"].where(file(_).exists).all(parse.ini(_).params["CRON_DAILY_RUN"] == "yes") ||
       crontab.entries.where(user == "root").any(command.contains("aide --check")) ||
       crontab.entries.where(user == "root").any(command.contains("aide.conf --check")) ||
-      systemd.timer('aidecheck').enabled
+      systemd.timer('aidecheck').enabled ||
+      systemd.timer('dailyaidecheck').enabled
     docs:
       desc: |
         This check verifies that AIDE integrity comparisons run on a schedule rather than only when someone remembers to start one.
 
-        Any of three arrangements satisfies it: `CRON_DAILY_RUN=yes` in `/etc/default/aide`, a root crontab entry that runs `aide --check`, or an enabled `aidecheck` systemd timer. Distributions differ in which they ship, so any one of them is accepted.
+        Any of four arrangements satisfies it: `CRON_DAILY_RUN=yes` in `/etc/default/aide`, a root crontab entry that runs `aide --check`, an enabled `aidecheck` systemd timer, or the enabled `dailyaidecheck` timer that Debian 12 and later ship in `aide-common`. Distributions differ in which they ship, so any one of them is accepted.
 
         **Why this matters**
 
@@ -399,13 +429,19 @@ queries:
         ```bash
         grep -E '^CRON_DAILY_RUN' /etc/default/aide
         crontab -u root -l | grep aide
-        systemctl is-enabled aidecheck.timer
+        systemctl is-enabled aidecheck.timer dailyaidecheck.timer
         ```
 
-        A passing result shows `CRON_DAILY_RUN=yes`, a root cron entry that runs `aide --check`, or an enabled `aidecheck.timer`. A failing result shows none of these are present.
+        A passing result shows `CRON_DAILY_RUN=yes`, a root cron entry that runs `aide --check`, or an enabled `aidecheck.timer` or `dailyaidecheck.timer`. A failing result shows none of these are present.
       remediation:
         - id: cli
           desc: |
+            On Debian 12 and later, `aide-common` ships a `dailyaidecheck.timer` that runs the comparison every day and is enabled when the package is installed. There, build the database as in step 1 below and confirm the timer is enabled instead of adding a schedule of your own:
+
+            ```bash
+            systemctl enable --now dailyaidecheck.timer
+            ```
+
             **Using the CLI to setup Cron:**
 
             1. Build the AIDE database from the current state of the filesystem and put it where scheduled checks read it. Run this on a system you trust, because every later check reports changes relative to this baseline. The commands differ by distribution because the database file names and the configuration path differ:
@@ -432,7 +468,7 @@ queries:
                 mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
                 ```
 
-            2. Edit the root crontab:
+            2. Edit the root crontab. Debian 12 and later install `cron` only as a recommendation of `aide-common`, so if the `crontab` command is missing, install it first with `apt-get install cron`:
 
                 ```bash
                 crontab -u root -e
@@ -521,6 +557,8 @@ queries:
                 dnf install -y aide
               elif command -v apt-get >/dev/null 2>&1; then
                 echo "Detected apt-based system. Installing aide..."
+                # The mail client aide-common needs pulls in Postfix on Ubuntu; keep it local-only.
+                echo "postfix postfix/main_mailer_type select Local only" | debconf-set-selections
                 apt-get update
                 apt-get install -y aide
               elif command -v zypper >/dev/null 2>&1; then
@@ -585,6 +623,15 @@ queries:
                   else '/usr/sbin/aide --check' }}
 
               tasks:
+                # The mail client aide-common needs pulls in Postfix on Ubuntu; keep it local-only
+                - name: Preseed Postfix to accept local mail only
+                  ansible.builtin.debconf:
+                    name: postfix
+                    question: postfix/main_mailer_type
+                    value: Local only
+                    vtype: select
+                  when: ansible_facts['os_family'] == 'Debian'
+
                 - name: Ensure AIDE is installed
                   ansible.builtin.package:
                     name: aide
@@ -664,6 +711,13 @@ queries:
             Use this Chef Infra recipe code to install AIDE, initialize its database, and run the check from a systemd timer named `aidecheck.timer`. The database and check commands differ by distribution, because Debian and Ubuntu use `aideinit` and need the configuration file passed explicitly, and the database and binary paths differ:
 
             ```ruby
+            # The mail client aide-common needs pulls in Postfix on Ubuntu; keep it local-only
+            execute 'preseed postfix local only' do
+              command 'echo "postfix postfix/main_mailer_type select Local only" | debconf-set-selections'
+              only_if { platform_family?('debian') }
+              not_if 'debconf-show postfix 2>/dev/null | grep -q "main_mailer_type: Local only"'
+            end
+
             package 'aide' do
               action :install
             end
@@ -12221,6 +12275,14 @@ queries:
                 f /var/log/sudo.log 0640 root utmp -
                 f /var/log/wtmp 0640 root utmp -
                 ```
+
+            4. On Debian and Ubuntu, make apt restore the mode of its own logs after every package operation:
+
+                apt rewrites `/var/log/apt/history.log` and `/var/log/apt/eipp.log.xz` with mode `0644` each time it installs, removes, or upgrades a package, which undoes step 1 at the next package change. The `systemd-tmpfiles` entries apply only at boot. Create `/etc/apt/apt.conf.d/99-log-permissions` with this hook, which apt runs after each package operation:
+
+                ```text
+                DPkg::Post-Invoke { "chmod g-wx,o-rwx /var/log/apt/history.log /var/log/apt/eipp.log.xz 2>/dev/null || true"; };
+                ```
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -12269,6 +12331,15 @@ queries:
             f /var/log/sudo.log 0640 root utmp -
             f /var/log/wtmp 0640 root utmp -
             EOF
+
+            # apt rewrites its own logs with mode 0644 on every package operation, which
+            # the tmpfiles entries above only correct at boot.
+            if [ -d /etc/apt/apt.conf.d ]; then
+              echo "Configuring apt to restore the mode of its logs after each package operation..."
+              cat <<'EOF' > /etc/apt/apt.conf.d/99-log-permissions
+            DPkg::Post-Invoke { "chmod g-wx,o-rwx /var/log/apt/history.log /var/log/apt/eipp.log.xz 2>/dev/null || true"; };
+            EOF
+            fi
             ```
         - id: ansible
           desc: |
@@ -12332,6 +12403,17 @@ queries:
                       f /var/log/lastlog 0640 root utmp -
                       f /var/log/sudo.log 0640 root utmp -
                       f /var/log/wtmp 0640 root utmp -
+
+                # apt rewrites its own logs with mode 0644 on every package operation
+                - name: Make apt restore the mode of its logs after each package operation
+                  ansible.builtin.copy:
+                    dest: /etc/apt/apt.conf.d/99-log-permissions
+                    owner: root
+                    group: root
+                    mode: '0644'
+                    content: |
+                      DPkg::Post-Invoke { "chmod g-wx,o-rwx /var/log/apt/history.log /var/log/apt/eipp.log.xz 2>/dev/null || true"; };
+                  when: ansible_facts['os_family'] == 'Debian'
 
               handlers:
                 - name: Restart rsyslog
@@ -12404,6 +12486,15 @@ queries:
               owner 'root'
               group 'root'
               mode '0644'
+            end
+
+            # apt rewrites its own logs with mode 0644 on every package operation
+            file '/etc/apt/apt.conf.d/99-log-permissions' do
+              content "DPkg::Post-Invoke { \"chmod g-wx,o-rwx /var/log/apt/history.log /var/log/apt/eipp.log.xz 2>/dev/null || true\"; };\n"
+              owner 'root'
+              group 'root'
+              mode '0644'
+              only_if { ::File.directory?('/etc/apt/apt.conf.d') }
             end
             ```
     refs:
@@ -12686,7 +12777,7 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc6-1-5
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    filters: package('openssh-server').version  >= semver("6") && package('openssh-server').version < semver("7.6")
+    filters: semver(package('openssh-server').version.split(":").last) >= semver("6") && semver(package('openssh-server').version.split(":").last) < semver("7.6")
     mql: |
       sshd.config.params["Protocol"] == null || sshd.config.params["Protocol"] == 2
     docs:
@@ -14921,7 +15012,9 @@ queries:
       - uid: mondooLinuxSecuritySshdCiphers
         title: Define the hardened ciphers for all SSH configurations
         mql: |
-          if( package('openssh-server').version >= semver("6") && package('openssh-server').version < semver("7")  ) {
+          // Debian and Ubuntu versions carry a "1:" epoch that breaks the semver comparison
+          v = semver(package('openssh-server').version.split(":").last)
+          if( v >= semver("6") && v < semver("7")  ) {
             return ["aes256-ctr", "aes192-ctr", "aes128-ctr"]
           }
           return ["chacha20-poly1305@openssh.com","aes256-gcm@openssh.com","aes128-gcm@openssh.com","aes256-ctr","aes192-ctr","aes128-ctr"]
@@ -15464,16 +15557,18 @@ queries:
       - uid: mondooLinuxSecurityKexAlgos
         title: Define the hardened key exchange algorithms for all SSH configurations
         mql: |
-          if( package('openssh-server').version  >= semver("4.4") && package('openssh-server').version  < semver("6.5") ) {
+          // Debian and Ubuntu versions carry a "1:" epoch that breaks the semver comparison
+          v = semver(package('openssh-server').version.split(":").last)
+          if( v >= semver("4.4") && v < semver("6.5") ) {
             return ["diffie-hellman-group-exchange-sha256"]
           }
-          if( package('openssh-server').version  >= semver("6.5") && package('openssh-server').version  < semver("7.3") ) {
+          if( v >= semver("6.5") && v < semver("7.3") ) {
             return ["curve25519-sha256@libssh.org"]
           }
-          if( package('openssh-server').version  >= semver("7.3") && package('openssh-server').version  < semver("8") ) {
+          if( v >= semver("7.3") && v < semver("8") ) {
             return ["curve25519-sha256@libssh.org","diffie-hellman-group18-sha512"]
           }
-          if( package('openssh-server').version  >= semver("8") && package('openssh-server').version  < semver("8.5") ) {
+          if( v >= semver("8") && v < semver("8.5") ) {
             return ["sntrup4591761x25519-sha512@tinyssh.org","curve25519-sha256@libssh.org","diffie-hellman-group18-sha512"]
           }
           return ["sntrup761x25519-sha512@openssh.com","curve25519-sha256@libssh.org","diffie-hellman-group18-sha512"]
