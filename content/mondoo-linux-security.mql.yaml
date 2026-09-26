@@ -7627,6 +7627,9 @@ queries:
 
             echo "Restarting auditd service to apply changes"
             systemctl restart auditd 2>/dev/null || /usr/libexec/initscripts/legacy-actions/auditd/restart
+            # Where rules load through audit-rules.service, the restart queues that unit and returns
+            # before it runs. Wait for it, so a later augenrules --load does not race it.
+            systemctl start audit-rules.service 2>/dev/null || true
 
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
               echo "Reboot required to load rules because auditd is in immutable mode"
@@ -7817,6 +7820,9 @@ queries:
 
             echo "Restarting auditd service to apply changes"
             systemctl restart auditd 2>/dev/null || /usr/libexec/initscripts/legacy-actions/auditd/restart
+            # Where rules load through audit-rules.service, the restart queues that unit and returns
+            # before it runs. Wait for it, so a later augenrules --load does not race it.
+            systemctl start audit-rules.service 2>/dev/null || true
 
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
               echo "Reboot required to load rules because auditd is in immutable mode"
@@ -8027,6 +8033,9 @@ queries:
 
             echo "Restarting auditd service to apply changes"
             systemctl restart auditd 2>/dev/null || /usr/libexec/initscripts/legacy-actions/auditd/restart
+            # Where rules load through audit-rules.service, the restart queues that unit and returns
+            # before it runs. Wait for it, so a later augenrules --load does not race it.
+            systemctl start audit-rules.service 2>/dev/null || true
 
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
               echo "Reboot required to load rules because auditd is in immutable mode"
@@ -9448,10 +9457,12 @@ queries:
             -w /etc/hosts -p wa -k system-locale
             EOF
 
-            if [[ -f /etc/sysconfig/network ]]; then
-              echo "-w /etc/sysconfig/network -p wa -k system-locale" >> "$RULES_FILE"
-            elif [[ -d /etc/network ]]; then
+            # Watch the distribution's network configuration location even where it does not
+            # exist yet: auditctl accepts a watch on a missing file in an existing directory.
+            if [[ -f /etc/debian_version ]]; then
               echo "-w /etc/network -p wa -k system-locale" >> "$RULES_FILE"
+            else
+              echo "-w /etc/sysconfig/network -p wa -k system-locale" >> "$RULES_FILE"
             fi
 
             # openSUSE builds auditctl without 32-bit ARM support. An arch=b32 rule it cannot
@@ -9493,14 +9504,6 @@ queries:
                   failed_when: false
                   when: ansible_architecture == 'aarch64'
 
-                - name: Gather network file facts
-                  ansible.builtin.stat:
-                    path: "{{ item }}"
-                  register: network_files
-                  loop:
-                    - /etc/sysconfig/network
-                    - /etc/network
-
                 - name: Configure base audit rules
                   ansible.builtin.blockinfile:
                     path: /etc/audit/rules.d/50-system_local.rules
@@ -9519,15 +9522,16 @@ queries:
                       -w /etc/issue.net -p wa -k system-locale
                       -w /etc/hosts -p wa -k system-locale
 
-                - name: Configure conditional network file monitoring
+                # auditctl accepts a watch on a missing file in an existing directory
+                - name: Watch the distribution's network configuration location
                   ansible.builtin.blockinfile:
                     path: /etc/audit/rules.d/50-system_local.rules
-                    block: "-w {{ item.item }} -p wa -k system-locale"
-                    marker: "# {mark} ANSIBLE MANAGED - {{ item.item | basename }}"
+                    block: "-w {{ network_config_path }} -p wa -k system-locale"
+                    marker: "# {mark} ANSIBLE MANAGED - network configuration"
                     state: present
-                  loop: "{{ network_files.results }}"
-                  when: item.stat.exists
                   register: conditional_audit_rules
+                  vars:
+                    network_config_path: "{{ '/etc/network' if ansible_facts['os_family'] == 'Debian' else '/etc/sysconfig/network' }}"
 
                 - name: Set secure file permissions
                   ansible.builtin.file:
@@ -9564,7 +9568,7 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to audit changes to the system's network environment. The distribution-specific network configuration paths are only watched where they exist, because auditd refuses to load a watch on a missing path:
+            Use this Chef Infra recipe code to audit changes to the system's network environment. The distribution's network configuration location, `/etc/network` on Debian and Ubuntu and `/etc/sysconfig/network` elsewhere, is watched even where it does not exist yet, because `auditctl` accepts a watch on a missing file in an existing directory. Fedora with NetworkManager has neither path:
 
             ```ruby
             execute 'load audit rules' do
@@ -9592,9 +9596,8 @@ queries:
               '-w /etc/hosts -p wa -k system-locale',
             ]
 
-            %w(/etc/sysconfig/network /etc/network).each do |path|
-              locale_rules << "-w #{path} -p wa -k system-locale" if ::File.exist?(path)
-            end
+            network_config_path = platform_family?('debian') ? '/etc/network' : '/etc/sysconfig/network'
+            locale_rules << "-w #{network_config_path} -p wa -k system-locale"
 
             locale_rules.reject! { |rule| rule.include?('arch=b32') } unless arm32_audit
 
