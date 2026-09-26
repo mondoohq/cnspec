@@ -15676,7 +15676,10 @@ queries:
           if( v >= semver("8") && v < semver("8.5") ) {
             return ["sntrup4591761x25519-sha512@tinyssh.org","curve25519-sha256@libssh.org","diffie-hellman-group18-sha512"]
           }
-          return ["sntrup761x25519-sha512@openssh.com","curve25519-sha256@libssh.org","diffie-hellman-group18-sha512"]
+          if( v >= semver("8.5") && v < semver("9.9") ) {
+            return ["sntrup761x25519-sha512@openssh.com","curve25519-sha256@libssh.org","diffie-hellman-group18-sha512"]
+          }
+          return ["mlkem768x25519-sha256","sntrup761x25519-sha512","sntrup761x25519-sha512@openssh.com","curve25519-sha256@libssh.org","diffie-hellman-group18-sha512"]
     mql: |
       sshd.config.kexs != empty
       sshd.config.kexs.containsOnly(props.mondooLinuxSecurityKexAlgos)
@@ -15686,7 +15689,7 @@ queries:
 
         Key exchange establishes the session keys that the cipher and MAC then use, so it is the foundation the rest of the session rests on. The check reads the `KexAlgorithms` directive in `/etc/ssh/sshd_config` and requires that every algorithm it names appears in the approved list carried by this policy's property. The directive must be present; a configuration that relies on OpenSSH's compiled-in default fails this check.
 
-        The approved list depends on the installed `openssh-server` release, because `sshd` refuses to start when `KexAlgorithms` names an algorithm that release does not recognize. The property changes lists at OpenSSH 6.5, 7.3, 8.0 and 8.5, the releases that added or renamed the algorithms it names.
+        The approved list depends on the installed `openssh-server` release, because `sshd` refuses to start when `KexAlgorithms` names an algorithm that release does not recognize. The property changes lists at OpenSSH 6.5, 7.3, 8.0, 8.5 and 9.9, the releases that added or renamed the algorithms it names.
 
         **Why this matters**
 
@@ -15747,9 +15750,14 @@ queries:
               KexAlgorithms sntrup4591761x25519-sha512@tinyssh.org,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
               ```
 
-            - **OpenSSH 8.5 or later**:
+            - **OpenSSH 8.5 to 9.8**:
               ```text
               KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
+              ```
+
+            - **OpenSSH 9.9 or later**:
+              ```text
+              KexAlgorithms mlkem768x25519-sha256,sntrup761x25519-sha512,sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
               ```
 
             The version to match is the upstream OpenSSH release, the number before `p` once any `1:` epoch prefix is removed. A Debian package version of `1:8.4p1-5+deb11u7` is OpenSSH 8.4.
@@ -15761,6 +15769,7 @@ queries:
             - OpenSSH 7.3 added `diffie-hellman-group18-sha512`.
             - OpenSSH 8.0 added `sntrup4591761x25519-sha512@tinyssh.org`.
             - OpenSSH 8.5 replaced it with `sntrup761x25519-sha512@openssh.com` and removed the old name.
+            - OpenSSH 9.9 added the post-quantum hybrid `mlkem768x25519-sha256` and the standard name `sntrup761x25519-sha512` for the NTRU Prime hybrid, and OpenSSH 10.0 made `mlkem768x25519-sha256` the default. The 9.9 list keeps `sntrup761x25519-sha512@openssh.com` so that clients from 8.5 to 9.8 still negotiate a post-quantum exchange.
 
             The SSH daemon refuses to start when `KexAlgorithms` names an algorithm it does not recognize, and `sshd -t` reports `Bad SSH2 KexAlgorithms`. A list meant for a different release therefore stops SSH instead of merely weakening it.
 
@@ -15783,7 +15792,7 @@ queries:
             fi
             ```
 
-            The example uses the OpenSSH 8.5 or later list. Ubuntu 20.04 and Debian 11 ship OpenSSH 8.2 and 8.4, which do not recognize `sntrup761x25519-sha512@openssh.com`, so substitute the list for your version from above or `sshd -t` rejects the configuration.
+            The example uses the OpenSSH 8.5 to 9.8 list, which OpenSSH 9.9 and later also accept. On 9.9 and later, the list for those releases adds the `mlkem768x25519-sha256` exchange that OpenSSH 10.0 uses by default. Ubuntu 20.04 and Debian 11 ship OpenSSH 8.2 and 8.4, which do not recognize `sntrup761x25519-sha512@openssh.com`, so substitute the list for your version from above or `sshd -t` rejects the configuration.
 
             Validate the configuration before restarting:
 
@@ -15810,7 +15819,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To ensure that SSH uses only strong key exchange algorithms, you can run the following bash script. It reads the installed OpenSSH release and writes the list that release recognizes, changing lists at 6.5, 7.3, 8.0 and 8.5, the releases that added or renamed each algorithm. On a release older than 4.4 it stops without editing anything, because no key exchange those releases carry meets this check:
+            To ensure that SSH uses only strong key exchange algorithms, you can run the following bash script. It reads the installed OpenSSH release and writes the list that release recognizes, changing lists at 6.5, 7.3, 8.0, 8.5 and 9.9, the releases that added or renamed each algorithm. On a release older than 4.4 it stops without editing anything, because no key exchange those releases carry meets this check:
 
             ```bash
             #!/bin/bash
@@ -15848,8 +15857,10 @@ queries:
               kex_algos="curve25519-sha256@libssh.org,diffie-hellman-group18-sha512"
             elif (( $(echo "$openssh_version < 8.5" | bc -l) )); then
               kex_algos="sntrup4591761x25519-sha512@tinyssh.org,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512"
-            else
+            elif (( $(echo "$openssh_version < 9.9" | bc -l) )); then
               kex_algos="sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512"
+            else
+              kex_algos="mlkem768x25519-sha256,sntrup761x25519-sha512,sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512"
             fi
 
             if grep -q '^KexAlgorithms' "$SSHD_CONFIG"; then
@@ -15886,7 +15897,7 @@ queries:
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
             2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
 
-            To configure SSH to use only approved key exchange algorithms, use the following Ansible playbook. It reads the installed OpenSSH release and writes the list that release recognizes, changing lists at 6.5, 7.3, 8.0 and 8.5, the releases that added or renamed each algorithm. On a release older than 4.4 it fails the host without editing anything, because no key exchange those releases carry meets this check:
+            To configure SSH to use only approved key exchange algorithms, use the following Ansible playbook. It reads the installed OpenSSH release and writes the list that release recognizes, changing lists at 6.5, 7.3, 8.0, 8.5 and 9.9, the releases that added or renamed each algorithm. On a release older than 4.4 it fails the host without editing anything, because no key exchange those releases carry meets this check:
 
             ```yaml
             ---
@@ -15944,8 +15955,10 @@ queries:
                         curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
                       {% elif openssh_version_float | float < 8.5 %}
                         sntrup4591761x25519-sha512@tinyssh.org,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
-                      {% else %}
+                      {% elif openssh_version_float | float < 9.9 %}
                         sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
+                      {% else %}
+                        mlkem768x25519-sha256,sntrup761x25519-sha512,sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
                       {% endif %}
 
                 - name: Ensure KexAlgorithms is set in sshd_config
@@ -15998,7 +16011,7 @@ queries:
             1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
             2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
-            Use this Chef Infra recipe code to restrict SSH to approved key exchange algorithms. The algorithm list depends on the OpenSSH release, so it is selected from the version reported by the installed binary. `sshd` rejects a name its release does not recognize, so the recipe changes lists at 6.5, 7.3, 8.0 and 8.5, the releases that added or renamed each algorithm. On a release older than 4.4 it raises without editing anything, because no key exchange those releases carry meets this check:
+            Use this Chef Infra recipe code to restrict SSH to approved key exchange algorithms. The algorithm list depends on the OpenSSH release, so it is selected from the version reported by the installed binary. `sshd` rejects a name its release does not recognize, so the recipe changes lists at 6.5, 7.3, 8.0, 8.5 and 9.9, the releases that added or renamed each algorithm. On a release older than 4.4 it raises without editing anything, because no key exchange those releases carry meets this check:
 
             ```ruby
             # sshd uses the first value it reads for each keyword, and the Include at the top of
@@ -16036,8 +16049,10 @@ queries:
                                'curve25519-sha256@libssh.org,diffie-hellman-group18-sha512'
                              elsif openssh_version < 8.5
                                'sntrup4591761x25519-sha512@tinyssh.org,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512'
-                             else
+                             elsif openssh_version < 9.9
                                'sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512'
+                             else
+                               'mlkem768x25519-sha256,sntrup761x25519-sha512,sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512'
                              end
 
             service ssh_service do
