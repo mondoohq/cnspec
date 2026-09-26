@@ -15082,6 +15082,12 @@ queries:
             echo 'Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr' >> /etc/ssh/sshd_config.d/00-hardening.conf
             ```
 
+            On Red Hat Enterprise Linux 8 and its rebuilds, the system-wide cryptographic policy does not reach `sshd` through a configuration file. The `sshd` unit passes it on the command line from `/etc/crypto-policies/back-ends/opensshserver.config`, and a command-line option overrides the same keyword in `sshd_config`, so the value set above has no effect on the running server. Where the `ExecStart` line of the `sshd` unit contains `$CRYPTO_POLICY`, set that variable to an empty value so `sshd` takes its algorithms from `sshd_config`. This opts `sshd` out of the policy for every algorithm list, so set `Ciphers`, `MACs`, and `KexAlgorithms` in `sshd_config` as well:
+
+            ```bash
+            systemctl cat sshd | grep -q 'CRYPTO_POLICY' && echo 'CRYPTO_POLICY=' >> /etc/sysconfig/sshd
+            ```
+
             Validate the configuration and restart the SSH service to apply the changes:
 
             ```bash
@@ -15138,6 +15144,13 @@ queries:
             else
               echo "Adding Ciphers to sshd_config..."
               echo "$CIPHER_LINE" >> "$SSHD_CONFIG"
+            fi
+
+            # Red Hat Enterprise Linux 8 passes the system-wide crypto policy to sshd as -o options
+            # on the command line, which override sshd_config. An empty CRYPTO_POLICY opts out.
+            if systemctl cat sshd 2>/dev/null | grep -q 'CRYPTO_POLICY' && ! grep -q '^CRYPTO_POLICY=$' /etc/sysconfig/sshd 2>/dev/null; then
+              echo "Letting sshd_config set the algorithms instead of the crypto policy..."
+              echo 'CRYPTO_POLICY=' >> /etc/sysconfig/sshd
             fi
 
             # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
@@ -15200,20 +15213,36 @@ queries:
                     validate: /usr/sbin/sshd -t -f %s
                   register: ssh_ciphers_config_change
 
+                - name: Read the sshd unit to see whether it takes the crypto policy on its command line
+                  ansible.builtin.slurp:
+                    src: /usr/lib/systemd/system/sshd.service
+                  register: sshd_unit
+                  failed_when: false
+
+                # Red Hat Enterprise Linux 8 passes the crypto policy as -o options, which override sshd_config
+                - name: Let sshd_config set the algorithms instead of the crypto policy
+                  ansible.builtin.lineinfile:
+                    path: /etc/sysconfig/sshd
+                    regexp: '^CRYPTO_POLICY='
+                    line: 'CRYPTO_POLICY='
+                    create: yes
+                  when: sshd_unit.content is defined and 'CRYPTO_POLICY' in (sshd_unit.content | b64decode)
+                  register: sshd_crypto_policy_change
+
                 - name: Validate the SSH server configuration before restarting
                   ansible.builtin.command: sshd -t
                   changed_when: false
-                  when: ssh_ciphers_config_change.changed
+                  when: ssh_ciphers_config_change.changed or sshd_crypto_policy_change.changed
 
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
-                  when: ssh_ciphers_config_change.changed
+                  when: ssh_ciphers_config_change.changed or sshd_crypto_policy_change.changed
 
                 - name: Restart the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
-                  when: ssh_ciphers_config_change.changed
+                  when: ssh_ciphers_config_change.changed or sshd_crypto_policy_change.changed
             ```
         - id: chef
           desc: |
@@ -15253,6 +15282,15 @@ queries:
             service ssh_service do
               action :nothing
               only_if '/usr/sbin/sshd -t'
+            end
+
+            # Red Hat Enterprise Linux 8 passes the system-wide crypto policy to sshd as -o options
+            # on the command line, which override sshd_config. An empty CRYPTO_POLICY opts out.
+            execute 'let sshd_config set the algorithms instead of the crypto policy' do
+              command "echo 'CRYPTO_POLICY=' >> /etc/sysconfig/sshd"
+              only_if 'systemctl cat sshd 2>/dev/null | grep -q CRYPTO_POLICY'
+              not_if 'grep -q "^CRYPTO_POLICY=$" /etc/sysconfig/sshd'
+              notifies :restart, "service[#{ssh_service}]", :delayed
             end
 
             { 'Ciphers' => 'chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr' }.each do |keyword, value|
@@ -15352,6 +15390,12 @@ queries:
             echo 'MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256' >> /etc/ssh/sshd_config.d/00-hardening.conf
             ```
 
+            On Red Hat Enterprise Linux 8 and its rebuilds, the system-wide cryptographic policy does not reach `sshd` through a configuration file. The `sshd` unit passes it on the command line from `/etc/crypto-policies/back-ends/opensshserver.config`, and a command-line option overrides the same keyword in `sshd_config`, so the value set above has no effect on the running server. Where the `ExecStart` line of the `sshd` unit contains `$CRYPTO_POLICY`, set that variable to an empty value so `sshd` takes its algorithms from `sshd_config`. This opts `sshd` out of the policy for every algorithm list, so set `Ciphers`, `MACs`, and `KexAlgorithms` in `sshd_config` as well:
+
+            ```bash
+            systemctl cat sshd | grep -q 'CRYPTO_POLICY' && echo 'CRYPTO_POLICY=' >> /etc/sysconfig/sshd
+            ```
+
             Validate the configuration and restart the SSH service to apply the changes:
 
             ```bash
@@ -15402,6 +15446,13 @@ queries:
             else
               echo "Adding MACs to sshd_config..."
               echo "$MAC_LINE" >> "$SSHD_CONFIG"
+            fi
+
+            # Red Hat Enterprise Linux 8 passes the system-wide crypto policy to sshd as -o options
+            # on the command line, which override sshd_config. An empty CRYPTO_POLICY opts out.
+            if systemctl cat sshd 2>/dev/null | grep -q 'CRYPTO_POLICY' && ! grep -q '^CRYPTO_POLICY=$' /etc/sysconfig/sshd 2>/dev/null; then
+              echo "Letting sshd_config set the algorithms instead of the crypto policy..."
+              echo 'CRYPTO_POLICY=' >> /etc/sysconfig/sshd
             fi
 
             # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
@@ -15464,20 +15515,36 @@ queries:
                     validate: /usr/sbin/sshd -t -f %s
                   register: ssh_mac_config_change
 
+                - name: Read the sshd unit to see whether it takes the crypto policy on its command line
+                  ansible.builtin.slurp:
+                    src: /usr/lib/systemd/system/sshd.service
+                  register: sshd_unit
+                  failed_when: false
+
+                # Red Hat Enterprise Linux 8 passes the crypto policy as -o options, which override sshd_config
+                - name: Let sshd_config set the algorithms instead of the crypto policy
+                  ansible.builtin.lineinfile:
+                    path: /etc/sysconfig/sshd
+                    regexp: '^CRYPTO_POLICY='
+                    line: 'CRYPTO_POLICY='
+                    create: yes
+                  when: sshd_unit.content is defined and 'CRYPTO_POLICY' in (sshd_unit.content | b64decode)
+                  register: sshd_crypto_policy_change
+
                 - name: Validate the SSH server configuration before restarting
                   ansible.builtin.command: sshd -t
                   changed_when: false
-                  when: ssh_mac_config_change.changed
+                  when: ssh_mac_config_change.changed or sshd_crypto_policy_change.changed
 
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
-                  when: ssh_mac_config_change.changed
+                  when: ssh_mac_config_change.changed or sshd_crypto_policy_change.changed
 
                 - name: Restart the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
-                  when: ssh_mac_config_change.changed
+                  when: ssh_mac_config_change.changed or sshd_crypto_policy_change.changed
             ```
         - id: chef
           desc: |
@@ -15517,6 +15584,15 @@ queries:
             service ssh_service do
               action :nothing
               only_if '/usr/sbin/sshd -t'
+            end
+
+            # Red Hat Enterprise Linux 8 passes the system-wide crypto policy to sshd as -o options
+            # on the command line, which override sshd_config. An empty CRYPTO_POLICY opts out.
+            execute 'let sshd_config set the algorithms instead of the crypto policy' do
+              command "echo 'CRYPTO_POLICY=' >> /etc/sysconfig/sshd"
+              only_if 'systemctl cat sshd 2>/dev/null | grep -q CRYPTO_POLICY'
+              not_if 'grep -q "^CRYPTO_POLICY=$" /etc/sysconfig/sshd'
+              notifies :restart, "service[#{ssh_service}]", :delayed
             end
 
             { 'MACs' => 'hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256' }.each do |keyword, value|
@@ -15676,6 +15752,12 @@ queries:
             echo 'KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512' >> /etc/ssh/sshd_config.d/00-hardening.conf
             ```
 
+            On Red Hat Enterprise Linux 8 and its rebuilds, the system-wide cryptographic policy does not reach `sshd` through a configuration file. The `sshd` unit passes it on the command line from `/etc/crypto-policies/back-ends/opensshserver.config`, and a command-line option overrides the same keyword in `sshd_config`, so the value set above has no effect on the running server. Where the `ExecStart` line of the `sshd` unit contains `$CRYPTO_POLICY`, set that variable to an empty value so `sshd` takes its algorithms from `sshd_config`. This opts `sshd` out of the policy for every algorithm list, so set `Ciphers`, `MACs`, and `KexAlgorithms` in `sshd_config` as well:
+
+            ```bash
+            systemctl cat sshd | grep -q 'CRYPTO_POLICY' && echo 'CRYPTO_POLICY=' >> /etc/sysconfig/sshd
+            ```
+
             The example uses the OpenSSH 8.5 or later list. Ubuntu 20.04 and Debian 11 ship OpenSSH 8.2 and 8.4, which do not recognize `sntrup761x25519-sha512@openssh.com`, so substitute the list for your version from above or `sshd -t` rejects the configuration.
 
             Validate the configuration before restarting:
@@ -15751,6 +15833,13 @@ queries:
             else
               echo "Adding KexAlgorithms configuration value to SSH config"
               echo "KexAlgorithms $kex_algos" >> "$SSHD_CONFIG"
+            fi
+
+            # Red Hat Enterprise Linux 8 passes the system-wide crypto policy to sshd as -o options
+            # on the command line, which override sshd_config. An empty CRYPTO_POLICY opts out.
+            if systemctl cat sshd 2>/dev/null | grep -q 'CRYPTO_POLICY' && ! grep -q '^CRYPTO_POLICY=$' /etc/sysconfig/sshd 2>/dev/null; then
+              echo "Letting sshd_config set the algorithms instead of the crypto policy..."
+              echo 'CRYPTO_POLICY=' >> /etc/sysconfig/sshd
             fi
 
             # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
@@ -15844,20 +15933,36 @@ queries:
                     validate: /usr/sbin/sshd -t -f %s
                   register: kexalgos_config_change
 
+                - name: Read the sshd unit to see whether it takes the crypto policy on its command line
+                  ansible.builtin.slurp:
+                    src: /usr/lib/systemd/system/sshd.service
+                  register: sshd_unit
+                  failed_when: false
+
+                # Red Hat Enterprise Linux 8 passes the crypto policy as -o options, which override sshd_config
+                - name: Let sshd_config set the algorithms instead of the crypto policy
+                  ansible.builtin.lineinfile:
+                    path: /etc/sysconfig/sshd
+                    regexp: '^CRYPTO_POLICY='
+                    line: 'CRYPTO_POLICY='
+                    create: yes
+                  when: sshd_unit.content is defined and 'CRYPTO_POLICY' in (sshd_unit.content | b64decode)
+                  register: sshd_crypto_policy_change
+
                 - name: Validate the SSH server configuration before restarting
                   ansible.builtin.command: sshd -t
                   changed_when: false
-                  when: kexalgos_config_change.changed
+                  when: kexalgos_config_change.changed or sshd_crypto_policy_change.changed
 
                 - name: Gather service facts to detect the SSH unit name
                   ansible.builtin.service_facts:
-                  when: kexalgos_config_change.changed
+                  when: kexalgos_config_change.changed or sshd_crypto_policy_change.changed
 
                 - name: Restart the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
-                  when: kexalgos_config_change.changed
+                  when: kexalgos_config_change.changed or sshd_crypto_policy_change.changed
             ```
         - id: chef
           desc: |
@@ -15913,6 +16018,15 @@ queries:
             service ssh_service do
               action :nothing
               only_if '/usr/sbin/sshd -t'
+            end
+
+            # Red Hat Enterprise Linux 8 passes the system-wide crypto policy to sshd as -o options
+            # on the command line, which override sshd_config. An empty CRYPTO_POLICY opts out.
+            execute 'let sshd_config set the algorithms instead of the crypto policy' do
+              command "echo 'CRYPTO_POLICY=' >> /etc/sysconfig/sshd"
+              only_if 'systemctl cat sshd 2>/dev/null | grep -q CRYPTO_POLICY'
+              not_if 'grep -q "^CRYPTO_POLICY=$" /etc/sysconfig/sshd'
+              notifies :restart, "service[#{ssh_service}]", :delayed
             end
 
             { 'KexAlgorithms' => kex_algorithms }.each do |keyword, value|
