@@ -474,7 +474,7 @@ queries:
                 mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
                 ```
 
-            2. Edit the root crontab. The `crontab` command is missing where no cron daemon is installed, which is the case on Fedora cloud images and on Debian 12 and later, where `aide-common` only recommends `cron`. Install one first, with `dnf install cronie` followed by `systemctl enable --now crond` on Fedora, or `apt-get install cron` on Debian and Ubuntu, or schedule the check with the systemd timer described below instead:
+            2. Edit the root crontab. The `crontab` command is missing where no cron daemon is installed, which is the case on Fedora cloud images and on Debian 12 and later, where `aide-common` only recommends `cron`. Install one first, with `dnf install cronie` followed by `systemctl enable --now crond` on Fedora, or `apt-get install cron` on Debian and Ubuntu, or `zypper install cronie` followed by `systemctl enable --now cron` on openSUSE, or schedule the check with the systemd timer described below instead:
 
                 ```bash
                 crontab -u root -e
@@ -599,6 +599,10 @@ queries:
               elif command -v apt-get >/dev/null 2>&1; then
                 echo "Installing cron..."
                 apt-get install -y cron
+              elif command -v zypper >/dev/null 2>&1; then
+                echo "Installing cronie..."
+                zypper -n install cronie
+                systemctl enable --now cron
               else
                 echo "ERROR: crontab not found; install a cron daemon first" >&2
                 exit 1
@@ -8114,6 +8118,10 @@ queries:
           && f.keyname != empty
         )
       )
+
+      // A task,never rule without fields turns off syscall auditing for every
+      // process, and with it every rule this check reads.
+      auditd.rules.syscalls.none(list == "task" && action == "never" && fields == empty)
     docs:
       desc: |
         This check verifies that audit watch rules with the `wa` permission mask and a non-empty key cover both `/etc/sudoers` and the `/etc/sudoers.d` directory, so that writes and attribute changes to either are recorded.
@@ -8149,6 +8157,12 @@ queries:
             ```text
             -w /etc/sudoers -p wa -k scope
             -w /etc/sudoers.d -p wa -k scope
+            ```
+
+            On openSUSE, `/etc/audit/rules.d/audit.rules` ships the rule `-a task,never`, which turns off syscall auditing for every process started after the rules load, so these rules would record nothing. Remove it before you load the rules:
+
+            ```bash
+            sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
             ```
 
             To load the newly added rules into the running configuration:
@@ -8189,6 +8203,11 @@ queries:
               echo "-w /etc/sudoers.d -p wa -k scope" >> "$RULES_FILE"
             fi
 
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process.
+            if [ -f /etc/audit/rules.d/audit.rules ]; then
+              sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+            fi
+
             echo "Loading audit rules"
             augenrules --load > /dev/null
 
@@ -8220,9 +8239,17 @@ queries:
                     state: present
                   register: scope_rules_updated
 
+                # openSUSE ships -a task,never, which turns off syscall auditing for every process
+                - name: Remove the rule that turns off syscall auditing
+                  ansible.builtin.lineinfile:
+                    path: /etc/audit/rules.d/audit.rules
+                    regexp: '^-a task,never'
+                    state: absent
+                  register: audit_task_never
+
                 - name: Load audit rules if updated
                   ansible.builtin.command: augenrules --load
-                  when: scope_rules_updated.changed
+                  when: (scope_rules_updated.changed) or audit_task_never.changed
 
                 - name: Check if auditd is in immutable mode
                   ansible.builtin.shell: |
@@ -8247,6 +8274,13 @@ queries:
               command 'augenrules --load'
               action :nothing
               not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process
+            execute 'remove the rule that turns off syscall auditing' do
+              command "sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules"
+              only_if "grep -q '^-a task,never' /etc/audit/rules.d/audit.rules"
+              notifies :run, 'execute[load audit rules]', :delayed
             end
 
             file '/etc/audit/rules.d/50-scope.rules' do
@@ -8343,6 +8377,12 @@ queries:
                 -w /var/run/faillock -p wa -k logins
                 ```
 
+                On openSUSE, `/etc/audit/rules.d/audit.rules` ships the rule `-a task,never`, which turns off syscall auditing for every process started after the rules load, so these rules would record nothing. Remove it before you load the rules:
+
+                ```bash
+                sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+                ```
+
             5. To load the newly added rules into the running configuration:
 
                 ```bash
@@ -8380,6 +8420,11 @@ queries:
             elif [ -f /etc/redhat-release ] || grep -qi '^ID.*amzn' /etc/os-release 2>/dev/null; then
               echo "Adding auditing for faillock in $RULES_FILE"
               echo "-w /var/run/faillock -p wa -k logins" >> "$RULES_FILE"
+            fi
+
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process.
+            if [ -f /etc/audit/rules.d/audit.rules ]; then
+              sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
             fi
 
             echo "Loading audit rules"
@@ -8438,6 +8483,14 @@ queries:
                     msg: "Reboot required to load audit rules because the configuration is immutable."
                   when: audit_enabled.stdout == "2"
 
+                # openSUSE ships -a task,never, which turns off syscall auditing for every process
+                - name: Remove the rule that turns off syscall auditing
+                  ansible.builtin.lineinfile:
+                    path: /etc/audit/rules.d/audit.rules
+                    regexp: '^-a task,never'
+                    state: absent
+                  notify: Load audit rules
+
               handlers:
                 - name: Load audit rules
                   ansible.builtin.command: augenrules --load
@@ -8453,6 +8506,13 @@ queries:
               command 'augenrules --load'
               action :nothing
               not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process
+            execute 'remove the rule that turns off syscall auditing' do
+              command "sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules"
+              only_if "grep -q '^-a task,never' /etc/audit/rules.d/audit.rules"
+              notifies :run, 'execute[load audit rules]', :delayed
             end
 
             login_rules = ['-w /var/log/lastlog -p wa -k logins', '-w /var/log/tallylog -p wa -k logins']
@@ -8483,6 +8543,10 @@ queries:
           && f.keyname != empty
         )
       )
+
+      // A task,never rule without fields turns off syscall auditing for every
+      // process, and with it every rule this check reads.
+      auditd.rules.syscalls.none(list == "task" && action == "never" && fields == empty)
   - uid: mondoo-linux-security-login-and-logout-events-are-collected-rhel
     filters: asset.family.contains("redhat") || asset.platform == "amazonlinux"
     mql: |
@@ -8493,6 +8557,10 @@ queries:
           && f.keyname != empty
         )
       )
+
+      // A task,never rule without fields turns off syscall auditing for every
+      // process, and with it every rule this check reads.
+      auditd.rules.syscalls.none(list == "task" && action == "never" && fields == empty)
   - uid: mondoo-linux-security-login-and-logout-events-are-collected-other
     filters: asset.family.contains(/redhat|debian/) == false && asset.platform != "amazonlinux"
     mql: |
@@ -8503,6 +8571,10 @@ queries:
           && f.keyname != empty
         )
       )
+
+      // A task,never rule without fields turns off syscall auditing for every
+      // process, and with it every rule this check reads.
+      auditd.rules.syscalls.none(list == "task" && action == "never" && fields == empty)
   - uid: mondoo-linux-security-session-initiation-information-is-collected
     title: Ensure session initiation information is audited
     impact: 50
@@ -8535,6 +8607,10 @@ queries:
           && f.keyname != empty
         )
       )
+
+      // A task,never rule without fields turns off syscall auditing for every
+      // process, and with it every rule this check reads.
+      auditd.rules.syscalls.none(list == "task" && action == "never" && fields == empty)
     docs:
       desc: |
         This check verifies that the audit system watches the three files that hold the host's login record.
@@ -8575,6 +8651,12 @@ queries:
                 -w /var/log/btmp -p wa -k logins
                 ```
 
+                On openSUSE, `/etc/audit/rules.d/audit.rules` ships the rule `-a task,never`, which turns off syscall auditing for every process started after the rules load, so these rules would record nothing. Remove it before you load the rules:
+
+                ```bash
+                sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+                ```
+
             3. To load the newly added rules into the running configuration:
 
                 ```bash
@@ -8606,6 +8688,11 @@ queries:
             -w /var/log/wtmp -p wa -k logins
             -w /var/log/btmp -p wa -k logins
             EOF
+
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process.
+            if [ -f /etc/audit/rules.d/audit.rules ]; then
+              sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+            fi
 
             echo "Loading audit rules"
             augenrules --load > /dev/null
@@ -8648,6 +8735,14 @@ queries:
                     msg: "Reboot required to load audit rules because the configuration is immutable."
                   when: audit_enabled.stdout == "2"
 
+                # openSUSE ships -a task,never, which turns off syscall auditing for every process
+                - name: Remove the rule that turns off syscall auditing
+                  ansible.builtin.lineinfile:
+                    path: /etc/audit/rules.d/audit.rules
+                    regexp: '^-a task,never'
+                    state: absent
+                  notify: Load audit rules
+
               handlers:
                 - name: Load audit rules
                   ansible.builtin.command: augenrules --load
@@ -8663,6 +8758,13 @@ queries:
               command 'augenrules --load'
               action :nothing
               not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process
+            execute 'remove the rule that turns off syscall auditing' do
+              command "sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules"
+              only_if "grep -q '^-a task,never' /etc/audit/rules.d/audit.rules"
+              notifies :run, 'execute[load audit rules]', :delayed
             end
 
             file '/etc/audit/rules.d/50-session.rules' do
@@ -8699,6 +8801,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     mql: |
+      // openSUSE builds auditctl without 32-bit ARM support, so on its ARM hosts
+      // arch=b32 rules cannot be loaded and are required only elsewhere.
+      b32Loadable = asset.arch != /arm|aarch/ || asset.family.contains("suse") == false
+
       // 64-bit syscall rules for time modification
       syscalls_64bit = ["adjtimex", "settimeofday", "clock_settime"]
       desiredRules64 = auditd.rules.syscalls.where(
@@ -8717,7 +8823,9 @@ queries:
         && action == "always"
         && fields.contains(key == "key" && value != empty)
       ).map(syscalls).flat
-      desiredRules32.containsAll(syscalls_32bit)
+      if (b32Loadable) {
+        desiredRules32.containsAll(syscalls_32bit)
+      }
 
       // Watch rule for /etc/localtime
       auditd.rules.files.contains(
@@ -8725,6 +8833,10 @@ queries:
         && permissions == "wa"
         && keyname != empty
       )
+
+      // A task,never rule without fields turns off syscall auditing for every
+      // process, and with it every rule this check reads.
+      auditd.rules.syscalls.none(list == "task" && action == "never" && fields == empty)
     docs:
       desc: |
         This check verifies that audit rules record the `adjtimex`, `settimeofday`, and `clock_settime` system calls on both 32-bit and 64-bit architectures, each with `action always` and a non-empty key, along with a watch on the system's timezone configuration.
@@ -8765,6 +8877,14 @@ queries:
                 -w /etc/localtime -p wa -k time-change
                 ```
 
+                On openSUSE, `/etc/audit/rules.d/audit.rules` ships the rule `-a task,never`, which turns off syscall auditing for every process started after the rules load, so these rules would record nothing. Remove it before you load the rules:
+
+                ```bash
+                sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+                ```
+
+                On openSUSE on 64-bit ARM, also leave out the `arch=b32` lines. openSUSE builds the audit tools without 32-bit ARM support, so `auditctl` rejects them with `arch elf mapping not found`, and `augenrules` stops loading at the first one, which drops every rule after it, including a later `-e 2`. On such a host `ausyscall arm open` fails.
+
             3. To load the newly added rules into the running configuration:
 
                 ```bash
@@ -8799,6 +8919,17 @@ queries:
             -w /etc/localtime -p wa -k time-change
             EOF
 
+            # openSUSE builds auditctl without 32-bit ARM support. An arch=b32 rule it cannot
+            # parse stops augenrules and drops every rule after it.
+            if [ "$(uname -m)" = aarch64 ] && ! ausyscall arm open >/dev/null 2>&1; then
+              sed -i '/arch=b32/d' "$RULES_FILE"
+            fi
+
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process.
+            if [ -f /etc/audit/rules.d/audit.rules ]; then
+              sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+            fi
+
             echo "Loading audit rules"
             augenrules --load > /dev/null
 
@@ -8819,24 +8950,43 @@ queries:
               become: true
 
               tasks:
+                - name: Check whether auditctl can load 32-bit ARM rules
+                  ansible.builtin.command: ausyscall arm open
+                  register: audit_arm32
+                  changed_when: false
+                  failed_when: false
+                  when: ansible_architecture == 'aarch64'
+
                 - name: Ensure required time-change audit rules are present
                   ansible.builtin.blockinfile:
                     path: /etc/audit/rules.d/50-time_change.rules
-                    block: |
-                      -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change
-                      -a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change
-                      -a always,exit -F arch=b32 -S clock_settime -k time-change
-                      -a always,exit -F arch=b64 -S clock_settime -k time-change
-                      -w /etc/localtime -p wa -k time-change
+                    block: >-
+                      {{ audit_rules if (audit_arm32 is skipped or audit_arm32.rc == 0)
+                      else audit_rules | regex_replace('(?m)^.*arch=b32.*(\n|$)', '') }}
                     create: yes
                     owner: root
                     group: root
                     mode: '0640'
                   register: audit_rules_updated
+                  vars:
+                    audit_rules: |
+                      -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change
+                      -a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change
+                      -a always,exit -F arch=b32 -S clock_settime -k time-change
+                      -a always,exit -F arch=b64 -S clock_settime -k time-change
+                      -w /etc/localtime -p wa -k time-change
+
+                # openSUSE ships -a task,never, which turns off syscall auditing for every process
+                - name: Remove the rule that turns off syscall auditing
+                  ansible.builtin.lineinfile:
+                    path: /etc/audit/rules.d/audit.rules
+                    regexp: '^-a task,never'
+                    state: absent
+                  register: audit_task_never
 
                 - name: Reload audit rules if file was updated
                   ansible.builtin.command: augenrules --load
-                  when: audit_rules_updated.changed
+                  when: (audit_rules_updated.changed) or audit_task_never.changed
 
                 - name: Check if auditd is in immutable mode
                   ansible.builtin.shell: |
@@ -8863,8 +9013,19 @@ queries:
               not_if "auditctl -s | grep -q '^enabled.*2$'"
             end
 
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process
+            execute 'remove the rule that turns off syscall auditing' do
+              command "sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules"
+              only_if "grep -q '^-a task,never' /etc/audit/rules.d/audit.rules"
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
+
+            # openSUSE builds auditctl without 32-bit ARM support. An arch=b32 rule it cannot
+            # parse stops augenrules and drops every rule after it.
+            arm32_audit = node['kernel']['machine'] != 'aarch64' || shell_out('ausyscall', 'arm', 'open').exitstatus.zero?
+
             file '/etc/audit/rules.d/50-time_change.rules' do
-              content <<~RULES
+              content(<<~RULES.lines.reject { |l| !arm32_audit && l.include?('arch=b32') }.join)
                 -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change
                 -a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change
                 -a always,exit -F arch=b32 -S clock_settime -k time-change
@@ -8922,6 +9083,10 @@ queries:
       )
 
       appArmorConfigured || seLinuxConfigured
+
+      // A task,never rule without fields turns off syscall auditing for every
+      // process, and with it every rule this check reads.
+      auditd.rules.syscalls.none(list == "task" && action == "never" && fields == empty)
     docs:
       desc: |
         This check verifies that audit watch rules with a write and attribute mask and a non-empty key cover the mandatory access control configuration directories, which are `/etc/selinux` and `/usr/share/selinux` on SELinux systems and `/etc/apparmor` and `/etc/apparmor.d` on AppArmor systems.
@@ -8988,6 +9153,12 @@ queries:
                 -w /etc/apparmor.d -p wa -k MAC-policy
                 ```
 
+                On openSUSE, `/etc/audit/rules.d/audit.rules` ships the rule `-a task,never`, which turns off syscall auditing for every process started after the rules load, so these rules would record nothing. Remove it before you load the rules:
+
+                ```bash
+                sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+                ```
+
             4. To load the newly added rules into the running configuration:
 
                 ```bash
@@ -9020,6 +9191,11 @@ queries:
             -w /etc/apparmor -p wa -k MAC-policy
             -w /etc/apparmor.d -p wa -k MAC-policy
             EOF
+
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process.
+            if [ -f /etc/audit/rules.d/audit.rules ]; then
+              sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+            fi
 
             echo "Loading audit rules"
             augenrules --load > /dev/null
@@ -9055,9 +9231,17 @@ queries:
                     mode: '0640'
                   register: mac_audit_rules_updated
 
+                # openSUSE ships -a task,never, which turns off syscall auditing for every process
+                - name: Remove the rule that turns off syscall auditing
+                  ansible.builtin.lineinfile:
+                    path: /etc/audit/rules.d/audit.rules
+                    regexp: '^-a task,never'
+                    state: absent
+                  register: audit_task_never
+
                 - name: Reload audit rules if file was updated
                   ansible.builtin.command: augenrules --load
-                  when: mac_audit_rules_updated.changed
+                  when: (mac_audit_rules_updated.changed) or audit_task_never.changed
 
                 - name: Check if auditd is in immutable mode
                   ansible.builtin.shell: |
@@ -9082,6 +9266,13 @@ queries:
               command 'augenrules --load'
               action :nothing
               not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process
+            execute 'remove the rule that turns off syscall auditing' do
+              command "sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules"
+              only_if "grep -q '^-a task,never' /etc/audit/rules.d/audit.rules"
+              notifies :run, 'execute[load audit rules]', :delayed
             end
 
             file '/etc/audit/rules.d/50-MAC_policy.rules' do
@@ -9182,6 +9373,14 @@ queries:
                 -w /etc/network -p wa -k system-locale
                 ```
 
+                On openSUSE, `/etc/audit/rules.d/audit.rules` ships the rule `-a task,never`, which turns off syscall auditing for every process started after the rules load, so these rules would record nothing. Remove it before you load the rules:
+
+                ```bash
+                sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+                ```
+
+                On openSUSE on 64-bit ARM, also leave out the `arch=b32` lines. openSUSE builds the audit tools without 32-bit ARM support, so `auditctl` rejects them with `arch elf mapping not found`, and `augenrules` stops loading at the first one, which drops every rule after it, including a later `-e 2`. On such a host `ausyscall arm open` fails.
+
             5. To load the newly added rules into the running configuration:
 
                 ```bash
@@ -9222,6 +9421,17 @@ queries:
               echo "-w /etc/network -p wa -k system-locale" >> "$RULES_FILE"
             fi
 
+            # openSUSE builds auditctl without 32-bit ARM support. An arch=b32 rule it cannot
+            # parse stops augenrules and drops every rule after it.
+            if [ "$(uname -m)" = aarch64 ] && ! ausyscall arm open >/dev/null 2>&1; then
+              sed -i '/arch=b32/d' "$RULES_FILE"
+            fi
+
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process.
+            if [ -f /etc/audit/rules.d/audit.rules ]; then
+              sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+            fi
+
             echo "Loading audit rules"
             augenrules --load > /dev/null
 
@@ -9243,6 +9453,13 @@ queries:
               gather_facts: yes
 
               tasks:
+                - name: Check whether auditctl can load 32-bit ARM rules
+                  ansible.builtin.command: ausyscall arm open
+                  register: audit_arm32
+                  changed_when: false
+                  failed_when: false
+                  when: ansible_architecture == 'aarch64'
+
                 - name: Gather network file facts
                   ansible.builtin.stat:
                     path: "{{ item }}"
@@ -9254,16 +9471,20 @@ queries:
                 - name: Configure base audit rules
                   ansible.builtin.blockinfile:
                     path: /etc/audit/rules.d/50-system_local.rules
-                    block: |
+                    block: >-
+                      {{ audit_rules if (audit_arm32 is skipped or audit_arm32.rc == 0)
+                      else audit_rules | regex_replace('(?m)^.*arch=b32.*(\n|$)', '') }}
+                    marker: "# {mark} ANSIBLE MANAGED - base network rules"
+                    state: present
+                    create: true
+                  register: base_audit_rules
+                  vars:
+                    audit_rules: |
                       -a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale
                       -a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale
                       -w /etc/issue -p wa -k system-locale
                       -w /etc/issue.net -p wa -k system-locale
                       -w /etc/hosts -p wa -k system-locale
-                    marker: "# {mark} ANSIBLE MANAGED - base network rules"
-                    state: present
-                    create: true
-                  register: base_audit_rules
 
                 - name: Configure conditional network file monitoring
                   ansible.builtin.blockinfile:
@@ -9282,11 +9503,17 @@ queries:
                     group: root
                     mode: '0600'
 
+                # openSUSE ships -a task,never, which turns off syscall auditing for every process
+                - name: Remove the rule that turns off syscall auditing
+                  ansible.builtin.lineinfile:
+                    path: /etc/audit/rules.d/audit.rules
+                    regexp: '^-a task,never'
+                    state: absent
+                  register: audit_task_never
+
                 - name: Reload audit rules if the rules file was updated
                   ansible.builtin.command: augenrules --load
-                  when: >
-                    base_audit_rules.changed or
-                    conditional_audit_rules.changed
+                  when: (base_audit_rules.changed or conditional_audit_rules.changed) or audit_task_never.changed
 
                 - name: Check if auditd is in immutable mode
                   ansible.builtin.shell: |
@@ -9313,6 +9540,17 @@ queries:
               not_if "auditctl -s | grep -q '^enabled.*2$'"
             end
 
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process
+            execute 'remove the rule that turns off syscall auditing' do
+              command "sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules"
+              only_if "grep -q '^-a task,never' /etc/audit/rules.d/audit.rules"
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
+
+            # openSUSE builds auditctl without 32-bit ARM support. An arch=b32 rule it cannot
+            # parse stops augenrules and drops every rule after it.
+            arm32_audit = node['kernel']['machine'] != 'aarch64' || shell_out('ausyscall', 'arm', 'open').exitstatus.zero?
+
             locale_rules = [
               '-a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale',
               '-a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale',
@@ -9324,6 +9562,8 @@ queries:
             %w(/etc/sysconfig/network /etc/network).each do |path|
               locale_rules << "-w #{path} -p wa -k system-locale" if ::File.exist?(path)
             end
+
+            locale_rules.reject! { |rule| rule.include?('arch=b32') } unless arm32_audit
 
             file '/etc/audit/rules.d/50-system_local.rules' do
               content "#{locale_rules.join("\n")}\n"
@@ -9339,6 +9579,10 @@ queries:
   - uid: mondoo-linux-security-events-that-modify-the-systems-network-environment-are-collected-debian-rhel
     filters: asset.family.contains(/redhat|debian/) == true
     mql: |
+      // openSUSE builds auditctl without 32-bit ARM support, so on its ARM hosts
+      // arch=b32 rules cannot be loaded and are required only elsewhere.
+      b32Loadable = asset.arch != /arm|aarch/ || asset.family.contains("suse") == false
+
       // Syscall rules for network changes (64-bit)
       syscalls_64bit = ["sethostname", "setdomainname"]
       desiredRules64 = auditd.rules.syscalls.where(
@@ -9357,7 +9601,9 @@ queries:
         && action == "always"
         && fields.contains(key == "key" && value != empty)
       ).map(syscalls).flat
-      desiredRules32.containsAll(syscalls_32bit)
+      if (b32Loadable) {
+        desiredRules32.containsAll(syscalls_32bit)
+      }
 
       // Watch rules for network config files
       paths = ["/etc/issue", "/etc/issue.net", "/etc/hosts"]
@@ -9376,9 +9622,17 @@ queries:
           && f.keyname != empty
         )
       )
+
+      // A task,never rule without fields turns off syscall auditing for every
+      // process, and with it every rule this check reads.
+      auditd.rules.syscalls.none(list == "task" && action == "never" && fields == empty)
   - uid: mondoo-linux-security-events-that-modify-the-systems-network-environment-are-collected-other
     filters: asset.family.contains(/redhat|debian/) == false
     mql: |
+      // openSUSE builds auditctl without 32-bit ARM support, so on its ARM hosts
+      // arch=b32 rules cannot be loaded and are required only elsewhere.
+      b32Loadable = asset.arch != /arm|aarch/ || asset.family.contains("suse") == false
+
       // Syscall rules for network changes (64-bit)
       syscalls_64bit = ["sethostname", "setdomainname"]
       desiredRules64 = auditd.rules.syscalls.where(
@@ -9397,7 +9651,9 @@ queries:
         && action == "always"
         && fields.contains(key == "key" && value != empty)
       ).map(syscalls).flat
-      desiredRules32.containsAll(syscalls_32bit)
+      if (b32Loadable) {
+        desiredRules32.containsAll(syscalls_32bit)
+      }
 
       // Watch rules for network config files
       paths = ["/etc/issue", "/etc/issue.net", "/etc/hosts"]
@@ -9407,6 +9663,10 @@ queries:
           && f.keyname != empty
         )
       )
+
+      // A task,never rule without fields turns off syscall auditing for every
+      // process, and with it every rule this check reads.
+      auditd.rules.syscalls.none(list == "task" && action == "never" && fields == empty)
   - uid: mondoo-linux-security-discretionary-access-control-permission-modification-events-are-collected
     title: Ensure DAC permission modification events are audited
     impact: 50
@@ -9426,6 +9686,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     mql: |
+      // openSUSE builds auditctl without 32-bit ARM support, so on its ARM hosts
+      // arch=b32 rules cannot be loaded and are required only elsewhere.
+      b32Loadable = asset.arch != /arm|aarch/ || asset.family.contains("suse") == false
+
       // Syscalls for DAC permission modification (64-bit). The 64-bit ARM syscall
       // table has no chmod, chown, or lchown, so they are required only elsewhere.
       syscalls_64bit_base = ["fchmod", "fchmodat", "fchown", "fchownat", "setxattr", "lsetxattr", "fsetxattr", "removexattr", "lremovexattr", "fremovexattr"]
@@ -9453,7 +9717,13 @@ queries:
         && action == "always"
         && fields.contains(key == "key" && value != empty)
       ).map(syscalls).flat
-      desiredRules32.containsAll(syscalls_32bit)
+      if (b32Loadable) {
+        desiredRules32.containsAll(syscalls_32bit)
+      }
+
+      // A task,never rule without fields turns off syscall auditing for every
+      // process, and with it every rule this check reads.
+      auditd.rules.syscalls.none(list == "task" && action == "never" && fields == empty)
     docs:
       desc: |
         This check verifies that audit rules record the system calls that change file permissions, ownership, and extended attributes, on both 32-bit and 64-bit architectures, filtered to `auid>=1000` with `action always` and a non-empty key. The permission calls are `chmod`, `fchmod`, and `fchmodat`; the ownership calls are `chown`, `fchown`, `fchownat`, and `lchown`; the extended attribute calls are `setxattr`, `lsetxattr`, `fsetxattr`, `removexattr`, `lremovexattr`, and `fremovexattr`. The 64-bit ARM system call table has no `chmod`, `chown`, or `lchown`, so on ARM hosts the 64-bit rules need only the other calls, while the 32-bit rules still need all of them.
@@ -9508,6 +9778,14 @@ queries:
                 -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
                 ```
 
+                On openSUSE, `/etc/audit/rules.d/audit.rules` ships the rule `-a task,never`, which turns off syscall auditing for every process started after the rules load, so these rules would record nothing. Remove it before you load the rules:
+
+                ```bash
+                sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+                ```
+
+                On openSUSE on 64-bit ARM, also leave out the `arch=b32` lines. openSUSE builds the audit tools without 32-bit ARM support, so `auditctl` rejects them with `arch elf mapping not found`, and `augenrules` stops loading at the first one, which drops every rule after it, including a later `-e 2`. On such a host `ausyscall arm open` fails.
+
             3. To load the newly added rules into the running configuration:
 
                 ```bash
@@ -9560,6 +9838,17 @@ queries:
             EOF
             fi
 
+            # openSUSE builds auditctl without 32-bit ARM support. An arch=b32 rule it cannot
+            # parse stops augenrules and drops every rule after it.
+            if [ "$(uname -m)" = aarch64 ] && ! ausyscall arm open >/dev/null 2>&1; then
+              sed -i '/arch=b32/d' "$RULES_FILE"
+            fi
+
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process.
+            if [ -f /etc/audit/rules.d/audit.rules ]; then
+              sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+            fi
+
             echo "Loading audit rules"
             augenrules --load > /dev/null
 
@@ -9581,6 +9870,13 @@ queries:
               gather_facts: true
 
               tasks:
+                - name: Check whether auditctl can load 32-bit ARM rules
+                  ansible.builtin.command: ausyscall arm open
+                  register: audit_arm32
+                  changed_when: false
+                  failed_when: false
+                  when: ansible_architecture == 'aarch64'
+
                 - name: Set access rules block for non-ARM architectures
                   ansible.builtin.set_fact:
                     access_rules_block: |-
@@ -9610,16 +9906,26 @@ queries:
                 - name: Ensure permission modification audit rules are present
                   ansible.builtin.blockinfile:
                     path: /etc/audit/rules.d/50-perm_mod.rules
-                    block: "{{ access_rules_block }}"
+                    block: >-
+                      {{ access_rules_block if (audit_arm32 is skipped or audit_arm32.rc == 0)
+                      else access_rules_block | regex_replace('(?m)^.*arch=b32.*(\n|$)', '') }}
                     create: yes
                     owner: root
                     group: root
                     mode: '0640'
                   register: perm_mod_audit_rules_updated
 
+                # openSUSE ships -a task,never, which turns off syscall auditing for every process
+                - name: Remove the rule that turns off syscall auditing
+                  ansible.builtin.lineinfile:
+                    path: /etc/audit/rules.d/audit.rules
+                    regexp: '^-a task,never'
+                    state: absent
+                  register: audit_task_never
+
                 - name: Reload audit rules if file was updated
                   ansible.builtin.command: augenrules --load
-                  when: perm_mod_audit_rules_updated.changed
+                  when: (perm_mod_audit_rules_updated.changed) or audit_task_never.changed
 
                 - name: Check if auditd is in immutable mode
                   ansible.builtin.shell: |
@@ -9646,6 +9952,17 @@ queries:
               not_if "auditctl -s | grep -q '^enabled.*2$'"
             end
 
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process
+            execute 'remove the rule that turns off syscall auditing' do
+              command "sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules"
+              only_if "grep -q '^-a task,never' /etc/audit/rules.d/audit.rules"
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
+
+            # openSUSE builds auditctl without 32-bit ARM support. An arch=b32 rule it cannot
+            # parse stops augenrules and drops every rule after it.
+            arm32_audit = node['kernel']['machine'] != 'aarch64' || shell_out('ausyscall', 'arm', 'open').exitstatus.zero?
+
             arm = node['kernel']['machine'].to_s.match?(/^(arm|aarch)/)
 
             perm_rules = []
@@ -9663,6 +9980,8 @@ queries:
             perm_rules << '-a always,exit -F arch=b64 -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod'
             perm_rules << '-a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -F auid>=1000 -F auid!=4294967295 -k perm_mod'
             perm_rules << '-a always,exit -F arch=b32 -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod'
+
+            perm_rules.reject! { |rule| rule.include?('arch=b32') } unless arm32_audit
 
             file '/etc/audit/rules.d/50-perm_mod.rules' do
               content "#{perm_rules.join("\n")}\n"
@@ -9694,6 +10013,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     mql: |
+      // openSUSE builds auditctl without 32-bit ARM support, so on its ARM hosts
+      // arch=b32 rules cannot be loaded and are required only elsewhere.
+      b32Loadable = asset.arch != /arm|aarch/ || asset.family.contains("suse") == false
+
       // The 64-bit ARM syscall table has no creat or open, so they are required
       // only elsewhere. The 32-bit table, ARM included, has all five.
       syscalls_64bit_base = ["openat", "truncate", "ftruncate"]
@@ -9741,7 +10064,9 @@ queries:
         && action == "always"
         && fields.contains(key == "key" && value != empty)
       ).map(syscalls).flat
-      desiredRulesEperm32.containsAll(syscalls_32bit)
+      if (b32Loadable) {
+        desiredRulesEperm32.containsAll(syscalls_32bit)
+      }
 
       // Check for EACCES exit code rules (32-bit)
       desiredRulesEacces32 = auditd.rules.syscalls.where(
@@ -9753,7 +10078,13 @@ queries:
         && action == "always"
         && fields.contains(key == "key" && value != empty)
       ).map(syscalls).flat
-      desiredRulesEacces32.containsAll(syscalls_32bit)
+      if (b32Loadable) {
+        desiredRulesEacces32.containsAll(syscalls_32bit)
+      }
+
+      // A task,never rule without fields turns off syscall auditing for every
+      // process, and with it every rule this check reads.
+      auditd.rules.syscalls.none(list == "task" && action == "never" && fields == empty)
     docs:
       desc: |
         This check verifies that audit rules record failed file access, covering the `creat`, `open`, `openat`, `truncate`, and `ftruncate` system calls on both 32-bit and 64-bit architectures, filtered to `auid>=1000`, excluding daemon activity, and matching the `EACCES` and `EPERM` return codes. Each rule must carry a non-empty key. The 64-bit ARM system call table has no `creat` or `open`, so on ARM hosts the 64-bit rules need only `openat`, `truncate`, and `ftruncate`, while the 32-bit rules still need all five.
@@ -9806,6 +10137,14 @@ queries:
                 -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
                 ```
 
+                On openSUSE, `/etc/audit/rules.d/audit.rules` ships the rule `-a task,never`, which turns off syscall auditing for every process started after the rules load, so these rules would record nothing. Remove it before you load the rules:
+
+                ```bash
+                sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+                ```
+
+                On openSUSE on 64-bit ARM, also leave out the `arch=b32` lines. openSUSE builds the audit tools without 32-bit ARM support, so `auditctl` rejects them with `arch elf mapping not found`, and `augenrules` stops loading at the first one, which drops every rule after it, including a later `-e 2`. On such a host `ausyscall arm open` fails.
+
             3. To load the newly added rules into the running configuration:
 
                 ```bash
@@ -9854,6 +10193,17 @@ queries:
             EOF
             fi
 
+            # openSUSE builds auditctl without 32-bit ARM support. An arch=b32 rule it cannot
+            # parse stops augenrules and drops every rule after it.
+            if [ "$(uname -m)" = aarch64 ] && ! ausyscall arm open >/dev/null 2>&1; then
+              sed -i '/arch=b32/d' "$RULES_FILE"
+            fi
+
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process.
+            if [ -f /etc/audit/rules.d/audit.rules ]; then
+              sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+            fi
+
             echo "Loading audit rules"
             augenrules --load > /dev/null
 
@@ -9875,6 +10225,13 @@ queries:
               gather_facts: yes
 
               tasks:
+                - name: Check whether auditctl can load 32-bit ARM rules
+                  ansible.builtin.command: ausyscall arm open
+                  register: audit_arm32
+                  changed_when: false
+                  failed_when: false
+                  when: ansible_architecture == 'aarch64'
+
                 - name: Set access rules block for non-ARM architectures
                   ansible.builtin.set_fact:
                     access_rules_block: |-
@@ -9896,16 +10253,26 @@ queries:
                 - name: Ensure access audit rules are present
                   ansible.builtin.blockinfile:
                     path: /etc/audit/rules.d/50-access.rules
-                    block: "{{ access_rules_block }}"
+                    block: >-
+                      {{ access_rules_block if (audit_arm32 is skipped or audit_arm32.rc == 0)
+                      else access_rules_block | regex_replace('(?m)^.*arch=b32.*(\n|$)', '') }}
                     create: yes
                     owner: root
                     group: root
                     mode: '0640'
                   register: access_audit_rules_updated
 
+                # openSUSE ships -a task,never, which turns off syscall auditing for every process
+                - name: Remove the rule that turns off syscall auditing
+                  ansible.builtin.lineinfile:
+                    path: /etc/audit/rules.d/audit.rules
+                    regexp: '^-a task,never'
+                    state: absent
+                  register: audit_task_never
+
                 - name: Reload audit rules if file was updated
                   ansible.builtin.command: augenrules --load
-                  when: access_audit_rules_updated.changed
+                  when: (access_audit_rules_updated.changed) or audit_task_never.changed
 
                 - name: Check if auditd is in immutable mode
                   ansible.builtin.shell: |
@@ -9932,6 +10299,17 @@ queries:
               not_if "auditctl -s | grep -q '^enabled.*2$'"
             end
 
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process
+            execute 'remove the rule that turns off syscall auditing' do
+              command "sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules"
+              only_if "grep -q '^-a task,never' /etc/audit/rules.d/audit.rules"
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
+
+            # openSUSE builds auditctl without 32-bit ARM support. An arch=b32 rule it cannot
+            # parse stops augenrules and drops every rule after it.
+            arm32_audit = node['kernel']['machine'] != 'aarch64' || shell_out('ausyscall', 'arm', 'open').exitstatus.zero?
+
             arm = node['kernel']['machine'].to_s.match?(/^(arm|aarch)/)
 
             access_rules = %w(b64 b32).flat_map do |arch|
@@ -9940,6 +10318,8 @@ queries:
                 "-a always,exit -F arch=#{arch} #{syscalls} -F exit=-#{errno} -F auid>=1000 -F auid!=4294967295 -k access"
               end
             end
+
+            access_rules.reject! { |rule| rule.include?('arch=b32') } unless arm32_audit
 
             file '/etc/audit/rules.d/50-access.rules' do
               content "#{access_rules.join("\n")}\n"
@@ -9978,6 +10358,10 @@ queries:
           && f.keyname != empty
         )
       )
+
+      // A task,never rule without fields turns off syscall auditing for every
+      // process, and with it every rule this check reads.
+      auditd.rules.syscalls.none(list == "task" && action == "never" && fields == empty)
     docs:
       desc: |
         This check verifies that audit watch rules with the `wa` permission mask and a non-empty key cover `/etc/passwd`, `/etc/shadow`, `/etc/group`, `/etc/gshadow`, and `/etc/security/opasswd`.
@@ -10020,6 +10404,12 @@ queries:
                 -w /etc/security/opasswd -p wa -k identity
                 ```
 
+                On openSUSE, `/etc/audit/rules.d/audit.rules` ships the rule `-a task,never`, which turns off syscall auditing for every process started after the rules load, so these rules would record nothing. Remove it before you load the rules:
+
+                ```bash
+                sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+                ```
+
             3. To load the newly added rules into the running configuration:
 
                 ```bash
@@ -10053,6 +10443,11 @@ queries:
             -w /etc/shadow -p wa -k identity
             -w /etc/security/opasswd -p wa -k identity
             EOF
+
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process.
+            if [ -f /etc/audit/rules.d/audit.rules ]; then
+              sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+            fi
 
             echo "Loading audit rules"
             augenrules --load > /dev/null
@@ -10089,9 +10484,17 @@ queries:
                     mode: '0640'
                   register: identity_audit_rules_updated
 
+                # openSUSE ships -a task,never, which turns off syscall auditing for every process
+                - name: Remove the rule that turns off syscall auditing
+                  ansible.builtin.lineinfile:
+                    path: /etc/audit/rules.d/audit.rules
+                    regexp: '^-a task,never'
+                    state: absent
+                  register: audit_task_never
+
                 - name: Reload audit rules if file was updated
                   ansible.builtin.command: augenrules --load
-                  when: identity_audit_rules_updated.changed
+                  when: (identity_audit_rules_updated.changed) or audit_task_never.changed
 
                 - name: Check if auditd is in immutable mode
                   ansible.builtin.shell: |
@@ -10116,6 +10519,13 @@ queries:
               command 'augenrules --load'
               action :nothing
               not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process
+            execute 'remove the rule that turns off syscall auditing' do
+              command "sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules"
+              only_if "grep -q '^-a task,never' /etc/audit/rules.d/audit.rules"
+              notifies :run, 'execute[load audit rules]', :delayed
             end
 
             file '/etc/audit/rules.d/50-identity.rules' do
@@ -10170,6 +10580,10 @@ queries:
         && action == "always"
         && fields.contains(key == "key" && value != empty)
       )
+
+      // A task,never rule without fields turns off syscall auditing for every
+      // process, and with it every rule this check reads.
+      auditd.rules.syscalls.none(list == "task" && action == "never" && fields == empty)
     docs:
       desc: |
         This check verifies that an audit rule records the `mount` system call on the host's architecture, filtered to `auid>=1000` so that it captures actions by interactive users while excluding daemon activity, with `action always` and a non-empty key.
@@ -10207,6 +10621,14 @@ queries:
                 -a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
                 ```
 
+                On openSUSE, `/etc/audit/rules.d/audit.rules` ships the rule `-a task,never`, which turns off syscall auditing for every process started after the rules load, so these rules would record nothing. Remove it before you load the rules:
+
+                ```bash
+                sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+                ```
+
+                On openSUSE on 64-bit ARM, also leave out the `arch=b32` lines. openSUSE builds the audit tools without 32-bit ARM support, so `auditctl` rejects them with `arch elf mapping not found`, and `augenrules` stops loading at the first one, which drops every rule after it, including a later `-e 2`. On such a host `ausyscall arm open` fails.
+
             3. Load the newly added rules into the running configuration:
 
                 ```bash
@@ -10236,6 +10658,17 @@ queries:
             -a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
             EOF
 
+            # openSUSE builds auditctl without 32-bit ARM support. An arch=b32 rule it cannot
+            # parse stops augenrules and drops every rule after it.
+            if [ "$(uname -m)" = aarch64 ] && ! ausyscall arm open >/dev/null 2>&1; then
+              sed -i '/arch=b32/d' /etc/audit/rules.d/50-mounts.rules
+            fi
+
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process.
+            if [ -f /etc/audit/rules.d/audit.rules ]; then
+              sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+            fi
+
             echo "Loading audit rules..."
             augenrules --load > /dev/null
 
@@ -10257,20 +10690,39 @@ queries:
               become: true
 
               tasks:
+                - name: Check whether auditctl can load 32-bit ARM rules
+                  ansible.builtin.command: ausyscall arm open
+                  register: audit_arm32
+                  changed_when: false
+                  failed_when: false
+                  when: ansible_architecture == 'aarch64'
+
                 - name: Ensure mount audit rules are present
                   ansible.builtin.blockinfile:
                     path: /etc/audit/rules.d/50-mounts.rules
-                    block: |
-                      -a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
-                      -a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
+                    block: >-
+                      {{ audit_rules if (audit_arm32 is skipped or audit_arm32.rc == 0)
+                      else audit_rules | regex_replace('(?m)^.*arch=b32.*(\n|$)', '') }}
                     state: present
                     insertafter: EOF
                     create: yes
                     mode: '0600'
                   register: mount_audit_rules_updated
+                  vars:
+                    audit_rules: |
+                      -a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
+                      -a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
+                # openSUSE ships -a task,never, which turns off syscall auditing for every process
+                - name: Remove the rule that turns off syscall auditing
+                  ansible.builtin.lineinfile:
+                    path: /etc/audit/rules.d/audit.rules
+                    regexp: '^-a task,never'
+                    state: absent
+                  register: audit_task_never
+
                 - name: Reload audit rules if file was updated
                   ansible.builtin.command: augenrules --load
-                  when: mount_audit_rules_updated.changed
+                  when: (mount_audit_rules_updated.changed) or audit_task_never.changed
 
                 - name: Check if auditd is in immutable mode
                   ansible.builtin.shell: |
@@ -10297,8 +10749,19 @@ queries:
               not_if "auditctl -s | grep -q '^enabled.*2$'"
             end
 
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process
+            execute 'remove the rule that turns off syscall auditing' do
+              command "sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules"
+              only_if "grep -q '^-a task,never' /etc/audit/rules.d/audit.rules"
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
+
+            # openSUSE builds auditctl without 32-bit ARM support. An arch=b32 rule it cannot
+            # parse stops augenrules and drops every rule after it.
+            arm32_audit = node['kernel']['machine'] != 'aarch64' || shell_out('ausyscall', 'arm', 'open').exitstatus.zero?
+
             file '/etc/audit/rules.d/50-mounts.rules' do
-              content <<~RULES
+              content(<<~RULES.lines.reject { |l| !arm32_audit && l.include?('arch=b32') }.join)
                 -a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
                 -a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
               RULES
@@ -10358,6 +10821,10 @@ queries:
       if (asset.arch != /arm|aarch/) {
         deleteRules64.containsAll(syscalls_nonarm) || deleteRules32.containsAll(syscalls_nonarm)
       }
+
+      // A task,never rule without fields turns off syscall auditing for every
+      // process, and with it every rule this check reads.
+      auditd.rules.syscalls.none(list == "task" && action == "never" && fields == empty)
     docs:
       desc: |
         This check verifies that the audit system records file deletions and renames performed by ordinary user accounts.
@@ -10406,6 +10873,14 @@ queries:
                 -a always,exit -F arch=b32 -S unlinkat -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
                 ```
 
+                On openSUSE, `/etc/audit/rules.d/audit.rules` ships the rule `-a task,never`, which turns off syscall auditing for every process started after the rules load, so these rules would record nothing. Remove it before you load the rules:
+
+                ```bash
+                sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+                ```
+
+                On openSUSE on 64-bit ARM, also leave out the `arch=b32` lines. openSUSE builds the audit tools without 32-bit ARM support, so `auditctl` rejects them with `arch elf mapping not found`, and `augenrules` stops loading at the first one, which drops every rule after it, including a later `-e 2`. On such a host `ausyscall arm open` fails.
+
             3. Load the newly added rules into the running configuration:
 
                 ```bash
@@ -10449,6 +10924,17 @@ queries:
             EOF
             fi
 
+            # openSUSE builds auditctl without 32-bit ARM support. An arch=b32 rule it cannot
+            # parse stops augenrules and drops every rule after it.
+            if [ "$(uname -m)" = aarch64 ] && ! ausyscall arm open >/dev/null 2>&1; then
+              sed -i '/arch=b32/d' /etc/audit/rules.d/50-deletion.rules
+            fi
+
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process.
+            if [ -f /etc/audit/rules.d/audit.rules ]; then
+              sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+            fi
+
             echo "Loading audit rules..."
             augenrules --load > /dev/null
 
@@ -10470,36 +10956,61 @@ queries:
               become: true
 
               tasks:
+                - name: Check whether auditctl can load 32-bit ARM rules
+                  ansible.builtin.command: ausyscall arm open
+                  register: audit_arm32
+                  changed_when: false
+                  failed_when: false
+                  when: ansible_architecture == 'aarch64'
+
                 - name: Ensure file deletion and renaming audit rules are present (non-ARM)
                   ansible.builtin.blockinfile:
                     path: /etc/audit/rules.d/50-deletion.rules
-                    block: |
-                      -a always,exit -F arch=b64 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
-                      -a always,exit -F arch=b32 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
+                    block: >-
+                      {{ audit_rules if (audit_arm32 is skipped or audit_arm32.rc == 0)
+                      else audit_rules | regex_replace('(?m)^.*arch=b32.*(\n|$)', '') }}
                     create: yes
                     owner: root
                     group: root
                     mode: '0640'
                   register: deletion_audit_rules_nonarm
                   when: ansible_architecture is not match('^(arm|aarch)')
+                  vars:
+                    audit_rules: |
+                      -a always,exit -F arch=b64 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
+                      -a always,exit -F arch=b32 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
 
                 - name: Ensure file deletion and renaming audit rules are present (ARM)
                   ansible.builtin.blockinfile:
                     path: /etc/audit/rules.d/50-deletion.rules
-                    block: |
-                      -a always,exit -F arch=b64 -S unlinkat -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
-                      -a always,exit -F arch=b32 -S unlinkat -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
+                    block: >-
+                      {{ audit_rules if (audit_arm32 is skipped or audit_arm32.rc == 0)
+                      else audit_rules | regex_replace('(?m)^.*arch=b32.*(\n|$)', '') }}
                     create: yes
                     owner: root
                     group: root
                     mode: '0640'
                   register: deletion_audit_rules_arm
                   when: ansible_architecture is match('^(arm|aarch)')
+                  vars:
+                    audit_rules: |
+                      -a always,exit -F arch=b64 -S unlinkat -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
+                      -a always,exit -F arch=b32 -S unlinkat -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
+
+                # openSUSE ships -a task,never, which turns off syscall auditing for every process
+                - name: Remove the rule that turns off syscall auditing
+                  ansible.builtin.lineinfile:
+                    path: /etc/audit/rules.d/audit.rules
+                    regexp: '^-a task,never'
+                    state: absent
+                  register: audit_task_never
 
                 - name: Reload audit rules if file was updated
                   ansible.builtin.command: augenrules --load
-                  when: (deletion_audit_rules_nonarm is defined and deletion_audit_rules_nonarm.changed) or
-                        (deletion_audit_rules_arm is defined and deletion_audit_rules_arm.changed)
+                  when: >-
+                    (deletion_audit_rules_nonarm is defined and deletion_audit_rules_nonarm.changed) or
+                    (deletion_audit_rules_arm is defined and deletion_audit_rules_arm.changed) or
+                    audit_task_never.changed
 
                 - name: Check if auditd is in immutable mode
                   ansible.builtin.shell: |
@@ -10526,12 +11037,25 @@ queries:
               not_if "auditctl -s | grep -q '^enabled.*2$'"
             end
 
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process
+            execute 'remove the rule that turns off syscall auditing' do
+              command "sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules"
+              only_if "grep -q '^-a task,never' /etc/audit/rules.d/audit.rules"
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
+
+            # openSUSE builds auditctl without 32-bit ARM support. An arch=b32 rule it cannot
+            # parse stops augenrules and drops every rule after it.
+            arm32_audit = node['kernel']['machine'] != 'aarch64' || shell_out('ausyscall', 'arm', 'open').exitstatus.zero?
+
             arm = node['kernel']['machine'].to_s.match?(/^(arm|aarch)/)
             syscalls = arm ? '-S unlinkat -S renameat' : '-S unlink -S unlinkat -S rename -S renameat'
 
             deletion_rules = %w(b64 b32).map do |arch|
               "-a always,exit -F arch=#{arch} #{syscalls} -F auid>=1000 -F auid!=4294967295 -k delete"
             end
+
+            deletion_rules.reject! { |rule| rule.include?('arch=b32') } unless arm32_audit
 
             file '/etc/audit/rules.d/50-deletion.rules' do
               content "#{deletion_rules.join("\n")}\n"
@@ -10579,6 +11103,10 @@ queries:
         && action == "always"
         && fields.contains(key == "key" && value != empty)
       )
+
+      // A task,never rule without fields turns off syscall auditing for every
+      // process, and with it every rule this check reads.
+      auditd.rules.syscalls.none(list == "task" && action == "never" && fields == empty)
     docs:
       desc: |
         This check verifies that audit rules cover both paths by which kernel modules are managed: watch rules with the execute mask on `/sbin/insmod`, `/sbin/rmmod`, and `/sbin/modprobe`, and a syscall rule recording `init_module` and `delete_module`. All rules must carry a non-empty key.
@@ -10619,6 +11147,14 @@ queries:
                 -a always,exit -F arch=b32 -S init_module -S finit_module -S delete_module -k modules
                 ```
 
+                On openSUSE, `/etc/audit/rules.d/audit.rules` ships the rule `-a task,never`, which turns off syscall auditing for every process started after the rules load, so these rules would record nothing. Remove it before you load the rules:
+
+                ```bash
+                sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+                ```
+
+                On openSUSE on 64-bit ARM, also leave out the `arch=b32` lines. openSUSE builds the audit tools without 32-bit ARM support, so `auditctl` rejects them with `arch elf mapping not found`, and `augenrules` stops loading at the first one, which drops every rule after it, including a later `-e 2`. On such a host `ausyscall arm open` fails.
+
             3. Load the newly added rules into the running configuration:
 
                 ```bash
@@ -10649,6 +11185,17 @@ queries:
             echo "-a always,exit -F arch=b64 -S init_module -S finit_module -S delete_module -k modules" >> /etc/audit/rules.d/50-modules.rules
             echo "-a always,exit -F arch=b32 -S init_module -S finit_module -S delete_module -k modules" >> /etc/audit/rules.d/50-modules.rules
 
+            # openSUSE builds auditctl without 32-bit ARM support. An arch=b32 rule it cannot
+            # parse stops augenrules and drops every rule after it.
+            if [ "$(uname -m)" = aarch64 ] && ! ausyscall arm open >/dev/null 2>&1; then
+              sed -i '/arch=b32/d' /etc/audit/rules.d/50-modules.rules
+            fi
+
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process.
+            if [ -f /etc/audit/rules.d/audit.rules ]; then
+              sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+            fi
+
             echo "Loading audit rules"
             augenrules --load > /dev/null
 
@@ -10669,23 +11216,42 @@ queries:
               become: true
 
               tasks:
+                - name: Check whether auditctl can load 32-bit ARM rules
+                  ansible.builtin.command: ausyscall arm open
+                  register: audit_arm32
+                  changed_when: false
+                  failed_when: false
+                  when: ansible_architecture == 'aarch64'
+
                 - name: Ensure audit rules for kernel modules are present
                   ansible.builtin.blockinfile:
                     path: /etc/audit/rules.d/50-modules.rules
-                    block: |
-                      -w /sbin/insmod -p x -k modules
-                      -w /sbin/rmmod -p x -k modules
-                      -w /sbin/modprobe -p x -k modules
-                      -a always,exit -F arch=b64 -S init_module -S finit_module -S delete_module -k modules
-                      -a always,exit -F arch=b32 -S init_module -S finit_module -S delete_module -k modules
+                    block: >-
+                      {{ audit_rules if (audit_arm32 is skipped or audit_arm32.rc == 0)
+                      else audit_rules | regex_replace('(?m)^.*arch=b32.*(\n|$)', '') }}
                     create: yes
                     owner: root
                     group: root
                     mode: '0640'
                   register: modules_audit_rules_updated
+                  vars:
+                    audit_rules: |
+                      -w /sbin/insmod -p x -k modules
+                      -w /sbin/rmmod -p x -k modules
+                      -w /sbin/modprobe -p x -k modules
+                      -a always,exit -F arch=b64 -S init_module -S finit_module -S delete_module -k modules
+                      -a always,exit -F arch=b32 -S init_module -S finit_module -S delete_module -k modules
+                # openSUSE ships -a task,never, which turns off syscall auditing for every process
+                - name: Remove the rule that turns off syscall auditing
+                  ansible.builtin.lineinfile:
+                    path: /etc/audit/rules.d/audit.rules
+                    regexp: '^-a task,never'
+                    state: absent
+                  register: audit_task_never
+
                 - name: Reload audit rules if file was updated
                   ansible.builtin.command: augenrules --load
-                  when: modules_audit_rules_updated.changed
+                  when: (modules_audit_rules_updated.changed) or audit_task_never.changed
 
                 - name: Check if auditd is in immutable mode
                   ansible.builtin.shell: |
@@ -10712,8 +11278,19 @@ queries:
               not_if "auditctl -s | grep -q '^enabled.*2$'"
             end
 
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process
+            execute 'remove the rule that turns off syscall auditing' do
+              command "sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules"
+              only_if "grep -q '^-a task,never' /etc/audit/rules.d/audit.rules"
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
+
+            # openSUSE builds auditctl without 32-bit ARM support. An arch=b32 rule it cannot
+            # parse stops augenrules and drops every rule after it.
+            arm32_audit = node['kernel']['machine'] != 'aarch64' || shell_out('ausyscall', 'arm', 'open').exitstatus.zero?
+
             file '/etc/audit/rules.d/50-modules.rules' do
-              content <<~RULES
+              content(<<~RULES.lines.reject { |l| !arm32_audit && l.include?('arch=b32') }.join)
                 -w /sbin/insmod -p x -k modules
                 -w /sbin/rmmod -p x -k modules
                 -w /sbin/modprobe -p x -k modules
@@ -10752,6 +11329,10 @@ queries:
         f.path == "/var/log/sudo.log" && f.permissions == "wa"
         && f.keyname != empty
       )
+
+      // A task,never rule without fields turns off syscall auditing for every
+      // process, and with it every rule this check reads.
+      auditd.rules.syscalls.none(list == "task" && action == "never" && fields == empty)
     docs:
       desc: |
         This check verifies that an audit watch rule with the `wa` permission mask and a non-empty key covers `/var/log/sudo.log`, the dedicated sudo log file configured by a companion check in this policy.
@@ -10794,6 +11375,12 @@ queries:
             -w /var/log/sudo.log -p wa -k actions
             ```
 
+            On openSUSE, `/etc/audit/rules.d/audit.rules` ships the rule `-a task,never`, which turns off syscall auditing for every process started after the rules load, so these rules would record nothing. Remove it before you load the rules:
+
+            ```bash
+            sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+            ```
+
             To load the newly added rules into the running configuration:
 
             ```bash
@@ -10819,6 +11406,11 @@ queries:
 
             echo "Setting audit rule for sudo actions..."
             echo "-w /var/log/sudo.log -p wa -k actions" > /etc/audit/rules.d/50-sudo.rules
+
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process.
+            if [ -f /etc/audit/rules.d/audit.rules ]; then
+              sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
+            fi
 
             echo "Loading audit rules"
             augenrules --load > /dev/null
@@ -10851,9 +11443,17 @@ queries:
                     mode: '0640'
                   register: sudo_audit_rule_updated
 
+                # openSUSE ships -a task,never, which turns off syscall auditing for every process
+                - name: Remove the rule that turns off syscall auditing
+                  ansible.builtin.lineinfile:
+                    path: /etc/audit/rules.d/audit.rules
+                    regexp: '^-a task,never'
+                    state: absent
+                  register: audit_task_never
+
                 - name: Reload audit rules if updated
                   ansible.builtin.command: augenrules --load
-                  when: sudo_audit_rule_updated.changed
+                  when: (sudo_audit_rule_updated.changed) or audit_task_never.changed
 
                 - name: Check if auditd is in immutable mode
                   ansible.builtin.shell: |
@@ -10878,6 +11478,13 @@ queries:
               command 'augenrules --load'
               action :nothing
               not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            # openSUSE ships -a task,never, which turns off syscall auditing for every process
+            execute 'remove the rule that turns off syscall auditing' do
+              command "sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules"
+              only_if "grep -q '^-a task,never' /etc/audit/rules.d/audit.rules"
+              notifies :run, 'execute[load audit rules]', :delayed
             end
 
             file '/etc/audit/rules.d/50-sudo.rules' do
@@ -11262,6 +11869,12 @@ queries:
           desc: |
             **Using the CLI**
 
+            openSUSE Leap 16 ships the SSH server configuration only as `/usr/etc/ssh/sshd_config`, so `/etc/ssh/sshd_config` does not exist there. sshd reads `/etc/ssh/sshd_config` in place of the vendor file once it exists, so create it as a copy of the vendor file rather than a new file. The copy no longer follows changes that package updates make to the vendor file:
+
+            ```bash
+            [ -f /etc/ssh/sshd_config ] || install -m 0600 -o root -g root /usr/etc/ssh/sshd_config /etc/ssh/sshd_config
+            ```
+
             To set the ownership and permissions on `/etc/ssh/sshd_config`, run the following commands:
 
             ```bash
@@ -11277,6 +11890,12 @@ queries:
             ```bash
             #!/bin/bash
             set -e
+
+            # openSUSE Leap 16 ships only /usr/etc/ssh/sshd_config. sshd reads /etc/ssh/sshd_config in
+            # place of it once that exists, so create it as a copy of the vendor file.
+            if [ ! -f /etc/ssh/sshd_config ] && [ -f /usr/etc/ssh/sshd_config ]; then
+              install -m 0600 -o root -g root /usr/etc/ssh/sshd_config /etc/ssh/sshd_config
+            fi
 
             echo "Setting ownership and permissions for /etc/ssh/sshd_config..."
             chown root:root /etc/ssh/sshd_config
@@ -11294,6 +11913,23 @@ queries:
               hosts: all
               become: yes
               tasks:
+                # openSUSE Leap 16 ships only /usr/etc/ssh/sshd_config, and sshd reads /etc/ssh/sshd_config in place of it
+                - name: Check for the vendor SSH server configuration
+                  ansible.builtin.stat:
+                    path: /usr/etc/ssh/sshd_config
+                  register: vendor_ssh_sshd_config
+
+                - name: Start /etc/ssh/sshd_config from the vendor file where it does not exist yet
+                  ansible.builtin.copy:
+                    src: /usr/etc/ssh/sshd_config
+                    dest: /etc/ssh/sshd_config
+                    remote_src: true
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0600'
+                  when: vendor_ssh_sshd_config.stat.exists
+
                 - name: Set ownership of /etc/ssh/sshd_config to root:root
                   ansible.builtin.file:
                     path: /etc/ssh/sshd_config
@@ -11312,6 +11948,18 @@ queries:
             Use this Chef Infra recipe code to restrict the SSH daemon configuration to root:
 
             ```ruby
+            # openSUSE Leap 16 ships only /usr/etc/ssh/sshd_config. sshd reads /etc/ssh/sshd_config in
+            # place of it once that exists, so create it as a copy of the vendor file.
+            file 'copy the vendor sshd_config' do
+              path '/etc/ssh/sshd_config'
+              content(lazy { ::File.read('/usr/etc/ssh/sshd_config') })
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create_if_missing
+              only_if { ::File.exist?('/usr/etc/ssh/sshd_config') }
+            end
+
             file '/etc/ssh/sshd_config' do
               owner 'root'
               group 'root'
@@ -11809,7 +12457,7 @@ queries:
                 ForwardToSyslog=yes
                 ```
 
-                Fedora, and Red Hat Enterprise Linux 10 and its rebuilds, install the defaults only as `/usr/lib/systemd/journald.conf`, so `/etc/systemd/journald.conf` does not exist there. Create it with a `[Journal]` line followed by the setting. journald then reads it in place of the file in `/usr/lib`.
+                Fedora, openSUSE Leap 16, and Red Hat Enterprise Linux 10 and its rebuilds install the defaults only as `/usr/lib/systemd/journald.conf`, so `/etc/systemd/journald.conf` does not exist there. Create it with a `[Journal]` line followed by the setting. journald then reads it in place of the file in `/usr/lib`.
 
                 journald reads the drop-in files in `journald.conf.d` after this file, so a drop-in that sets `ForwardToSyslog` overrides it. Remove or correct the setting in any drop-in that the audit command shows after this file.
 
@@ -12111,7 +12759,7 @@ queries:
                 Storage=persistent
                 ```
 
-                Fedora, and Red Hat Enterprise Linux 10 and its rebuilds, install the defaults only as `/usr/lib/systemd/journald.conf`, so `/etc/systemd/journald.conf` does not exist there. Create it with a `[Journal]` line followed by the setting. journald then reads it in place of the file in `/usr/lib`.
+                Fedora, openSUSE Leap 16, and Red Hat Enterprise Linux 10 and its rebuilds install the defaults only as `/usr/lib/systemd/journald.conf`, so `/etc/systemd/journald.conf` does not exist there. Create it with a `[Journal]` line followed by the setting. journald then reads it in place of the file in `/usr/lib`.
 
                 journald reads the drop-in files in `journald.conf.d` after this file, so a drop-in that sets `Storage` overrides it. Remove or correct the setting in any drop-in that the audit command shows after this file.
 
@@ -12308,6 +12956,15 @@ queries:
                 ```text
                 DPkg::Post-Invoke { "chmod g-wx,o-rwx /var/log/apt/history.log /var/log/apt/eipp.log.xz 2>/dev/null || true"; };
                 ```
+
+            5. On openSUSE, give `klog.service` a umask:
+
+                `klog.service` writes the kernel ring buffer to `/var/log/boot.msg` at every boot, and creates the file with mode `0644`, which undoes step 1 at the next boot. Create `/etc/systemd/system/klog.service.d/log-permissions.conf` with this content, so the service creates the file without group write or any access for other users. It takes effect at the next boot:
+
+                ```ini
+                [Service]
+                UMask=0027
+                ```
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -12364,6 +13021,14 @@ queries:
               cat <<'EOF' > /etc/apt/apt.conf.d/99-log-permissions
             DPkg::Post-Invoke { "chmod g-wx,o-rwx /var/log/apt/history.log /var/log/apt/eipp.log.xz 2>/dev/null || true"; };
             EOF
+            fi
+
+            # openSUSE's klog.service rewrites /var/log/boot.msg with mode 0644 at every boot.
+            if [ -f /usr/lib/systemd/system/klog.service ]; then
+              echo "Giving klog.service a umask for /var/log/boot.msg..."
+              mkdir -p /etc/systemd/system/klog.service.d
+              printf '[Service]\nUMask=0027\n' > /etc/systemd/system/klog.service.d/log-permissions.conf
+              systemctl daemon-reload
             fi
             ```
         - id: ansible
@@ -12439,6 +13104,29 @@ queries:
                     content: |
                       DPkg::Post-Invoke { "chmod g-wx,o-rwx /var/log/apt/history.log /var/log/apt/eipp.log.xz 2>/dev/null || true"; };
                   when: ansible_facts['os_family'] == 'Debian'
+
+                - name: Check for openSUSE's klog service
+                  ansible.builtin.stat:
+                    path: /usr/lib/systemd/system/klog.service
+                  register: klog_unit
+
+                # klog.service rewrites /var/log/boot.msg with mode 0644 at every boot
+                - name: Give klog.service a umask for /var/log/boot.msg
+                  ansible.builtin.copy:
+                    dest: /etc/systemd/system/klog.service.d/log-permissions.conf
+                    owner: root
+                    group: root
+                    mode: '0644'
+                    content: |
+                      [Service]
+                      UMask=0027
+                  when: klog_unit.stat.exists
+                  register: klog_umask
+
+                - name: Reload systemd after adding the klog.service drop-in
+                  ansible.builtin.systemd:
+                    daemon_reload: true
+                  when: klog_umask.changed
 
               handlers:
                 - name: Restart rsyslog
@@ -12520,6 +13208,25 @@ queries:
               group 'root'
               mode '0644'
               only_if { ::File.directory?('/etc/apt/apt.conf.d') }
+            end
+
+            # openSUSE's klog.service rewrites /var/log/boot.msg with mode 0644 at every boot
+            directory '/etc/systemd/system/klog.service.d' do
+              only_if { ::File.exist?('/usr/lib/systemd/system/klog.service') }
+            end
+
+            file '/etc/systemd/system/klog.service.d/log-permissions.conf' do
+              content "[Service]\nUMask=0027\n"
+              owner 'root'
+              group 'root'
+              mode '0644'
+              only_if { ::File.exist?('/usr/lib/systemd/system/klog.service') }
+              notifies :run, 'execute[reload systemd for klog]', :immediately
+            end
+
+            execute 'reload systemd for klog' do
+              command 'systemctl daemon-reload'
+              action :nothing
             end
             ```
     refs:
@@ -13040,7 +13747,7 @@ queries:
             LogLevel INFO
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'LogLevel' /etc/ssh/sshd_config.d/
@@ -13084,7 +13791,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -13130,7 +13840,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -13190,8 +13900,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -13293,7 +14005,7 @@ queries:
             X11Forwarding no
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'X11Forwarding' /etc/ssh/sshd_config.d/
@@ -13337,7 +14049,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -13383,7 +14098,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -13443,8 +14158,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -13546,7 +14263,7 @@ queries:
             MaxAuthTries 4
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'MaxAuthTries' /etc/ssh/sshd_config.d/
@@ -13590,7 +14307,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -13636,7 +14356,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -13696,8 +14416,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -13799,7 +14521,7 @@ queries:
             IgnoreRhosts yes
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'IgnoreRhosts' /etc/ssh/sshd_config.d/
@@ -13843,7 +14565,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -13889,7 +14614,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -13949,8 +14674,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -14052,7 +14779,7 @@ queries:
             HostbasedAuthentication no
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'HostbasedAuthentication' /etc/ssh/sshd_config.d/
@@ -14096,7 +14823,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -14142,7 +14872,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -14202,8 +14932,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -14311,7 +15043,7 @@ queries:
             PermitRootLogin prohibit-password
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'PermitRootLogin' /etc/ssh/sshd_config.d/
@@ -14355,7 +15087,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -14401,7 +15136,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -14461,8 +15196,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -14564,7 +15301,7 @@ queries:
             PermitEmptyPasswords no
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'PermitEmptyPasswords' /etc/ssh/sshd_config.d/
@@ -14608,7 +15345,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -14654,7 +15394,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -14714,8 +15454,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -14819,7 +15561,7 @@ queries:
             PermitUserEnvironment no
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'PermitUserEnvironment' /etc/ssh/sshd_config.d/
@@ -14863,7 +15605,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -14909,7 +15654,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -14969,8 +15714,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -15092,7 +15839,7 @@ queries:
             Ciphers aes256-ctr,aes192-ctr,aes128-ctr
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'Ciphers' /etc/ssh/sshd_config.d/
@@ -15142,7 +15889,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -15203,7 +15953,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -15281,8 +16031,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -15402,7 +16154,7 @@ queries:
             MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'MACs' /etc/ssh/sshd_config.d/
@@ -15452,7 +16204,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -15507,7 +16262,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -15585,8 +16340,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -15775,7 +16532,7 @@ queries:
 
             Releases before 4.4 offer no key exchange that meets this check. Every method they carry is either SHA-1 based or uses the fixed 1024-bit group. Upgrade OpenSSH on those hosts rather than editing `KexAlgorithms`.
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'KexAlgorithms' /etc/ssh/sshd_config.d/
@@ -15829,7 +16586,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -15907,7 +16667,7 @@ queries:
               gather_facts: true
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -16018,8 +16778,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -16184,7 +16946,7 @@ queries:
             ClientAliveCountMax 2
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'ClientAlive' /etc/ssh/sshd_config.d/
@@ -16227,7 +16989,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -16281,7 +17046,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -16353,8 +17118,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -16459,7 +17226,7 @@ queries:
             LoginGraceTime 60
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'LoginGraceTime' /etc/ssh/sshd_config.d/
@@ -16501,7 +17268,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -16547,7 +17317,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -16609,8 +17379,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -16711,6 +17483,12 @@ queries:
 
             **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works. Confirm that your own administrative account is a member of the allowed group or is named in `AllowUsers` before you apply the change, otherwise you will be denied access along with everyone else not on the list.
 
+            openSUSE Leap 16 ships the SSH server configuration only as `/usr/etc/ssh/sshd_config`, so `/etc/ssh/sshd_config` does not exist there. sshd reads `/etc/ssh/sshd_config` in place of the vendor file once it exists, so create it as a copy of the vendor file rather than a new file. The copy no longer follows changes that package updates make to the vendor file:
+
+            ```bash
+            [ -f /etc/ssh/sshd_config ] || install -m 0600 -o root -g root /usr/etc/ssh/sshd_config /etc/ssh/sshd_config
+            ```
+
             To limit SSH access, edit the `/etc/ssh/sshd_config` file and add or modify one or more of the `AllowUsers`, `AllowGroups`, `DenyUsers`, or `DenyGroups` parameters as needed. Configure only the directives your site policy requires. Once `AllowUsers` or `AllowGroups` is set, every account not matched is denied SSH access, so make sure the list covers all administrative accounts before applying it.
 
             Example restricting access to one group:
@@ -16751,6 +17529,12 @@ queries:
             # Replace with the group that should retain SSH access
             ALLOW_GROUPS="sshusers"
 
+            # openSUSE Leap 16 ships only /usr/etc/ssh/sshd_config. sshd reads /etc/ssh/sshd_config in
+            # place of it once that exists, so create it as a copy of the vendor file.
+            if [ ! -f /etc/ssh/sshd_config ] && [ -f /usr/etc/ssh/sshd_config ]; then
+              install -m 0600 -o root -g root /usr/etc/ssh/sshd_config /etc/ssh/sshd_config
+            fi
+
             if grep -q '^AllowGroups' /etc/ssh/sshd_config; then
               echo "Updating existing AllowGroups configuration value"
               sed -i "s/^AllowGroups.*/AllowGroups $ALLOW_GROUPS/" /etc/ssh/sshd_config
@@ -16789,6 +17573,23 @@ queries:
                 ssh_allow_groups: "sshusers"
 
               tasks:
+                # openSUSE Leap 16 ships only /usr/etc/ssh/sshd_config, and sshd reads /etc/ssh/sshd_config in place of it
+                - name: Check for the vendor SSH server configuration
+                  ansible.builtin.stat:
+                    path: /usr/etc/ssh/sshd_config
+                  register: vendor_ssh_sshd_config
+
+                - name: Start /etc/ssh/sshd_config from the vendor file where it does not exist yet
+                  ansible.builtin.copy:
+                    src: /usr/etc/ssh/sshd_config
+                    dest: /etc/ssh/sshd_config
+                    remote_src: true
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0600'
+                  when: vendor_ssh_sshd_config.stat.exists
+
                 - name: Set AllowGroups in sshd_config
                   ansible.builtin.lineinfile:
                     path: /etc/ssh/sshd_config
@@ -16828,6 +17629,18 @@ queries:
             ```ruby
             sshd_config = '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            # openSUSE Leap 16 ships only /usr/etc/ssh/sshd_config. sshd reads /etc/ssh/sshd_config in
+            # place of it once that exists, so create it as a copy of the vendor file.
+            file 'copy the vendor sshd_config' do
+              path '/etc/ssh/sshd_config'
+              content(lazy { ::File.read('/usr/etc/ssh/sshd_config') })
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create_if_missing
+              only_if { ::File.exist?('/usr/etc/ssh/sshd_config') }
+            end
 
             service ssh_service do
               action :nothing
@@ -16921,7 +17734,7 @@ queries:
             echo 'Authorized use only. Activity on this system is monitored and may be reported.' > /etc/issue.net
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'Banner' /etc/ssh/sshd_config.d/
@@ -16963,7 +17776,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -17010,7 +17826,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -17072,8 +17888,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -19684,6 +20502,12 @@ queries:
 
             **Warning: confirm the `wheel` group has an administrator before you apply this.** With `pam_wheel.so use_uid` and no `group=` option, PAM allows `su` only for members of the `wheel` group. If that group is empty, no one can `su` to root. Debian and Ubuntu have no `wheel` group at all, so on those distributions use the `group=sudo` form shown below. Elsewhere, add at least one trusted administrative account to `wheel` first and verify it can `su` in a separate session before you close your current one.
 
+            openSUSE Leap 16 ships this file only as `/usr/lib/pam.d/su`, and PAM uses `/etc/pam.d/su` in place of the vendor file as soon as it exists. A new `/etc/pam.d/su` holding only the line below leaves `su` without its other rules and denies it to everyone, root included, so copy the vendor file first where `/etc/pam.d/su` is missing:
+
+            ```bash
+            [ -f /etc/pam.d/su ] || cp /usr/lib/pam.d/su /etc/pam.d/su
+            ```
+
             To restrict access to the `su` command, you can edit the `/etc/pam.d/su` file and add the following line:
 
             ```bash
@@ -19724,6 +20548,12 @@ queries:
             set -e
 
             echo "Restricting access to su command"
+            # openSUSE Leap 16 ships only /usr/lib/pam.d/su, and PAM uses /etc/pam.d/su in place of it
+            # once that exists, so start from a copy rather than a file holding one line.
+            if [ ! -f /etc/pam.d/su ] && [ -f /usr/lib/pam.d/su ]; then
+              cp /usr/lib/pam.d/su /etc/pam.d/su
+            fi
+
             if ! grep -qE '^\s*auth\s+required\s+pam_wheel\.so\s+use_uid' /etc/pam.d/su; then
               echo "auth required pam_wheel.so use_uid" >> /etc/pam.d/su
             fi
@@ -19751,6 +20581,23 @@ queries:
               become: true
 
               tasks:
+                # openSUSE Leap 16 ships only /usr/lib/pam.d/su, and PAM uses /etc/pam.d/su in place of it once that exists
+                - name: Check for the vendor PAM configuration for su
+                  ansible.builtin.stat:
+                    path: /usr/lib/pam.d/su
+                  register: vendor_pam_d_su
+
+                - name: Start /etc/pam.d/su from the vendor file where it does not exist yet
+                  ansible.builtin.copy:
+                    src: /usr/lib/pam.d/su
+                    dest: /etc/pam.d/su
+                    remote_src: true
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0644'
+                  when: vendor_pam_d_su.stat.exists
+
                 - name: Ensure pam_wheel.so is configured in /etc/pam.d/su
                   ansible.builtin.lineinfile:
                     path: /etc/pam.d/su
@@ -19766,6 +20613,16 @@ queries:
 
             ```ruby
             pam_su = '/etc/pam.d/su'
+
+            # openSUSE Leap 16 ships only /usr/lib/pam.d/su, and PAM uses /etc/pam.d/su in place of
+            # it once that exists, so start from a copy rather than a file holding one line.
+            file 'copy the vendor su PAM configuration' do
+              path pam_su
+              content(lazy { ::File.read('/usr/lib/pam.d/su') })
+              mode '0644'
+              action :create_if_missing
+              only_if { ::File.exist?('/usr/lib/pam.d/su') }
+            end
 
             ruby_block 'restrict su to the wheel group' do
               block do
@@ -20112,10 +20969,14 @@ queries:
           desc: |
             **Using CLI**
 
-            Add an authorized time source to the chrony configuration for your distribution, then restart the daemon. Red Hat-based systems use `/etc/chrony.conf`; Debian-based systems use `/etc/chrony/chrony.conf`. Any `server` or `pool` line satisfies the check. Replace the public `2.pool.ntp.org` pool in the example with the time servers your organization operates or approves, using `server` for a single host and `pool` for a name that resolves to several. `iburst` makes chrony send its first requests in quick succession so the clock synchronizes within seconds of the restart:
+            Add an authorized time source to the chrony configuration for your distribution, then restart the daemon. Red Hat-based systems use `/etc/chrony.conf`; Debian-based systems use `/etc/chrony/chrony.conf`. openSUSE Leap 16 ships its configuration only as `/usr/etc/chrony.conf`. chronyd reads `/etc/chrony.conf` in place of it once that exists, and this check reads only `/etc/chrony.conf`, so the script starts from a copy of the vendor file there. Any `server` or `pool` line satisfies the check. Replace the public `2.pool.ntp.org` pool in the example with the time servers your organization operates or approves, using `server` for a single host and `pool` for a name that resolves to several. `iburst` makes chrony send its first requests in quick succession so the clock synchronizes within seconds of the restart:
 
             ```bash
             CONF=/etc/chrony.conf
+            # openSUSE Leap 16 ships only /usr/etc/chrony.conf, and chronyd reads /etc/chrony.conf in place of it
+            if [ ! -f "$CONF" ] && [ -f /usr/etc/chrony.conf ]; then
+              cp /usr/etc/chrony.conf "$CONF"
+            fi
             [ -f "$CONF" ] || CONF=/etc/chrony/chrony.conf
             echo "pool 2.pool.ntp.org iburst" >> "$CONF"
             systemctl restart chronyd 2>/dev/null || systemctl restart chrony
@@ -20131,6 +20992,10 @@ queries:
             set -e
 
             CONF=/etc/chrony.conf
+            # openSUSE Leap 16 ships only /usr/etc/chrony.conf, and chronyd reads /etc/chrony.conf in place of it
+            if [ ! -f "$CONF" ] && [ -f /usr/etc/chrony.conf ]; then
+              cp /usr/etc/chrony.conf "$CONF"
+            fi
             [ -f "$CONF" ] || CONF=/etc/chrony/chrony.conf
 
             if ! grep -qE '^\s*(server|pool)\s' "$CONF"; then
@@ -20157,6 +21022,23 @@ queries:
                     path: /etc/chrony/chrony.conf
                   register: debian_chrony
 
+                # openSUSE Leap 16 ships only /usr/etc/chrony.conf, and chronyd reads /etc/chrony.conf in place of it
+                - name: Check for the vendor chrony configuration
+                  ansible.builtin.stat:
+                    path: /usr/etc/chrony.conf
+                  register: vendor_chrony_conf
+
+                - name: Start /etc/chrony.conf from the vendor file where it does not exist yet
+                  ansible.builtin.copy:
+                    src: /usr/etc/chrony.conf
+                    dest: /etc/chrony.conf
+                    remote_src: true
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0644'
+                  when: vendor_chrony_conf.stat.exists and not debian_chrony.stat.exists
+
                 - name: Ensure a pool directive is present
                   ansible.builtin.lineinfile:
                     path: "{{ debian_chrony.stat.exists | ternary('/etc/chrony/chrony.conf', '/etc/chrony.conf') }}"
@@ -20181,6 +21063,16 @@ queries:
             debian = ::File.exist?('/etc/chrony/chrony.conf')
             chrony_conf = debian ? '/etc/chrony/chrony.conf' : '/etc/chrony.conf'
             chrony_service = debian ? 'chrony' : 'chronyd'
+
+            # openSUSE Leap 16 ships only /usr/etc/chrony.conf, and chronyd reads /etc/chrony.conf in
+            # place of it once that exists, so start from a copy rather than a file holding one line.
+            file 'copy the vendor chrony configuration' do
+              path chrony_conf
+              content(lazy { ::File.read('/usr/etc/chrony.conf') })
+              mode '0644'
+              action :create_if_missing
+              only_if { !debian && ::File.exist?('/usr/etc/chrony.conf') }
+            end
 
             service chrony_service do
               action :nothing
