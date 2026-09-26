@@ -16634,26 +16634,28 @@ queries:
               SSHD_CONFIG=/etc/ssh/sshd_config
             fi
 
-            if ! command -v bc >/dev/null 2>&1; then
-              echo "Warning: 'bc' is required but not installed. Please install 'bc' and re-run this script."
+            echo "Configuring SSH with strong KexAlgorithms"
+            # Compare the release as major * 100 + minor, so 10.0 sorts above 9.9 without bc.
+            read -r major minor < <(ssh -V 2>&1 | sed -nE 's/.*OpenSSH_([0-9]+)\.([0-9]+).*/\1 \2/p')
+            if [ -z "$major" ] || [ -z "$minor" ]; then
+              echo "Could not read the OpenSSH release from 'ssh -V'." >&2
               exit 1
             fi
+            openssh_version="$major.$minor"
+            release=$(( major * 100 + minor ))
 
-            echo "Configuring SSH with strong KexAlgorithms"
-            openssh_version=$(ssh -V 2>&1 | grep -oP 'OpenSSH_\K\d+\.\d+')
-
-            if (( $(echo "$openssh_version < 4.4" | bc -l) )); then
+            if (( release < 404 )); then
               echo "OpenSSH $openssh_version has no key exchange algorithm that meets this check. Upgrade OpenSSH."
               exit 1
-            elif (( $(echo "$openssh_version < 6.5" | bc -l) )); then
+            elif (( release < 605 )); then
               kex_algos="diffie-hellman-group-exchange-sha256"
-            elif (( $(echo "$openssh_version < 7.3" | bc -l) )); then
+            elif (( release < 703 )); then
               kex_algos="curve25519-sha256@libssh.org"
-            elif (( $(echo "$openssh_version < 8.0" | bc -l) )); then
+            elif (( release < 800 )); then
               kex_algos="curve25519-sha256@libssh.org,diffie-hellman-group18-sha512"
-            elif (( $(echo "$openssh_version < 8.5" | bc -l) )); then
+            elif (( release < 805 )); then
               kex_algos="sntrup4591761x25519-sha512@tinyssh.org,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512"
-            elif (( $(echo "$openssh_version < 9.9" | bc -l) )); then
+            elif (( release < 909 )); then
               kex_algos="sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512"
             else
               kex_algos="mlkem768x25519-sha256,sntrup761x25519-sha512,sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512"
@@ -17556,7 +17558,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To limit SSH access, you can run the following bash script. Before running it, replace the example group with a group that contains every account that must retain SSH access, including your administrative accounts. Once `AllowGroups` is set, any account outside the listed groups is denied SSH access.
+            To limit SSH access, you can run the following bash script. Before running it, replace the example group with a group that contains every account that must retain SSH access, including your administrative accounts. Once `AllowGroups` is set, any account outside the listed groups is denied SSH access. `sshd -t` accepts a group that does not exist, so the script stops before changing anything if a listed group is missing, or if the account that ran it through `sudo` is in none of the listed groups.
 
             ```bash
             #!/bin/bash
@@ -17569,6 +17571,18 @@ queries:
             # place of it once that exists, so create it as a copy of the vendor file.
             if [ ! -f /etc/ssh/sshd_config ] && [ -f /usr/etc/ssh/sshd_config ]; then
               install -m 0600 -o root -g root /usr/etc/ssh/sshd_config /etc/ssh/sshd_config
+            fi
+
+            # sshd -t accepts a group that does not exist, and AllowGroups then denies every account.
+            for group in $ALLOW_GROUPS; do
+              if ! getent group "$group" >/dev/null; then
+                echo "Group '$group' does not exist. Create it, add every account that must keep SSH access, and re-run." >&2
+                exit 1
+              fi
+            done
+            if [ -n "${SUDO_USER:-}" ] && ! id -nG "$SUDO_USER" | tr ' ' '\n' | grep -qxF -f <(tr ' ' '\n' <<< "$ALLOW_GROUPS"); then
+              echo "$SUDO_USER is in none of: $ALLOW_GROUPS. Add it first, or this change locks it out of SSH." >&2
+              exit 1
             fi
 
             if grep -q '^AllowGroups' /etc/ssh/sshd_config; then
@@ -17598,7 +17612,7 @@ queries:
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
             2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
 
-            **Warning: avoid locking yourself out.** Once `AllowGroups` is set, every account outside the listed groups is denied SSH access, including the account Ansible connects with. Before you run this playbook, set `ssh_allow_groups` to a space-separated list of groups that together contain every account that must keep SSH access, and make sure those groups already exist with their members. To limit SSH access using Ansible, use the following playbook:
+            **Warning: avoid locking yourself out.** Once `AllowGroups` is set, every account outside the listed groups is denied SSH access, including the account Ansible connects with. Before you run this playbook, set `ssh_allow_groups` to a space-separated list of groups that together contain every account that must keep SSH access, and make sure those groups already exist with their members. The playbook stops before changing anything if a listed group does not exist. To limit SSH access using Ansible, use the following playbook:
 
             ```yaml
             ---
@@ -17625,6 +17639,20 @@ queries:
                     group: root
                     mode: '0600'
                   when: vendor_ssh_sshd_config.stat.exists
+
+                # sshd -t accepts a group that does not exist, and AllowGroups then denies every account
+                - name: Read the local groups
+                  ansible.builtin.getent:
+                    database: group
+
+                - name: Find AllowGroups groups that do not exist
+                  ansible.builtin.set_fact:
+                    ssh_missing_groups: "{{ ssh_allow_groups.split() | difference(ansible_facts.getent_group.keys() | list) }}"
+
+                - name: Stop unless every AllowGroups group exists
+                  ansible.builtin.assert:
+                    that: ssh_missing_groups | length == 0
+                    fail_msg: "Create these groups and add every account that must keep SSH access first: {{ ssh_missing_groups | join(' ') }}"
 
                 - name: Set AllowGroups in sshd_config
                   ansible.builtin.lineinfile:
@@ -17660,7 +17688,7 @@ queries:
             1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
             2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
-            Use this Chef Infra recipe code to limit SSH access to a named group. Create the group and add your administrators to it before you apply this, or no one will be able to log in:
+            Use this Chef Infra recipe code to limit SSH access to a named group. Create the group and add your administrators to it before you apply this, or no one will be able to log in. The recipe stops if the group does not exist:
 
             ```ruby
             sshd_config = '/etc/ssh/sshd_config'
@@ -17683,7 +17711,18 @@ queries:
               only_if '/usr/sbin/sshd -t'
             end
 
-            { 'AllowGroups' => 'sshusers' }.each do |keyword, value|
+            allow_groups = 'sshusers'
+
+            # sshd -t accepts a group that does not exist, and AllowGroups then denies every account.
+            ruby_block 'require the AllowGroups groups to exist' do
+              block do
+                missing = allow_groups.split.reject { |g| node['etc']['group'].key?(g) }
+                raise "Create these groups and add every account that must keep SSH access first: #{missing.join(' ')}"
+              end
+              not_if { allow_groups.split.all? { |g| node['etc']['group'].key?(g) } }
+            end
+
+            { 'AllowGroups' => allow_groups }.each do |keyword, value|
               file "set #{keyword} in sshd_config" do
                 path sshd_config
                 content(lazy do
@@ -20577,7 +20616,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu have no `wheel` group, and `pam_wheel` then checks the group with GID `0` instead, so on those distributions change the line to `auth required pam_wheel.so use_uid group=sudo`. Elsewhere, add a trusted administrative account to `wheel` first and verify `su` works in a separate session. To restrict access to the `su` command to members of the `wheel` group, run the following bash script:
+            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu have no `wheel` group, and `pam_wheel` then checks the group with GID `0` instead, which leaves only root able to use `su`, so where `wheel` does not exist this code names the `sudo` group with `group=sudo`. Elsewhere, add a trusted administrative account to `wheel` first and verify `su` works in a separate session. To restrict access to the `su` command to members of the `wheel` group, run the following bash script:
 
             ```bash
             #!/bin/bash
@@ -20590,8 +20629,18 @@ queries:
               cp /usr/lib/pam.d/su /etc/pam.d/su
             fi
 
+            # Debian and Ubuntu have no wheel group. pam_wheel then checks GID 0 instead, which
+            # leaves only root able to use su, so name the sudo group there.
+            if getent group wheel >/dev/null; then
+              PAM_WHEEL='auth required pam_wheel.so use_uid'
+            elif getent group sudo >/dev/null; then
+              PAM_WHEEL='auth required pam_wheel.so use_uid group=sudo'
+            else
+              PAM_WHEEL='auth required pam_wheel.so use_uid'
+            fi
+
             if ! grep -qE '^\s*auth\s+required\s+pam_wheel\.so\s+use_uid' /etc/pam.d/su; then
-              echo "auth required pam_wheel.so use_uid" >> /etc/pam.d/su
+              echo "$PAM_WHEEL" >> /etc/pam.d/su
             fi
 
             # Grant su access to each authorized user:
@@ -20608,7 +20657,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu have no `wheel` group, and `pam_wheel` then checks the group with GID `0` instead, so on those distributions change the line to `auth required pam_wheel.so use_uid group=sudo`. Elsewhere, add a trusted administrative account to `wheel` first and verify `su` works in a separate session. To restrict access to the `su` command, you can use the following Ansible playbook:
+            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu have no `wheel` group, and `pam_wheel` then checks the group with GID `0` instead, which leaves only root able to use `su`, so where `wheel` does not exist this code names the `sudo` group with `group=sudo`. Elsewhere, add a trusted administrative account to `wheel` first and verify `su` works in a separate session. To restrict access to the `su` command, you can use the following Ansible playbook:
 
             ```yaml
             ---
@@ -20634,18 +20683,27 @@ queries:
                     mode: '0644'
                   when: vendor_pam_d_su.stat.exists
 
+                - name: Read the local groups
+                  ansible.builtin.getent:
+                    database: group
+
+                # Debian and Ubuntu have no wheel group; pam_wheel then checks GID 0, which leaves only root able to use su
+                - name: Choose the group pam_wheel checks
+                  ansible.builtin.set_fact:
+                    pam_wheel_group: "{{ ' group=sudo' if ('wheel' not in ansible_facts.getent_group and 'sudo' in ansible_facts.getent_group) else '' }}"
+
                 - name: Ensure pam_wheel.so is configured in /etc/pam.d/su
                   ansible.builtin.lineinfile:
                     path: /etc/pam.d/su
                     regexp: '^auth required pam_wheel.so use_uid'
-                    line: 'auth required pam_wheel.so use_uid'
+                    line: "auth required pam_wheel.so use_uid{{ pam_wheel_group }}"
                     create: yes
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu have no `wheel` group, and `pam_wheel` then checks the group with GID `0` instead, so on those distributions change the line to `auth required pam_wheel.so use_uid group=sudo`. Elsewhere, add a trusted administrative account to `wheel` first and verify `su` works in a separate session. Use this Chef Infra recipe code to restrict the `su` command to the `wheel` group:
+            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu have no `wheel` group, and `pam_wheel` then checks the group with GID `0` instead, which leaves only root able to use `su`, so where `wheel` does not exist this code names the `sudo` group with `group=sudo`. Elsewhere, add a trusted administrative account to `wheel` first and verify `su` works in a separate session. Use this Chef Infra recipe code to restrict the `su` command to the `wheel` group:
 
             ```ruby
             pam_su = '/etc/pam.d/su'
@@ -20660,10 +20718,18 @@ queries:
               only_if { ::File.exist?('/usr/lib/pam.d/su') }
             end
 
+            # Debian and Ubuntu have no wheel group. pam_wheel then checks GID 0 instead, which
+            # leaves only root able to use su, so name the sudo group there.
+            group_exists = ->(name) { !node['etc']['group'][name].nil? }
+            directive = if !group_exists.call('wheel') && group_exists.call('sudo')
+                          'auth required pam_wheel.so use_uid group=sudo'
+                        else
+                          'auth required pam_wheel.so use_uid'
+                        end
+
             ruby_block 'restrict su to the wheel group' do
               block do
                 body = ::File.exist?(pam_su) ? ::File.read(pam_su) : ''
-                directive = 'auth required pam_wheel.so use_uid'
                 # Append rather than prepend. PAM ignores the success of a `sufficient`
                 # module once an earlier `required` module has failed, so placing this
                 # line above `auth sufficient pam_rootok.so` would stop root from
@@ -20675,7 +20741,7 @@ queries:
                        end
                 ::File.write(pam_su, body)
               end
-              not_if { ::File.exist?(pam_su) && ::File.read(pam_su).match?(/^auth\s+required\s+pam_wheel\.so\s+use_uid\s*$/) }
+              not_if { ::File.exist?(pam_su) && ::File.read(pam_su).match?(/^#{Regexp.escape(directive)}\s*$/) }
             end
             ```
     refs:
