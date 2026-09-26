@@ -408,11 +408,16 @@ queries:
       crontab.entries.where(user == "root").any(command.contains("aide.conf --check")) ||
       systemd.timer('aidecheck').enabled ||
       systemd.timer('dailyaidecheck').enabled
+
+      // A schedule does nothing unless the configuration it reads and the
+      // baseline it compares against both exist.
+      file("/etc/aide/aide.conf").exists || file("/etc/aide.conf").exists
+      file("/var/lib/aide/aide.db").exists || file("/var/lib/aide/aide.db.gz").exists
     docs:
       desc: |
         This check verifies that AIDE integrity comparisons run on a schedule rather than only when someone remembers to start one.
 
-        Any of four arrangements satisfies it: `CRON_DAILY_RUN=yes` in `/etc/default/aide`, a root crontab entry that runs `aide --check`, an enabled `aidecheck` systemd timer, or the enabled `dailyaidecheck` timer that Debian 12 and later ship in `aide-common`. Distributions differ in which they ship, so any one of them is accepted.
+        Any of four arrangements satisfies it: `CRON_DAILY_RUN=yes` in `/etc/default/aide`, a root crontab entry that runs `aide --check`, an enabled `aidecheck` systemd timer, or the enabled `dailyaidecheck` timer that Debian 12 and later ship in `aide-common`. Distributions differ in which they ship, so any one of them is accepted. The check also requires the AIDE configuration, `/etc/aide/aide.conf` on Debian and Ubuntu or `/etc/aide.conf` elsewhere, and a database at `/var/lib/aide/aide.db` or `/var/lib/aide/aide.db.gz`, because a scheduled comparison without them fails every time it runs.
 
         **Why this matters**
 
@@ -430,9 +435,10 @@ queries:
         grep -E '^CRON_DAILY_RUN' /etc/default/aide
         crontab -u root -l | grep aide
         systemctl is-enabled aidecheck.timer dailyaidecheck.timer
+        ls /etc/aide/aide.conf /etc/aide.conf /var/lib/aide/aide.db /var/lib/aide/aide.db.gz
         ```
 
-        A passing result shows `CRON_DAILY_RUN=yes`, a root cron entry that runs `aide --check`, or an enabled `aidecheck.timer` or `dailyaidecheck.timer`. A failing result shows none of these are present.
+        A passing result shows `CRON_DAILY_RUN=yes`, a root cron entry that runs `aide --check`, or an enabled `aidecheck.timer` or `dailyaidecheck.timer`, and `ls` lists one configuration file and one database. A failing result shows no schedule, or `ls` finds no configuration file or no database.
       remediation:
         - id: cli
           desc: |
@@ -17549,6 +17555,37 @@ queries:
                 ```text
                 f /etc/passwd- 0600 root root -
                 ```
+
+            3. `useradd`, `userdel`, `groupadd`, and the other shadow tools write this backup with the mode of `/etc/passwd`, which is `644`, so any account change, including a package that adds a system user, undoes step 1 until the next boot. To reapply the mode each time the file is rewritten, have systemd watch it. Create `/etc/systemd/system/passwd-backup-mode.service`:
+
+                ```ini
+                [Unit]
+                Description=Restore the mode of /etc/passwd- after it is rewritten
+
+                [Service]
+                Type=oneshot
+                ExecStart=/bin/chmod 0600 /etc/passwd-
+                ```
+
+                Create `/etc/systemd/system/passwd-backup-mode.path`:
+
+                ```ini
+                [Unit]
+                Description=Watch /etc/passwd- for rewrites
+
+                [Path]
+                PathChanged=/etc/passwd-
+
+                [Install]
+                WantedBy=paths.target
+                ```
+
+                Then enable the watch:
+
+                ```bash
+                systemctl daemon-reload
+                systemctl enable --now passwd-backup-mode.path
+                ```
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -17571,6 +17608,32 @@ queries:
             else
               echo "Adding an entry to $TMPFILES_CONF to maintain permissions"
               echo 'f /etc/passwd- 0600 root root -' >> "$TMPFILES_CONF"
+            fi
+
+            # The shadow tools rewrite /etc/passwd- with mode 644 on every account change, which the
+            # tmpfiles entry only corrects at boot. A path unit reapplies the mode each time.
+            if [ -d /run/systemd/system ]; then
+              echo "Watching /etc/passwd- so its mode is restored after every rewrite"
+              cat > /etc/systemd/system/passwd-backup-mode.service <<'EOF'
+            [Unit]
+            Description=Restore the mode of /etc/passwd- after it is rewritten
+
+            [Service]
+            Type=oneshot
+            ExecStart=/bin/chmod 0600 /etc/passwd-
+            EOF
+              cat > /etc/systemd/system/passwd-backup-mode.path <<'EOF'
+            [Unit]
+            Description=Watch /etc/passwd- for rewrites
+
+            [Path]
+            PathChanged=/etc/passwd-
+
+            [Install]
+            WantedBy=paths.target
+            EOF
+              systemctl daemon-reload
+              systemctl enable --now passwd-backup-mode.path
             fi
             ```
         - id: ansible
@@ -17598,6 +17661,41 @@ queries:
                     line: 'f /etc/passwd- 0600 root root -'
                     create: true
                     state: present
+                # The shadow tools rewrite /etc/passwd- with mode 644 on every account change
+                - name: Install a service that restores the mode of /etc/passwd-
+                  ansible.builtin.copy:
+                    dest: /etc/systemd/system/passwd-backup-mode.service
+                    owner: root
+                    group: root
+                    mode: '0644'
+                    content: |
+                      [Unit]
+                      Description=Restore the mode of /etc/passwd- after it is rewritten
+
+                      [Service]
+                      Type=oneshot
+                      ExecStart=/bin/chmod 0600 /etc/passwd-
+                - name: Install a path unit that watches /etc/passwd-
+                  ansible.builtin.copy:
+                    dest: /etc/systemd/system/passwd-backup-mode.path
+                    owner: root
+                    group: root
+                    mode: '0644'
+                    content: |
+                      [Unit]
+                      Description=Watch /etc/passwd- for rewrites
+
+                      [Path]
+                      PathChanged=/etc/passwd-
+
+                      [Install]
+                      WantedBy=paths.target
+                - name: Restore the mode of /etc/passwd- after every rewrite
+                  ansible.builtin.systemd:
+                    name: passwd-backup-mode.path
+                    enabled: true
+                    state: started
+                    daemon_reload: true
             ```
         - id: chef
           desc: |
@@ -17626,6 +17724,33 @@ queries:
                 ::File.write(tmpfiles_conf, body)
               end
               not_if { ::File.exist?(tmpfiles_conf) && ::File.read(tmpfiles_conf).include?(tmpfiles_entry) }
+            end
+
+            # The shadow tools rewrite /etc/passwd- with mode 644 on every account change
+            systemd_unit 'passwd-backup-mode.service' do
+              content <<~UNIT
+                [Unit]
+                Description=Restore the mode of /etc/passwd- after it is rewritten
+
+                [Service]
+                Type=oneshot
+                ExecStart=/bin/chmod 0600 /etc/passwd-
+              UNIT
+              action :create
+            end
+
+            systemd_unit 'passwd-backup-mode.path' do
+              content <<~UNIT
+                [Unit]
+                Description=Watch /etc/passwd- for rewrites
+
+                [Path]
+                PathChanged=/etc/passwd-
+
+                [Install]
+                WantedBy=paths.target
+              UNIT
+              action [:create, :enable, :start]
             end
             ```
     refs:
@@ -17873,6 +17998,37 @@ queries:
                 ```text
                 f /etc/group- 0600 root root -
                 ```
+
+            3. `useradd`, `userdel`, `groupadd`, and the other shadow tools write this backup with the mode of `/etc/group`, which is `644`, so any account change, including a package that adds a system user, undoes step 1 until the next boot. To reapply the mode each time the file is rewritten, have systemd watch it. Create `/etc/systemd/system/group-backup-mode.service`:
+
+                ```ini
+                [Unit]
+                Description=Restore the mode of /etc/group- after it is rewritten
+
+                [Service]
+                Type=oneshot
+                ExecStart=/bin/chmod 0600 /etc/group-
+                ```
+
+                Create `/etc/systemd/system/group-backup-mode.path`:
+
+                ```ini
+                [Unit]
+                Description=Watch /etc/group- for rewrites
+
+                [Path]
+                PathChanged=/etc/group-
+
+                [Install]
+                WantedBy=paths.target
+                ```
+
+                Then enable the watch:
+
+                ```bash
+                systemctl daemon-reload
+                systemctl enable --now group-backup-mode.path
+                ```
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -17895,6 +18051,32 @@ queries:
             else
               echo "Adding an entry to $TMPFILES_CONF to maintain permissions"
               echo 'f /etc/group- 0600 root root -' >> "$TMPFILES_CONF"
+            fi
+
+            # The shadow tools rewrite /etc/group- with mode 644 on every account change, which the
+            # tmpfiles entry only corrects at boot. A path unit reapplies the mode each time.
+            if [ -d /run/systemd/system ]; then
+              echo "Watching /etc/group- so its mode is restored after every rewrite"
+              cat > /etc/systemd/system/group-backup-mode.service <<'EOF'
+            [Unit]
+            Description=Restore the mode of /etc/group- after it is rewritten
+
+            [Service]
+            Type=oneshot
+            ExecStart=/bin/chmod 0600 /etc/group-
+            EOF
+              cat > /etc/systemd/system/group-backup-mode.path <<'EOF'
+            [Unit]
+            Description=Watch /etc/group- for rewrites
+
+            [Path]
+            PathChanged=/etc/group-
+
+            [Install]
+            WantedBy=paths.target
+            EOF
+              systemctl daemon-reload
+              systemctl enable --now group-backup-mode.path
             fi
             ```
         - id: ansible
@@ -17922,6 +18104,41 @@ queries:
                     line: 'f /etc/group- 0600 root root -'
                     create: true
                     state: present
+                # The shadow tools rewrite /etc/group- with mode 644 on every account change
+                - name: Install a service that restores the mode of /etc/group-
+                  ansible.builtin.copy:
+                    dest: /etc/systemd/system/group-backup-mode.service
+                    owner: root
+                    group: root
+                    mode: '0644'
+                    content: |
+                      [Unit]
+                      Description=Restore the mode of /etc/group- after it is rewritten
+
+                      [Service]
+                      Type=oneshot
+                      ExecStart=/bin/chmod 0600 /etc/group-
+                - name: Install a path unit that watches /etc/group-
+                  ansible.builtin.copy:
+                    dest: /etc/systemd/system/group-backup-mode.path
+                    owner: root
+                    group: root
+                    mode: '0644'
+                    content: |
+                      [Unit]
+                      Description=Watch /etc/group- for rewrites
+
+                      [Path]
+                      PathChanged=/etc/group-
+
+                      [Install]
+                      WantedBy=paths.target
+                - name: Restore the mode of /etc/group- after every rewrite
+                  ansible.builtin.systemd:
+                    name: group-backup-mode.path
+                    enabled: true
+                    state: started
+                    daemon_reload: true
             ```
         - id: chef
           desc: |
@@ -17950,6 +18167,33 @@ queries:
                 ::File.write(tmpfiles_conf, body)
               end
               not_if { ::File.exist?(tmpfiles_conf) && ::File.read(tmpfiles_conf).include?(tmpfiles_entry) }
+            end
+
+            # The shadow tools rewrite /etc/group- with mode 644 on every account change
+            systemd_unit 'group-backup-mode.service' do
+              content <<~UNIT
+                [Unit]
+                Description=Restore the mode of /etc/group- after it is rewritten
+
+                [Service]
+                Type=oneshot
+                ExecStart=/bin/chmod 0600 /etc/group-
+              UNIT
+              action :create
+            end
+
+            systemd_unit 'group-backup-mode.path' do
+              content <<~UNIT
+                [Unit]
+                Description=Watch /etc/group- for rewrites
+
+                [Path]
+                PathChanged=/etc/group-
+
+                [Install]
+                WantedBy=paths.target
+              UNIT
+              action [:create, :enable, :start]
             end
             ```
     refs:
