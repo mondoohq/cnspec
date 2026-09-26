@@ -7023,9 +7023,13 @@ queries:
       || package("audit").installed || package("audit-libs").installed
       service("auditd").enabled
       service("auditd").running
+
+      // Audit 4 on Red Hat Enterprise Linux 10 and its rebuilds ships auditctl in a
+      // separate audit-rules package. Without it no audit rule is ever loaded.
+      file("/sbin/auditctl").exists || file("/usr/sbin/auditctl").exists
     docs:
       desc: |
-        This check verifies that the audit packages are installed, which is `auditd` together with `audispd-plugins` on Debian-based systems or `audit` and `audit-libs` on Red Hat-based systems, and that the `auditd` service is both enabled at boot and currently running.
+        This check verifies that the audit packages are installed, which is `auditd` together with `audispd-plugins` on Debian-based systems or `audit` and `audit-libs` on Red Hat-based systems, and that the `auditd` service is both enabled at boot and currently running. It also requires `auditctl`, the tool that loads audit rules into the kernel. Red Hat Enterprise Linux 10 and its rebuilds ship it in a separate `audit-rules` package, and a host without that package runs `auditd` with no rules at all.
 
         **Why this matters**
 
@@ -7043,9 +7047,10 @@ queries:
         rpm -q audit || dpkg -s auditd
         systemctl is-enabled auditd
         systemctl is-active auditd
+        command -v auditctl
         ```
 
-        A passing result reports the audit package installed and `auditd` reported as `enabled` and `active`. A failing result reports the package missing or the service not enabled or not running.
+        A passing result reports the audit package installed, `auditd` reported as `enabled` and `active`, and a path to `auditctl`. A failing result reports the package missing, the service not enabled or not running, or no `auditctl`.
       remediation:
         - id: cli
           desc: |
@@ -7057,6 +7062,12 @@ queries:
 
                 ```bash
                 dnf install audit audit-libs
+                ```
+
+                Red Hat Enterprise Linux 10 and its rebuilds ship `auditctl`, `augenrules`, and the `audit-rules` service that loads the rules at boot in a separate package. If `auditctl` is missing after the step above, install it as well. The package enables the `audit-rules` service itself:
+
+                ```bash
+                dnf install audit-rules
                 ```
 
                 **Debian/Ubuntu and derivatives**
@@ -7089,6 +7100,11 @@ queries:
             echo "Installing auditd..."
             if command -v dnf &> /dev/null; then
               dnf install -y audit audit-libs
+              # Red Hat Enterprise Linux 10 and its rebuilds ship auditctl and augenrules
+              # in a separate audit-rules package.
+              if ! command -v auditctl &> /dev/null; then
+                dnf install -y audit-rules
+              fi
             elif command -v apt-get &> /dev/null; then
               apt-get install -y auditd audispd-plugins
             elif command -v zypper &> /dev/null; then
@@ -7121,6 +7137,19 @@ queries:
                       - audit-libs
                     state: present
                   when: ansible_facts['os_family'] == "RedHat"
+
+                - name: Check whether auditctl is installed
+                  ansible.builtin.stat:
+                    path: /usr/sbin/auditctl
+                  register: auditctl_binary
+                  when: ansible_facts['os_family'] == "RedHat"
+
+                # Red Hat Enterprise Linux 10 and its rebuilds ship auditctl in audit-rules
+                - name: Install the audit rule tools on RHEL 10 and its rebuilds
+                  ansible.builtin.package:
+                    name: audit-rules
+                    state: present
+                  when: ansible_facts['os_family'] == "RedHat" and not auditctl_binary.stat.exists
 
                 - name: Install auditd on Debian/Ubuntu
                   ansible.builtin.package:
@@ -7159,6 +7188,13 @@ queries:
 
             package audit_packages do
               action :install
+            end
+
+            # Red Hat Enterprise Linux 10 and its rebuilds ship auditctl in audit-rules
+            package 'audit-rules' do
+              action :install
+              not_if { platform_family?('debian', 'suse') }
+              not_if { ::File.exist?('/usr/sbin/auditctl') || ::File.exist?('/sbin/auditctl') }
             end
 
             service 'auditd' do
