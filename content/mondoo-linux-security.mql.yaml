@@ -269,8 +269,10 @@ queries:
 
             ### Debian/Ubuntu and derivatives
 
+            Skip the recommended packages. `aide-common` recommends a mail client, which depends on a mail transfer agent, so a default install also installs and starts Postfix listening on every network interface, which fails the check that the mail transfer agent accepts only local connections:
+
             ```bash
-            apt-get install aide
+            apt-get install --no-install-recommends aide
             ```
 
             ### SLES and openSUSE
@@ -297,7 +299,7 @@ queries:
             elif command -v apt-get >/dev/null 2>&1; then
               echo "Detected apt-based system. Installing aide..."
               apt-get update
-              apt-get install -y aide
+              apt-get install -y --no-install-recommends aide
             elif command -v zypper >/dev/null 2>&1; then
               echo "Detected zypper-based system. Installing aide..."
               zypper install -y aide
@@ -325,6 +327,15 @@ queries:
                   ansible.builtin.package:
                     name: aide
                     state: present
+                  when: ansible_facts['os_family'] != 'Debian'
+
+                # aide-common recommends a mail client that pulls in Postfix listening on every interface
+                - name: Ensure AIDE is installed without recommended packages on Debian and Ubuntu
+                  ansible.builtin.apt:
+                    name: aide
+                    state: present
+                    install_recommends: false
+                  when: ansible_facts['os_family'] == 'Debian'
             ```
         - id: chef
           desc: |
@@ -334,6 +345,8 @@ queries:
 
             ```ruby
             package 'aide' do
+              # aide-common recommends a mail client that pulls in Postfix listening on every interface
+              options '--no-install-recommends' if platform_family?('debian')
               action :install
             end
             ```
@@ -802,11 +815,19 @@ queries:
                 ```
 
                 systemd-coredump reads its configuration each time it handles a crash, so no service restart is needed.
+
+            4. Disable the Apport crash reporter if present:
+
+                Ubuntu enables Apport by default. When `apport.service` starts, after the sysctl files have been applied, it writes `fs.suid_dumpable = 2` directly to the kernel, so the drop-in from step 2 is overridden at every boot. If `/usr/share/apport/apport` exists, stop and disable the service. Stopping it writes `fs.suid_dumpable = 0` back:
+
+                ```bash
+                systemctl disable --now apport.service
+                ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Use this Bash script to restrict core dumps. It will set the appropriate limits, kernel parameters, and update systemd-coredump configuration if present.
+            Use this Bash script to restrict core dumps. It will set the appropriate limits, kernel parameters, and update systemd-coredump configuration if present, and disable the Apport crash reporter where it is installed.
 
             ```bash
             #!/bin/bash
@@ -834,6 +855,13 @@ queries:
               echo "Setting systemd-coredump configuration in /etc/systemd/coredump.conf.d/99-disable-coredump.conf"
               mkdir -p /etc/systemd/coredump.conf.d
               printf '[Coredump]\nStorage=none\nProcessSizeMax=0\n' | tee /etc/systemd/coredump.conf.d/99-disable-coredump.conf
+            fi
+
+            # Ubuntu's Apport crash reporter writes fs.suid_dumpable=2 when its service
+            # starts, after the sysctl drop-ins are applied, so it must not run at boot.
+            if [ -e /usr/share/apport/apport ]; then
+              echo "Disabling the Apport crash reporter"
+              systemctl disable --now apport.service
             fi
 
             echo "Core dump restrictions applied."
@@ -868,6 +896,18 @@ queries:
                     state: present
                     sysctl_set: true
                     reload: yes
+
+                - name: Check if the Apport crash reporter is installed
+                  ansible.builtin.stat:
+                    path: /usr/share/apport/apport
+                  register: apport_binary
+
+                - name: Disable Apport, which sets fs.suid_dumpable to 2 when it starts
+                  ansible.builtin.systemd:
+                    name: apport.service
+                    state: stopped
+                    enabled: false
+                  when: apport_binary.stat.exists
 
                 - name: Check if systemd-coredump is installed
                   ansible.builtin.stat:
@@ -913,6 +953,12 @@ queries:
 
             sysctl 'fs.suid_dumpable' do
               value 0
+            end
+
+            # Apport sets fs.suid_dumpable to 2 when its service starts, overriding the sysctl above.
+            service 'apport' do
+              action [:stop, :disable]
+              only_if { ::File.exist?('/usr/share/apport/apport') }
             end
 
             coredump_installed = %w(/usr/lib/systemd/systemd-coredump /lib/systemd/systemd-coredump).any? { |p| ::File.exist?(p) }
@@ -9305,19 +9351,24 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     mql: |
-      // Syscalls for DAC permission modification (64-bit)
-      syscalls_64bit = ["chmod", "fchmod", "fchmodat", "chown", "fchown", "fchownat", "lchown", "setxattr", "lsetxattr", "fsetxattr", "removexattr", "lremovexattr", "fremovexattr"]
+      // Syscalls for DAC permission modification (64-bit). The 64-bit ARM syscall
+      // table has no chmod, chown, or lchown, so they are required only elsewhere.
+      syscalls_64bit_base = ["fchmod", "fchmodat", "fchown", "fchownat", "setxattr", "lsetxattr", "fsetxattr", "removexattr", "lremovexattr", "fremovexattr"]
+      syscalls_64bit_nonarm = ["chmod", "chown", "lchown"]
       desiredRules64 = auditd.rules.syscalls.where(
-        syscalls.any(_.in(syscalls_64bit))
+        syscalls.any(_.in(syscalls_64bit_base + syscalls_64bit_nonarm))
         && arch == "b64"
         && auidMin == 1000
         && excludesUnsetAuid
         && action == "always"
         && fields.contains(key == "key" && value != empty)
       ).map(syscalls).flat
-      desiredRules64.containsAll(syscalls_64bit)
+      desiredRules64.containsAll(syscalls_64bit_base)
+      if (asset.arch != /arm|aarch/) {
+        desiredRules64.containsAll(syscalls_64bit_nonarm)
+      }
 
-      // Syscalls for DAC permission modification (32-bit)
+      // Syscalls for DAC permission modification (32-bit), all present in the 32-bit ARM table too
       syscalls_32bit = ["chmod", "fchmod", "fchmodat", "chown", "fchown", "fchownat", "lchown", "setxattr", "lsetxattr", "fsetxattr", "removexattr", "lremovexattr", "fremovexattr"]
       desiredRules32 = auditd.rules.syscalls.where(
         syscalls.any(_.in(syscalls_32bit))
@@ -9330,7 +9381,7 @@ queries:
       desiredRules32.containsAll(syscalls_32bit)
     docs:
       desc: |
-        This check verifies that audit rules record the system calls that change file permissions, ownership, and extended attributes, on both 32-bit and 64-bit architectures, filtered to `auid>=1000` with `action always` and a non-empty key. The permission calls are `chmod`, `fchmod`, and `fchmodat`; the ownership calls are `chown`, `fchown`, `fchownat`, and `lchown`; the extended attribute calls are `setxattr`, `lsetxattr`, `fsetxattr`, `removexattr`, `lremovexattr`, and `fremovexattr`.
+        This check verifies that audit rules record the system calls that change file permissions, ownership, and extended attributes, on both 32-bit and 64-bit architectures, filtered to `auid>=1000` with `action always` and a non-empty key. The permission calls are `chmod`, `fchmod`, and `fchmodat`; the ownership calls are `chown`, `fchown`, `fchownat`, and `lchown`; the extended attribute calls are `setxattr`, `lsetxattr`, `fsetxattr`, `removexattr`, `lremovexattr`, and `fremovexattr`. The 64-bit ARM system call table has no `chmod`, `chown`, or `lchown`, so on ARM hosts the 64-bit rules need only the other calls, while the 32-bit rules still need all of them.
 
         **Why this matters**
 
@@ -9371,13 +9422,13 @@ queries:
 
                 **On ARM architectures:**
 
-                64-bit ARM kernels implement only `fchmod`, `fchmodat`, `fchown`, and `fchownat` from the permission and ownership calls, and auditctl stops loading a rules file at the first syscall name it does not recognize, so the 64-bit lines leave out `chmod`, `chown`, and `lchown`:
+                64-bit ARM kernels implement only `fchmod`, `fchmodat`, `fchown`, and `fchownat` from the permission and ownership calls, and auditctl stops loading a rules file at the first syscall name it does not recognize, so the 64-bit lines leave out `chmod`, `chown`, and `lchown`. The `b32` lines are resolved against the 32-bit ARM syscall table, which has all of them, so they keep the full list:
 
                 ```text
                 -a always,exit -F arch=b64 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
-                -a always,exit -F arch=b32 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                -a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
                 -a always,exit -F arch=b64 -S fchown -S fchownat -F auid>=1000 -F auid!=4294967295 -k perm_mod
-                -a always,exit -F arch=b32 -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                -a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
                 -a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
                 -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
                 ```
@@ -9417,9 +9468,9 @@ queries:
             if [ "$is_arm" = true ]; then
               cat > "$RULES_FILE" <<EOF
             -a always,exit -F arch=b64 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
-            -a always,exit -F arch=b32 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+            -a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
             -a always,exit -F arch=b64 -S fchown -S fchownat -F auid>=1000 -F auid!=4294967295 -k perm_mod
-            -a always,exit -F arch=b32 -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+            -a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
             -a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
             -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
             EOF
@@ -9472,9 +9523,9 @@ queries:
                   ansible.builtin.set_fact:
                     access_rules_block: |-
                       -a always,exit -F arch=b64 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
-                      -a always,exit -F arch=b32 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                      -a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
                       -a always,exit -F arch=b64 -S fchown -S fchownat -F auid>=1000 -F auid!=4294967295 -k perm_mod
-                      -a always,exit -F arch=b32 -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+                      -a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
                       -a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
                       -a always,exit -F arch=b64 -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
                       -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
@@ -9511,7 +9562,7 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to audit permission and ownership changes made by unprivileged users. 64-bit ARM kernels do not implement the `chmod`, `chown`, and `lchown` syscalls, and auditctl stops loading the rules at the first one it does not recognize, so those are only requested where the architecture has them:
+            Use this Chef Infra recipe code to audit permission and ownership changes made by unprivileged users. 64-bit ARM kernels do not implement the `chmod`, `chown`, and `lchown` syscalls, and auditctl stops loading the rules at the first one it does not recognize, so the 64-bit rules request them only where the architecture has them. The 32-bit ARM syscall table has all of them, so the 32-bit rules are the same everywhere:
 
             ```ruby
             execute 'load audit rules' do
@@ -9523,19 +9574,15 @@ queries:
             arm = node['kernel']['machine'].to_s.match?(/^(arm|aarch)/)
 
             perm_rules = []
-            unless arm
-              perm_rules << '-a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod'
-              perm_rules << '-a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod'
-              perm_rules << '-a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod'
-              perm_rules << '-a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod'
-            end
-
             if arm
               perm_rules << '-a always,exit -F arch=b64 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod'
-              perm_rules << '-a always,exit -F arch=b32 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod'
               perm_rules << '-a always,exit -F arch=b64 -S fchown -S fchownat -F auid>=1000 -F auid!=4294967295 -k perm_mod'
-              perm_rules << '-a always,exit -F arch=b32 -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod'
+            else
+              perm_rules << '-a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod'
+              perm_rules << '-a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod'
             end
+            perm_rules << '-a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod'
+            perm_rules << '-a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod'
 
             perm_rules << '-a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -F auid>=1000 -F auid!=4294967295 -k perm_mod'
             perm_rules << '-a always,exit -F arch=b64 -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod'
@@ -9572,7 +9619,11 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     mql: |
-      syscalls_64bit = ["creat", "open", "openat", "truncate", "ftruncate"]
+      // The 64-bit ARM syscall table has no creat or open, so they are required
+      // only elsewhere. The 32-bit table, ARM included, has all five.
+      syscalls_64bit_base = ["openat", "truncate", "ftruncate"]
+      syscalls_64bit_nonarm = ["creat", "open"]
+      syscalls_64bit = syscalls_64bit_base + syscalls_64bit_nonarm
       syscalls_32bit = ["creat", "open", "openat", "truncate", "ftruncate"]
 
       // Check for EPERM exit code rules (64-bit)
@@ -9585,7 +9636,10 @@ queries:
         && action == "always"
         && fields.contains(key == "key" && value != empty)
       ).map(syscalls).flat
-      desiredRulesEperm64.containsAll(syscalls_64bit)
+      desiredRulesEperm64.containsAll(syscalls_64bit_base)
+      if (asset.arch != /arm|aarch/) {
+        desiredRulesEperm64.containsAll(syscalls_64bit_nonarm)
+      }
 
       // Check for EACCES exit code rules (64-bit)
       desiredRulesEacces64 = auditd.rules.syscalls.where(
@@ -9597,7 +9651,10 @@ queries:
         && action == "always"
         && fields.contains(key == "key" && value != empty)
       ).map(syscalls).flat
-      desiredRulesEacces64.containsAll(syscalls_64bit)
+      desiredRulesEacces64.containsAll(syscalls_64bit_base)
+      if (asset.arch != /arm|aarch/) {
+        desiredRulesEacces64.containsAll(syscalls_64bit_nonarm)
+      }
 
       // Check for EPERM exit code rules (32-bit)
       desiredRulesEperm32 = auditd.rules.syscalls.where(
@@ -9624,7 +9681,7 @@ queries:
       desiredRulesEacces32.containsAll(syscalls_32bit)
     docs:
       desc: |
-        This check verifies that audit rules record failed file access, covering the `creat`, `open`, `openat`, `truncate`, and `ftruncate` system calls on both 32-bit and 64-bit architectures, filtered to `auid>=1000`, excluding daemon activity, and matching the `EACCES` and `EPERM` return codes. Each rule must carry a non-empty key.
+        This check verifies that audit rules record failed file access, covering the `creat`, `open`, `openat`, `truncate`, and `ftruncate` system calls on both 32-bit and 64-bit architectures, filtered to `auid>=1000`, excluding daemon activity, and matching the `EACCES` and `EPERM` return codes. Each rule must carry a non-empty key. The 64-bit ARM system call table has no `creat` or `open`, so on ARM hosts the 64-bit rules need only `openat`, `truncate`, and `ftruncate`, while the 32-bit rules still need all five.
 
         **Why this matters**
 
@@ -9665,11 +9722,13 @@ queries:
 
                 **On ARM architectures:**
 
+                64-bit ARM kernels do not implement `creat` or `open`, and auditctl stops loading a rules file at the first syscall name it does not recognize, so the 64-bit lines leave them out. The `b32` lines are resolved against the 32-bit ARM syscall table, which has both, so they keep the full list:
+
                 ```text
                 -a always,exit -F arch=b64 -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
-                -a always,exit -F arch=b32 -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
+                -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
                 -a always,exit -F arch=b64 -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
-                -a always,exit -F arch=b32 -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
+                -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
                 ```
 
             3. To load the newly added rules into the running configuration:
@@ -9707,9 +9766,9 @@ queries:
             if $is_arm; then
               cat > "$RULES_FILE" <<'EOF'
             -a always,exit -F arch=b64 -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
-            -a always,exit -F arch=b32 -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
+            -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
             -a always,exit -F arch=b64 -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
-            -a always,exit -F arch=b32 -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
+            -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
             EOF
             else
               cat > "$RULES_FILE" <<'EOF'
@@ -9754,9 +9813,9 @@ queries:
                   ansible.builtin.set_fact:
                     access_rules_block: |-
                       -a always,exit -F arch=b64 -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
-                      -a always,exit -F arch=b32 -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
+                      -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
                       -a always,exit -F arch=b64 -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
-                      -a always,exit -F arch=b32 -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
+                      -a always,exit -F arch=b32 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access
                   when: ansible_architecture is match('^(arm|aarch)')
 
                 - name: Ensure access audit rules are present
@@ -9789,7 +9848,7 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to audit denied file access attempts. ARM kernels do not implement the `creat` and `open` syscalls, so those are only requested on other architectures:
+            Use this Chef Infra recipe code to audit denied file access attempts. 64-bit ARM kernels do not implement the `creat` and `open` syscalls, so the 64-bit rules request them only on other architectures. The 32-bit ARM syscall table has both, so the 32-bit rules are the same everywhere:
 
             ```ruby
             execute 'load audit rules' do
@@ -9799,9 +9858,9 @@ queries:
             end
 
             arm = node['kernel']['machine'].to_s.match?(/^(arm|aarch)/)
-            syscalls = arm ? '-S openat -S truncate -S ftruncate' : '-S creat -S open -S openat -S truncate -S ftruncate'
 
             access_rules = %w(b64 b32).flat_map do |arch|
+              syscalls = arm && arch == 'b64' ? '-S openat -S truncate -S ftruncate' : '-S creat -S open -S openat -S truncate -S ftruncate'
               %w(EACCES EPERM).map do |errno|
                 "-a always,exit -F arch=#{arch} #{syscalls} -F exit=-#{errno} -F auid>=1000 -F auid!=4294967295 -k access"
               end
@@ -12089,7 +12148,9 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     mql: |
-      files.find(from: "/var/log", type: "file").list.all(
+      // files.find follows symlinks and reports the target's mode. A link such as
+      // systemd's /var/log/README points outside /var/log, so links are skipped.
+      files.find(from: "/var/log", type: "file").list.where(permissions.isSymlink == false).all(
         permissions.group_writeable == false &&
         permissions.group_executable == false &&
         permissions.other_readable == false &&
@@ -12098,7 +12159,7 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that every file under `/var/log` has no write or execute permission for the group, and no read, write, or execute permission for other users. Group read is permitted, so that a log-reading group such as `adm` continues to work.
+        This check verifies that every file under `/var/log` has no write or execute permission for the group, and no read, write, or execute permission for other users. Group read is permitted, so that a log-reading group such as `adm` continues to work. Symbolic links are skipped, because the file a link points to is not a log under `/var/log`: systemd installs `/var/log/README` as a link to its documentation in `/usr/share/doc`.
 
         **Why this matters**
 
@@ -12113,7 +12174,7 @@ queries:
         Run this command to find log files with overly permissive permissions:
 
         ```bash
-        find /var/log -type f \( -perm /0137 \) -ls
+        find /var/log -type f -perm /0037 -ls
         ```
 
         A passing result returns no files, meaning no log file is group-writable or executable or readable, writable, or executable by other users. A failing result lists log files with broader access.
