@@ -50,6 +50,7 @@ AZURE_REMEDIATION_IDS = ("cli",)
 # provides shows up as a reviewable diff on the next regeneration.
 AZURE_EXTENSIONS = (
     "account",
+    "alertsmanagement",  # `az monitor alert-processing-rule`
     "automation",
     "azure-firewall",
     "bastion",
