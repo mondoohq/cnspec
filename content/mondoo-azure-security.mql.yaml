@@ -43589,11 +43589,11 @@ queries:
 
         A WAF policy is attached from **Web Application Firewall** under **Settings** on the gateway, which must use the `WAF_v2` SKU, and its mode is set in **Policy settings** on the policy itself, as `mode` in the `policy_settings` block or `policySettings.mode` in ARM and Bicep. The check requires `Prevention`. Without a policy the gateway forwards everything to its backends uninspected, and an attached policy commonly defaults to `Detection`.
 
-        Prevention mode alone is not proof of protection. A managed rule set can report a current version while individual rules inside it are neutralized by a rule group override: an override that lists no rules disables the entire group, and a per-rule override can downgrade a rule's action from Block to `Log`, so the rule still matches and records but no longer blocks. Either change leaves the policy reporting Prevention mode while a whole attack class passes through, so the check also requires that no managed rule group is wholesale-disabled and no rule action has been downgraded to `Log`.
+        Prevention mode alone is not proof of protection. A managed rule set can report a current version while individual rules inside it are neutralized by a rule group override: an override that lists no rules disables the entire group, and a per-rule override can downgrade a rule's action from Block to `Log`, so the rule still matches and records but no longer blocks, or to `Allow`, so a matching request is let through without the remaining rules inspecting it. Any of these changes leaves the policy reporting Prevention mode while a whole attack class passes through, so the check also requires that no managed rule group is wholesale-disabled and no rule action has been overridden to `Log` or `Allow`.
 
         **Why this matters**
 
-        In Prevention mode the firewall terminates requests that match its managed and custom rule sets, so SQL injection, cross-site scripting, and the rest of the OWASP Top 10 never reach the backend. Detection mode writes a log entry and forwards the same request, which gives teams the impression of coverage while the attack proceeds. A disabled rule group or a rule downgraded to `Log` produces the same illusion for one attack class without changing the policy's mode or its rule set version, so a review that stops at the mode misses it.
+        In Prevention mode the firewall terminates requests that match its managed and custom rule sets, so SQL injection, cross-site scripting, and the rest of the OWASP Top 10 never reach the backend. Detection mode writes a log entry and forwards the same request, which gives teams the impression of coverage while the attack proceeds. A disabled rule group or a rule overridden to `Log` or `Allow` produces the same illusion for one attack class without changing the policy's mode or its rule set version, so a review that stops at the mode misses it.
 
         Blocking at the edge shrinks the window in which an unpatched or poorly coded backend can be probed and exploited. Managed rule sets and custom rate-limiting rules also throttle brute-force and enumeration attempts at the gateway rather than leaving the application tier to absorb them.
 
@@ -43607,9 +43607,9 @@ queries:
         2. Select the Application Gateway.
         3. Under **Settings**, select **Web Application Firewall**.
         4. Confirm that a WAF policy is associated and that **Mode** is set to **Prevention**.
-        5. Open the associated policy's **Managed rules** and confirm no rule group is fully disabled and no rule's action has been overridden to **Log**.
+        5. Open the associated policy's **Managed rules** and confirm no rule group is fully disabled and no rule's action has been overridden to **Log** or **Allow**.
 
-        A passing gateway has a policy attached with the mode shown as Prevention and no managed rule group disabled or downgraded to Log. A failing gateway has no WAF policy, a policy whose mode is Detection, or a policy with a disabled rule group or a rule overridden to Log.
+        A passing gateway has a policy attached with the mode shown as Prevention and no managed rule group disabled and no rule overridden to Log or Allow. A failing gateway has no WAF policy, a policy whose mode is Detection, or a policy with a disabled rule group or a rule overridden to Log or Allow.
 
         ### Audit via Azure CLI
 
@@ -43619,7 +43619,7 @@ queries:
         az network application-gateway waf-policy list --query "[].{Name:name, Mode:policySettings.mode, State:policySettings.state, Overrides:managedRules.managedRuleSets[].ruleGroupOverrides[].{Group:ruleGroupName, Rules:rules[].{Id:ruleId, State:state, Action:action}}}" -o json
         ```
 
-        Any policy whose `Mode` is not `Prevention`, or that has a rule group with every rule disabled, or a rule whose `Action` is `Log`, fails this check.
+        Any policy whose `Mode` is not `Prevention`, or that has a rule group with every rule disabled, or a rule whose `Action` is `Log` or `Allow`, fails this check.
       remediation:
         - id: portal
           desc: |
@@ -43784,7 +43784,7 @@ queries:
     mql: |
       azure.subscription.networkService.applicationGateway.policy != empty && azure.subscription.networkService.applicationGateway.policy.mode == "Prevention"
       azure.subscription.networkService.applicationGateway.policy == empty || azure.subscription.networkService.applicationGateway.policy.managedRules.all(ruleGroupOverrides.none(disablesEntireGroup))
-      azure.subscription.networkService.applicationGateway.policy == empty || azure.subscription.networkService.applicationGateway.policy.managedRules.all(ruleGroupOverrides.all(rules.none(action == "Log")))
+      azure.subscription.networkService.applicationGateway.policy == empty || azure.subscription.networkService.applicationGateway.policy.managedRules.all(ruleGroupOverrides.all(rules.none(action == "Log" || action == "Allow")))
   - uid: mondoo-azure-security-appgw-waf-prevention-mode-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_web_application_firewall_policy")
     mql: |
@@ -50137,7 +50137,7 @@ queries:
 
         A policy carries two independent switches. The enabled state, shown in **Policy settings** on the policy and written as `enabled` in the `policy_settings` block or `policySettings.state` in ARM and Bicep, decides whether the firewall evaluates traffic at all. The mode decides whether matches are logged or blocked. The check requires the enabled state, because a policy in `Prevention` mode inspects nothing while its state is `Disabled`.
 
-        The enabled state is not the whole picture either. On an enabled policy a managed rule set can report a current version while individual rules inside it are neutralized by a rule group override: an override that lists no rules disables the entire group, and a per-rule override can downgrade a rule's action from Block to `Log`. The check therefore also requires that no managed rule group is wholesale-disabled and no rule action has been downgraded to `Log`.
+        The enabled state is not the whole picture either. On an enabled policy a managed rule set can report a current version while individual rules inside it are neutralized by a rule group override: an override that lists no rules disables the entire group, and a per-rule override can downgrade a rule's action from Block to `Log` or `Allow`. The check therefore also requires that no managed rule group is wholesale-disabled and no rule action has been overridden to `Log` or `Allow`.
 
         **Why this matters**
 
@@ -50155,7 +50155,7 @@ queries:
         2. Select the policy associated with the Application Gateway.
         3. Open **Policy settings** and review the state.
         4. A passing policy shows the state as **Enabled**.
-        5. Open **Managed rules** and confirm no rule group is fully disabled and no rule's action has been overridden to **Log**.
+        5. Open **Managed rules** and confirm no rule group is fully disabled and no rule's action has been overridden to **Log** or **Allow**.
 
         ### Audit via Azure CLI
 
@@ -50163,7 +50163,7 @@ queries:
         az network application-gateway waf-policy show --name <PolicyName> --resource-group <ResourceGroupName> --query "{State:policySettings.state, Mode:policySettings.mode, Overrides:managedRules.managedRuleSets[].ruleGroupOverrides[].{Group:ruleGroupName, Rules:rules[].{Id:ruleId, State:state, Action:action}}}"
         ```
 
-        A passing policy returns a state of `Enabled` with no managed rule group fully disabled and no rule whose `Action` is `Log`.
+        A passing policy returns a state of `Enabled` with no managed rule group fully disabled and no rule whose `Action` is `Log` or `Allow`.
       remediation:
         - id: portal
           desc: |
@@ -50241,7 +50241,7 @@ queries:
       azure.subscription.networkService.applicationGateway.policy != empty
       azure.subscription.networkService.applicationGateway.policy.enabled == true
       azure.subscription.networkService.applicationGateway.policy == empty || azure.subscription.networkService.applicationGateway.policy.managedRules.all(ruleGroupOverrides.none(disablesEntireGroup))
-      azure.subscription.networkService.applicationGateway.policy == empty || azure.subscription.networkService.applicationGateway.policy.managedRules.all(ruleGroupOverrides.all(rules.none(action == "Log")))
+      azure.subscription.networkService.applicationGateway.policy == empty || azure.subscription.networkService.applicationGateway.policy.managedRules.all(ruleGroupOverrides.all(rules.none(action == "Log" || action == "Allow")))
   - uid: mondoo-azure-security-appgw-waf-policy-enabled-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_web_application_firewall_policy")
