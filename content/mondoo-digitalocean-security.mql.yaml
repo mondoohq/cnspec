@@ -1640,9 +1640,9 @@ queries:
       desc: |
         This check verifies that no managed database cluster runs an engine version that has reached end of life.
 
-        Each cluster's engine and version are compared against the releases that no longer receive security patches from their upstream maintainer or from DigitalOcean, covering PostgreSQL, MySQL, Redis, MongoDB, Kafka, and OpenSearch. The version in use is shown on the cluster overview in the DigitalOcean Cloud Control Panel and returned by `doctl databases get`.
+        Each cluster's engine and version are compared against the versions DigitalOcean offers for PostgreSQL, MySQL, Valkey, Redis, MongoDB, Kafka, and OpenSearch, and against the date each of those versions stops receiving security fixes. Where DigitalOcean and the upstream project both publish an end-of-life date, the earlier one applies, so a cluster fails from that date onward without waiting for anyone to mark the version as retired. A version that is not in the comparison also fails. The version in use is shown on the cluster overview in the DigitalOcean Cloud Control Panel and returned by `doctl databases get`.
 
-        DigitalOcean has replaced its managed Redis offering with Valkey, which reports the engine `valkey`. No Valkey release has reached end of life, so Valkey clusters have nothing to deny and always pass. Clusters still reporting the engine `redis` are matched against the Redis lifecycle.
+        DigitalOcean has replaced its managed Redis offering with Valkey, which reports the engine `valkey`. No Valkey release has an announced end of life, so a Valkey cluster passes while it runs a version DigitalOcean offers. Clusters still reporting the engine `redis` pass only on Redis 7.
 
         **Why this matters**
 
@@ -1656,13 +1656,13 @@ queries:
       audit: |
         ### Audit via Console
 
-        Treat the versions that DigitalOcean currently offers as the authoritative list of supported versions. The set of EOL versions changes over time, so check the live `doctl databases options versions` output for each engine rather than relying on a static list. The version ranges below are examples that were EOL at the time of writing and may be incomplete now.
+        Treat the versions that DigitalOcean currently offers as the authoritative list of supported versions, and the end-of-life dates in the DigitalOcean engine documentation and the upstream project's support policy as the deadline for each.
 
         1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
         2. Navigate to **Databases** and review the **Engine Version** column for each cluster.
-        3. Compare each engine and version against the versions DigitalOcean currently offers for that engine. As of 13 September 2026 the EOL versions are PostgreSQL 9.x through 13, MySQL 5.6, 5.7, and 8.0, Redis 4 through 6, MongoDB 3.6 through 6.0, Kafka 2.8 through 3.8, and OpenSearch 1.x. Confirm the current set with the CLI step below.
+        3. Compare each engine and version against the versions DigitalOcean currently offers for that engine, using the CLI step below, and look up the end-of-life date of the version in use.
 
-        A passing database cluster runs a version that DigitalOcean still offers for its engine. A failing database cluster runs a version absent from the current supported list.
+        A passing database cluster runs a version that DigitalOcean still offers for its engine and whose end-of-life date is still ahead. A failing database cluster runs a version absent from the current supported list or past its end-of-life date.
 
         ### Audit via CLI
 
@@ -1678,18 +1678,18 @@ queries:
         doctl databases options versions --engine opensearch
         ```
 
-        A passing cluster shows a version in the current supported list for its engine. A failing cluster shows a version absent from that list.
+        A passing cluster shows a version in the current supported list for its engine whose end-of-life date is still ahead. A failing cluster shows a version absent from that list or past its end-of-life date.
       remediation:
         - id: console
           desc: |
-            The cluster fails while it runs one of these versions, so upgrade to a newer version that DigitalOcean still offers:
+            The cluster fails once its version is past its end-of-life date or no longer offered, so upgrade to a newer version that DigitalOcean still offers. The newest version of each engine stays supported longest:
 
-            - PostgreSQL `9` through `13`, where DigitalOcean offers `14` through `18`
-            - MySQL `5.6`, `5.7`, and `8.0`, where DigitalOcean offers `8.4`
-            - Redis `4` through `6`, where the replacement is a Valkey `8` cluster
-            - MongoDB `3.6` through `6.0`, where DigitalOcean offers `7.0` and `8.0`
-            - Kafka `2.8` through `3.8`, where DigitalOcean offers `3.9` and `4.1`
-            - OpenSearch `1.x`, where DigitalOcean offers `2.19`, `3.3`, and `3.6`
+            - PostgreSQL `18`
+            - MySQL `8.4`
+            - Valkey `8`, as the replacement for a Redis cluster
+            - MongoDB `8.0`
+            - Kafka `4.1`
+            - OpenSearch `3.x`
 
             Confirm which versions DigitalOcean currently offers with `doctl databases options versions --engine <engine>` before choosing a target.
 
@@ -1725,14 +1725,14 @@ queries:
                 ```bash
                 doctl databases create <new-name> \
                   --engine pg \
-                  --version 16 \
+                  --version 18 \
                   --region <region> \
                   --size <size-slug> \
                   --num-nodes <count> \
                   --private-network-uuid <vpc-uuid>
                 ```
 
-                - The example creates PostgreSQL `16`. For another engine, set `--engine` to the old cluster's `Engine` value and `--version` to a version from that engine's `options versions` output that is newer than the failing versions.
+                - The example creates PostgreSQL `18`. For another engine, set `--engine` to the old cluster's `Engine` value and `--version` to the newest version in that engine's `options versions` output.
                 - `<region>`, `<size-slug>`, and `<count>` are the old cluster's `Region`, `Size`, and `NumNodes` values, and `<vpc-uuid>` is the VPC network the application hosts use.
 
             3. Pull connection info for the new cluster, then migrate the data and re-create the users, connection pools, and Trusted Sources with engine-native tools such as `pg_dump` and `pg_restore` or `mysqldump`:
@@ -1748,7 +1748,7 @@ queries:
                 ```
         - id: terraform
           desc: |
-            Terraform manages the engine version through the `version` argument on `digitalocean_database_cluster`. Set it to a supported major version newer than the failing versions, such as `16` for PostgreSQL. Changing `version` makes the provider call the major-version upgrade API on the existing cluster rather than replacing it.
+            Terraform manages the engine version through the `version` argument on `digitalocean_database_cluster`. Set it to the newest major version DigitalOcean offers for the engine, such as `18` for PostgreSQL. Changing `version` makes the provider call the major-version upgrade API on the existing cluster rather than replacing it.
 
             **The upgrade cannot be rolled back.** Backups taken on the old version can no longer be used for point-in-time recovery, so test the upgrade on a fork first:
 
@@ -1756,7 +1756,7 @@ queries:
             resource "digitalocean_database_cluster" "example" {
               name       = "example"
               engine     = "pg"
-              version    = "16"
+              version    = "18"
               size       = "db-s-1vcpu-1gb"
               region     = "nyc3"
               node_count = 1
@@ -1771,47 +1771,133 @@ queries:
         title: Kafka Limits
       - url: https://docs.digitalocean.com/release-notes/upcoming/mysql-8-eol/
         title: MySQL 8.0 End of Life and Forced Upgrades Beginning 30 October 2026
+      - url: https://www.postgresql.org/support/versioning/
+        title: PostgreSQL Versioning Policy
+      - url: https://www.mongodb.com/legal/support-policy/lifecycles
+        title: MongoDB Software Lifecycle Schedules
 
+  # Supported engine versions and the date each stops receiving security fixes, last checked on
+  # 26 September 2026. Each date is the earlier of DigitalOcean's end of life and the upstream one:
+  # PostgreSQL from both https://docs.digitalocean.com/products/databases/postgresql/details/limits/
+  # and https://www.postgresql.org/support/versioning/, MongoDB from
+  # https://www.mongodb.com/legal/support-policy/lifecycles. A version without a date has no
+  # announced end of life: DigitalOcean lists none for MySQL 8.4, Valkey, Kafka 3.9 and 4.1, or
+  # OpenSearch, and Redis 7 is kept for clusters that still report the retired redis engine.
+  # Versions absent from the table fail, including MySQL 8.0, whose upstream support ended in
+  # April 2026. Every variant carries the same table, so edit them together.
   - uid: mondoo-digitalocean-security-db-engine-supported-version-digitalocean
     filters: asset.platform == "digitalocean-database"
     mql: |
-      // EOL lists last reviewed 2026-09-13. Next review due before 2026-11-12, when PostgreSQL 14 reaches EOL.
-      digitalocean.database.engine != "pg" || digitalocean.database.version.notIn(["9", "9.5", "9.6", "10", "11", "12", "13"])
-      digitalocean.database.engine != "mysql" || digitalocean.database.version.notIn(["5.6", "5.7", "8", "8.0"])
-      digitalocean.database.engine != "redis" || digitalocean.database.version.notIn(["4", "5", "6"])
-      digitalocean.database.engine != "mongodb" || digitalocean.database.version.notIn(["3.6", "4.0", "4.2", "4.4", "5.0", "6", "6.0"])
-      digitalocean.database.engine != "kafka" || digitalocean.database.version.notIn(["2.8", "3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7", "3.8"])
-      digitalocean.database.engine != "opensearch" || digitalocean.database.version.notIn(["1", "1.0", "1.1", "1.2", "1.3"])
+      digitalocean.database.engine != "pg" ||
+        digitalocean.database.version == "14" && time.now < parse.date("2026-11-12") ||
+        digitalocean.database.version == "15" && time.now < parse.date("2027-11-11") ||
+        digitalocean.database.version == "16" && time.now < parse.date("2028-11-09") ||
+        digitalocean.database.version == "17" && time.now < parse.date("2029-11-08") ||
+        digitalocean.database.version == "18" && time.now < parse.date("2030-11-08")
+      digitalocean.database.engine != "mysql" ||
+        digitalocean.database.version == "8.4"
+      digitalocean.database.engine != "redis" ||
+        digitalocean.database.version == "7"
+      digitalocean.database.engine != "valkey" ||
+        digitalocean.database.version == "8"
+      digitalocean.database.engine != "mongodb" ||
+        digitalocean.database.version == /^7(\.0)?$/ && time.now < parse.date("2027-08-31") ||
+        digitalocean.database.version == /^8(\.0)?$/ && time.now < parse.date("2029-10-31")
+      digitalocean.database.engine != "kafka" ||
+        digitalocean.database.version == "3.9" ||
+        digitalocean.database.version == "4.1"
+      digitalocean.database.engine != "opensearch" ||
+        digitalocean.database.version == /^[23](\.|$)/
   - uid: mondoo-digitalocean-security-db-engine-supported-version-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_database_cluster")
     mql: |
-      // EOL lists last reviewed 2026-09-13. Next review due before 2026-11-12, when PostgreSQL 14 reaches EOL.
-      terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "pg").all(arguments["version"].notIn(["9", "9.5", "9.6", "10", "11", "12", "13"]))
-      terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "mysql").all(arguments["version"].notIn(["5.6", "5.7", "8", "8.0"]))
-      terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "redis").all(arguments["version"].notIn(["4", "5", "6"]))
-      terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "mongodb").all(arguments["version"].notIn(["3.6", "4.0", "4.2", "4.4", "5.0", "6", "6.0"]))
-      terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "kafka").all(arguments["version"].notIn(["2.8", "3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7", "3.8"]))
-      terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "opensearch").all(arguments["version"].notIn(["1", "1.0", "1.1", "1.2", "1.3"]))
+      terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "pg").all(
+        arguments["version"] == "14" && time.now < parse.date("2026-11-12") ||
+        arguments["version"] == "15" && time.now < parse.date("2027-11-11") ||
+        arguments["version"] == "16" && time.now < parse.date("2028-11-09") ||
+        arguments["version"] == "17" && time.now < parse.date("2029-11-08") ||
+        arguments["version"] == "18" && time.now < parse.date("2030-11-08")
+      )
+      terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "mysql").all(
+        arguments["version"] == "8.4"
+      )
+      terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "redis").all(
+        arguments["version"] == "7"
+      )
+      terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "valkey").all(
+        arguments["version"] == "8"
+      )
+      terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "mongodb").all(
+        arguments["version"] == /^7(\.0)?$/ && time.now < parse.date("2027-08-31") ||
+        arguments["version"] == /^8(\.0)?$/ && time.now < parse.date("2029-10-31")
+      )
+      terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "kafka").all(
+        arguments["version"] == "3.9" ||
+        arguments["version"] == "4.1"
+      )
+      terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "opensearch").all(
+        arguments["version"] == /^[23](\.|$)/
+      )
   - uid: mondoo-digitalocean-security-db-engine-supported-version-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_database_cluster")
     mql: |
-      // EOL lists last reviewed 2026-09-13. Next review due before 2026-11-12, when PostgreSQL 14 reaches EOL.
-      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "pg").all(change.after.version.notIn(["9", "9.5", "9.6", "10", "11", "12", "13"]))
-      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "mysql").all(change.after.version.notIn(["5.6", "5.7", "8", "8.0"]))
-      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "redis").all(change.after.version.notIn(["4", "5", "6"]))
-      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "mongodb").all(change.after.version.notIn(["3.6", "4.0", "4.2", "4.4", "5.0", "6", "6.0"]))
-      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "kafka").all(change.after.version.notIn(["2.8", "3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7", "3.8"]))
-      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "opensearch").all(change.after.version.notIn(["1", "1.0", "1.1", "1.2", "1.3"]))
+      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "pg").all(
+        change.after.version == "14" && time.now < parse.date("2026-11-12") ||
+        change.after.version == "15" && time.now < parse.date("2027-11-11") ||
+        change.after.version == "16" && time.now < parse.date("2028-11-09") ||
+        change.after.version == "17" && time.now < parse.date("2029-11-08") ||
+        change.after.version == "18" && time.now < parse.date("2030-11-08")
+      )
+      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "mysql").all(
+        change.after.version == "8.4"
+      )
+      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "redis").all(
+        change.after.version == "7"
+      )
+      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "valkey").all(
+        change.after.version == "8"
+      )
+      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "mongodb").all(
+        change.after.version == /^7(\.0)?$/ && time.now < parse.date("2027-08-31") ||
+        change.after.version == /^8(\.0)?$/ && time.now < parse.date("2029-10-31")
+      )
+      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "kafka").all(
+        change.after.version == "3.9" ||
+        change.after.version == "4.1"
+      )
+      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "opensearch").all(
+        change.after.version == /^[23](\.|$)/
+      )
   - uid: mondoo-digitalocean-security-db-engine-supported-version-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_database_cluster")
     mql: |
-      // EOL lists last reviewed 2026-09-13. Next review due before 2026-11-12, when PostgreSQL 14 reaches EOL.
-      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "pg").all(values.version.notIn(["9", "9.5", "9.6", "10", "11", "12", "13"]))
-      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "mysql").all(values.version.notIn(["5.6", "5.7", "8", "8.0"]))
-      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "redis").all(values.version.notIn(["4", "5", "6"]))
-      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "mongodb").all(values.version.notIn(["3.6", "4.0", "4.2", "4.4", "5.0", "6", "6.0"]))
-      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "kafka").all(values.version.notIn(["2.8", "3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7", "3.8"]))
-      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "opensearch").all(values.version.notIn(["1", "1.0", "1.1", "1.2", "1.3"]))
+      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "pg").all(
+        values.version == "14" && time.now < parse.date("2026-11-12") ||
+        values.version == "15" && time.now < parse.date("2027-11-11") ||
+        values.version == "16" && time.now < parse.date("2028-11-09") ||
+        values.version == "17" && time.now < parse.date("2029-11-08") ||
+        values.version == "18" && time.now < parse.date("2030-11-08")
+      )
+      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "mysql").all(
+        values.version == "8.4"
+      )
+      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "redis").all(
+        values.version == "7"
+      )
+      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "valkey").all(
+        values.version == "8"
+      )
+      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "mongodb").all(
+        values.version == /^7(\.0)?$/ && time.now < parse.date("2027-08-31") ||
+        values.version == /^8(\.0)?$/ && time.now < parse.date("2029-10-31")
+      )
+      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "kafka").all(
+        values.version == "3.9" ||
+        values.version == "4.1"
+      )
+      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "opensearch").all(
+        values.version == /^[23](\.|$)/
+      )
 
   # No Terraform variants: the check inspects the validity window of the CA certificate the cluster currently advertises — runtime telemetry that has no analog in digitalocean_database_cluster HCL. Terraform expresses desired cluster configuration; the CA is managed and rotated by DigitalOcean and only exposed by the live API.
   - uid: mondoo-digitalocean-security-db-ca-certificate-not-expired
@@ -2673,7 +2759,7 @@ queries:
       desc: |
         This check verifies that every DOKS cluster runs a Kubernetes minor version that is still supported.
 
-        Upstream Kubernetes supports only the latest three minor versions, and DigitalOcean aligns its own support window with that. This check requires version 1.34 or newer, the oldest minor release DigitalOcean still supported on 13 September 2026. Support for 1.33 ended on 28 June 2026, and support for 1.34 ends on 27 October 2026. The running version is shown on the cluster overview in the DigitalOcean Cloud Control Panel and returned by `doctl kubernetes cluster get`.
+        Upstream Kubernetes supports only the latest three minor versions, and DigitalOcean aligns its own support window with that. DigitalOcean publishes an end-of-support date for every minor release, and the check fails a cluster from that date onward. A minor release that is not yet in that comparison also fails until it is added. The running version is shown on the cluster overview in the DigitalOcean Cloud Control Panel and returned by `doctl kubernetes cluster get`.
 
         **Why this matters**
 
@@ -2689,9 +2775,9 @@ queries:
 
         1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
         2. Navigate to **Kubernetes** and review the **Version** column for each cluster.
-        3. Compare the version against the currently supported minor versions, which are 1.34 and newer. A banner or badge indicating **Upgrade Available** confirms the cluster is on an unsupported minor.
+        3. Look up the minor version in the [DOKS supported releases](https://docs.digitalocean.com/products/kubernetes/details/supported-releases/) table and compare its end-of-support date with today.
 
-        A passing cluster shows a version of 1.34 or newer with no upgrade warning. A failing cluster shows a version older than 1.34 or displays an unsupported-version warning.
+        A passing cluster runs a minor version whose end-of-support date is still ahead. A failing cluster runs a minor version whose end-of-support date has passed.
 
         ### Audit via CLI
 
@@ -2706,7 +2792,7 @@ queries:
       remediation:
         - id: console
           desc: |
-            The cluster passes once it runs Kubernetes 1.34 or newer. A cluster moves up one minor version per upgrade, and only after it has the latest patch release of its current minor version, so a cluster several versions behind needs several upgrades.
+            The cluster passes once it runs a Kubernetes minor version whose end-of-support date is still ahead. A cluster moves up one minor version per upgrade, and only after it has the latest patch release of its current minor version, so a cluster several versions behind needs several upgrades.
 
             **An upgrade replaces every worker node.** Workloads are rescheduled, the new nodes receive new IP addresses, and APIs removed in the target version stop working, so check the deprecated API removals for each hop and keep surge upgrades enabled.
 
@@ -2715,10 +2801,10 @@ queries:
             1. Navigate to **Kubernetes** and open the affected cluster.
             2. Go to **Overview** and click **Upgrade Available** if present.
             3. Select the offered version, run the cluster linter from the upgrade window, and confirm the upgrade.
-            4. Repeat until the cluster runs 1.34 or newer.
+            4. Repeat until the cluster runs a supported minor version.
         - id: cli
           desc: |
-            The cluster passes once it runs Kubernetes 1.34 or newer. A cluster moves up one minor version per upgrade, and only after it has the latest patch release of its current minor version, so a cluster several versions behind needs several upgrades.
+            The cluster passes once it runs a Kubernetes minor version whose end-of-support date is still ahead. A cluster moves up one minor version per upgrade, and only after it has the latest patch release of its current minor version, so a cluster several versions behind needs several upgrades.
 
             **An upgrade replaces every worker node.** Workloads are rescheduled, the new nodes receive new IP addresses, and APIs removed in the target version stop working, so check the deprecated API removals for each hop and keep surge upgrades enabled.
 
@@ -2736,14 +2822,14 @@ queries:
                 doctl kubernetes cluster upgrade <cluster-id> --version <version-slug>
                 ```
 
-            3. Repeat both steps until the cluster runs 1.34 or newer.
+            3. Repeat both steps until the cluster runs a supported minor version.
         - id: terraform
           desc: |
-            Terraform manages the cluster version through the `version` argument on `digitalocean_kubernetes_cluster`. Use the `digitalocean_kubernetes_versions` data source to resolve the latest patch release for a minor version. The check requires 1.34 or newer, but DigitalOcean only creates clusters on its three most recent minor releases, so point `version_prefix` at one of those, such as `1.35.`:
+            Terraform manages the cluster version through the `version` argument on `digitalocean_kubernetes_cluster`. Use the `digitalocean_kubernetes_versions` data source to resolve the latest patch release for a minor version. Point `version_prefix` at the newest minor release, such as `1.36.`, since it stays supported longest:
 
             ```hcl
             data "digitalocean_kubernetes_versions" "example" {
-              version_prefix = "1.35."
+              version_prefix = "1.36."
             }
 
             resource "digitalocean_kubernetes_cluster" "example" {
@@ -2762,43 +2848,52 @@ queries:
       - url: https://docs.digitalocean.com/products/kubernetes/details/supported-releases/
         title: DOKS supported Kubernetes releases
 
-  # The floor is a literal because the provider has no supported-versions list to
-  # read at runtime. digitalocean.kubernetes.cluster.availableUpgradeVersions is the
-  # get-upgrades endpoint, which is non-empty for any cluster behind on a patch
-  # release, so it reports patch currency rather than whether the minor is still
-  # supported, and Terraform assets have no equivalent at all.
+  # The table is a literal because the provider has no supported-versions list to read at
+  # runtime. digitalocean.kubernetes.cluster.availableUpgradeVersions is the get-upgrades
+  # endpoint, which is non-empty for any cluster behind on a patch release, so it reports patch
+  # currency rather than whether the minor is still supported, and Terraform assets have no
+  # equivalent at all.
   #
-  # DigitalOcean supports the three most recent minor releases. As of 13 September
-  # 2026 the oldest supported minor is 1.34, which reaches end of support on
-  # 27 October 2026. Raise this floor and the parent docs when the next minor
-  # leaves support:
-  # https://docs.digitalocean.com/products/kubernetes/details/supported-releases/
+  # Supported minors and their DigitalOcean end-of-support dates, last checked on 26 September
+  # 2026 against https://docs.digitalocean.com/products/kubernetes/details/supported-releases/.
+  # A minor DigitalOcean releases fails here until it gets a clause, and every variant carries
+  # the same clauses.
   - uid: mondoo-digitalocean-security-doks-supported-version-digitalocean
     filters: asset.platform == "digitalocean-kubernetes-cluster"
     mql: |
-      digitalocean.kubernetes.cluster.version == /^1\.(3[4-9]|[4-9][0-9]|[1-9][0-9]{2})\./
+      digitalocean.kubernetes.cluster.version == /^1\.34\./ && time.now < parse.date("2026-10-27") ||
+      digitalocean.kubernetes.cluster.version == /^1\.35\./ && time.now < parse.date("2027-02-28") ||
+      digitalocean.kubernetes.cluster.version == /^1\.36\./ && time.now < parse.date("2027-06-28")
   - uid: mondoo-digitalocean-security-doks-supported-version-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_kubernetes_cluster")
     mql: |
       terraform.resources("digitalocean_kubernetes_cluster").all(
-        arguments["version"] == /^1\.(3[4-9]|[4-9][0-9]|[1-9][0-9]{2})\./ ||
-        arguments["version"] == /^data\.digitalocean_kubernetes_versions\./
+        arguments["version"] == /^data\.digitalocean_kubernetes_versions\./ ||
+        arguments["version"] == /^1\.34\./ && time.now < parse.date("2026-10-27") ||
+        arguments["version"] == /^1\.35\./ && time.now < parse.date("2027-02-28") ||
+        arguments["version"] == /^1\.36\./ && time.now < parse.date("2027-06-28")
       )
       terraform.datasources.where(nameLabel == "digitalocean_kubernetes_versions").all(
         arguments["version_prefix"] == empty ||
-        arguments["version_prefix"] == /^1\.(3[4-9]|[4-9][0-9]|[1-9][0-9]{2})\./
+        arguments["version_prefix"] == /^1\.34\./ && time.now < parse.date("2026-10-27") ||
+        arguments["version_prefix"] == /^1\.35\./ && time.now < parse.date("2027-02-28") ||
+        arguments["version_prefix"] == /^1\.36\./ && time.now < parse.date("2027-06-28")
       )
   - uid: mondoo-digitalocean-security-doks-supported-version-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_kubernetes_cluster")
     mql: |
       terraform.plan.resourceChanges.where(type == "digitalocean_kubernetes_cluster").all(
-        change.after.version == /^1\.(3[4-9]|[4-9][0-9]|[1-9][0-9]{2})\./
+        change.after.version == /^1\.34\./ && time.now < parse.date("2026-10-27") ||
+        change.after.version == /^1\.35\./ && time.now < parse.date("2027-02-28") ||
+        change.after.version == /^1\.36\./ && time.now < parse.date("2027-06-28")
       )
   - uid: mondoo-digitalocean-security-doks-supported-version-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_kubernetes_cluster")
     mql: |
       terraform.state.resources.where(type == "digitalocean_kubernetes_cluster").all(
-        values.version == /^1\.(3[4-9]|[4-9][0-9]|[1-9][0-9]{2})\./
+        values.version == /^1\.34\./ && time.now < parse.date("2026-10-27") ||
+        values.version == /^1\.35\./ && time.now < parse.date("2027-02-28") ||
+        values.version == /^1\.36\./ && time.now < parse.date("2027-06-28")
       )
 
   # No Terraform variants yet: the digitalocean Terraform provider now exposes an

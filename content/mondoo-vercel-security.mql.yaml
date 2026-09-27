@@ -795,7 +795,7 @@ queries:
       desc: |
         This check verifies that the project is not pinned to a Node.js major version that has reached end of life.
 
-        The runtime is selected as **Node.js Version** under **Settings > General** in the project, exposed as `nodeVersion` on the REST API and as `node_version` on the `vercel_project` Terraform resource. The check fails when the value is `14.x`, `16.x`, or `18.x`, each of which is past its end-of-life date, and passes when the field is unset, in which case the project builds on the platform default.
+        The runtime is selected as **Node.js Version** under **Settings > General** in the project, exposed as `nodeVersion` on the REST API and as `node_version` on the `vercel_project` Terraform resource. The check compares the value against the end-of-life date the Node.js project publishes for each major line and fails a project from that date onward. A line that is not yet in that comparison also fails until it is added, and the check passes when the field is unset, in which case the project builds on the platform default.
 
         **Why this matters**
 
@@ -805,7 +805,7 @@ queries:
 
         Delay compounds the cost. Each release the project sits out widens the jump it eventually has to make, and a migration across several major versions at once, together with the dependency upgrades that come with it, is far riskier than moving one line at a time.
 
-        Track the Node.js release schedule and plan each move ahead of the end-of-life date rather than after it, then redeploy so the new runtime takes effect, since the setting applies to the next build rather than retroactively. Note that the check names specific expired versions, so a version that leaves maintenance after this policy was written will keep passing until that list is updated.
+        Track the Node.js release schedule and plan each move ahead of the end-of-life date rather than after it, then redeploy so the new runtime takes effect, since the setting applies to the next build rather than retroactively.
       audit: |
         ### Audit via Dashboard
 
@@ -813,7 +813,7 @@ queries:
         2. Open the project, then go to **Settings > General**.
         3. Review the **Node.js Version** setting.
 
-        A passing result shows a supported Node.js major version; a failing result shows an end-of-life version such as 14.x, 16.x, or 18.x.
+        Compare the version against the end-of-life dates in the [Node.js release schedule](https://github.com/nodejs/release#release-schedule). A passing result shows a major version whose end-of-life date is still ahead; a failing result shows one whose date has passed.
 
         ### Audit via API
 
@@ -840,7 +840,7 @@ queries:
             curl -s -X PATCH -H "Authorization: Bearer $VERCEL_TOKEN" \
               -H "Content-Type: application/json" \
               "https://api.vercel.com/v9/projects/<project-id>?teamId=<team-id>" \
-              --data '{ "nodeVersion": "22.x" }'
+              --data '{ "nodeVersion": "24.x" }'
             ```
         - id: terraform
           desc: |
@@ -849,31 +849,56 @@ queries:
             ```hcl
             resource "vercel_project" "example" {
               name         = "example"
-              node_version = "22.x"
+              node_version = "24.x"
             }
             ```
     refs:
       - url: https://vercel.com/docs/functions/runtimes/node-js
         title: Vercel Node.js runtime documentation
+      - url: https://github.com/nodejs/release#release-schedule
+        title: Node.js release schedule
 
+  # Supported Node.js lines and the upstream end-of-life date of each, last checked on
+  # 26 September 2026 against https://github.com/nodejs/release#release-schedule and the versions
+  # Vercel offers at https://vercel.com/docs/functions/runtimes/node-js/node-js-versions.
+  # Vercel's own deprecation of a line comes after the upstream date, so the upstream date is the one
+  # that counts. A line Vercel adds fails here until it gets a clause, and every variant carries the
+  # same clauses.
   - uid: mondoo-vercel-security-project-supported-node-version-vercel-project
     filters: asset.platform == "vercel-project"
     mql: |
-      vercel.project.nodeVersion == empty || ["14.x", "16.x", "18.x"].contains(vercel.project.nodeVersion) == false
-  # An omitted node_version reads as null, and null matches none of the three end-of-life
-  # values, so a project that builds on the platform default passes.
+      vercel.project.nodeVersion == empty ||
+        vercel.project.nodeVersion == "20.x" && time.now < parse.date("2026-04-30") ||
+        vercel.project.nodeVersion == "22.x" && time.now < parse.date("2027-04-30") ||
+        vercel.project.nodeVersion == "24.x" && time.now < parse.date("2028-04-30")
+  # An omitted node_version reads as null, so a project that builds on the platform default passes.
   - uid: mondoo-vercel-security-project-supported-node-version-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "vercel_project")
     mql: |
-      terraform.resources("vercel_project").all(arguments["node_version"] != "14.x" && arguments["node_version"] != "16.x" && arguments["node_version"] != "18.x")
+      terraform.resources("vercel_project").all(
+        arguments["node_version"] == empty ||
+          arguments["node_version"] == "20.x" && time.now < parse.date("2026-04-30") ||
+          arguments["node_version"] == "22.x" && time.now < parse.date("2027-04-30") ||
+          arguments["node_version"] == "24.x" && time.now < parse.date("2028-04-30")
+      )
   - uid: mondoo-vercel-security-project-supported-node-version-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "vercel_project")
     mql: |
-      terraform.plan.resourceChanges.where(type == "vercel_project").all(change.after["node_version"] != "14.x" && change.after["node_version"] != "16.x" && change.after["node_version"] != "18.x")
+      terraform.plan.resourceChanges.where(type == "vercel_project").all(
+        change.after["node_version"] == empty ||
+          change.after["node_version"] == "20.x" && time.now < parse.date("2026-04-30") ||
+          change.after["node_version"] == "22.x" && time.now < parse.date("2027-04-30") ||
+          change.after["node_version"] == "24.x" && time.now < parse.date("2028-04-30")
+      )
   - uid: mondoo-vercel-security-project-supported-node-version-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "vercel_project")
     mql: |
-      terraform.state.resources.where(type == "vercel_project").all(values["node_version"] != "14.x" && values["node_version"] != "16.x" && values["node_version"] != "18.x")
+      terraform.state.resources.where(type == "vercel_project").all(
+        values["node_version"] == empty ||
+          values["node_version"] == "20.x" && time.now < parse.date("2026-04-30") ||
+          values["node_version"] == "22.x" && time.now < parse.date("2027-04-30") ||
+          values["node_version"] == "24.x" && time.now < parse.date("2028-04-30")
+      )
   # ---------------------------------------------------------------------------
   # Environment variables
   # ---------------------------------------------------------------------------

@@ -1,7 +1,8 @@
+# A minor release with no entry in the lifecycle table fails rather than passing unexamined.
 resource "digitalocean_kubernetes_cluster" "primary" {
-  name    = "prod-cluster"
+  name    = "future-cluster"
   region  = "nyc1"
-  version = "1.35.1-do.0"
+  version = "1.99.0-do.0"
 
   node_pool {
     name       = "worker-pool"

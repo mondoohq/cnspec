@@ -76,6 +76,26 @@ The parts you can't infer from reading a policy file:
 
 Anchor to a sibling check in the same policy where you can. Adding an encryption-at-rest check next to five others at `impact: 70`? Use 70 unless you can say why this one differs, and cite the sibling UID in the PR description.
 
+## Lifecycle checks
+
+A check that asks whether a runtime, engine, or product release still receives security fixes carries a version table, and every such table goes stale. Write it so it goes stale in the direction someone notices.
+
+- **Allowlist the supported versions, each with its end-of-life date.** One clause per version, joined with `||`, and a version with no announced end of life gets a clause without a date:
+
+  ```
+  vercel.project.nodeVersion == "20.x" && time.now < parse.date("2026-04-30") ||
+    vercel.project.nodeVersion == "22.x" && time.now < parse.date("2027-04-30") ||
+    vercel.project.nodeVersion == "24.x" && time.now < parse.date("2028-04-30")
+  ```
+
+  The check starts failing on the published date without anyone editing it, and a version missing from the table fails. A new release then shows up as a false failure that gets reported and fixed, not as a pass nobody questions.
+- **Never a denylist or a floor.** `["14.x", "16.x"].contains(v) == false` and `/^1\.(3[4-9]|[4-9][0-9])\./` both keep passing a version from the day it reaches end of life until someone edits the query, which is exactly when the check should start firing. A bare allowlist has the same gap, so every entry that has a date carries it.
+- **Read the date from the asset when the provider exposes one.** `asset.eol.date` covers operating systems. Before hardcoding a table, check the provider schema for an end-of-life or end-of-support field, and when the vendor API returns one that mql does not expose yet, file that against mql rather than hardcoding around it for good.
+- **Take the earlier of the upstream date and the operator's date.** A managed service publishes its own dates and they can run past upstream: DigitalOcean keeps MySQL 8.0 clusters running into late 2026, after Oracle has stopped shipping fixes for it. Put the source pages in `refs:` and in a comment above the variants, with the date the table was last checked against them.
+- **Keep the table in the query, not in props.** Props look like the place for it, but a map prop can't be indexed from inside a block, which every Terraform variant is (`cannot find field or resource 'arguments' in block`), and a prop per version is not something a user tunes. When a check has several variants, each carries the same clauses, so edit them together.
+- **Prose names the source, not the list.** `desc:` and `audit:` say the check compares against the vendor's published end-of-life dates and link them. Which versions are end of life, or when the next one expires, is a second table in prose that nothing updates. Remediation may name a target version.
+- **Fixtures:** the pass fixture uses the newest version in the table, so it stays passing longest; the fail fixture uses a version whose date has passed. A fixture on a version absent from the table proves the check fails closed.
+
 ## UID and naming
 
 Pattern: `mondoo-<provider>-security-<resource>-<rule>`
