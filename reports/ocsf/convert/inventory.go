@@ -89,11 +89,12 @@ func assetDataResults(r *policy.ReportCollection, assetMrn string) map[string]st
 		return nil
 	}
 
-	qid2mrn := map[string]string{}
+	// Queries with identical MQL share a code id; each of them gets an entry.
+	qid2mrns := map[string][]string{}
 	if r.Bundle != nil {
 		for _, query := range r.Bundle.Queries {
 			if query.CodeId != "" {
-				qid2mrn[query.CodeId] = query.Mrn
+				qid2mrns[query.CodeId] = append(qid2mrns[query.CodeId], query.Mrn)
 			}
 		}
 	}
@@ -106,22 +107,25 @@ func assetDataResults(r *policy.ReportCollection, assetMrn string) map[string]st
 	results := report.RawResults()
 	res := map[string]string{}
 	for qid, query := range resolved.ExecutionJob.Queries {
-		mrn := qid2mrn[qid]
-		if mrn == "" {
-			continue
-		}
-		if job, ok := reportingJobs[mrn]; ok &&
-			job.Type != policy.ReportingJob_DATA_QUERY && job.Type != policy.ReportingJob_CHECK_AND_DATA_QUERY {
-			continue
-		}
+		for _, mrn := range qid2mrns[qid] {
+			// only the queries resolved for this asset: a bundle can hold the
+			// same MQL under queries for other platforms
+			if _, ok := reportingJobs[mrn]; !ok {
+				continue
+			}
+			if job, ok := reportingJobs[mrn]; ok &&
+				job.Type != policy.ReportingJob_DATA_QUERY && job.Type != policy.ReportingJob_CHECK_AND_DATA_QUERY {
+				continue
+			}
 
-		buf := &bytes.Buffer{}
-		w := iox.IOWriter{Writer: buf}
-		if err := cr.CodeBundleToJSON(query.Code, results, &w); err != nil {
-			log.Warn().Err(err).Str("query", mrn).Msg("could not render a data query result for the OCSF report")
-			continue
+			buf := &bytes.Buffer{}
+			w := iox.IOWriter{Writer: buf}
+			if err := cr.CodeBundleToJSON(query.Code, results, &w); err != nil {
+				log.Warn().Err(err).Str("query", mrn).Msg("could not render a data query result for the OCSF report")
+				continue
+			}
+			res[mrn] = strings.TrimSpace(buf.String())
 		}
-		res[mrn] = strings.TrimSpace(buf.String())
 	}
 	return res
 }
