@@ -40,6 +40,12 @@ _DOCTL_SUBCOMMAND_LINE = re.compile(r"^  ([a-z][a-z0-9-]*)\s+\S")
 # "  -X, --flag-name <type>   <description>". We only capture the long form.
 _DOCTL_FLAG_LINE = re.compile(r"^\s+(?:-\w,\s+)?(--[a-z][a-z0-9-]*)")
 
+# Deepest command path the walk will follow; the real tree is four levels
+# deep. A backstop for help text the parser misreads as a subcommand list:
+# each call returns in milliseconds, so the per-call timeout would never stop
+# a walk that keeps extending the same path.
+_DOCTL_MAX_DEPTH = 6
+
 
 def _doctl_help(path: str) -> str:
     """Return stdout+stderr of `doctl <path> --help`."""
@@ -80,7 +86,9 @@ def _parse_doctl_help(text: str) -> tuple[list[str], list[str]]:
                 flags.append(m.group(1))
         elif in_cmds:
             m = _DOCTL_SUBCOMMAND_LINE.match(line)
-            if m:
+            # "  doctl knowledge-base" under a header such as "Public commands
+            # moved to:" points at another command; it is never a child.
+            if m and m.group(1) != "doctl":
                 subcommands.append(m.group(1))
 
     return sorted(set(subcommands)), sorted(set(flags))
@@ -146,6 +154,7 @@ def build_doctl_commands_db() -> dict[str, list[str]]:
     # thread-pool startup cost on every level of the tree.
     visited: set[str] = set()
     results: dict[str, dict] = {}
+    help_text: dict[str, str] = {}
     queue = list(services)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
@@ -166,8 +175,21 @@ def build_doctl_commands_db() -> dict[str, list[str]]:
                         file=sys.stderr,
                     )
                     continue
+                # A group given an argument it does not recognise prints its
+                # own help again. That child is not a command; skip it.
+                parent = path.rsplit(" ", 1)[0] if " " in path else None
+                if parent is not None and help_text.get(parent) == text:
+                    continue
+                help_text[path] = text
                 subs, flags = _parse_doctl_help(text)
                 results[path] = {"subcommands": subs, "flags": flags}
+                if subs and len(path.split()) >= _DOCTL_MAX_DEPTH:
+                    print(
+                        f"Warning: not descending past `doctl {path}`: "
+                        f"deeper than {_DOCTL_MAX_DEPTH} levels",
+                        file=sys.stderr,
+                    )
+                    continue
                 for s in subs:
                     sub_path = f"{path} {s}".strip()
                     if sub_path not in visited:
