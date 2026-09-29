@@ -28,20 +28,19 @@ func ConvertToProto(data *policy.ReportCollection) (*Report, error) {
 		return protoReport, nil
 	}
 
-	var qid2mrn map[string]string
+	// Queries with identical MQL compile to the same code id and run once, so a
+	// code id can stand for several queries; each of them gets an entry.
+	qid2mrns := map[string][]string{}
 	aggregateQueries := []string{}
 	if data.Bundle != nil {
-		qid2mrn = make(map[string]string, len(data.Bundle.Queries))
 		for i := range data.Bundle.Queries {
 			query := data.Bundle.Queries[i]
 			if query.CodeId == "" {
 				aggregateQueries = append(aggregateQueries, query.Mrn)
 			} else {
-				qid2mrn[query.CodeId] = query.Mrn
+				qid2mrns[query.CodeId] = append(qid2mrns[query.CodeId], query.Mrn)
 			}
 		}
-	} else {
-		qid2mrn = make(map[string]string, 0)
 	}
 
 	// fill in assets
@@ -93,14 +92,14 @@ func ConvertToProto(data *policy.ReportCollection) (*Report, error) {
 				execCodeIdByUuid[job.Uuid] = job.QrId
 			}
 		}
-		resolvedQid2Mrn := map[string]string{}
+		resolvedQid2Mrns := map[string][]string{}
 		for _, job := range resolved.CollectorJob.ReportingJobs {
 			if job.Type != policy.ReportingJob_DATA_QUERY && job.Type != policy.ReportingJob_CHECK_AND_DATA_QUERY {
 				continue
 			}
 			for childUuid := range job.ChildJobs {
 				if codeId, ok := execCodeIdByUuid[childUuid]; ok {
-					resolvedQid2Mrn[codeId] = job.QrId
+					resolvedQid2Mrns[codeId] = append(resolvedQid2Mrns[codeId], job.QrId)
 				}
 			}
 		}
@@ -110,54 +109,53 @@ func ConvertToProto(data *policy.ReportCollection) (*Report, error) {
 			continue
 		}
 		for qid, query := range resolved.ExecutionJob.Queries {
-			mrn := qid2mrn[qid]
-			if mrn == "" {
+			mrns := queryMrns(qid2mrns[qid], reportingJobByQrId)
+			if len(mrns) == 0 {
 				// a query pack's queries are only identifiable through the
-				// resolved policy; see resolvedQid2Mrn above
-				mrn = resolvedQid2Mrn[qid]
+				// resolved policy; see resolvedQid2Mrns above
+				mrns = resolvedQid2Mrns[qid]
 			}
 
-			// policies and other stuff
-			if mrn == "" {
-				continue
-			}
-			// checks
-			if rj, ok := reportingJobByQrId[mrn]; ok {
-				if rj.Type != policy.ReportingJob_DATA_QUERY && rj.Type != policy.ReportingJob_CHECK_AND_DATA_QUERY {
-					continue
+			// policies and other stuff have no query mrn
+			for _, mrn := range mrns {
+				// checks
+				if rj, ok := reportingJobByQrId[mrn]; ok {
+					if rj.Type != policy.ReportingJob_DATA_QUERY && rj.Type != policy.ReportingJob_CHECK_AND_DATA_QUERY {
+						continue
+					}
 				}
-			}
 
-			buf := &bytes.Buffer{}
-			w := iox.IOWriter{Writer: buf}
-			err := cr.CodeBundleToJSON(query.Code, results, &w)
-			if err != nil {
-				return nil, err
-			}
-
-			var v *structpb.Value
-			var jsonStruct map[string]any
-			err = json.Unmarshal([]byte(buf.Bytes()), &jsonStruct)
-			if err == nil {
-				v, err = structpb.NewValue(jsonStruct)
+				buf := &bytes.Buffer{}
+				w := iox.IOWriter{Writer: buf}
+				err := cr.CodeBundleToJSON(query.Code, results, &w)
 				if err != nil {
 					return nil, err
 				}
-			} else {
-				v, err = structpb.NewValue(buf.String())
-				if err != nil {
-					return nil, err
-				}
-			}
 
-			if protoReport.Data[assetMrn] == nil {
-				protoReport.Data[assetMrn] = &cr.DataValues{
-					Values: map[string]*cr.DataValue{},
+				var v *structpb.Value
+				var jsonStruct map[string]any
+				err = json.Unmarshal([]byte(buf.Bytes()), &jsonStruct)
+				if err == nil {
+					v, err = structpb.NewValue(jsonStruct)
+					if err != nil {
+						return nil, err
+					}
+				} else {
+					v, err = structpb.NewValue(buf.String())
+					if err != nil {
+						return nil, err
+					}
 				}
-			}
 
-			protoReport.Data[assetMrn].Values[mrn] = &cr.DataValue{
-				Content: v,
+				if protoReport.Data[assetMrn] == nil {
+					protoReport.Data[assetMrn] = &cr.DataValues{
+						Values: map[string]*cr.DataValue{},
+					}
+				}
+
+				protoReport.Data[assetMrn].Values[mrn] = &cr.DataValue{
+					Content: v,
+				}
 			}
 		}
 	}
@@ -180,21 +178,23 @@ func ConvertToProto(data *policy.ReportCollection) (*Report, error) {
 			return nil, errors.New("cannot find resolved pack for " + mrn + " in report")
 		}
 
+		reportingJobByQrId := map[string]*policy.ReportingJob{}
+		for _, job := range resolved.GetCollectorJob().GetReportingJobs() {
+			reportingJobByQrId[job.QrId] = job
+		}
+
 		// Getters, not field access: a ResolvedPolicy with no ExecutionJob is a
 		// nil pointer dereference here, and this runs on the `-o json` path, so
 		// the failure is a panic in the middle of writing a report rather than
 		// an error. Reached with a resolved policy that carries only a
 		// CollectorJob.
 		for qid := range resolved.GetExecutionJob().GetQueries() {
-			qmrn := qid2mrn[qid]
-			// policies and other stuff
-			if qmrn == "" {
-				continue
-			}
-
-			score := gatherScoreValue(report.Scores[qid])
-			if score != nil {
-				protoReport.Scores[mrn].Values[qmrn] = score
+			// policies and other stuff have no query mrn
+			for _, qmrn := range queryMrns(qid2mrns[qid], reportingJobByQrId) {
+				score := gatherScoreValue(report.Scores[qid])
+				if score != nil {
+					protoReport.Scores[mrn].Values[qmrn] = score
+				}
 			}
 		}
 

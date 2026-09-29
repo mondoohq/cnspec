@@ -101,25 +101,43 @@ func prepareAssetsForPrinting(assets map[string]*inventory.Asset) map[string]*as
 	return printableAssets
 }
 
+// queryMrns returns the queries a code id stands for on one asset. Queries with
+// identical MQL compile to the same code id and run once, so a code id can
+// stand for several queries of the bundle, but only those in the asset's
+// resolved policy (with a reporting job there) were resolved for it: a bundle
+// can hold the same MQL under a Linux and a Windows query. Without reporting
+// jobs to go by, every query of the bundle with the code id is returned.
+func queryMrns(bundleMrns []string, reportingJobByQrId map[string]*policy.ReportingJob) []string {
+	if len(reportingJobByQrId) == 0 {
+		return bundleMrns
+	}
+	res := make([]string, 0, len(bundleMrns))
+	for _, mrn := range bundleMrns {
+		if _, ok := reportingJobByQrId[mrn]; ok {
+			res = append(res, mrn)
+		}
+	}
+	return res
+}
+
 func ConvertToJSON(data *policy.ReportCollection, out iox.OutputHelper) error {
 	if data == nil {
 		return nil
 	}
 
-	var qid2mrn map[string]string
+	// Queries with identical MQL compile to the same code id and run once, so a
+	// code id can stand for several queries; each of them gets an entry.
+	qid2mrns := map[string][]string{}
 	aggregateQueries := []string{}
 	if data.Bundle != nil {
-		qid2mrn = make(map[string]string, len(data.Bundle.Queries))
 		for i := range data.Bundle.Queries {
 			query := data.Bundle.Queries[i]
 			if query.CodeId == "" {
 				aggregateQueries = append(aggregateQueries, query.Mrn)
 			} else {
-				qid2mrn[query.CodeId] = query.Mrn
+				qid2mrns[query.CodeId] = append(qid2mrns[query.CodeId], query.Mrn)
 			}
 		}
-	} else {
-		qid2mrn = make(map[string]string, 0)
 	}
 
 	_ = out.WriteString(
@@ -155,24 +173,22 @@ func ConvertToJSON(data *policy.ReportCollection, out iox.OutputHelper) error {
 		results := report.RawResults()
 		pre2 := ""
 		for qid, query := range resolved.ExecutionJob.Queries {
-			mrn := qid2mrn[qid]
-			// policies and other stuff
-			if mrn == "" {
-				continue
-			}
-			// checks
-			if rj, ok := reportingJobByQrId[mrn]; ok {
-				if rj.Type != policy.ReportingJob_DATA_QUERY && rj.Type != policy.ReportingJob_CHECK_AND_DATA_QUERY {
-					continue
+			// policies and other stuff have no query mrn
+			for _, mrn := range queryMrns(qid2mrns[qid], reportingJobByQrId) {
+				// checks
+				if rj, ok := reportingJobByQrId[mrn]; ok {
+					if rj.Type != policy.ReportingJob_DATA_QUERY && rj.Type != policy.ReportingJob_CHECK_AND_DATA_QUERY {
+						continue
+					}
 				}
-			}
 
-			_ = out.WriteString(pre2 + llx.PrettyPrintString(mrn) + ":")
-			pre2 = ","
+				_ = out.WriteString(pre2 + llx.PrettyPrintString(mrn) + ":")
+				pre2 = ","
 
-			err := cr.CodeBundleToJSON(query.Code, results, out)
-			if err != nil {
-				return err
+				err := cr.CodeBundleToJSON(query.Code, results, out)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		_ = out.WriteString("}")
@@ -191,6 +207,11 @@ func ConvertToJSON(data *policy.ReportCollection, out iox.OutputHelper) error {
 			return errors.New("cannot find resolved pack for " + id + " in report")
 		}
 
+		reportingJobByQrId := map[string]*policy.ReportingJob{}
+		for _, job := range resolved.GetCollectorJob().GetReportingJobs() {
+			reportingJobByQrId[job.QrId] = job
+		}
+
 		pre2 := ""
 		// try to get the policy first
 		if printScore(report.Scores[id], id, out, pre2) {
@@ -198,14 +219,11 @@ func ConvertToJSON(data *policy.ReportCollection, out iox.OutputHelper) error {
 		}
 
 		for qid := range resolved.ExecutionJob.Queries {
-			mrn := qid2mrn[qid]
-			// policies and other stuff
-			if mrn == "" {
-				continue
-			}
-
-			if printScore(report.Scores[qid], mrn, out, pre2) {
-				pre2 = ","
+			// policies and other stuff have no query mrn
+			for _, mrn := range queryMrns(qid2mrns[qid], reportingJobByQrId) {
+				if printScore(report.Scores[qid], mrn, out, pre2) {
+					pre2 = ","
+				}
 			}
 		}
 
