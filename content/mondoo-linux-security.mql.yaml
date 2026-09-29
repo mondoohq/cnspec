@@ -12875,6 +12875,23 @@ queries:
                 f /var/log/sudo.log 0640 root utmp -
                 f /var/log/wtmp 0640 root utmp -
                 ```
+
+            4. On Debian and Ubuntu, make apt restore the mode of its own logs after every package operation:
+
+                apt rewrites `/var/log/apt/history.log` and `/var/log/apt/eipp.log.xz` with mode `0644` each time it installs, removes, or upgrades a package, which undoes step 1 at the next package change. The `systemd-tmpfiles` entries apply only at boot. Create `/etc/apt/apt.conf.d/99-log-permissions` with this hook, which apt runs after each package operation:
+
+                ```text
+                DPkg::Post-Invoke { "chmod g-wx,o-rwx /var/log/apt/history.log /var/log/apt/eipp.log.xz 2>/dev/null || true"; };
+                ```
+
+            5. On openSUSE, give `klog.service` a umask:
+
+                `klog.service` writes the kernel ring buffer to `/var/log/boot.msg` at every boot, and creates the file with mode `0644`, which undoes step 1 at the next boot. Create `/etc/systemd/system/klog.service.d/log-permissions.conf` with this content, so the service creates the file without group write or any access for other users. It takes effect at the next boot:
+
+                ```ini
+                [Service]
+                UMask=0027
+                ```
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -12923,6 +12940,23 @@ queries:
             f /var/log/sudo.log 0640 root utmp -
             f /var/log/wtmp 0640 root utmp -
             EOF
+
+            # apt rewrites its own logs with mode 0644 on every package operation, which
+            # the tmpfiles entries above only correct at boot.
+            if [ -d /etc/apt/apt.conf.d ]; then
+              echo "Configuring apt to restore the mode of its logs after each package operation..."
+              cat <<'EOF' > /etc/apt/apt.conf.d/99-log-permissions
+            DPkg::Post-Invoke { "chmod g-wx,o-rwx /var/log/apt/history.log /var/log/apt/eipp.log.xz 2>/dev/null || true"; };
+            EOF
+            fi
+
+            # openSUSE's klog.service rewrites /var/log/boot.msg with mode 0644 at every boot.
+            if [ -f /usr/lib/systemd/system/klog.service ]; then
+              echo "Giving klog.service a umask for /var/log/boot.msg..."
+              mkdir -p /etc/systemd/system/klog.service.d
+              printf '[Service]\nUMask=0027\n' > /etc/systemd/system/klog.service.d/log-permissions.conf
+              systemctl daemon-reload
+            fi
             ```
         - id: ansible
           desc: |
@@ -12986,6 +13020,49 @@ queries:
                       f /var/log/lastlog 0640 root utmp -
                       f /var/log/sudo.log 0640 root utmp -
                       f /var/log/wtmp 0640 root utmp -
+
+                # apt rewrites its own logs with mode 0644 on every package operation
+                - name: Make apt restore the mode of its logs after each package operation
+                  ansible.builtin.copy:
+                    dest: /etc/apt/apt.conf.d/99-log-permissions
+                    owner: root
+                    group: root
+                    mode: '0644'
+                    content: |
+                      DPkg::Post-Invoke { "chmod g-wx,o-rwx /var/log/apt/history.log /var/log/apt/eipp.log.xz 2>/dev/null || true"; };
+                  when: ansible_facts['os_family'] == 'Debian'
+
+                - name: Check for openSUSE's klog service
+                  ansible.builtin.stat:
+                    path: /usr/lib/systemd/system/klog.service
+                  register: klog_unit
+
+                - name: Ensure the klog.service drop-in directory exists
+                  ansible.builtin.file:
+                    path: /etc/systemd/system/klog.service.d
+                    state: directory
+                    owner: root
+                    group: root
+                    mode: '0755'
+                  when: klog_unit.stat.exists
+
+                # klog.service rewrites /var/log/boot.msg with mode 0644 at every boot
+                - name: Give klog.service a umask for /var/log/boot.msg
+                  ansible.builtin.copy:
+                    dest: /etc/systemd/system/klog.service.d/log-permissions.conf
+                    owner: root
+                    group: root
+                    mode: '0644'
+                    content: |
+                      [Service]
+                      UMask=0027
+                  when: klog_unit.stat.exists
+                  register: klog_umask
+
+                - name: Reload systemd after adding the klog.service drop-in
+                  ansible.builtin.systemd:
+                    daemon_reload: true
+                  when: klog_umask.changed
 
               handlers:
                 - name: Restart rsyslog
@@ -13058,6 +13135,34 @@ queries:
               owner 'root'
               group 'root'
               mode '0644'
+            end
+
+            # apt rewrites its own logs with mode 0644 on every package operation
+            file '/etc/apt/apt.conf.d/99-log-permissions' do
+              content "DPkg::Post-Invoke { \"chmod g-wx,o-rwx /var/log/apt/history.log /var/log/apt/eipp.log.xz 2>/dev/null || true\"; };\n"
+              owner 'root'
+              group 'root'
+              mode '0644'
+              only_if { ::File.directory?('/etc/apt/apt.conf.d') }
+            end
+
+            # openSUSE's klog.service rewrites /var/log/boot.msg with mode 0644 at every boot
+            directory '/etc/systemd/system/klog.service.d' do
+              only_if { ::File.exist?('/usr/lib/systemd/system/klog.service') }
+            end
+
+            file '/etc/systemd/system/klog.service.d/log-permissions.conf' do
+              content "[Service]\nUMask=0027\n"
+              owner 'root'
+              group 'root'
+              mode '0644'
+              only_if { ::File.exist?('/usr/lib/systemd/system/klog.service') }
+              notifies :run, 'execute[reload systemd for klog]', :immediately
+            end
+
+            execute 'reload systemd for klog' do
+              command 'systemctl daemon-reload'
+              action :nothing
             end
             ```
     refs:
