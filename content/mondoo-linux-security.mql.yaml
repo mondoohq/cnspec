@@ -12977,7 +12977,16 @@ queries:
             set -e
 
             echo "Setting permissions on all log files in /var/log..."
-            find /var/log/ -type f -exec chmod g-wx,o-rwx {} +
+            # A log can be rotated or removed between find listing it and chmod reaching
+            # it. Skip a file that no longer exists; any other chmod failure still stops
+            # the script.
+            find /var/log/ -type f -print0 | while IFS= read -r -d '' log_file; do
+              if ! chmod g-wx,o-rwx "$log_file" 2>/dev/null; then
+                [ -e "$log_file" ] || continue
+                echo "ERROR: could not change the mode of $log_file" >&2
+                exit 1
+              fi
+            done
 
             # Tighten the mode rsyslog creates new files with. Without this the daemon
             # recreates world-readable log files and the hardening above is undone on the
@@ -13059,6 +13068,9 @@ queries:
                   loop: "{{ log_files.files }}"
                   loop_control:
                     label: "{{ item.path }}"
+                  register: log_file_mode
+                  # journald and logrotate can remove a file between the find and this task
+                  failed_when: log_file_mode is failed and 'is absent' not in (log_file_mode.msg | default(''))
 
                 - name: Configure rsyslog default file creation mode
                   ansible.builtin.lineinfile:
@@ -13161,11 +13173,16 @@ queries:
                   next unless ::File.file?(log_file)
 
                   ::File.chmod(::File.stat(log_file).mode & 0o740, log_file)
+                rescue Errno::ENOENT
+                  # Rotated or removed after the listing, so there is nothing left to restrict.
+                  next
                 end
               end
               only_if do
                 ::Dir.glob('/var/log/**/*').any? do |log_file|
                   ::File.file?(log_file) && (::File.stat(log_file).mode & 0o037) != 0
+                rescue Errno::ENOENT
+                  false
                 end
               end
             end
