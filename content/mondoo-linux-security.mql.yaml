@@ -12224,6 +12224,15 @@ queries:
                 ```text
                 DPkg::Post-Invoke { "chmod g-wx,o-rwx /var/log/apt/history.log /var/log/apt/eipp.log.xz 2>/dev/null || true"; };
                 ```
+
+            5. On openSUSE, give `klog.service` a umask:
+
+                `klog.service` writes the kernel ring buffer to `/var/log/boot.msg` at every boot, and creates the file with mode `0644`, which undoes step 1 at the next boot. Create `/etc/systemd/system/klog.service.d/log-permissions.conf` with this content, so the service creates the file without group write or any access for other users. It takes effect at the next boot:
+
+                ```ini
+                [Service]
+                UMask=0027
+                ```
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -12280,6 +12289,14 @@ queries:
               cat <<'EOF' > /etc/apt/apt.conf.d/99-log-permissions
             DPkg::Post-Invoke { "chmod g-wx,o-rwx /var/log/apt/history.log /var/log/apt/eipp.log.xz 2>/dev/null || true"; };
             EOF
+            fi
+
+            # openSUSE's klog.service rewrites /var/log/boot.msg with mode 0644 at every boot.
+            if [ -f /usr/lib/systemd/system/klog.service ]; then
+              echo "Giving klog.service a umask for /var/log/boot.msg..."
+              mkdir -p /etc/systemd/system/klog.service.d
+              printf '[Service]\nUMask=0027\n' > /etc/systemd/system/klog.service.d/log-permissions.conf
+              systemctl daemon-reload
             fi
             ```
         - id: ansible
@@ -12355,6 +12372,38 @@ queries:
                     content: |
                       DPkg::Post-Invoke { "chmod g-wx,o-rwx /var/log/apt/history.log /var/log/apt/eipp.log.xz 2>/dev/null || true"; };
                   when: ansible_facts['os_family'] == 'Debian'
+
+                - name: Check for openSUSE's klog service
+                  ansible.builtin.stat:
+                    path: /usr/lib/systemd/system/klog.service
+                  register: klog_unit
+
+                - name: Ensure the klog.service drop-in directory exists
+                  ansible.builtin.file:
+                    path: /etc/systemd/system/klog.service.d
+                    state: directory
+                    owner: root
+                    group: root
+                    mode: '0755'
+                  when: klog_unit.stat.exists
+
+                # klog.service rewrites /var/log/boot.msg with mode 0644 at every boot
+                - name: Give klog.service a umask for /var/log/boot.msg
+                  ansible.builtin.copy:
+                    dest: /etc/systemd/system/klog.service.d/log-permissions.conf
+                    owner: root
+                    group: root
+                    mode: '0644'
+                    content: |
+                      [Service]
+                      UMask=0027
+                  when: klog_unit.stat.exists
+                  register: klog_umask
+
+                - name: Reload systemd after adding the klog.service drop-in
+                  ansible.builtin.systemd:
+                    daemon_reload: true
+                  when: klog_umask.changed
 
               handlers:
                 - name: Restart rsyslog
@@ -12436,6 +12485,25 @@ queries:
               group 'root'
               mode '0644'
               only_if { ::File.directory?('/etc/apt/apt.conf.d') }
+            end
+
+            # openSUSE's klog.service rewrites /var/log/boot.msg with mode 0644 at every boot
+            directory '/etc/systemd/system/klog.service.d' do
+              only_if { ::File.exist?('/usr/lib/systemd/system/klog.service') }
+            end
+
+            file '/etc/systemd/system/klog.service.d/log-permissions.conf' do
+              content "[Service]\nUMask=0027\n"
+              owner 'root'
+              group 'root'
+              mode '0644'
+              only_if { ::File.exist?('/usr/lib/systemd/system/klog.service') }
+              notifies :run, 'execute[reload systemd for klog]', :immediately
+            end
+
+            execute 'reload systemd for klog' do
+              command 'systemctl daemon-reload'
+              action :nothing
             end
             ```
     refs:
