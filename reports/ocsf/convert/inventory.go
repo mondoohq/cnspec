@@ -77,6 +77,32 @@ func (c *converter) assetUnmapped(r *policy.ReportCollection, ctx *assetContext)
 	return res
 }
 
+// resolvedQueryMrns returns the queries a code id stands for on one asset.
+//
+// Queries with identical MQL compile to the same code id and run once, so a
+// code id can stand for several queries of the bundle. Only those the asset's
+// resolved policy has a reporting job for were resolved for it, since a bundle
+// can hold the same MQL under a Linux and a Windows query.
+//
+// With no reporting jobs to go by, every query of the bundle with that code id
+// is returned rather than none: a collector job that carries no reporting jobs
+// says nothing about which queries were resolved, and reading it as "none were"
+// empties the data section of the report. cli/reporter applies the same rule in
+// queryMrns; the two cannot share one function because cli/reporter imports
+// this package, so a change to either belongs in both.
+func resolvedQueryMrns(bundleMrns []string, reportingJobs map[string]*policy.ReportingJob) []string {
+	if len(reportingJobs) == 0 {
+		return bundleMrns
+	}
+	res := make([]string, 0, len(bundleMrns))
+	for _, mrn := range bundleMrns {
+		if _, ok := reportingJobs[mrn]; ok {
+			res = append(res, mrn)
+		}
+	}
+	return res
+}
+
 // assetDataResults renders the results of the asset's data-only queries as JSON,
 // keyed by query MRN.
 func assetDataResults(r *policy.ReportCollection, assetMrn string) map[string]string {
@@ -107,12 +133,7 @@ func assetDataResults(r *policy.ReportCollection, assetMrn string) map[string]st
 	results := report.RawResults()
 	res := map[string]string{}
 	for qid, query := range resolved.ExecutionJob.Queries {
-		for _, mrn := range qid2mrns[qid] {
-			// only the queries resolved for this asset: a bundle can hold the
-			// same MQL under queries for other platforms
-			if _, ok := reportingJobs[mrn]; !ok {
-				continue
-			}
+		for _, mrn := range resolvedQueryMrns(qid2mrns[qid], reportingJobs) {
 			if job, ok := reportingJobs[mrn]; ok &&
 				job.Type != policy.ReportingJob_DATA_QUERY && job.Type != policy.ReportingJob_CHECK_AND_DATA_QUERY {
 				continue
