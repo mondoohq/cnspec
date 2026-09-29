@@ -424,11 +424,16 @@ queries:
       crontab.entries.where(user == "root").any(command.contains("aide --check")) ||
       crontab.entries.where(user == "root").any(command.contains("aide.conf --check")) ||
       systemd.timer('aidecheck').enabled
+
+      // A schedule does nothing unless the configuration it reads and the
+      // baseline it compares against both exist.
+      file("/etc/aide/aide.conf").exists || file("/etc/aide.conf").exists
+      file("/var/lib/aide/aide.db").exists || file("/var/lib/aide/aide.db.gz").exists
     docs:
       desc: |
         This check verifies that AIDE integrity comparisons run on a schedule rather than only when someone remembers to start one.
 
-        Any of three arrangements satisfies it: the daily check that the Debian and Ubuntu `aide-common` package schedules itself, a root crontab entry that runs `aide --check`, or an enabled `aidecheck` systemd timer. Distributions differ in which they ship, so any one of them is accepted. The `aide-common` check runs from `/etc/cron.daily/aide` on older releases and from `dailyaidecheck.timer` on newer ones, and either counts only while `CRON_DAILY_RUN` in `/etc/default/aide` is unset or `yes`. Setting it to any other value turns the daily run off.
+        Any of three arrangements satisfies it: the daily check that the Debian and Ubuntu `aide-common` package schedules itself, a root crontab entry that runs `aide --check`, or an enabled `aidecheck` systemd timer. Distributions differ in which they ship, so any one of them is accepted. The `aide-common` check runs from `/etc/cron.daily/aide` on older releases and from `dailyaidecheck.timer` on newer ones, and either counts only while `CRON_DAILY_RUN` in `/etc/default/aide` is unset or `yes`. Setting it to any other value turns the daily run off. The check also requires the AIDE configuration, `/etc/aide/aide.conf` on Debian and Ubuntu or `/etc/aide.conf` elsewhere, and a database at `/var/lib/aide/aide.db` or `/var/lib/aide/aide.db.gz`, because a scheduled comparison without them fails every time it runs.
 
         **Why this matters**
 
@@ -448,12 +453,19 @@ queries:
         systemctl is-enabled dailyaidecheck.timer
         crontab -u root -l | grep aide
         systemctl is-enabled aidecheck.timer
+        ls /etc/aide/aide.conf /etc/aide.conf /var/lib/aide/aide.db /var/lib/aide/aide.db.gz
         ```
 
-        A passing result shows one of these: `/etc/cron.daily/aide` exists or `dailyaidecheck.timer` is enabled while `CRON_DAILY_RUN` is absent, commented out, or `yes`; a root cron entry runs `aide --check`; or `aidecheck.timer` is enabled. A failing result shows none of these, or shows `CRON_DAILY_RUN` set to `no` with no other schedule in place.
+        A passing result shows one of these: `/etc/cron.daily/aide` exists or `dailyaidecheck.timer` is enabled while `CRON_DAILY_RUN` is absent, commented out, or `yes`; a root cron entry runs `aide --check`; or `aidecheck.timer` is enabled. `ls` must also list one configuration file and one database. A failing result shows none of these schedules, `CRON_DAILY_RUN` set to `no` with no other schedule in place, or `ls` finding no configuration file or no database.
       remediation:
         - id: cli
           desc: |
+            On Debian 12 and later, `aide-common` ships a `dailyaidecheck.timer` that runs the comparison every day and is enabled when the package is installed. There, build the database as in step 1 below and confirm the timer is enabled instead of adding a schedule of your own:
+
+            ```bash
+            systemctl enable --now dailyaidecheck.timer
+            ```
+
             **Using the CLI to setup Cron:**
 
             1. Build the AIDE database from the current state of the filesystem and put it where scheduled checks read it. Run this on a system you trust, because every later check reports changes relative to this baseline. The commands differ by distribution because the database file names and the configuration path differ:
@@ -480,7 +492,7 @@ queries:
                 mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
                 ```
 
-            2. Edit the root crontab:
+            2. Edit the root crontab. Debian 12 and later install `cron` only as a recommendation of `aide-common`, so if the `crontab` command is missing, install it first with `apt-get install cron`:
 
                 ```bash
                 crontab -u root -e
@@ -663,6 +675,15 @@ queries:
                   else '/usr/sbin/aide --check' }}
 
               tasks:
+                # The mail client aide-common needs pulls in Postfix on Ubuntu; keep it local-only
+                - name: Preseed Postfix to accept local mail only
+                  ansible.builtin.debconf:
+                    name: postfix
+                    question: postfix/main_mailer_type
+                    value: Local only
+                    vtype: select
+                  when: ansible_facts['os_family'] == 'Debian'
+
                 - name: Ensure AIDE is installed
                   ansible.builtin.package:
                     name: aide
