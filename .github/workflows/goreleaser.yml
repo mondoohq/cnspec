@@ -511,6 +511,37 @@ jobs:
           client-payload: >-
             {"version": ${{ toJSON(github.ref_name) }}}
 
+  packer-plugin-cnspec:
+    name: Trigger Packer plugin cnspec bump
+    # Dispatched from here rather than from a `release: published` workflow:
+    # goreleaser creates the release with GITHUB_TOKEN, and GitHub does not
+    # fire workflow triggers for events created that way, so a workflow
+    # listening for the release never runs.
+    #
+    # Stable only: the receiver rejects pre-release versions anyway.
+    if: ${{ inputs.skip-publish != true && needs.goreleaser.outputs.skip-publish != 'true' && needs.goreleaser.outputs.channel == 'stable' }}
+    runs-on: ubuntu-latest
+    needs: goreleaser
+    steps:
+      # Mint a short-lived installation token from the mondoo-mergebot
+      # GitHub App, scoped to packer-plugin-cnspec only.
+      - name: Generate mergebot token
+        id: generate-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.MONDOO_MERGEBOT_APP_ID }}
+          private-key: ${{ secrets.MONDOO_MERGEBOT_APP_PRIVATE_KEY }}
+          owner: mondoohq
+          repositories: packer-plugin-cnspec
+      - name: Repository Dispatch
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
+        with:
+          token: ${{ steps.generate-token.outputs.token }}
+          repository: mondoohq/packer-plugin-cnspec
+          event-type: update-cnspec
+          client-payload: >-
+            {"version": ${{ toJSON(github.ref_name) }}}
+
   # Reports the release outcome to #release-coordination.
   #
   # Nothing depends on this job, and it never gates the release: a Slack outage,
@@ -520,7 +551,7 @@ jobs:
   notify:
     name: Report the release to Slack
     if: ${{ always() && github.ref_type == 'tag' }}
-    needs: [goreleaser, trigger-installer-release, mondoo-operator-cnspec]
+    needs: [goreleaser, trigger-installer-release, mondoo-operator-cnspec, packer-plugin-cnspec]
     runs-on: ubuntu-latest
     steps:
       - name: Compose the message
@@ -530,6 +561,7 @@ jobs:
           BUILD: ${{ needs.goreleaser.result }}
           DISPATCH: ${{ needs.trigger-installer-release.result }}
           OPERATOR: ${{ needs.mondoo-operator-cnspec.result }}
+          PACKER: ${{ needs.packer-plugin-cnspec.result }}
           # Through env rather than `${{ }}` inline: an expression is pasted into
           # the script before bash parses it, so a tag carrying a quote or `$(…)`
           # would be read as shell rather than as text.
@@ -560,7 +592,7 @@ jobs:
           # is skipped by design, and reporting that red would train everyone to
           # ignore the colour.
           ok=true
-          for result in "$BUILD" "$DISPATCH" "$OPERATOR"; do
+          for result in "$BUILD" "$DISPATCH" "$OPERATOR" "$PACKER"; do
             case "$result" in
               success|skipped) ;;
               *) ok=false ;;
@@ -598,6 +630,7 @@ jobs:
             echo "build_status=$(status "$BUILD")"
             echo "dispatch_status=$(status "$DISPATCH")"
             echo "operator_status=$(status "$OPERATOR")"
+            echo "packer_status=$(status "$PACKER")"
           } >> "$GITHUB_OUTPUT"
 
       - name: Post to Slack
@@ -637,6 +670,8 @@ jobs:
                     text: "*Publish trigger:*\n${{ steps.meta.outputs.dispatch_status }}"
                   - type: "mrkdwn"
                     text: "*Operator image:*\n${{ steps.meta.outputs.operator_status }}"
+                  - type: "mrkdwn"
+                    text: "*Packer plugin:*\n${{ steps.meta.outputs.packer_status }}"
               - type: "section"
                 text:
                   type: "mrkdwn"
