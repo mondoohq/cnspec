@@ -11859,6 +11859,12 @@ queries:
           desc: |
             **Using the CLI**
 
+            openSUSE Leap 16 ships the SSH server configuration only as `/usr/etc/ssh/sshd_config`, so `/etc/ssh/sshd_config` does not exist there. sshd reads `/etc/ssh/sshd_config` in place of the vendor file once it exists, so create it as a copy of the vendor file rather than a new file. The copy no longer follows changes that package updates make to the vendor file:
+
+            ```bash
+            [ -f /etc/ssh/sshd_config ] || install -m 0600 -o root -g root /usr/etc/ssh/sshd_config /etc/ssh/sshd_config
+            ```
+
             To set the ownership and permissions on `/etc/ssh/sshd_config`, run the following commands:
 
             ```bash
@@ -11874,6 +11880,12 @@ queries:
             ```bash
             #!/bin/bash
             set -e
+
+            # openSUSE Leap 16 ships only /usr/etc/ssh/sshd_config. sshd reads /etc/ssh/sshd_config in
+            # place of it once that exists, so create it as a copy of the vendor file.
+            if [ ! -f /etc/ssh/sshd_config ] && [ -f /usr/etc/ssh/sshd_config ]; then
+              install -m 0600 -o root -g root /usr/etc/ssh/sshd_config /etc/ssh/sshd_config
+            fi
 
             echo "Setting ownership and permissions for /etc/ssh/sshd_config..."
             chown root:root /etc/ssh/sshd_config
@@ -11891,6 +11903,23 @@ queries:
               hosts: all
               become: yes
               tasks:
+                # openSUSE Leap 16 ships only /usr/etc/ssh/sshd_config, and sshd reads /etc/ssh/sshd_config in place of it
+                - name: Check for the vendor SSH server configuration
+                  ansible.builtin.stat:
+                    path: /usr/etc/ssh/sshd_config
+                  register: vendor_ssh_sshd_config
+
+                - name: Start /etc/ssh/sshd_config from the vendor file where it does not exist yet
+                  ansible.builtin.copy:
+                    src: /usr/etc/ssh/sshd_config
+                    dest: /etc/ssh/sshd_config
+                    remote_src: true
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0600'
+                  when: vendor_ssh_sshd_config.stat.exists
+
                 - name: Set ownership of /etc/ssh/sshd_config to root:root
                   ansible.builtin.file:
                     path: /etc/ssh/sshd_config
@@ -11909,6 +11938,18 @@ queries:
             Use this Chef Infra recipe code to restrict the SSH daemon configuration to root:
 
             ```ruby
+            # openSUSE Leap 16 ships only /usr/etc/ssh/sshd_config. sshd reads /etc/ssh/sshd_config in
+            # place of it once that exists, so create it as a copy of the vendor file.
+            file 'copy the vendor sshd_config' do
+              path '/etc/ssh/sshd_config'
+              content(lazy { ::File.read('/usr/etc/ssh/sshd_config') })
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create_if_missing
+              only_if { ::File.exist?('/usr/etc/ssh/sshd_config') }
+            end
+
             file '/etc/ssh/sshd_config' do
               owner 'root'
               group 'root'
@@ -13475,7 +13516,7 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc6-1-5
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    filters: package('openssh-server').version  >= semver("6") && package('openssh-server').version < semver("7.6")
+    filters: package('openssh-server').installed && semver(package('openssh-server').version.split(":").last) >= semver("6") && semver(package('openssh-server').version.split(":").last) < semver("7.6")
     mql: |
       sshd.config.params["Protocol"] == null || sshd.config.params["Protocol"] == 2
     docs:
@@ -13713,7 +13754,7 @@ queries:
             LogLevel INFO
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'LogLevel' /etc/ssh/sshd_config.d/
@@ -13757,7 +13798,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -13803,7 +13847,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -13863,8 +13907,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -13966,7 +14012,7 @@ queries:
             X11Forwarding no
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'X11Forwarding' /etc/ssh/sshd_config.d/
@@ -14010,7 +14056,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -14056,7 +14105,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -14116,8 +14165,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -14219,7 +14270,7 @@ queries:
             MaxAuthTries 4
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'MaxAuthTries' /etc/ssh/sshd_config.d/
@@ -14263,7 +14314,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -14309,7 +14363,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -14369,8 +14423,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -14472,7 +14528,7 @@ queries:
             IgnoreRhosts yes
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'IgnoreRhosts' /etc/ssh/sshd_config.d/
@@ -14516,7 +14572,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -14562,7 +14621,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -14622,8 +14681,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -14725,7 +14786,7 @@ queries:
             HostbasedAuthentication no
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'HostbasedAuthentication' /etc/ssh/sshd_config.d/
@@ -14769,7 +14830,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -14815,7 +14879,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -14875,8 +14939,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -14984,7 +15050,7 @@ queries:
             PermitRootLogin prohibit-password
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'PermitRootLogin' /etc/ssh/sshd_config.d/
@@ -15028,7 +15094,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -15074,7 +15143,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -15134,8 +15203,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -15237,7 +15308,7 @@ queries:
             PermitEmptyPasswords no
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'PermitEmptyPasswords' /etc/ssh/sshd_config.d/
@@ -15281,7 +15352,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -15327,7 +15401,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -15387,8 +15461,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -15492,7 +15568,7 @@ queries:
             PermitUserEnvironment no
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'PermitUserEnvironment' /etc/ssh/sshd_config.d/
@@ -15536,7 +15612,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -15582,7 +15661,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -15642,8 +15721,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -15710,7 +15791,9 @@ queries:
       - uid: mondooLinuxSecuritySshdCiphers
         title: Define the hardened ciphers for all SSH configurations
         mql: |
-          if( package('openssh-server').version >= semver("6") && package('openssh-server').version < semver("7")  ) {
+          // Debian and Ubuntu versions carry a "1:" epoch that breaks the semver comparison
+          v = semver(package('openssh-server').version.split(":").last)
+          if( v >= semver("6") && v < semver("7")  ) {
             return ["aes256-ctr", "aes192-ctr", "aes128-ctr"]
           }
           return ["chacha20-poly1305@openssh.com","aes256-gcm@openssh.com","aes128-gcm@openssh.com","aes256-ctr","aes192-ctr","aes128-ctr"]
@@ -15763,7 +15846,7 @@ queries:
             Ciphers aes256-ctr,aes192-ctr,aes128-ctr
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'Ciphers' /etc/ssh/sshd_config.d/
@@ -15805,7 +15888,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -15859,7 +15945,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -15921,8 +16007,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -16033,7 +16121,7 @@ queries:
             MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'MACs' /etc/ssh/sshd_config.d/
@@ -16075,7 +16163,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -16123,7 +16214,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -16185,8 +16276,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -16253,19 +16346,24 @@ queries:
       - uid: mondooLinuxSecurityKexAlgos
         title: Define the hardened key exchange algorithms for all SSH configurations
         mql: |
-          if( package('openssh-server').version  >= semver("4.4") && package('openssh-server').version  < semver("6.5") ) {
+          // Debian and Ubuntu versions carry a "1:" epoch that breaks the semver comparison
+          v = semver(package('openssh-server').version.split(":").last)
+          if( v >= semver("4.4") && v < semver("6.5") ) {
             return ["diffie-hellman-group-exchange-sha256"]
           }
-          if( package('openssh-server').version  >= semver("6.5") && package('openssh-server').version  < semver("7.3") ) {
+          if( v >= semver("6.5") && v < semver("7.3") ) {
             return ["curve25519-sha256@libssh.org"]
           }
-          if( package('openssh-server').version  >= semver("7.3") && package('openssh-server').version  < semver("8") ) {
+          if( v >= semver("7.3") && v < semver("8") ) {
             return ["curve25519-sha256@libssh.org","diffie-hellman-group18-sha512"]
           }
-          if( package('openssh-server').version  >= semver("8") && package('openssh-server').version  < semver("8.5") ) {
+          if( v >= semver("8") && v < semver("8.5") ) {
             return ["sntrup4591761x25519-sha512@tinyssh.org","curve25519-sha256@libssh.org","diffie-hellman-group18-sha512"]
           }
-          return ["sntrup761x25519-sha512@openssh.com","curve25519-sha256@libssh.org","diffie-hellman-group18-sha512"]
+          if( v >= semver("8.5") && v < semver("9.9") ) {
+            return ["sntrup761x25519-sha512@openssh.com","curve25519-sha256@libssh.org","diffie-hellman-group18-sha512"]
+          }
+          return ["mlkem768x25519-sha256","sntrup761x25519-sha512","sntrup761x25519-sha512@openssh.com","curve25519-sha256@libssh.org","diffie-hellman-group18-sha512"]
     mql: |
       sshd.config.kexs != empty
       sshd.config.kexs.containsOnly(props.mondooLinuxSecurityKexAlgos)
@@ -16275,7 +16373,7 @@ queries:
 
         Key exchange establishes the session keys that the cipher and MAC then use, so it is the foundation the rest of the session rests on. The check reads the `KexAlgorithms` directive in `/etc/ssh/sshd_config` and requires that every algorithm it names appears in the approved list carried by this policy's property. The directive must be present; a configuration that relies on OpenSSH's compiled-in default fails this check.
 
-        The approved list depends on the installed `openssh-server` release, because `sshd` refuses to start when `KexAlgorithms` names an algorithm that release does not recognize. The property changes lists at OpenSSH 6.5, 7.3, 8.0 and 8.5, the releases that added or renamed the algorithms it names.
+        The approved list depends on the installed `openssh-server` release, because `sshd` refuses to start when `KexAlgorithms` names an algorithm that release does not recognize. The property changes lists at OpenSSH 6.5, 7.3, 8.0, 8.5 and 9.9, the releases that added or renamed the algorithms it names.
 
         **Why this matters**
 
@@ -16336,9 +16434,14 @@ queries:
               KexAlgorithms sntrup4591761x25519-sha512@tinyssh.org,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
               ```
 
-            - **OpenSSH 8.5 or later**:
+            - **OpenSSH 8.5 to 9.8**:
               ```text
               KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
+              ```
+
+            - **OpenSSH 9.9 or later**:
+              ```text
+              KexAlgorithms mlkem768x25519-sha256,sntrup761x25519-sha512,sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
               ```
 
             The version to match is the upstream OpenSSH release, the number before `p` once any `1:` epoch prefix is removed. A Debian package version of `1:8.4p1-5+deb11u7` is OpenSSH 8.4.
@@ -16350,12 +16453,13 @@ queries:
             - OpenSSH 7.3 added `diffie-hellman-group18-sha512`.
             - OpenSSH 8.0 added `sntrup4591761x25519-sha512@tinyssh.org`.
             - OpenSSH 8.5 replaced it with `sntrup761x25519-sha512@openssh.com` and removed the old name.
+            - OpenSSH 9.9 added the post-quantum hybrid `mlkem768x25519-sha256` and the standard name `sntrup761x25519-sha512` for the NTRU Prime hybrid, and OpenSSH 10.0 made `mlkem768x25519-sha256` the default. The 9.9 list keeps `sntrup761x25519-sha512@openssh.com` so that clients from 8.5 to 9.8 still negotiate a post-quantum exchange.
 
             The SSH daemon refuses to start when `KexAlgorithms` names an algorithm it does not recognize, and `sshd -t` reports `Bad SSH2 KexAlgorithms`. A list meant for a different release therefore stops SSH instead of merely weakening it.
 
             Releases before 4.4 offer no key exchange that meets this check. Every method they carry is either SHA-1 based or uses the fixed 1024-bit group. Upgrade OpenSSH on those hosts rather than editing `KexAlgorithms`.
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'KexAlgorithms' /etc/ssh/sshd_config.d/
@@ -16364,7 +16468,7 @@ queries:
             echo 'KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512' >> /etc/ssh/sshd_config.d/00-hardening.conf
             ```
 
-            The example uses the OpenSSH 8.5 or later list. Ubuntu 20.04 and Debian 11 ship OpenSSH 8.2 and 8.4, which do not recognize `sntrup761x25519-sha512@openssh.com`, so substitute the list for your version from above or `sshd -t` rejects the configuration.
+            The example uses the OpenSSH 8.5 to 9.8 list, which OpenSSH 9.9 and later also accept. On 9.9 and later, the list for those releases adds the `mlkem768x25519-sha256` exchange that OpenSSH 10.0 uses by default. Ubuntu 20.04 and Debian 11 ship OpenSSH 8.2 and 8.4, which do not recognize `sntrup761x25519-sha512@openssh.com`, so substitute the list for your version from above or `sshd -t` rejects the configuration.
 
             Validate the configuration before restarting:
 
@@ -16391,7 +16495,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To ensure that SSH uses only strong key exchange algorithms, you can run the following bash script. It reads the installed OpenSSH release and writes the list that release recognizes, changing lists at 6.5, 7.3, 8.0 and 8.5, the releases that added or renamed each algorithm. On a release older than 4.4 it stops without editing anything, because no key exchange those releases carry meets this check:
+            To ensure that SSH uses only strong key exchange algorithms, you can run the following bash script. It reads the installed OpenSSH release and writes the list that release recognizes, changing lists at 6.5, 7.3, 8.0, 8.5 and 9.9, the releases that added or renamed each algorithm. On a release older than 4.4 it stops without editing anything, because no key exchange those releases carry meets this check:
 
             ```bash
             #!/bin/bash
@@ -16401,7 +16505,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -16429,8 +16536,10 @@ queries:
               kex_algos="curve25519-sha256@libssh.org,diffie-hellman-group18-sha512"
             elif (( $(echo "$openssh_version < 8.5" | bc -l) )); then
               kex_algos="sntrup4591761x25519-sha512@tinyssh.org,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512"
-            else
+            elif (( $(echo "$openssh_version < 9.9" | bc -l) )); then
               kex_algos="sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512"
+            else
+              kex_algos="mlkem768x25519-sha256,sntrup761x25519-sha512,sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512"
             fi
 
             if grep -q '^KexAlgorithms' "$SSHD_CONFIG"; then
@@ -16460,7 +16569,7 @@ queries:
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
             2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
 
-            To configure SSH to use only approved key exchange algorithms, use the following Ansible playbook. It reads the installed OpenSSH release and writes the list that release recognizes, changing lists at 6.5, 7.3, 8.0 and 8.5, the releases that added or renamed each algorithm. On a release older than 4.4 it fails the host without editing anything, because no key exchange those releases carry meets this check:
+            To configure SSH to use only approved key exchange algorithms, use the following Ansible playbook. It reads the installed OpenSSH release and writes the list that release recognizes, changing lists at 6.5, 7.3, 8.0, 8.5 and 9.9, the releases that added or renamed each algorithm. On a release older than 4.4 it fails the host without editing anything, because no key exchange those releases carry meets this check:
 
             ```yaml
             ---
@@ -16470,7 +16579,7 @@ queries:
               gather_facts: true
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -16518,8 +16627,10 @@ queries:
                         curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
                       {% elif openssh_version_float | float < 8.5 %}
                         sntrup4591761x25519-sha512@tinyssh.org,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
-                      {% else %}
+                      {% elif openssh_version_float | float < 9.9 %}
                         sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
+                      {% else %}
+                        mlkem768x25519-sha256,sntrup761x25519-sha512,sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
                       {% endif %}
 
                 - name: Ensure KexAlgorithms is set in sshd_config
@@ -16556,15 +16667,17 @@ queries:
             1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
             2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
-            Use this Chef Infra recipe code to restrict SSH to approved key exchange algorithms. The algorithm list depends on the OpenSSH release, so it is selected from the version reported by the installed binary. `sshd` rejects a name its release does not recognize, so the recipe changes lists at 6.5, 7.3, 8.0 and 8.5, the releases that added or renamed each algorithm. On a release older than 4.4 it raises without editing anything, because no key exchange those releases carry meets this check:
+            Use this Chef Infra recipe code to restrict SSH to approved key exchange algorithms. The algorithm list depends on the OpenSSH release, so it is selected from the version reported by the installed binary. `sshd` rejects a name its release does not recognize, so the recipe changes lists at 6.5, 7.3, 8.0, 8.5 and 9.9, the releases that added or renamed each algorithm. On a release older than 4.4 it raises without editing anything, because no key exchange those releases carry meets this check:
 
             ```ruby
             # sshd uses the first value it reads for each keyword, and the Include at the top of
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -16594,8 +16707,10 @@ queries:
                                'curve25519-sha256@libssh.org,diffie-hellman-group18-sha512'
                              elsif openssh_version < 8.5
                                'sntrup4591761x25519-sha512@tinyssh.org,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512'
-                             else
+                             elsif openssh_version < 9.9
                                'sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512'
+                             else
+                               'mlkem768x25519-sha256,sntrup761x25519-sha512,sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512'
                              end
 
             service ssh_service do
@@ -16718,7 +16833,7 @@ queries:
             ClientAliveCountMax 2
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'ClientAlive' /etc/ssh/sshd_config.d/
@@ -16761,7 +16876,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -16815,7 +16933,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -16887,8 +17005,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -16993,7 +17113,7 @@ queries:
             LoginGraceTime 60
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'LoginGraceTime' /etc/ssh/sshd_config.d/
@@ -17035,7 +17155,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -17081,7 +17204,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -17143,8 +17266,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
@@ -17245,6 +17370,12 @@ queries:
 
             **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works. Confirm that your own administrative account is a member of the allowed group or is named in `AllowUsers` before you apply the change, otherwise you will be denied access along with everyone else not on the list.
 
+            openSUSE Leap 16 ships the SSH server configuration only as `/usr/etc/ssh/sshd_config`, so `/etc/ssh/sshd_config` does not exist there. sshd reads `/etc/ssh/sshd_config` in place of the vendor file once it exists, so create it as a copy of the vendor file rather than a new file. The copy no longer follows changes that package updates make to the vendor file:
+
+            ```bash
+            [ -f /etc/ssh/sshd_config ] || install -m 0600 -o root -g root /usr/etc/ssh/sshd_config /etc/ssh/sshd_config
+            ```
+
             To limit SSH access, edit the `/etc/ssh/sshd_config` file and add or modify one or more of the `AllowUsers`, `AllowGroups`, `DenyUsers`, or `DenyGroups` parameters as needed. Configure only the directives your site policy requires. Once `AllowUsers` or `AllowGroups` is set, every account not matched is denied SSH access, so make sure the list covers all administrative accounts before applying it.
 
             Example restricting access to one group:
@@ -17285,6 +17416,12 @@ queries:
             # Replace with the group that should retain SSH access
             ALLOW_GROUPS="sshusers"
 
+            # openSUSE Leap 16 ships only /usr/etc/ssh/sshd_config. sshd reads /etc/ssh/sshd_config in
+            # place of it once that exists, so create it as a copy of the vendor file.
+            if [ ! -f /etc/ssh/sshd_config ] && [ -f /usr/etc/ssh/sshd_config ]; then
+              install -m 0600 -o root -g root /usr/etc/ssh/sshd_config /etc/ssh/sshd_config
+            fi
+
             if grep -q '^AllowGroups' /etc/ssh/sshd_config; then
               echo "Updating existing AllowGroups configuration value"
               sed -i "s/^AllowGroups.*/AllowGroups $ALLOW_GROUPS/" /etc/ssh/sshd_config
@@ -17323,6 +17460,23 @@ queries:
                 ssh_allow_groups: "sshusers"
 
               tasks:
+                # openSUSE Leap 16 ships only /usr/etc/ssh/sshd_config, and sshd reads /etc/ssh/sshd_config in place of it
+                - name: Check for the vendor SSH server configuration
+                  ansible.builtin.stat:
+                    path: /usr/etc/ssh/sshd_config
+                  register: vendor_ssh_sshd_config
+
+                - name: Start /etc/ssh/sshd_config from the vendor file where it does not exist yet
+                  ansible.builtin.copy:
+                    src: /usr/etc/ssh/sshd_config
+                    dest: /etc/ssh/sshd_config
+                    remote_src: true
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0600'
+                  when: vendor_ssh_sshd_config.stat.exists
+
                 - name: Set AllowGroups in sshd_config
                   ansible.builtin.lineinfile:
                     path: /etc/ssh/sshd_config
@@ -17362,6 +17516,18 @@ queries:
             ```ruby
             sshd_config = '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            # openSUSE Leap 16 ships only /usr/etc/ssh/sshd_config. sshd reads /etc/ssh/sshd_config in
+            # place of it once that exists, so create it as a copy of the vendor file.
+            file 'copy the vendor sshd_config' do
+              path '/etc/ssh/sshd_config'
+              content(lazy { ::File.read('/usr/etc/ssh/sshd_config') })
+              owner 'root'
+              group 'root'
+              mode '0600'
+              action :create_if_missing
+              only_if { ::File.exist?('/usr/etc/ssh/sshd_config') }
+            end
 
             service ssh_service do
               action :nothing
@@ -17455,7 +17621,7 @@ queries:
             echo 'Authorized use only. Activity on this system is monitored and may be reported.' > /etc/issue.net
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'Banner' /etc/ssh/sshd_config.d/
@@ -17497,7 +17663,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            MAIN_CONFIG=/etc/ssh/sshd_config
+            [ -f "$MAIN_CONFIG" ] || MAIN_CONFIG=/usr/etc/ssh/sshd_config
+            if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$MAIN_CONFIG"; then
               SSHD_CONFIG=/etc/ssh/sshd_config.d/00-hardening.conf
               mkdir -p /etc/ssh/sshd_config.d
               touch "$SSHD_CONFIG"
@@ -17544,7 +17713,7 @@ queries:
 
               tasks:
                 - name: Detect whether sshd reads drop-in configuration files
-                  ansible.builtin.command: grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config
+                  ansible.builtin.command: grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config /usr/etc/ssh/sshd_config
                   register: sshd_include
                   changed_when: false
                   failed_when: false
@@ -17606,8 +17775,10 @@ queries:
             # sshd_config pulls in /etc/ssh/sshd_config.d in lexical order. Red Hat Enterprise
             # Linux and Ubuntu ship their own snippets in that directory, so a drop-in numbered
             # below theirs is the only place a new value reliably wins.
-            sshd_include = ::File.exist?('/etc/ssh/sshd_config') &&
-                           ::File.read('/etc/ssh/sshd_config').match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
+            # openSUSE Leap 16 ships its main configuration only as /usr/etc/ssh/sshd_config.
+            sshd_main = %w(/etc/ssh/sshd_config /usr/etc/ssh/sshd_config).find { |p| ::File.exist?(p) }
+            sshd_include = !sshd_main.nil? &&
+                           ::File.read(sshd_main).match?(%r{^\s*Include\s+/etc/ssh/sshd_config\.d/})
             sshd_config = sshd_include ? '/etc/ssh/sshd_config.d/00-hardening.conf' : '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
 
