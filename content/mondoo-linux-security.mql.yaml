@@ -19186,6 +19186,12 @@ queries:
 
             **Warning: confirm the `wheel` group has an administrator before you apply this.** With `pam_wheel.so use_uid` and no `group=` option, PAM allows `su` only for members of the `wheel` group. If that group is empty, no one can `su` to root. Debian and Ubuntu have no `wheel` group at all, so on those distributions use the `group=sudo` form shown below. Elsewhere, add at least one trusted administrative account to `wheel` first and verify it can `su` in a separate session before you close your current one.
 
+            openSUSE Leap 16 ships this file only as `/usr/lib/pam.d/su`, and PAM uses `/etc/pam.d/su` in place of the vendor file as soon as it exists. A new `/etc/pam.d/su` holding only the line below leaves `su` without its other rules and denies it to everyone, root included, so copy the vendor file first where `/etc/pam.d/su` is missing:
+
+            ```bash
+            [ -f /etc/pam.d/su ] || cp /usr/lib/pam.d/su /etc/pam.d/su
+            ```
+
             To restrict access to the `su` command, you can edit the `/etc/pam.d/su` file and add the following line:
 
             ```bash
@@ -19226,6 +19232,12 @@ queries:
             set -e
 
             echo "Restricting access to su command"
+            # openSUSE Leap 16 ships only /usr/lib/pam.d/su, and PAM uses /etc/pam.d/su in place of it
+            # once that exists, so start from a copy rather than a file holding one line.
+            if [ ! -f /etc/pam.d/su ] && [ -f /usr/lib/pam.d/su ]; then
+              cp /usr/lib/pam.d/su /etc/pam.d/su
+            fi
+
             if ! grep -qE '^\s*auth\s+required\s+pam_wheel\.so\s+use_uid' /etc/pam.d/su; then
               echo "auth required pam_wheel.so use_uid" >> /etc/pam.d/su
             fi
@@ -19253,6 +19265,23 @@ queries:
               become: true
 
               tasks:
+                # openSUSE Leap 16 ships only /usr/lib/pam.d/su, and PAM uses /etc/pam.d/su in place of it once that exists
+                - name: Check for the vendor PAM configuration for su
+                  ansible.builtin.stat:
+                    path: /usr/lib/pam.d/su
+                  register: vendor_pam_d_su
+
+                - name: Start /etc/pam.d/su from the vendor file where it does not exist yet
+                  ansible.builtin.copy:
+                    src: /usr/lib/pam.d/su
+                    dest: /etc/pam.d/su
+                    remote_src: true
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0644'
+                  when: vendor_pam_d_su.stat.exists
+
                 - name: Ensure pam_wheel.so is configured in /etc/pam.d/su
                   ansible.builtin.lineinfile:
                     path: /etc/pam.d/su
@@ -19268,6 +19297,16 @@ queries:
 
             ```ruby
             pam_su = '/etc/pam.d/su'
+
+            # openSUSE Leap 16 ships only /usr/lib/pam.d/su, and PAM uses /etc/pam.d/su in place of
+            # it once that exists, so start from a copy rather than a file holding one line.
+            file 'copy the vendor su PAM configuration' do
+              path pam_su
+              content(lazy { ::File.read('/usr/lib/pam.d/su') })
+              mode '0644'
+              action :create_if_missing
+              only_if { ::File.exist?('/usr/lib/pam.d/su') }
+            end
 
             ruby_block 'restrict su to the wheel group' do
               block do
