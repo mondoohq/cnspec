@@ -20892,10 +20892,14 @@ queries:
           desc: |
             **Using CLI**
 
-            Add an authorized time source to the chrony configuration for your distribution, then restart the daemon. Red Hat-based systems use `/etc/chrony.conf`; Debian-based systems use `/etc/chrony/chrony.conf`. Any `server` or `pool` line satisfies the check. Replace the public `2.pool.ntp.org` pool in the example with the time servers your organization operates or approves, using `server` for a single host and `pool` for a name that resolves to several. `iburst` makes chrony send its first requests in quick succession so the clock synchronizes within seconds of the restart:
+            Add an authorized time source to the chrony configuration for your distribution, then restart the daemon. Red Hat-based systems use `/etc/chrony.conf`; Debian-based systems use `/etc/chrony/chrony.conf`. openSUSE Leap 16 ships its configuration only as `/usr/etc/chrony.conf`. chronyd reads `/etc/chrony.conf` in place of it once that exists, and this check reads only `/etc/chrony.conf`, so the script starts from a copy of the vendor file there. Any `server` or `pool` line satisfies the check. Replace the public `2.pool.ntp.org` pool in the example with the time servers your organization operates or approves, using `server` for a single host and `pool` for a name that resolves to several. `iburst` makes chrony send its first requests in quick succession so the clock synchronizes within seconds of the restart:
 
             ```bash
             CONF=/etc/chrony.conf
+            # openSUSE Leap 16 ships only /usr/etc/chrony.conf, and chronyd reads /etc/chrony.conf in place of it
+            if [ ! -f "$CONF" ] && [ -f /usr/etc/chrony.conf ]; then
+              cp /usr/etc/chrony.conf "$CONF"
+            fi
             [ -f "$CONF" ] || CONF=/etc/chrony/chrony.conf
             echo "pool 2.pool.ntp.org iburst" >> "$CONF"
             systemctl restart chronyd 2>/dev/null || systemctl restart chrony
@@ -20911,6 +20915,10 @@ queries:
             set -e
 
             CONF=/etc/chrony.conf
+            # openSUSE Leap 16 ships only /usr/etc/chrony.conf, and chronyd reads /etc/chrony.conf in place of it
+            if [ ! -f "$CONF" ] && [ -f /usr/etc/chrony.conf ]; then
+              cp /usr/etc/chrony.conf "$CONF"
+            fi
             [ -f "$CONF" ] || CONF=/etc/chrony/chrony.conf
 
             if ! grep -qE '^\s*(server|pool)\s' "$CONF"; then
@@ -20937,6 +20945,23 @@ queries:
                     path: /etc/chrony/chrony.conf
                   register: debian_chrony
 
+                # openSUSE Leap 16 ships only /usr/etc/chrony.conf, and chronyd reads /etc/chrony.conf in place of it
+                - name: Check for the vendor chrony configuration
+                  ansible.builtin.stat:
+                    path: /usr/etc/chrony.conf
+                  register: vendor_chrony_conf
+
+                - name: Start /etc/chrony.conf from the vendor file where it does not exist yet
+                  ansible.builtin.copy:
+                    src: /usr/etc/chrony.conf
+                    dest: /etc/chrony.conf
+                    remote_src: true
+                    force: false
+                    owner: root
+                    group: root
+                    mode: '0644'
+                  when: vendor_chrony_conf.stat.exists and not debian_chrony.stat.exists
+
                 - name: Ensure a pool directive is present
                   ansible.builtin.lineinfile:
                     path: "{{ debian_chrony.stat.exists | ternary('/etc/chrony/chrony.conf', '/etc/chrony.conf') }}"
@@ -20961,6 +20986,16 @@ queries:
             debian = ::File.exist?('/etc/chrony/chrony.conf')
             chrony_conf = debian ? '/etc/chrony/chrony.conf' : '/etc/chrony.conf'
             chrony_service = debian ? 'chrony' : 'chronyd'
+
+            # openSUSE Leap 16 ships only /usr/etc/chrony.conf, and chronyd reads /etc/chrony.conf in
+            # place of it once that exists, so start from a copy rather than a file holding one line.
+            file 'copy the vendor chrony configuration' do
+              path chrony_conf
+              content(lazy { ::File.read('/usr/etc/chrony.conf') })
+              mode '0644'
+              action :create_if_missing
+              only_if { !debian && ::File.exist?('/usr/etc/chrony.conf') }
+            end
 
             service chrony_service do
               action :nothing
