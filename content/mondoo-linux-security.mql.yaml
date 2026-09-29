@@ -19225,7 +19225,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu have no `wheel` group, and `pam_wheel` then checks the group with GID `0` instead, so on those distributions change the line to `auth required pam_wheel.so use_uid group=sudo`. Elsewhere, add a trusted administrative account to `wheel` first and verify `su` works in a separate session. To restrict access to the `su` command to members of the `wheel` group, run the following bash script:
+            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu have no `wheel` group, and `pam_wheel` then checks the group with GID `0` instead, which leaves only root able to use `su`, so where `wheel` does not exist this code names the `sudo` group with `group=sudo`. Elsewhere, add a trusted administrative account to `wheel` first and verify `su` works in a separate session. To restrict access to the `su` command to members of the `wheel` group, run the following bash script:
 
             ```bash
             #!/bin/bash
@@ -19238,8 +19238,16 @@ queries:
               cp /usr/lib/pam.d/su /etc/pam.d/su
             fi
 
+            # Debian and Ubuntu have no wheel group. pam_wheel then checks GID 0 instead, which
+            # leaves only root able to use su, so name the sudo group there.
+            if getent group sudo >/dev/null && ! getent group wheel >/dev/null; then
+              PAM_WHEEL='auth required pam_wheel.so use_uid group=sudo'
+            else
+              PAM_WHEEL='auth required pam_wheel.so use_uid'
+            fi
+
             if ! grep -qE '^\s*auth\s+required\s+pam_wheel\.so\s+use_uid' /etc/pam.d/su; then
-              echo "auth required pam_wheel.so use_uid" >> /etc/pam.d/su
+              echo "$PAM_WHEEL" >> /etc/pam.d/su
             fi
 
             # Grant su access to each authorized user:
@@ -19256,7 +19264,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu have no `wheel` group, and `pam_wheel` then checks the group with GID `0` instead, so on those distributions change the line to `auth required pam_wheel.so use_uid group=sudo`. Elsewhere, add a trusted administrative account to `wheel` first and verify `su` works in a separate session. To restrict access to the `su` command, you can use the following Ansible playbook:
+            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu have no `wheel` group, and `pam_wheel` then checks the group with GID `0` instead, which leaves only root able to use `su`, so where `wheel` does not exist this code names the `sudo` group with `group=sudo`. Elsewhere, add a trusted administrative account to `wheel` first and verify `su` works in a separate session. To restrict access to the `su` command, you can use the following Ansible playbook:
 
             ```yaml
             ---
@@ -19282,18 +19290,27 @@ queries:
                     mode: '0644'
                   when: vendor_pam_d_su.stat.exists
 
+                - name: Read the local groups
+                  ansible.builtin.getent:
+                    database: group
+
+                # Debian and Ubuntu have no wheel group; pam_wheel then checks GID 0, which leaves only root able to use su
+                - name: Choose the group pam_wheel checks
+                  ansible.builtin.set_fact:
+                    pam_wheel_group: "{{ ' group=sudo' if ('wheel' not in ansible_facts.getent_group and 'sudo' in ansible_facts.getent_group) else '' }}"
+
                 - name: Ensure pam_wheel.so is configured in /etc/pam.d/su
                   ansible.builtin.lineinfile:
                     path: /etc/pam.d/su
                     regexp: '^auth required pam_wheel.so use_uid'
-                    line: 'auth required pam_wheel.so use_uid'
+                    line: "auth required pam_wheel.so use_uid{{ pam_wheel_group }}"
                     create: yes
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu have no `wheel` group, and `pam_wheel` then checks the group with GID `0` instead, so on those distributions change the line to `auth required pam_wheel.so use_uid group=sudo`. Elsewhere, add a trusted administrative account to `wheel` first and verify `su` works in a separate session. Use this Chef Infra recipe code to restrict the `su` command to the `wheel` group:
+            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu have no `wheel` group, and `pam_wheel` then checks the group with GID `0` instead, which leaves only root able to use `su`, so where `wheel` does not exist this code names the `sudo` group with `group=sudo`. Elsewhere, add a trusted administrative account to `wheel` first and verify `su` works in a separate session. Use this Chef Infra recipe code to restrict the `su` command to the `wheel` group:
 
             ```ruby
             pam_su = '/etc/pam.d/su'
@@ -19308,10 +19325,24 @@ queries:
               only_if { ::File.exist?('/usr/lib/pam.d/su') }
             end
 
+            # Debian and Ubuntu have no wheel group. pam_wheel then checks GID 0 instead, which
+            # leaves only root able to use su, so name the sudo group there.
+            # node['etc'] comes from an Ohai plugin that is off by default, so ask the system.
+            group_exists = lambda do |name|
+              ::Etc.getgrnam(name)
+              true
+            rescue ArgumentError
+              false
+            end
+            directive = if !group_exists.call('wheel') && group_exists.call('sudo')
+                          'auth required pam_wheel.so use_uid group=sudo'
+                        else
+                          'auth required pam_wheel.so use_uid'
+                        end
+
             ruby_block 'restrict su to the wheel group' do
               block do
                 body = ::File.exist?(pam_su) ? ::File.read(pam_su) : ''
-                directive = 'auth required pam_wheel.so use_uid'
                 # Append rather than prepend. PAM ignores the success of a `sufficient`
                 # module once an earlier `required` module has failed, so placing this
                 # line above `auth sufficient pam_rootok.so` would stop root from
@@ -19323,7 +19354,7 @@ queries:
                        end
                 ::File.write(pam_su, body)
               end
-              not_if { ::File.exist?(pam_su) && ::File.read(pam_su).match?(/^auth\s+required\s+pam_wheel\.so\s+use_uid\s*$/) }
+              not_if { ::File.exist?(pam_su) && ::File.read(pam_su).match?(/^#{Regexp.escape(directive)}\s*$/) }
             end
             ```
     refs:
