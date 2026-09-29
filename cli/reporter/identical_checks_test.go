@@ -84,7 +84,13 @@ func TestSharedCodeIsReportedUnderTheResolvedQuery(t *testing.T) {
 	report, err := ConvertToProto(yr)
 	require.NoError(t, err)
 
+	// Asserting inside the loop only: a report that carried no data at all
+	// would run the body zero times and report success, which is the outcome
+	// this test exists to catch.
+	require.NotEmpty(t, report.Data, "the conversion produced no data section")
+
 	for _, values := range report.Data {
+		require.NotEmpty(t, values.Values)
 		assert.Contains(t, values.Values, "//policy.api.mondoo.app/queries/mondoo-linux-installed-packages")
 		assert.NotContains(t, values.Values, "//policy.api.mondoo.app/queries/mondoo-windows-packages")
 		assert.Contains(t, values.Values, "//policy.api.mondoo.app/queries/mondoo-linux-mounts")
