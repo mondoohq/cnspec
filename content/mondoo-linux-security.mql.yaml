@@ -269,10 +269,13 @@ queries:
 
             ### Debian/Ubuntu and derivatives
 
-            Skip the recommended packages. `aide-common` recommends a mail client, which depends on a mail transfer agent, so a default install also installs and starts Postfix listening on every network interface, which fails the check that the mail transfer agent accepts only local connections:
+            Install `aide-common` by name alongside `aide`. It provides `/etc/aide/aide.conf`, the `aideinit` wrapper, and the daily check, and `aide` only recommends it, so installing `aide` alone without recommended packages leaves the binary unusable.
+
+            Skip the other recommended packages, and preseed Postfix to accept local mail only. `aide-common` needs a mail client, as a dependency on Ubuntu 22.04 and earlier and on Debian 11 and as a recommendation on later releases, and the mail client depends on a mail transfer agent. On Ubuntu that agent is Postfix, which a default install configures to listen on every network interface, failing the check that the mail transfer agent accepts only local connections. The preseed has no effect where Postfix is not installed:
 
             ```bash
-            apt-get install --no-install-recommends aide
+            echo "postfix postfix/main_mailer_type select Local only" | debconf-set-selections
+            apt-get install --no-install-recommends aide aide-common
             ```
 
             ### SLES and openSUSE
@@ -298,8 +301,12 @@ queries:
               dnf install -y aide
             elif command -v apt-get >/dev/null 2>&1; then
               echo "Detected apt-based system. Installing aide..."
+              # aide-common carries the configuration and aideinit; the mail client it needs
+              # pulls in Postfix on Ubuntu, so keep Postfix to local delivery only.
+              echo "postfix postfix/main_mailer_type select Local only" | debconf-set-selections
               apt-get update
-              apt-get install -y --no-install-recommends aide
+              # Without a terminal, debconf would wait for an answer to the Postfix mail name question.
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends aide aide-common
             elif command -v zypper >/dev/null 2>&1; then
               echo "Detected zypper-based system. Installing aide..."
               zypper install -y aide
@@ -329,10 +336,21 @@ queries:
                     state: present
                   when: ansible_facts['os_family'] != 'Debian'
 
-                # aide-common recommends a mail client that pulls in Postfix listening on every interface
+                # aide-common depends on a mail client, which pulls in Postfix on Ubuntu; keep it local-only
+                - name: Preseed Postfix to accept local mail only
+                  ansible.builtin.debconf:
+                    name: postfix
+                    question: postfix/main_mailer_type
+                    value: Local only
+                    vtype: select
+                  when: ansible_facts['os_family'] == 'Debian'
+
+                # aide only recommends aide-common, which carries the configuration and aideinit
                 - name: Ensure AIDE is installed without recommended packages on Debian and Ubuntu
                   ansible.builtin.apt:
-                    name: aide
+                    name:
+                      - aide
+                      - aide-common
                     state: present
                     install_recommends: false
                   when: ansible_facts['os_family'] == 'Debian'
@@ -344,10 +362,22 @@ queries:
             Use this Chef Infra recipe code to install AIDE:
 
             ```ruby
-            package 'aide' do
-              # aide-common recommends a mail client that pulls in Postfix listening on every interface
-              options '--no-install-recommends' if platform_family?('debian')
-              action :install
+            if platform_family?('debian')
+              # aide-common depends on a mail client, which pulls in Postfix on Ubuntu; keep it local-only
+              execute 'preseed postfix local only' do
+                command 'echo "postfix postfix/main_mailer_type select Local only" | debconf-set-selections'
+                not_if 'debconf-show postfix 2>/dev/null | grep -q "main_mailer_type: Local only"'
+              end
+
+              # aide only recommends aide-common, which carries the configuration and aideinit
+              package %w(aide aide-common) do
+                options '--no-install-recommends'
+                action :install
+              end
+            else
+              package 'aide' do
+                action :install
+              end
             end
             ```
     refs:
