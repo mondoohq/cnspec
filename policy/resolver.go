@@ -246,6 +246,15 @@ func (s *LocalServices) ReportAssetScanFailed(ctx context.Context, req *ReportAs
 	return globalEmpty, nil
 }
 
+// ReportAssetActivityStarted tells upstream that activity on synced assets
+// has begun. Locally there is no inventory view to show it in.
+func (s *LocalServices) ReportAssetActivityStarted(ctx context.Context, req *ReportAssetActivityStartedReq) (*ReportAssetActivityStartedResp, error) {
+	if s.Upstream != nil && !s.Incognito {
+		return s.Upstream.ReportAssetActivityStarted(ctx, req)
+	}
+	return &ReportAssetActivityStartedResp{}, nil
+}
+
 // GetUploadURL provides signed URLs for uploading data to the server
 func (s *LocalServices) GetUploadURL(ctx context.Context, req *GetUploadURLReq) (*GetUploadURLResp, error) {
 	// Only forward to upstream if we have one and are not in incognito mode
