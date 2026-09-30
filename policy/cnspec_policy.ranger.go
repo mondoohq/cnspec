@@ -435,6 +435,7 @@ type PolicyResolver interface {
 	GetResolvedPolicy(context.Context, *Mrn) (*ResolvedPolicy, error)
 	StoreResults(context.Context, *StoreResultsReq) (*Empty, error)
 	ReportAssetScanFailed(context.Context, *ReportAssetScanFailedReq) (*Empty, error)
+	ReportAssetActivityStarted(context.Context, *ReportAssetActivityStartedReq) (*ReportAssetActivityStartedResp, error)
 	GetUploadURL(context.Context, *GetUploadURLReq) (*GetUploadURLResp, error)
 	ReportUploadCompleted(context.Context, *ReportUploadCompletedReq) (*Empty, error)
 	GetDownloadURL(context.Context, *GetDownloadURLReq) (*GetDownloadURLResp, error)
@@ -519,6 +520,11 @@ func (c *PolicyResolverClient) ReportAssetScanFailed(ctx context.Context, in *Re
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/ReportAssetScanFailed"}, ""), in, out)
 	return out, err
 }
+func (c *PolicyResolverClient) ReportAssetActivityStarted(ctx context.Context, in *ReportAssetActivityStartedReq) (*ReportAssetActivityStartedResp, error) {
+	out := new(ReportAssetActivityStartedResp)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/ReportAssetActivityStarted"}, ""), in, out)
+	return out, err
+}
 func (c *PolicyResolverClient) GetUploadURL(ctx context.Context, in *GetUploadURLReq) (*GetUploadURLResp, error) {
 	out := new(GetUploadURLResp)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetUploadURL"}, ""), in, out)
@@ -597,26 +603,27 @@ func NewPolicyResolverServer(handler PolicyResolver, opts ...PolicyResolverServe
 	service := ranger.Service{
 		Name: "PolicyResolver",
 		Methods: map[string]ranger.Method{
-			"Assign":                srv.Assign,
-			"Unassign":              srv.Unassign,
-			"SetProps":              srv.SetProps,
-			"Resolve":               srv.Resolve,
-			"UpdateAssetJobs":       srv.UpdateAssetJobs,
-			"ResolveAndUpdateJobs":  srv.ResolveAndUpdateJobs,
-			"GetResolvedPolicy":     srv.GetResolvedPolicy,
-			"StoreResults":          srv.StoreResults,
-			"ReportAssetScanFailed": srv.ReportAssetScanFailed,
-			"GetUploadURL":          srv.GetUploadURL,
-			"ReportUploadCompleted": srv.ReportUploadCompleted,
-			"GetDownloadURL":        srv.GetDownloadURL,
-			"GetReport":             srv.GetReport,
-			"GetFrameworkReport":    srv.GetFrameworkReport,
-			"GetScore":              srv.GetScore,
-			"GetResourcesData":      srv.GetResourcesData,
-			"SynchronizeAssets":     srv.SynchronizeAssets,
-			"PurgeAssets":           srv.PurgeAssets,
-			"RefreshAssetScores":    srv.RefreshAssetScores,
-			"GetScanParameters":     srv.GetScanParameters,
+			"Assign":                     srv.Assign,
+			"Unassign":                   srv.Unassign,
+			"SetProps":                   srv.SetProps,
+			"Resolve":                    srv.Resolve,
+			"UpdateAssetJobs":            srv.UpdateAssetJobs,
+			"ResolveAndUpdateJobs":       srv.ResolveAndUpdateJobs,
+			"GetResolvedPolicy":          srv.GetResolvedPolicy,
+			"StoreResults":               srv.StoreResults,
+			"ReportAssetScanFailed":      srv.ReportAssetScanFailed,
+			"ReportAssetActivityStarted": srv.ReportAssetActivityStarted,
+			"GetUploadURL":               srv.GetUploadURL,
+			"ReportUploadCompleted":      srv.ReportUploadCompleted,
+			"GetDownloadURL":             srv.GetDownloadURL,
+			"GetReport":                  srv.GetReport,
+			"GetFrameworkReport":         srv.GetFrameworkReport,
+			"GetScore":                   srv.GetScore,
+			"GetResourcesData":           srv.GetResourcesData,
+			"SynchronizeAssets":          srv.SynchronizeAssets,
+			"PurgeAssets":                srv.PurgeAssets,
+			"RefreshAssetScores":         srv.RefreshAssetScores,
+			"GetScanParameters":          srv.GetScanParameters,
 		},
 	}
 	return ranger.NewRPCServer(&service)
@@ -842,6 +849,30 @@ func (p *PolicyResolverServer) ReportAssetScanFailed(ctx context.Context, reqByt
 		return nil, err
 	}
 	return p.handler.ReportAssetScanFailed(ctx, &req)
+}
+func (p *PolicyResolverServer) ReportAssetActivityStarted(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req ReportAssetActivityStartedReq
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.ReportAssetActivityStarted(ctx, &req)
 }
 func (p *PolicyResolverServer) GetUploadURL(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req GetUploadURLReq

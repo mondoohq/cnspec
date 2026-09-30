@@ -1251,6 +1251,13 @@ service PolicyResolver {
   // predate this RPC answer NotFound (ranger's unknown-method response), and
   // clients ignore any error here: the scan has already failed.
   rpc ReportAssetScanFailed(ReportAssetScanFailedReq) returns (Empty) {}
+  // Reports that activity (a scan, an import) has begun on already-synced
+  // assets, so the platform can show them as being worked on. Start-only:
+  // the server clears the signal itself when results arrive, and ignores it
+  // after a decay window. Display-only on the server; nothing gates on it.
+  // Servers that predate this RPC answer NotFound (ranger's unknown-method
+  // response); clients must ignore any error here and scan regardless.
+  rpc ReportAssetActivityStarted(ReportAssetActivityStartedReq) returns (ReportAssetActivityStartedResp) {}
 
   // Signed URL upload flow
   rpc GetUploadURL(GetUploadURLReq) returns (GetUploadURLResp) {}
@@ -1333,6 +1340,43 @@ message ReportAssetScanFailedReq {
   string error = 2;
   // Its classification (mql ADR-46), or unset when it is unclassified.
   mql.llx.ErrorDetail error_detail = 3;
+}
+
+// What kind of client reports activity on an asset.
+enum AssetActivityKind {
+  ASSET_ACTIVITY_KIND_UNSPECIFIED = 0;
+  ASSET_ACTIVITY_KIND_AGENT = 1;
+  ASSET_ACTIVITY_KIND_IMPORT = 2;
+}
+
+// How the reported activity came to run, as the client understands it.
+enum AssetActivityTrigger {
+  ASSET_ACTIVITY_TRIGGER_UNSPECIFIED = 0;
+  // A human invoked it interactively.
+  ASSET_ACTIVITY_TRIGGER_AD_HOC = 1;
+  // A schedule fired it (cron, cnspec serve's periodic loop).
+  ASSET_ACTIVITY_TRIGGER_SCHEDULED = 2;
+  // Something asked for this run remotely (a fleet-scan dispatch, a rescan).
+  ASSET_ACTIVITY_TRIGGER_TRIGGERED = 3;
+}
+
+message ReportAssetActivityStartedReq {
+  string space_mrn = 1;
+  // Assets the activity covers; they must already exist in space_mrn.
+  // Capped per request, callers chunk.
+  repeated string asset_mrns = 2;
+  // Required: UNSPECIFIED is rejected.
+  AssetActivityKind kind = 3;
+  AssetActivityTrigger trigger = 4;
+  // Optional display text, length-capped by the server.
+  string detail = 5;
+  // Optional: set by importers, never by agents.
+  string integration_mrn = 6;
+}
+
+message ReportAssetActivityStartedResp {
+  // How many of asset_mrns resolved to assets in space_mrn and were recorded.
+  int32 updated = 1;
 }
 
 enum UploadURLKind {
