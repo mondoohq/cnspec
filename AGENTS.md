@@ -95,6 +95,8 @@ cnspec policy lint ./content/mondoo-linux-security.mql.yaml     # one policy
 
 Titles are `<emoji> <scope>: <lowercase description>`. The emoji is part of the convention, not decoration. Counts over the last 200 commits on `main`: ✨ new capability or coverage (57), 🧹 cleanup/refactor/maintenance (47), 🐛 bug fix (40), 👷 CI and automation (8), 📝 docs (3). Scope is the area, not the file: `validation`, `content`, `ci`, or a provider name like `aws` or `alibaba`.
 
+**Public repo: never identify a customer.** No customer names in commit messages, PR titles or bodies, branch names, code comments or test fixtures. Never link to or cite an issue or repository that tracks a customer report, and leave out contact names, emails and hostnames from one. Describe the problem by its software, platform and symptom ("Debian hosts with ZFS installed"), not by who reported it.
+
 ### Stacked PRs
 
 Squash-merging a base branch does not retarget the PRs stacked on it. The squash lands a new SHA on `main` and leaves the original branch commit orphaned but alive, so GitHub keeps the stacked PR pointed at a dead branch and will merge into it. The PR then reports `MERGED` with none of its work on `main`.
