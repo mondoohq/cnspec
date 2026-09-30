@@ -102,6 +102,27 @@ Formats:
 
 **Use cases**: understand the full structure of a bundle, generate visual diagrams, programmatic analysis.
 
+## remediation
+
+Show the `docs.remediation` entries of a check, with the fenced code blocks of each entry's markdown parsed out. For a policy, group, framework, or control, show those of every check reachable from it.
+
+```bash
+cnspec policy graph remediation <uid> <path>
+cnspec policy graph remediation <uid> <path> --id bash --code
+cnspec policy graph remediation <uid> <path> --id bash --json
+cnspec policy graph remediation <uid> <path> --lang powershell
+```
+
+Flags:
+- `--id`: Only entries with these remediation ids (e.g. `bash`, `cli`, `ansible`, `terraform`)
+- `--code`: Print only the code blocks
+- `--lang`: Only code blocks in these languages; implies `--code`
+- `--json`: Output as JSON; each entry carries `code: [{lang, code}]`
+
+`--code` prints every block of the selected entries, and later blocks can be alternatives rather than next steps. Take `code[0]` from `--json` when one script per check is wanted.
+
+**Use cases**: get the fix script for a failing check, collect every bash or PowerShell remediation of a policy, list which checks of a policy have no automated remediation.
+
 ## Common Flags
 
 - `--json`: Output as JSON (available on callers, callees, paths, reachable)
