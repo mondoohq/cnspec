@@ -55,10 +55,10 @@ SKIP_RULES = [
     "yaml[truthy]",  # snippets use `become: true` not `become: "true"`
 ]
 
-# Rules to ignore in results (can't be skipped via -x but are false positives)
-IGNORE_CHECKS = {
-    "syntax-check[unknown-module]",  # offline mode can't resolve collections
-}
+# Offline lint cannot resolve modules from uninstalled collections. Ansible's
+# built-in modules are available through ansible-core and must still resolve.
+UNKNOWN_MODULE_RE = re.compile(r"module/action ['\"]([^'\"]+)['\"]")
+BUILTIN_MODULE_RE = re.compile(r"\bansible\.builtin\.[A-Za-z_][A-Za-z0-9_]*\b")
 
 FAILURES: list[dict] = []
 
@@ -155,6 +155,40 @@ def sanitize_snippet(code: str) -> str:
 # ansible-lint execution
 # ---------------------------------------------------------------------------
 
+def load_builtin_modules() -> set[str]:
+    """List real built-in modules, excluding collection redirects."""
+    lint_executable = shutil.which("ansible-lint")
+    if not lint_executable:
+        raise RuntimeError("ansible-lint not found in PATH")
+    # CI installs ansible-lint with pipx, which exposes only the requested app.
+    # ansible-doc is in the same virtual environment as its ansible-core dependency.
+    ansible_doc = Path(lint_executable).resolve().with_name("ansible-doc")
+    if not ansible_doc.is_file():
+        raise RuntimeError(f"ansible-doc not found beside {lint_executable}")
+    result = subprocess.run(
+        [str(ansible_doc), "-t", "module", "-l", "ansible.builtin"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    modules = {
+        line.split()[0]
+        for line in result.stdout.splitlines()
+        if line.startswith("ansible.builtin.")
+    }
+    if result.returncode != 0 or not modules:
+        raise RuntimeError(
+            "Could not list Ansible built-in modules: "
+            + (result.stderr.strip() or f"ansible-doc exited {result.returncode}")
+        )
+    return modules
+
+
+def unknown_builtin_modules(code: str, builtin_modules: set[str]) -> list[str]:
+    """Find built-in references missing from ansible-doc's module list."""
+    return sorted(set(BUILTIN_MODULE_RE.findall(code)) - builtin_modules)
+
+
 def run_ansible_lint(playbook_path: Path) -> LintResult:
     """Run ansible-lint on a playbook file and return structured results."""
     skip_args = []
@@ -180,9 +214,11 @@ def run_ansible_lint(playbook_path: Path) -> LintResult:
         data = json.loads(result.stdout)
         for issue in data:
             check = issue.get("check_name", "unknown")
-            if check in IGNORE_CHECKS:
-                continue
             desc = issue.get("description", "")
+            if check == "syntax-check[unknown-module]":
+                module = UNKNOWN_MODULE_RE.search(desc)
+                if module and not module.group(1).startswith("ansible.builtin."):
+                    continue
             body = issue.get("content", {}).get("body", "")
             msg = f"{check}: {desc}"
             if body:
@@ -239,9 +275,17 @@ def truncate_snippet(code: str, max_len: int = 100) -> str:
     return code[:max_len]
 
 
-def validate_block(block: AnsibleBlock) -> tuple[AnsibleBlock, bool, list[str]]:
+def validate_block(
+    block: AnsibleBlock, builtin_modules: set[str]
+) -> tuple[AnsibleBlock, bool, list[str]]:
     """Validate a single ansible block. Returns (block, success, issues)."""
     sanitized = sanitize_snippet(block.code)
+
+    invalid_modules = unknown_builtin_modules(sanitized, builtin_modules)
+    if invalid_modules:
+        return block, False, [
+            f"Unknown Ansible built-in module: {name}" for name in invalid_modules
+        ]
 
     with tempfile.TemporaryDirectory(prefix="ansible_lint_") as tmp:
         tmp_path = Path(tmp)
@@ -252,7 +296,7 @@ def validate_block(block: AnsibleBlock) -> tuple[AnsibleBlock, bool, list[str]]:
 
 
 def validate_policy_file(
-    filepath: Path, workers: int
+    filepath: Path, workers: int, builtin_modules: set[str]
 ) -> tuple[int, int]:
     """Validate all ansible blocks in a policy file."""
     if not filepath.exists():
@@ -275,7 +319,7 @@ def validate_policy_file(
     fail_count = 0
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(validate_block, b): b for b in blocks}
+        futures = {pool.submit(validate_block, b, builtin_modules): b for b in blocks}
         results = []
         for future in concurrent.futures.as_completed(futures):
             results.append(future.result())
@@ -375,6 +419,12 @@ def main():
         )
         sys.exit(1)
 
+    try:
+        builtin_modules = load_builtin_modules()
+    except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
     total_pass = 0
     total_fail = 0
 
@@ -382,7 +432,7 @@ def main():
 
     for t in targets_to_run:
         for filepath in TARGETS[t]:
-            p, f = validate_policy_file(filepath, workers)
+            p, f = validate_policy_file(filepath, workers, builtin_modules)
             total_pass += p
             total_fail += f
 
