@@ -26,6 +26,12 @@ func init() {
 	policyGraphContextCmd.Flags().Int("depth", 2, "Neighborhood depth (hops)")
 	policyGraphCmd.AddCommand(policyGraphContextCmd)
 
+	policyGraphRemediationCmd.Flags().StringSlice("id", nil, "Only remediations with these ids, e.g. bash,cli")
+	policyGraphRemediationCmd.Flags().StringSlice("lang", nil, "Only code blocks in these languages, e.g. bash,sh (implies --code)")
+	policyGraphRemediationCmd.Flags().Bool("code", false, "Print only the code blocks, without the markdown around them")
+	policyGraphRemediationCmd.Flags().Bool("json", false, "Output as JSON, with each remediation's code blocks parsed out")
+	policyGraphCmd.AddCommand(policyGraphRemediationCmd)
+
 	policyGraphPathsCmd.Flags().Bool("json", false, "Output as JSON")
 	policyGraphCmd.AddCommand(policyGraphPathsCmd)
 
@@ -117,6 +123,106 @@ var policyGraphContextCmd = &cobra.Command{
 			log.Fatal().Err(err).Msg("failed to write context")
 		}
 	},
+}
+
+var policyGraphRemediationCmd = &cobra.Command{
+	Use:   "remediation <uid> <path>",
+	Short: "Show the remediations of a check, or of every check under a policy, group, or control",
+	Long: `Show the docs.remediation entries of a check. For a policy, group,
+framework, or control, show those of every check reachable from it.
+
+Remediation texts are markdown. --code prints only their fenced code blocks,
+and --json adds each block with its language under "code", so a script can be
+taken from a check without parsing markdown. Select one remediation method
+with --id: a check's "cli" entry often holds alternative commands for several
+distributions, while its "bash" entry is usually one script. --code prints
+every block of the selected entries, and a later block can be an alternative
+to an earlier one rather than a next step, so read the text before running
+the output.`,
+	Example: `  # The bash script that fixes one check
+  cnspec policy graph remediation mondoo-linux-security-core-dumps-are-restricted ./content --id bash --code
+
+  # Every bash remediation of a policy, as JSON
+  cnspec policy graph remediation mondoo-linux-security ./content --id bash --json`,
+	Args: cobra.MinimumNArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		uid, paths := args[0], args[1:]
+		ids, _ := cmd.Flags().GetStringSlice("id")
+		langs, _ := cmd.Flags().GetStringSlice("lang")
+		codeOnly, _ := cmd.Flags().GetBool("code")
+		g := mustBuildGraph(paths)
+		node := mustFindNode(g, uid)
+
+		results := g.Remediations(node.ID, bundle.RemediationOpts{IDs: ids, Langs: langs})
+		if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut {
+			if results == nil {
+				results = []bundle.NodeRemediations{}
+			}
+			printJSON(results)
+			return
+		}
+		if len(results) == 0 {
+			fmt.Fprintf(os.Stderr, "No matching remediations found for %s\n", node.QualName)
+			os.Exit(1)
+		}
+
+		if codeOnly || len(langs) > 0 {
+			writeRemediationCode(results)
+			return
+		}
+		for i, r := range results {
+			if i > 0 {
+				fmt.Println()
+			}
+			fmt.Printf("# %s (%s:%d)\n", r.QualName, r.File, r.Line)
+			if r.Title != "" {
+				fmt.Printf("%s\n", r.Title)
+			}
+			for _, rem := range r.Remediations {
+				id := rem.ID
+				if id == "" {
+					id = "(no id)"
+				}
+				fmt.Printf("\n## %s\n\n%s\n", id, strings.TrimRight(rem.Desc, "\n"))
+			}
+		}
+	},
+}
+
+// writeRemediationCode prints the code blocks of the remediations. For a
+// single check the output is the code alone, ready to pipe. For several, a
+// "# <check>" line precedes each check's code, which is a comment in shell,
+// PowerShell, Ruby, YAML, and HCL; use --json for other languages.
+func writeRemediationCode(results []bundle.NodeRemediations) {
+	var total int
+	for _, r := range results {
+		for _, rem := range r.Remediations {
+			total += len(rem.Code)
+		}
+	}
+	if total == 0 {
+		fmt.Fprintln(os.Stderr, "The matching remediations contain no code blocks; run without --code to read them")
+		os.Exit(1)
+	}
+
+	for i, r := range results {
+		if len(results) > 1 {
+			if i > 0 {
+				fmt.Println()
+			}
+			fmt.Printf("# %s\n", r.QualName)
+		}
+		var n int
+		for _, rem := range r.Remediations {
+			for _, block := range rem.Code {
+				if n > 0 {
+					fmt.Println()
+				}
+				fmt.Print(block.Code)
+				n++
+			}
+		}
+	}
 }
 
 var policyGraphPathsCmd = &cobra.Command{

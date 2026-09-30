@@ -15,6 +15,7 @@ Navigate and understand cnspec policy bundles (`.mql.yaml` files) using structur
 - Tracing relationships ("how does this framework relate to that check?")
 - Understanding large bundles (10K+ line `.mql.yaml` files)
 - Getting context for a specific check with its MQL code, impact, and docs
+- Extracting remediation scripts for a check, or for every check in a policy
 
 ## When NOT to Use
 
@@ -36,6 +37,7 @@ For authoring or changing policies, use the `mql` skill instead. Its **Wiring Po
 | `cnspec policy graph paths <from> <to> <path>` | Find paths between two nodes |
 | `cnspec policy graph reachable <uid> <path>` | All nodes transitively reachable |
 | `cnspec policy graph export <path> [--format json\|dot]` | Export full graph |
+| `cnspec policy graph remediation <uid> <path> [--id bash] [--code\|--json]` | Remediations of a check or of every check under a node, with code blocks extracted |
 
 All commands support `--json` for structured output. Search also supports `--kind`, `--tag`, `--impact`, and `--limit`.
 

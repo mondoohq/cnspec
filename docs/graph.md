@@ -32,16 +32,20 @@ cnspec policy graph context mondoo-linux-security-ssh-root-login-is-disabled ./c
 | `cnspec policy graph paths <from> <to> <path>` | Find paths between two nodes |
 | `cnspec policy graph reachable <uid> <path>` | All nodes transitively reachable |
 | `cnspec policy graph export <path>` | Export the full graph |
+| `cnspec policy graph remediation <uid> <path>` | Remediations of a check, or of every check under a policy, group, or control |
 
 ### Flags
 
-- `--json` — JSON output (search, callers, callees, paths, reachable)
+- `--json` — JSON output (search, callers, callees, paths, reachable, remediation)
 - `--kind` — Filter by node kind: policy, check, group, query, framework, control (search only)
 - `--tag` — Filter by tag key (search only)
 - `--impact N` — Minimum impact score (search only)
 - `--limit N` — Maximum results, default 50 (search only)
 - `--depth N` — Neighborhood depth for context (default 2)
 - `--format json|dot` — Export format (export command only)
+- `--id` — Only remediation entries with these ids, e.g. `bash` or `bash,cli` (remediation only)
+- `--code` — Print only the fenced code blocks of the remediations (remediation only)
+- `--lang` — Only code blocks in these languages, e.g. `bash,sh`; implies `--code` (remediation only)
 
 ### Path argument
 
@@ -332,6 +336,77 @@ $ cnspec policy graph callees mondoo-linux-security ./content/mondoo-linux-secur
   ...
 ]
 ```
+
+### Extract remediations
+
+Each check's `docs.remediation` is a list of entries, one per method, each with an `id` such as `cli`, `bash`, `ansible`, `terraform`, or `powershell`, and a markdown `desc`. The `remediation` command returns those entries and parses the fenced code blocks out of the markdown, so a script can be taken from a check without reading the markdown.
+
+Print the bash script for one check, ready to review and run:
+
+```bash
+$ cnspec policy graph remediation mondoo-linux-security-core-dumps-are-restricted \
+    ./content/mondoo-linux-security.mql.yaml --id bash --code
+```
+
+```
+#!/bin/bash
+set -e
+
+# Set hard core dump limit to 0
+...
+```
+
+Pointed at a policy, group, framework, or control, the command returns the remediations of every check reachable from it and skips checks without a matching entry. `--json` gives each entry's code blocks under `code`, with the language of each block:
+
+```bash
+$ cnspec policy graph remediation mondoo-linux-security \
+    ./content/mondoo-linux-security.mql.yaml --id bash --json
+```
+
+```json
+[
+  {
+    "uid": "mondoo-linux-security-window-system-is-not-installed",
+    "qual_name": "check:mondoo-linux-security-window-system-is-not-installed",
+    "kind": "check",
+    "title": "Ensure X Window System is not installed",
+    "file": "content/mondoo-linux-security.mql.yaml",
+    "line": 2643,
+    "remediations": [
+      {
+        "id": "bash",
+        "desc": "**Using a Bash Script**\n\nUse this Bash script to remove the X Window System packages. ...",
+        "code": [
+          {
+            "lang": "bash",
+            "code": "#!/bin/bash\nset -e\n..."
+          }
+        ]
+      }
+    ]
+  },
+  ...
+]
+```
+
+Write one script file per check:
+
+```bash
+cnspec policy graph remediation mondoo-linux-security ./content/mondoo-linux-security.mql.yaml \
+    --id bash --json | jq -c '.[]' | while read -r check; do
+  uid=$(jq -r .uid <<<"$check")
+  jq -r '.remediations[0].code[0].code' <<<"$check" > "$uid.sh"
+done
+```
+
+With `--code` and more than one check, a `# check:<uid>` line precedes each check's code. That line is a comment in shell, PowerShell, Ruby, YAML, and HCL; for other languages, use `--json`.
+
+What to expect from the output:
+
+- **The code is what the policy author wrote, and it is not verified to run on your system.** Read it before running it; most scripts need root.
+- **`--code` prints every code block of the selected entries.** A `cli` entry often has one block per distribution family, and even a `bash` entry can follow its script with an alternative, for example `mondoo-linux-security-access-to-the-su-command-is-restricted`, whose second block locks `su` down entirely instead of restricting it to `wheel`. Taking `code[0]` from `--json` selects the main script.
+- **Coverage depends on the policy.** In `mondoo-linux-security`, 114 of 125 checks have a `bash` entry holding a complete script. `mondoo-macos-security` has no `bash` entries; its `cli` entries hold step-by-step commands. `mondoo-windows-security` uses `powershell` and `grouppolicy` entries.
+- **Remediations written as prose extract poorly.** Where code blocks have no language tag, `--lang` does not match them, and where commands carry a `#` or `$` prompt or the remediation describes a step in words ("create a file ending in `.conf`"), the output is not a runnable script. Filter with `--id` instead of `--lang` for such content.
 
 ### Generate a visual diagram
 
