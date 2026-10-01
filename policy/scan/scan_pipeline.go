@@ -60,15 +60,18 @@ type syncBatcher struct {
 	multiprogress progress.MultiProgress
 
 	buf []*discovery.TrackedAsset
+
+	trigger policy.AssetActivityTrigger
 }
 
-func newSyncBatcher(dispatcher *scanDispatcher, services *policy.Services, spaceMrn string, rec llx.Recording, mp progress.MultiProgress) *syncBatcher {
+func newSyncBatcher(dispatcher *scanDispatcher, services *policy.Services, spaceMrn string, rec llx.Recording, mp progress.MultiProgress, trigger policy.AssetActivityTrigger) *syncBatcher {
 	return &syncBatcher{
 		dispatcher:    dispatcher,
 		services:      services,
 		spaceMrn:      spaceMrn,
 		recording:     rec,
 		multiprogress: mp,
+		trigger:       trigger,
 	}
 }
 
@@ -106,7 +109,7 @@ func (sb *syncBatcher) Flush(ctx context.Context) error {
 	}
 
 	if len(readyToSync) > 0 {
-		if err := syncBatchWithUpstream(ctx, readyToSync, sb.services, sb.spaceMrn, sb.recording); err != nil {
+		if err := syncBatchWithUpstream(ctx, readyToSync, sb.services, sb.spaceMrn, sb.recording, sb.trigger); err != nil {
 			for _, tracked := range batch {
 				assetName := ""
 				if tracked.Asset != nil {
@@ -257,7 +260,7 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 		if len(asset.PlatformIds) > 0 {
 			d.multiprogress.AddTask(asset.PlatformIds[0], asset)
 		}
-		if syncErr := syncBatchWithUpstream(ctx, []*discovery.TrackedAsset{tracked}, d.services, d.spaceMrn, d.scanner.recording); syncErr != nil {
+		if syncErr := syncBatchWithUpstream(ctx, []*discovery.TrackedAsset{tracked}, d.services, d.spaceMrn, d.scanner.recording, d.scanner.activityTrigger); syncErr != nil {
 			d.reporter.AddScanError(asset, syncErr)
 			if len(asset.PlatformIds) > 0 {
 				d.multiprogress.Errored(asset.PlatformIds[0])
