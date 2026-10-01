@@ -1,12 +1,9 @@
 extension microsoftGraphV1
 
-resource userRiskPolicy 'Microsoft.Graph/conditionalAccessPolicies@v1.0' = {
-  displayName: 'Require MFA for high user risk'
+resource blockLegacyAuth 'Microsoft.Graph/conditionalAccessPolicies@v1.0' = {
+  displayName: 'Block every client type'
   state: 'enabled'
   conditions: {
-    userRiskLevels: [
-      'high'
-    ]
     clientAppTypes: [
       'all'
     ]
@@ -27,7 +24,7 @@ resource userRiskPolicy 'Microsoft.Graph/conditionalAccessPolicies@v1.0' = {
   grantControls: {
     operator: 'OR'
     builtInControls: [
-      'mfa'
+      'block'
     ]
   }
 }

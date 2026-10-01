@@ -120,7 +120,7 @@ queries:
       desc: |
         This check verifies that the tenant acts automatically on sign-ins Microsoft Entra ID Protection scores as risky.
 
-        Entra ID Protection scores each authentication attempt using signals such as an anonymized IP address, impossible travel between two locations, a device previously linked to malware, and sign-in properties unfamiliar for that account. The score does nothing on its own. Turning it into enforcement takes a Conditional Access policy, created in the Microsoft Entra admin center under **Protection > Conditional Access > Policies**, with **Conditions > Sign-in risk** set to the high and medium levels and **Grant** requiring multifactor authentication. This check requires such a policy to exist and to be on rather than in report-only or off state. Where the tenant is provisioned as code, the same policy appears as a conditional access policy resource in the Terraform or Bicep definition.
+        Entra ID Protection scores each authentication attempt using signals such as an anonymized IP address, impossible travel between two locations, a device previously linked to malware, and sign-in properties unfamiliar for that account. The score does nothing on its own. Turning it into enforcement takes a Conditional Access policy, created in the Microsoft Entra admin center under **Entra ID > Conditional Access > Policies**, with **Conditions > Sign-in risk** set to the high and medium levels and **Grant** requiring multifactor authentication. This check requires an enabled policy, not one in report-only or off state, that is assigned to all users and all resources, covers both the medium and high sign-in risk levels, and either requires multifactor authentication or an authentication strength or blocks access. Where the tenant is provisioned as code, the same policy appears as a conditional access policy resource in the Terraform or Bicep definition.
 
         **Why this matters**
 
@@ -135,10 +135,10 @@ queries:
         ### Audit via Console
 
         1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
-        2. Go to **Protection** > **Conditional Access** > **Policies**.
-        3. Look for a policy that, under **Conditions**, sets **Sign-in risk** to one or more levels and, under **Grant**, requires multifactor authentication.
+        2. Go to **Entra ID** > **Conditional Access** > **Policies**.
+        3. Look for a policy that includes **All users**, targets **All resources**, sets **Conditions** > **Sign-in risk** to both **High** and **Medium**, and under **Grant** requires multifactor authentication or an authentication strength, or blocks access.
 
-        A passing tenant has at least one enabled policy that targets sign-in risk and requires MFA. A failing tenant has no such policy, or the policy is in **Report-only** or **Off** state.
+        A passing tenant has at least one such policy set to **On**. A failing tenant has no such policy, scopes it to selected users or apps only, leaves out one of the two risk levels, or has it in **Report-only** or **Off** state.
 
         ### Audit via PowerShell
 
@@ -147,7 +147,14 @@ queries:
         ```powershell
         Connect-MgGraph -Scopes "Policy.Read.All"
         Get-MgIdentityConditionalAccessPolicy |
-          Where-Object { $_.State -eq "enabled" -and $_.Conditions.SignInRiskLevels }
+          Where-Object {
+            $_.State -eq "enabled" -and
+            $_.Conditions.Users.IncludeUsers -contains "All" -and
+            $_.Conditions.Applications.IncludeApplications -contains "All" -and
+            $_.Conditions.SignInRiskLevels -contains "high" -and
+            $_.Conditions.SignInRiskLevels -contains "medium" -and
+            ($_.GrantControls.BuiltInControls -contains "mfa" -or $_.GrantControls.BuiltInControls -contains "block" -or $_.GrantControls.AuthenticationStrength.Id)
+          }
         ```
 
         A passing tenant returns at least one policy. A failing tenant returns nothing.
@@ -157,11 +164,11 @@ queries:
             **To configure a sign-in risk policy:**
 
             1. Sign in to the Microsoft Entra admin center at https://entra.microsoft.com.
-            2. Go to `Protection` > `Conditional Access` > `Policies`.
+            2. Go to `Entra ID` > `Conditional Access` > `Policies`.
             3. Select `New policy`.
             4. Configure the policy:
                - Under `Users or workload identities`, choose `All users` and exclude at least one emergency access account.
-               - Under `Cloud apps or actions`, choose `All cloud apps`.
+               - Under `Target resources`, include `All resources (formerly 'All cloud apps')`.
                - Under `Conditions` > `Sign-in risk`, set `Configure` to `Yes` and select the `High` and `Medium` risk levels.
                - Under `Access controls` > `Grant`, select `Grant access` and check `Require multifactor authentication`.
                - Under `Session`, select `Sign-in frequency` and choose `Every time`.
@@ -253,7 +260,22 @@ queries:
     filters: |
       asset.platform == "microsoft365"
     mql: |
-      microsoft.security.latestSecureScores.controls.where(controlName == 'SigninRiskPolicy').all(score == 7)
+      microsoft.conditionalAccess.policies.where(
+        state == "enabled" &&
+        conditions != empty &&
+        conditions.users != empty &&
+        conditions.applications != empty &&
+        grantControls != empty
+      ).where(
+        grantControls.builtInControls.contains("mfa") ||
+        grantControls.builtInControls.contains("block") ||
+        grantControls.authenticationStrength != empty
+      ).any(
+        conditions.users.includeUsers.contains("All") &&
+        conditions.applications.includeApplications.contains("All") &&
+        conditions.signInRiskLevels.contains("high") &&
+        conditions.signInRiskLevels.contains("medium")
+      )
   - uid: mondoo-m365-security-enable-azure-ad-identity-protection-sign-in-risk-policies-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == 'azuread_conditional_access_policy')
@@ -332,7 +354,7 @@ queries:
       desc: |
         This check verifies that the tenant acts automatically when Microsoft Entra ID Protection concludes an identity itself is compromised.
 
-        User risk is a judgment about the account rather than about one sign-in. It rises when Microsoft finds the account's credentials in a leaked credential dump, when Microsoft threat intelligence links the identity to known attacker activity, or when a pattern of behavior over time indicates compromise. Acting on it requires a Conditional Access policy, created in the Microsoft Entra admin center under **Protection > Conditional Access > Policies**, with **Conditions > User risk** set to high and **Grant** requiring both multifactor authentication and a password change. This check requires such a policy to exist and be enabled. Provisioned as code, it is the same conditional access policy resource with a user risk condition.
+        User risk is a judgment about the account rather than about one sign-in. It rises when Microsoft finds the account's credentials in a leaked credential dump, when Microsoft threat intelligence links the identity to known attacker activity, or when a pattern of behavior over time indicates compromise. Acting on it requires a Conditional Access policy, created in the Microsoft Entra admin center under **Entra ID > Conditional Access > Policies**, with **Conditions > User risk** set to high and **Grant** set to **Require risk remediation**, or to the older combination of multifactor authentication and **Require password change**. This check requires an enabled policy, not one in report-only or off state, that is assigned to all users and all resources, covers the high user risk level, and forces a password change or risk remediation or blocks access. Multifactor authentication on its own does not satisfy it, because it leaves the leaked password valid. Provisioned as code, it is the same conditional access policy resource with a user risk condition and one of those grant controls.
 
         **Why this matters**
 
@@ -347,10 +369,10 @@ queries:
         ### Audit via Console
 
         1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
-        2. Go to **Protection** > **Conditional Access** > **Policies**.
-        3. Look for a policy that, under **Conditions**, sets **User risk** to one or more levels and, under **Grant**, requires multifactor authentication.
+        2. Go to **Entra ID** > **Conditional Access** > **Policies**.
+        3. Look for a policy that includes **All users**, targets **All resources**, sets **Conditions** > **User risk** to include **High**, and under **Grant** requires risk remediation or a password change, or blocks access.
 
-        A passing tenant has at least one enabled policy that targets user risk and requires MFA. A failing tenant has no such policy, or the policy is in **Report-only** or **Off** state.
+        A passing tenant has at least one such policy set to **On**. A failing tenant has no such policy, scopes it to selected users or apps only, grants access with multifactor authentication alone, or has it in **Report-only** or **Off** state.
 
         ### Audit via PowerShell
 
@@ -359,7 +381,13 @@ queries:
         ```powershell
         Connect-MgGraph -Scopes "Policy.Read.All"
         Get-MgIdentityConditionalAccessPolicy |
-          Where-Object { $_.State -eq "enabled" -and $_.Conditions.UserRiskLevels }
+          Where-Object {
+            $_.State -eq "enabled" -and
+            $_.Conditions.Users.IncludeUsers -contains "All" -and
+            $_.Conditions.Applications.IncludeApplications -contains "All" -and
+            $_.Conditions.UserRiskLevels -contains "high" -and
+            ($_.GrantControls.BuiltInControls -contains "passwordChange" -or $_.GrantControls.BuiltInControls -contains "riskRemediation" -or $_.GrantControls.BuiltInControls -contains "block")
+          }
         ```
 
         A passing tenant returns at least one policy. A failing tenant returns nothing.
@@ -369,13 +397,13 @@ queries:
             **To configure a user risk policy:**
 
             1. Sign in to the Microsoft Entra admin center at https://entra.microsoft.com.
-            2. Go to `Protection` > `Conditional Access` > `Policies`.
+            2. Go to `Entra ID` > `Conditional Access` > `Policies`.
             3. Select `New policy`.
             4. Configure the policy:
                - Under `Users or workload identities`, choose `All users` and exclude at least one emergency access account.
-               - Under `Cloud apps or actions`, choose `All cloud apps`.
+               - Under `Target resources`, include `All resources (formerly 'All cloud apps')`.
                - Under `Conditions` > `User risk`, set `Configure` to `Yes` and select the `High` risk level.
-               - Under `Access controls` > `Grant`, select `Grant access`, then select `Require multifactor authentication` and `Require password change`.
+               - Under `Access controls` > `Grant`, select `Grant access`, then select `Require risk remediation`. Tenants that have not moved to risk remediation can instead select `Require multifactor authentication` and `Require password change`.
                - Under `Session`, ensure `Sign-in frequency` is set to `Every time`.
             5. You may start the policy in `Report-only` mode to assess impact, but it must be set to `On` to be enforced.
             6. Select `Create`.
@@ -465,7 +493,21 @@ queries:
     filters: |
       asset.platform == "microsoft365"
     mql: |
-      microsoft.security.latestSecureScores.controls.where(controlName == 'UserRiskPolicy').all(score == 7)
+      microsoft.conditionalAccess.policies.where(
+        state == "enabled" &&
+        conditions != empty &&
+        conditions.users != empty &&
+        conditions.applications != empty &&
+        grantControls != empty
+      ).where(
+        grantControls.builtInControls.contains("passwordChange") ||
+        grantControls.builtInControls.contains("riskRemediation") ||
+        grantControls.builtInControls.contains("block")
+      ).any(
+        conditions.users.includeUsers.contains("All") &&
+        conditions.applications.includeApplications.contains("All") &&
+        conditions.userRiskLevels.contains("high")
+      )
   - uid: mondoo-m365-security-enable-azure-ad-identity-protection-user-risk-policies-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == 'azuread_conditional_access_policy')
@@ -473,7 +515,7 @@ queries:
       terraform.resources('azuread_conditional_access_policy').any(
         arguments['state'] == 'enabled' &&
         blocks.where(type == 'conditions').any(arguments['user_risk_levels'] != empty) &&
-        blocks.where(type == 'grant_controls').any(arguments['built_in_controls'].contains('mfa'))
+        blocks.where(type == 'grant_controls').any(arguments['built_in_controls'].contains('passwordChange') || arguments['built_in_controls'].contains('riskRemediation') || arguments['built_in_controls'].contains('block'))
       )
   - uid: mondoo-m365-security-enable-azure-ad-identity-protection-user-risk-policies-terraform-plan
     filters: |
@@ -482,7 +524,7 @@ queries:
       terraform.plan.resourceChanges.where(type == 'azuread_conditional_access_policy').any(
         change.after['state'] == 'enabled' &&
         change.after['conditions'].any(_['user_risk_levels'] != empty) &&
-        change.after['grant_controls'].any(_['built_in_controls'].contains('mfa'))
+        change.after['grant_controls'].any(_['built_in_controls'].contains('passwordChange') || _['built_in_controls'].contains('riskRemediation') || _['built_in_controls'].contains('block'))
       )
   - uid: mondoo-m365-security-enable-azure-ad-identity-protection-user-risk-policies-terraform-state
     filters: |
@@ -491,7 +533,7 @@ queries:
       terraform.state.resources.where(type == 'azuread_conditional_access_policy').any(
         values['state'] == 'enabled' &&
         values['conditions'].any(_['user_risk_levels'] != empty) &&
-        values['grant_controls'].any(_['built_in_controls'].contains('mfa'))
+        values['grant_controls'].any(_['built_in_controls'].contains('passwordChange') || _['built_in_controls'].contains('riskRemediation') || _['built_in_controls'].contains('block'))
       )
   - uid: mondoo-m365-security-enable-azure-ad-identity-protection-user-risk-policies-bicep
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Graph/conditionalAccessPolicies")
@@ -499,7 +541,7 @@ queries:
       bicep.resources.where(type == "Microsoft.Graph/conditionalAccessPolicies").any(
           body["state"] == "enabled" &&
           body["conditions"]["userRiskLevels"] != empty &&
-          body["grantControls"]["builtInControls"].any(_ == "mfa")
+          body["grantControls"]["builtInControls"].any(_ == "passwordChange" || _ == "riskRemediation" || _ == "block")
       )
   - uid: mondoo-m365-security-enable-conditional-access-policies-to-block-legacy-authentication
     title: Enable Conditional Access policies to block legacy authentication
@@ -544,7 +586,7 @@ queries:
       desc: |
         This check verifies that authentication protocols incapable of multifactor authentication are blocked outright.
 
-        Legacy authentication covers Exchange ActiveSync and the older mail clients grouped as other clients, which includes POP, IMAP, and SMTP AUTH. Microsoft 365 accepts these protocols by default, and they predate modern authentication and cannot present an interactive second factor, so a sign-in over them completes on a password alone regardless of what the tenant requires elsewhere. You block them with a Conditional Access policy in the Microsoft Entra admin center under **Protection > Conditional Access > Policies**, setting **Conditions > Client apps** to those legacy client types and **Grant** to block access. This check requires such a policy to be enabled rather than report-only or off. In infrastructure code it is the same conditional access policy resource with a blocking grant control.
+        Legacy authentication covers Exchange ActiveSync and the older mail clients grouped as other clients, which includes POP, IMAP, and SMTP AUTH. Microsoft 365 accepts these protocols by default, and they predate modern authentication and cannot present an interactive second factor, so a sign-in over them completes on a password alone regardless of what the tenant requires elsewhere. You block them with a Conditional Access policy in the Microsoft Entra admin center under **Entra ID > Conditional Access > Policies**, setting **Conditions > Client apps** to those legacy client types and **Grant** to block access. This check requires an enabled policy, not one in report-only or off state, that is assigned to all users and all resources, selects both the Exchange ActiveSync and other clients types, and blocks access. In infrastructure code it is the same conditional access policy resource with a blocking grant control.
 
         **Why this matters**
 
@@ -559,10 +601,10 @@ queries:
         ### Audit via Console
 
         1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
-        2. Go to **Protection** > **Conditional Access** > **Policies**.
-        3. Look for an enabled policy whose **Conditions** > **Client apps** targets the legacy authentication client apps, Exchange ActiveSync and other clients, and whose **Grant** control is set to **Block access**.
+        2. Go to **Entra ID** > **Conditional Access** > **Policies**.
+        3. Look for a policy that includes **All users**, targets **All resources**, selects both **Exchange ActiveSync clients** and **Other clients** under **Conditions** > **Client apps**, and sets **Grant** to **Block access**.
 
-        A passing tenant has at least one enabled policy that blocks legacy authentication. A failing tenant has no such policy, or it is in **Report-only** or **Off** state.
+        A passing tenant has at least one such policy set to **On**. A failing tenant has no such policy, selects only one of the two legacy client types, scopes it to selected users or apps only, or has it in **Report-only** or **Off** state.
 
         ### Audit via PowerShell
 
@@ -571,21 +613,28 @@ queries:
         ```powershell
         Connect-MgGraph -Scopes "Policy.Read.All"
         Get-MgIdentityConditionalAccessPolicy |
-          Where-Object { $_.State -eq "enabled" -and $_.GrantControls.BuiltInControls -contains "block" }
+          Where-Object {
+            $_.State -eq "enabled" -and
+            $_.Conditions.Users.IncludeUsers -contains "All" -and
+            $_.Conditions.Applications.IncludeApplications -contains "All" -and
+            $_.Conditions.ClientAppTypes -contains "exchangeActiveSync" -and
+            $_.Conditions.ClientAppTypes -contains "other" -and
+            $_.GrantControls.BuiltInControls -contains "block"
+          }
         ```
 
-        A passing tenant returns at least one policy that blocks legacy authentication client app types. A failing tenant returns nothing.
+        A passing tenant returns at least one policy. A failing tenant returns nothing.
       remediation:
         - id: console
           desc: |
             **To set up a Conditional Access policy that blocks legacy authentication:**
 
             1. Sign in to the Microsoft Entra admin center at https://entra.microsoft.com.
-            2. Go to `Protection` > `Conditional Access` > `Policies`.
+            2. Go to `Entra ID` > `Conditional Access` > `Policies`.
             3. Select `New policy`.
             4. Configure the policy:
                - Under `Users`, include `All users`, and under `Exclude`, add at least one emergency access account or directory role. This is required as a best practice so administrators are not locked out.
-               - Under `Target resources`, choose `All cloud apps`.
+               - Under `Target resources`, include `All resources (formerly 'All cloud apps')`.
                - Under `Conditions` > `Client apps`, set `Configure` to `Yes` and select only `Exchange ActiveSync clients` and `Other clients`.
                - Under `Access controls` > `Grant`, select `Block access`.
             5. Set `Enable policy` to `On`.
@@ -660,14 +709,27 @@ queries:
     filters: |
       asset.platform == "microsoft365"
     mql: |
-      microsoft.security.latestSecureScores.controls.where(controlName == 'BlockLegacyAuthentication').all(score == 8)
+      microsoft.conditionalAccess.policies.where(
+        state == "enabled" &&
+        conditions != empty &&
+        conditions.users != empty &&
+        conditions.applications != empty &&
+        grantControls != empty
+      ).where(
+        grantControls.builtInControls.contains("block")
+      ).any(
+        conditions.users.includeUsers.contains("All") &&
+        conditions.applications.includeApplications.contains("All") &&
+        conditions.clientAppTypes.contains("exchangeActiveSync") &&
+        conditions.clientAppTypes.contains("other")
+      )
   - uid: mondoo-m365-security-enable-conditional-access-policies-to-block-legacy-authentication-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == 'azuread_conditional_access_policy')
     mql: |
       terraform.resources('azuread_conditional_access_policy').any(
         arguments['state'] == 'enabled' &&
-        blocks.where(type == 'conditions').any(arguments['client_app_types'] != empty) &&
+        blocks.where(type == 'conditions').any(arguments['client_app_types'].contains('exchangeActiveSync') && arguments['client_app_types'].contains('other')) &&
         blocks.where(type == 'grant_controls').any(arguments['built_in_controls'].contains('block'))
       )
   - uid: mondoo-m365-security-enable-conditional-access-policies-to-block-legacy-authentication-terraform-plan
@@ -676,7 +738,7 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == 'azuread_conditional_access_policy').any(
         change.after['state'] == 'enabled' &&
-        change.after['conditions'].any(_['client_app_types'] != empty) &&
+        change.after['conditions'].any(_['client_app_types'].contains('exchangeActiveSync') && _['client_app_types'].contains('other')) &&
         change.after['grant_controls'].any(_['built_in_controls'].contains('block'))
       )
   - uid: mondoo-m365-security-enable-conditional-access-policies-to-block-legacy-authentication-terraform-state
@@ -685,7 +747,7 @@ queries:
     mql: |
       terraform.state.resources.where(type == 'azuread_conditional_access_policy').any(
         values['state'] == 'enabled' &&
-        values['conditions'].any(_['client_app_types'] != empty) &&
+        values['conditions'].any(_['client_app_types'].contains('exchangeActiveSync') && _['client_app_types'].contains('other')) &&
         values['grant_controls'].any(_['built_in_controls'].contains('block'))
       )
   - uid: mondoo-m365-security-enable-conditional-access-policies-to-block-legacy-authentication-bicep
@@ -693,7 +755,8 @@ queries:
     mql: |
       bicep.resources.where(type == "Microsoft.Graph/conditionalAccessPolicies").any(
           body["state"] == "enabled" &&
-          body["conditions"]["clientAppTypes"] != empty &&
+          body["conditions"]["clientAppTypes"].any(_ == "exchangeActiveSync") &&
+          body["conditions"]["clientAppTypes"].any(_ == "other") &&
           body["grantControls"]["builtInControls"].any(_ == "block")
       )
   - uid: mondoo-m365-security-ensure-multifactor-authentication-is-enabled-for-all-users-in-administrative-roles
@@ -739,7 +802,7 @@ queries:
       desc: |
         This check verifies that holding a privileged directory role requires a second factor at sign-in.
 
-        Microsoft 365 creates no such requirement on its own. It is a Conditional Access policy, built in the Microsoft Entra admin center under **Protection > Conditional Access > Policies**, with the **Users** assignment targeting directory roles rather than individuals and **Grant** set to require multifactor authentication. Scoping by role rather than by name is the important part, because the policy then covers whoever holds the role next. This check requires an enabled policy of that shape. Provisioned as code, it is a conditional access policy resource whose user condition names the administrative role template identifiers.
+        Microsoft 365 creates no such requirement on its own. It is a Conditional Access policy, built in the Microsoft Entra admin center under **Entra ID > Conditional Access > Policies**, with the **Users** assignment targeting directory roles rather than individuals and **Grant** set to require multifactor authentication. Scoping by role rather than by name is the important part, because the policy then covers whoever holds the role next. This check requires an enabled policy, not one in report-only or off state, that includes the Global Administrator role, targets all resources, and requires multifactor authentication or an authentication strength. Provisioned as code, it is a conditional access policy resource whose user condition names the administrative role template identifiers.
 
         **Why this matters**
 
@@ -754,10 +817,10 @@ queries:
         ### Audit via Console
 
         1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
-        2. Go to **Protection** > **Conditional Access** > **Policies**.
-        3. Look for an enabled policy whose **Users** assignment targets administrative directory roles and whose **Grant** control requires multifactor authentication.
+        2. Go to **Entra ID** > **Conditional Access** > **Policies**.
+        3. Look for a policy whose **Users** assignment includes the **Global Administrator** directory role, that targets **All resources**, and whose **Grant** control requires multifactor authentication or an authentication strength.
 
-        A passing tenant has at least one enabled policy that requires MFA for administrators. A failing tenant has no such policy, or it is in **Report-only** or **Off** state.
+        A passing tenant has at least one such policy set to **On**. A failing tenant has no such policy, leaves Global Administrator out of the role list, or has it in **Report-only** or **Off** state.
 
         ### Audit via PowerShell
 
@@ -766,21 +829,26 @@ queries:
         ```powershell
         Connect-MgGraph -Scopes "Policy.Read.All"
         Get-MgIdentityConditionalAccessPolicy |
-          Where-Object { $_.State -eq "enabled" -and $_.Conditions.Users.IncludeRoles }
+          Where-Object {
+            $_.State -eq "enabled" -and
+            $_.Conditions.Users.IncludeRoles -contains "62e90394-69f5-4237-9190-012177145e10" -and
+            $_.Conditions.Applications.IncludeApplications -contains "All" -and
+            ($_.GrantControls.BuiltInControls -contains "mfa" -or $_.GrantControls.AuthenticationStrength.Id)
+          }
         ```
 
-        A passing tenant returns at least one policy scoped to administrative roles. A failing tenant returns nothing.
+        A passing tenant returns at least one policy. A failing tenant returns nothing. The identifier is the Global Administrator role template, which is the same in every tenant.
       remediation:
         - id: console
           desc: |
             **To enable multifactor authentication for administrators:**
 
             1. Sign in to the Microsoft Entra admin center at https://entra.microsoft.com.
-            2. Go to `Protection` > `Conditional Access` > `Policies`.
+            2. Go to `Entra ID` > `Conditional Access` > `Policies`.
             3. Select `New policy`.
             4. Go to `Users` > `Include` > `Select users and groups` and check `Directory roles`. At a minimum, select the directory roles listed below.
             5. Under `Users` > `Exclude`, add at least one emergency access account so a failed MFA rollout cannot lock all administrators out of the tenant.
-            6. Go to `Target resources` > `Cloud apps` > `Include` and select `All cloud apps`.
+            6. Go to `Target resources` > `Include` and select `All resources (formerly 'All cloud apps')`.
             7. Under `Access controls` > `Grant`, select `Grant access` and check `Require multifactor authentication`.
             8. Start the policy in `Report-only` mode, confirm in the sign-in logs that no administrator would be blocked, then set it to `On`.
             9. Select `Create`.
@@ -917,7 +985,19 @@ queries:
     filters: |
       asset.platform == "microsoft365"
     mql: |
-      microsoft.security.latestSecureScores.controls.where(controlName == 'AdminMFAV2').all(score == 10)
+      microsoft.conditionalAccess.policies.where(
+        state == "enabled" &&
+        conditions != empty &&
+        conditions.users != empty &&
+        conditions.applications != empty &&
+        grantControls != empty
+      ).where(
+        grantControls.builtInControls.contains("mfa") ||
+        grantControls.authenticationStrength != empty
+      ).any(
+        conditions.applications.includeApplications.contains("All") &&
+        conditions.users.includeRolesRefs.any(templateId == "62e90394-69f5-4237-9190-012177145e10")
+      )
   - uid: mondoo-m365-security-ensure-multifactor-authentication-is-enabled-for-all-users-in-administrative-roles-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == 'azuread_conditional_access_policy')
@@ -996,7 +1076,7 @@ queries:
       desc: |
         This check verifies that every account in the tenant, not only the administrators, must present a second factor.
 
-        The control is a Conditional Access policy created in the Microsoft Entra admin center under **Protection > Conditional Access > Policies**, with the **Users** assignment set to all users and **Grant** set to require multifactor authentication. A Microsoft 365 tenant with no such policy leaves ordinary accounts protected by a password alone. This check requires the policy to exist and be enabled. Declared as code, it is a conditional access policy resource including all users with a multifactor grant control.
+        The control is a Conditional Access policy created in the Microsoft Entra admin center under **Entra ID > Conditional Access > Policies**, with the **Users** assignment set to all users and **Grant** set to require multifactor authentication. A Microsoft 365 tenant with no such policy leaves ordinary accounts protected by a password alone. This check requires an enabled policy, not one in report-only or off state, that is assigned to all users and all resources and requires multifactor authentication or an authentication strength. Declared as code, it is a conditional access policy resource including all users with a multifactor grant control.
 
         **Why this matters**
 
@@ -1011,10 +1091,10 @@ queries:
         ### Audit via Console
 
         1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
-        2. Go to **Protection** > **Conditional Access** > **Policies**.
-        3. Look for an enabled policy whose **Users** assignment includes **All users** and whose **Grant** control requires multifactor authentication.
+        2. Go to **Entra ID** > **Conditional Access** > **Policies**.
+        3. Look for a policy whose **Users** assignment includes **All users**, that targets **All resources**, and whose **Grant** control requires multifactor authentication or an authentication strength.
 
-        A passing tenant has at least one enabled policy that requires MFA for all users. A failing tenant has no such policy, or it is in **Report-only** or **Off** state.
+        A passing tenant has at least one such policy set to **On**. A failing tenant has no such policy, scopes it to selected apps only, or has it in **Report-only** or **Off** state.
 
         ### Audit via PowerShell
 
@@ -1023,21 +1103,26 @@ queries:
         ```powershell
         Connect-MgGraph -Scopes "Policy.Read.All"
         Get-MgIdentityConditionalAccessPolicy |
-          Where-Object { $_.State -eq "enabled" -and $_.Conditions.Users.IncludeUsers -contains "All" }
+          Where-Object {
+            $_.State -eq "enabled" -and
+            $_.Conditions.Users.IncludeUsers -contains "All" -and
+            $_.Conditions.Applications.IncludeApplications -contains "All" -and
+            ($_.GrantControls.BuiltInControls -contains "mfa" -or $_.GrantControls.AuthenticationStrength.Id)
+          }
         ```
 
-        A passing tenant returns at least one policy scoped to all users. A failing tenant returns nothing.
+        A passing tenant returns at least one policy. A failing tenant returns nothing.
       remediation:
         - id: console
           desc: |
             **To enable multifactor authentication for all users:**
 
             1. Sign in to the Microsoft Entra admin center at https://entra.microsoft.com.
-            2. Go to `Protection` > `Conditional Access` > `Policies`.
+            2. Go to `Entra ID` > `Conditional Access` > `Policies`.
             3. Select `New policy`.
             4. Go to `Users` > `Include` and select `All users`.
             5. Under `Users` > `Exclude`, add at least one emergency access account so a failed MFA rollout cannot lock administrators out of the tenant.
-            6. Go to `Target resources` > `Cloud apps` > `Include` and select `All cloud apps`.
+            6. Go to `Target resources` > `Include` and select `All resources (formerly 'All cloud apps')`.
             7. Under `Access controls` > `Grant`, select `Grant access` and check `Require multifactor authentication`.
             8. Start the policy in `Report-only` mode, review the sign-in logs for unintended impact, then set it to `On`.
             9. Select `Create`.
@@ -1111,7 +1196,19 @@ queries:
     filters: |
       asset.platform == "microsoft365"
     mql: |
-      microsoft.security.latestSecureScores.controls.where(controlName == 'MFARegistrationV2').all(score == 9)
+      microsoft.conditionalAccess.policies.where(
+        state == "enabled" &&
+        conditions != empty &&
+        conditions.users != empty &&
+        conditions.applications != empty &&
+        grantControls != empty
+      ).where(
+        grantControls.builtInControls.contains("mfa") ||
+        grantControls.authenticationStrength != empty
+      ).any(
+        conditions.users.includeUsers.contains("All") &&
+        conditions.applications.includeApplications.contains("All")
+      )
   - uid: mondoo-m365-security-ensure-multifactor-authentication-is-enabled-for-all-users-in-all-roles-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == 'azuread_conditional_access_policy')
@@ -1174,7 +1271,7 @@ queries:
       desc: |
         This check verifies that the tenant has moved off the Microsoft-managed baseline and onto its own explicit access policies.
 
-        Security defaults is a single on or off switch in the Microsoft Entra admin center under **Identity > Overview > Properties > Manage security defaults**. It applies a fixed set of protections to everybody and cannot be scoped, tuned, or excepted. Critically, it is mutually exclusive with Conditional Access: while security defaults is on, the tenant cannot use Conditional Access policies at all. This check requires it to be disabled, which is what makes the policies the rest of this bundle looks for possible.
+        Security defaults is a single on or off switch in the Microsoft Entra admin center under **Entra ID > Overview > Properties > Manage security defaults**. It applies a fixed set of protections to everybody and cannot be scoped, tuned, or excepted. Critically, it is mutually exclusive with Conditional Access: while security defaults is on, the tenant cannot use Conditional Access policies at all. This check requires it to be disabled, which is what makes the policies the rest of this bundle looks for possible.
 
         **Why this matters**
 
@@ -1187,7 +1284,7 @@ queries:
         ### Audit via Console
 
         1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
-        2. Go to **Identity** > **Overview** > **Properties**.
+        2. Go to **Entra ID** > **Overview** > **Properties**.
         3. Select **Manage security defaults** and review the **Security defaults** setting.
 
         A passing tenant has security defaults set to **Disabled**, with Conditional Access policies providing equivalent or stronger controls. A failing tenant has security defaults **Enabled**.
@@ -1207,14 +1304,12 @@ queries:
           desc: |
             **To disable security defaults:**
 
-            1. Navigate to the `Microsoft Entra admin center` https://entra.microsoft.com.
-            2. Select to expand `Identity` select `Overview`
-            3. Select `Properties`.
-            4. Select `Manage security defaults`.
-            5. Set the `Security defaults` dropdown to `Disabled`.
-            6. Select Save.
+            **WARNING:** Disabling security defaults removes the tenant-wide multifactor requirement and the legacy authentication block immediately. Create and enable the Conditional Access policies that replace them first, at minimum one requiring multifactor authentication for all users and one blocking legacy authentication, both of which companion checks in this policy verify.
 
-            **WARNING:** It is recommended not to disable security defaults until you are ready to implement conditional access rules in the benchmark. Rules such as requiring MFA for all users and blocking legacy protocols are required in CA in order to make up the gap by disabling defaults. Plan accordingly. See the reference section for more details on what coverage Security Defaults provide.
+            1. Sign in to the Microsoft Entra admin center at https://entra.microsoft.com as at least a Conditional Access Administrator.
+            2. Go to `Entra ID` > `Overview` > `Properties`.
+            3. Select `Manage security defaults`.
+            4. Set `Security defaults` to `Disabled`, choose a reason, and select `Save`.
         - id: powershell
           desc: |
             **Using Microsoft Graph PowerShell**
@@ -1266,7 +1361,7 @@ queries:
       desc: |
         This check verifies that the Global Administrator role is held by a small named group, between two and four accounts.
 
-        Global Administrator is the unrestricted role in Microsoft 365. Microsoft imposes no upper or lower bound on how many accounts hold it, so the count drifts in both directions. You review the assignments in the Microsoft Entra admin center under **Identity > Roles & admins > Roles**, and change them there or from the Microsoft 365 admin center under **Users > Active Users** using **Manage roles**. This check requires the number of assignments to fall between two and four.
+        Global Administrator is the unrestricted role in Microsoft 365. Microsoft imposes no upper or lower bound on how many accounts hold it, so the count drifts in both directions. You review the assignments in the Microsoft Entra admin center under **Entra ID > Roles & admins**, and change them there or from the Microsoft 365 admin center under **Users > Active Users** using **Manage roles**. This check requires the number of assignments to fall between two and four.
 
         **Why this matters**
 
@@ -1281,7 +1376,7 @@ queries:
         ### Audit via Console
 
         1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
-        2. Go to **Identity** > **Roles & admins** > **Roles**.
+        2. Go to **Entra ID** > **Roles & admins**.
         3. Select the **Global Administrator** role and review its **Assignments**.
 
         A passing tenant has between two and four accounts assigned the Global Administrator role. A failing tenant has fewer than two or more than four.
@@ -1305,18 +1400,19 @@ queries:
             1. Navigate to the `Microsoft 365 admin center` https://admin.microsoft.com
             2. Select `Users` > `Active Users`.
             3. In the `Search` field enter the name of the user to be made a Global Administrator.
-            4. To create a new Global Admin:
-              1. Select the user's name.
-              2. A window will appear to the right.
-              3. Select `Manage roles`.
-              4. Select `Admin center access`.
-              5. Check `Global Administrator`.
-              6. Select `Save changes`.
-            5. To remove Global Admins:
-              1. Select User.
-              2. Under `Roles` select `Manage roles`
-              3. De-Select the appropriate role.
-              4. Select `Save changes`.
+            4. To add a Global Administrator:
+               1. Select the user's name to open the details pane.
+               2. Select `Manage roles`.
+               3. Select `Admin center access`.
+               4. Check `Global Administrator`.
+               5. Select `Save changes`.
+            5. To remove a Global Administrator:
+               1. Select the user's name.
+               2. Under `Roles`, select `Manage roles`.
+               3. Clear `Global Administrator` and assign a narrower role if the user still needs administrative access.
+               4. Select `Save changes`.
+
+            This check counts active assignments only. An account that holds Global Administrator only as a Privileged Identity Management eligible assignment is not counted.
         - id: powershell
           desc: |
             **Using Microsoft Graph PowerShell**
@@ -1411,7 +1507,7 @@ queries:
       desc: |
         This check verifies that managed Android devices are required to encrypt their storage.
 
-        The requirement is expressed in a device configuration profile in the Microsoft Intune admin center under **Devices > Configuration**, where a device restrictions profile for the Android platform carries the `storageRequireDeviceEncryption` setting. Intune does not turn it on in a newly created profile, so it has to be set deliberately and the profile assigned to the device groups that need it. This check requires every Android device configuration profile to require storage encryption.
+        The requirement is expressed in a device configuration profile in the Microsoft Intune admin center under **Devices > Configuration**, where a device restrictions profile for the Android platform carries the `storageRequireDeviceEncryption` setting. Intune does not turn it on in a newly created profile, so it has to be set deliberately and the profile assigned to the device groups that need it. This check evaluates the Android device administrator device restrictions profiles, the only Android profile type with a storage encryption setting, and requires every one of them to require encryption. Android Enterprise profiles have no such setting and are not evaluated, and a tenant with no device administrator profiles passes.
 
         **Why this matters**
 
@@ -1421,15 +1517,16 @@ queries:
 
         Encryption ties the data to a key the lock credential releases, so the same physical access yields nothing readable.
 
-        Android Enterprise work profile and fully managed enrollments enforce storage encryption on their own, so provisioning through Android Enterprise satisfies the requirement without a separate setting. The legacy Android device administrator path is deprecated and winding down in Intune, so treat any remaining profiles there as a migration task rather than a place to add new configuration.
+        Android Enterprise work profile and fully managed enrollments enforce storage encryption on their own, so provisioning through Android Enterprise satisfies the requirement without a separate setting. Intune ended support for Android device administrator management on devices with Google Mobile Services at the end of 2024, so treat any remaining device administrator profiles as a migration task rather than a place to add new configuration.
       audit: |
         ### Audit via Console
 
         1. Sign in to the Microsoft Intune admin center at `https://intune.microsoft.com`.
         2. Go to **Devices** > **Configuration**.
-        3. Open each device configuration profile and confirm that storage encryption is required.
+        3. Filter the list to the **Android device administrator** platform and open each **Device restrictions** profile.
+        4. In the **Password** section, confirm that **Encryption** is set to **Require**.
 
-        A passing tenant has every applicable device configuration profile requiring device storage encryption. A failing tenant has a profile that does not require encryption.
+        A passing tenant has every Android device administrator device restrictions profile requiring encryption. A failing tenant has one that does not.
 
         ### Audit via PowerShell
 
@@ -1437,31 +1534,30 @@ queries:
 
         ```powershell
         Connect-MgGraph -Scopes "DeviceManagementConfiguration.Read.All"
-        Get-MgDeviceManagementDeviceConfiguration
+        Get-MgDeviceManagementDeviceConfiguration |
+          Where-Object { $_.AdditionalProperties."@odata.type" -eq "#microsoft.graph.androidGeneralDeviceConfiguration" } |
+          Select-Object DisplayName, @{n="StorageRequireDeviceEncryption";e={$_.AdditionalProperties.storageRequireDeviceEncryption}}
         ```
 
-        A passing tenant returns profiles that require storage encryption. A failing tenant returns a profile with encryption not required.
+        A passing tenant returns `True` for every profile. A failing tenant returns `False` or an empty value for one of them.
       remediation:
         - id: console
           desc: |
             **Using the Microsoft Intune admin center:**
 
-            Android Enterprise is the recommended enrollment model. Android Enterprise work profile and fully managed devices enforce storage encryption automatically, so provisioning these devices through Android Enterprise satisfies the encryption requirement without a separate device restrictions setting.
+            This check fails on an Android device administrator device restrictions profile that does not require encryption. There are two ways to close it.
+
+            **Fix the existing device administrator profile:**
 
             1. Sign in to the Microsoft Intune admin center at https://intune.microsoft.com.
             2. Go to `Devices` > `Manage devices` > `Configuration`.
-            3. Select `Create` > `New policy`.
-            4. For `Platform`, select `Android Enterprise`. For `Profile type`, select `Device restrictions` for the relevant management mode such as `Fully Managed, Dedicated, and Corporate-Owned Work Profile`.
-            5. Confirm the device password and encryption settings enforce encryption, then assign the profile to the appropriate device groups and select `Create`.
+            3. Open the failing `Android device administrator` profile and select `Properties` > `Configuration settings` > `Edit`.
+            4. In the `Password` section, set `Encryption` to `Require`.
+            5. Select `Review + save`.
 
-            **Legacy fallback using Android device administrator:**
+            **Retire the profile after moving devices to Android Enterprise:**
 
-            Microsoft has deprecated Android device administrator management, and Intune has wound down support for device administrator enrollment. Use this path only for remaining device administrator profiles that have not yet migrated to Android Enterprise.
-
-            1. In `Devices` > `Manage devices` > `Configuration`, select `Create` > `New policy`.
-            2. For `Platform`, select `Android device administrator`. For `Profile type`, select `Device restrictions`.
-            3. In the `Password` section, set `Encryption` to `Require`.
-            4. Assign the profile to the appropriate device groups and select `Create`.
+            Intune ended support for device administrator management on devices with Google Mobile Services at the end of 2024. Android Enterprise fully managed, dedicated, and work profile devices enforce storage encryption on their own, with no profile setting to configure. Once the devices a device administrator profile targeted are enrolled through Android Enterprise, delete the old profile so it no longer fails this check.
         - id: powershell
           desc: |
             **Using Microsoft Graph PowerShell**
@@ -1677,12 +1773,12 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-8
       compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
-      microsoft.domains.all(passwordValidityPeriodInDays == 2147483647)
+      microsoft.domains.where(isVerified == true && authenticationType == "Managed").all(passwordValidityPeriodInDays == 2147483647)
     docs:
       desc: |
         This check verifies that user passwords are not forced to rotate on a schedule.
 
-        The setting lives in the Microsoft 365 admin center under **Settings > Org settings > Security & privacy > Password expiration policy**, where selecting the never expire option is what this check requires. Microsoft records it per domain as a `passwordValidityPeriodInDays` value of `2147483647`, the sentinel meaning no expiry. Tenants that have not changed it may still carry the older default of 90 days.
+        The setting lives in the Microsoft 365 admin center under **Settings > Org settings > Security & privacy > Password expiration policy**, where selecting the never expire option is what this check requires. Microsoft records it per domain as a `passwordValidityPeriodInDays` value of `2147483647`, the sentinel meaning no expiry. This check evaluates verified domains that Microsoft Entra ID authenticates itself. Federated domains are skipped because their passwords are governed by the federated identity provider. Tenants that have not changed it may still carry the older default of 90 days.
 
         **Why this matters**
 
@@ -1708,10 +1804,10 @@ queries:
 
         ```powershell
         Connect-MgGraph -Scopes "Domain.Read.All"
-        Get-MgDomain | Select-Object Id, PasswordValidityPeriodInDays
+        Get-MgDomain | Select-Object Id, IsVerified, AuthenticationType, PasswordValidityPeriodInDays
         ```
 
-        A passing tenant returns `PasswordValidityPeriodInDays : 2147483647` for every domain. A failing tenant returns a smaller value.
+        A passing tenant returns `PasswordValidityPeriodInDays : 2147483647` for every verified domain whose `AuthenticationType` is `Managed`. A failing tenant returns a smaller value for one of them.
       remediation:
         - id: console
           desc: |
@@ -1737,8 +1833,8 @@ queries:
             2. Set passwords to never expire for each domain:
 
             ```powershell
-            # Get all domains
-            $domains = Get-MgDomain
+            # Federated domains take their password policy from the identity provider and cannot be updated here
+            $domains = Get-MgDomain | Where-Object { $_.IsVerified -and $_.AuthenticationType -eq "Managed" }
 
             # Set password policy for each domain
             foreach ($domain in $domains) {
@@ -1935,7 +2031,7 @@ queries:
       desc: |
         This check verifies that ordinary users cannot register applications in the tenant directory.
 
-        Application registration is governed by the tenant authorization policy, exposed in the Microsoft Entra admin center under **Identity > Users > User settings** as the users can register applications option. Microsoft ships it enabled, so any account in the tenant can create an application identity that reaches Microsoft 365 data. This check requires the setting to be off, recorded on the default user role as `allowedToCreateApps` set to `false`.
+        Application registration is governed by the tenant authorization policy, exposed in the Microsoft Entra admin center under **Entra ID > Users > User settings** as the users can register applications option. Microsoft ships it enabled, so any account in the tenant can create an application identity that reaches Microsoft 365 data. This check requires the setting to be off, recorded on the default user role as `allowedToCreateApps` set to `false`.
 
         **Why this matters**
 
@@ -1950,7 +2046,7 @@ queries:
         ### Audit via Console
 
         1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
-        2. Go to **Identity** > **Users** > **User settings**.
+        2. Go to **Entra ID** > **Users** > **User settings**.
         3. Review the **Users can register applications** setting.
 
         A passing tenant has **Users can register applications** set to **No**. A failing tenant has it set to **Yes**.
@@ -1971,7 +2067,7 @@ queries:
             **Using the Microsoft Entra admin center:**
 
             1. Sign in to the Microsoft Entra admin center at https://entra.microsoft.com.
-            2. Go to `Identity` > `Users` > `User settings`.
+            2. Go to `Entra ID` > `Users` > `User settings`.
             3. Set `Users can register applications` to `No`.
             4. Select `Save`.
         - id: powershell
@@ -2120,12 +2216,17 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-8-4
       compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: |
-      ms365.exchangeonline.safeLinksPolicies.length > 0
+      ms365.exchangeonline.safeLinksPolicies.any(
+        enableSafeLinksForEmail == true &&
+        enableForInternalSenders == true &&
+        scanUrls == true &&
+        allowClickThrough == false
+      )
     docs:
       desc: |
         This check verifies that URLs in mail and documents are checked at the moment a user clicks them.
 
-        Safe Links is the Microsoft Defender for Office 365 feature that rewrites links so they resolve through Microsoft's checking service, evaluating the destination when the click happens rather than when the message arrived. Policies are created in the Microsoft Defender portal under **Email & collaboration > Policies & rules > Threat policies > Safe Links**. A new tenant has none, so links reach users unexamined. This check requires at least one Safe Links policy to be configured.
+        Safe Links is the Microsoft Defender for Office 365 feature that rewrites links so they resolve through Microsoft's checking service, evaluating the destination when the click happens rather than when the message arrived. Policies are created in the Microsoft Defender portal under **Email & collaboration > Policies & rules > Threat policies > Safe Links**, or applied through the Standard and Strict preset security policies. Every tenant licensed for Defender for Office 365 also carries a policy named Built-In Protection Policy, which rewrites links in inbound mail but lets users click through a block and leaves internal mail unchecked. This check requires at least one Safe Links policy that checks links in email, applies to messages sent inside the organization, scans URLs before the message is delivered, and does not let users click through to a blocked URL. The built-in policy does not meet that bar; the Standard and Strict presets do. The check reads the policy settings only and does not confirm that a rule assigns the policy to recipients.
 
         **Why this matters**
 
@@ -2143,9 +2244,9 @@ queries:
 
         1. Sign in to the Microsoft Defender portal at `https://security.microsoft.com`.
         2. Go to **Email & collaboration** > **Policies & rules** > **Threat policies** > **Safe Links**.
-        3. Review the configured Safe Links policies.
+        3. Open each policy other than **Built-In Protection Policy** and review its **URL & click protection settings**.
 
-        A passing tenant has at least one Safe Links policy configured. A failing tenant has none.
+        A passing tenant has at least one policy with Safe Links on for email, **Apply Safe Links to email messages sent within the organization** selected, **Apply real-time URL scanning for suspicious links and links that point to files** selected, and **Let users click through to the original URL** cleared. A failing tenant has no such policy.
 
         ### Audit via PowerShell
 
@@ -2153,7 +2254,9 @@ queries:
 
         ```powershell
         Connect-ExchangeOnline
-        Get-SafeLinksPolicy
+        Get-SafeLinksPolicy |
+          Where-Object { $_.EnableSafeLinksForEmail -and $_.EnableForInternalSenders -and $_.ScanUrls -and -not $_.AllowClickThrough } |
+          Select-Object Name
         ```
 
         A passing tenant returns at least one policy. A failing tenant returns nothing.
@@ -2171,7 +2274,8 @@ queries:
                - Under **Users and domains**, add all users or specific groups.
                - Under **URL & click protection settings**, enable **On: Safe Links checks a list of known, malicious links when users click links in email**.
                - Enable **Apply Safe Links to email messages sent within the organization**.
-               - Enable **Do not let users click through to the original URL**.
+               - Enable **Apply real-time URL scanning for suspicious links and links that point to files**.
+               - Clear **Let users click through to the original URL**.
             6. Click **Submit** to save the policy.
         - id: powershell
           desc: |
@@ -2187,6 +2291,9 @@ queries:
               -EnableSafeLinksForEmail $true `
               -EnableSafeLinksForTeams $true `
               -EnableSafeLinksForOffice $true `
+              -EnableForInternalSenders $true `
+              -ScanUrls $true `
+              -DeliverMessageAfterScan $true `
               -TrackClicks $true `
               -AllowClickThrough $false
 
@@ -2195,6 +2302,8 @@ queries:
               -SafeLinksPolicy "Organization Safe Links Policy" `
               -RecipientDomainIs "example.com"
             ```
+
+            A policy without a rule applies to nobody, so create both. Turning on the Standard or Strict preset security policy is an alternative that produces a passing Safe Links policy and assigns it in one step.
         # No Terraform remediation: Exchange Online Safe Links policies have no Terraform provider.
     refs:
       - url: https://learn.microsoft.com/en-us/microsoft-365/security/office-365-security/safe-links-about
@@ -2223,12 +2332,15 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-8-4
       compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: |
-      ms365.exchangeonline.safeAttachmentPolicies.length > 0
+      ms365.exchangeonline.safeAttachmentPolicies.any(
+        enable == true &&
+        action == /^(Block|DynamicDelivery)$/
+      )
     docs:
       desc: |
         This check verifies that email attachments are detonated in a sandbox before they reach a mailbox.
 
-        Safe Attachments is the Microsoft Defender for Office 365 feature that opens each attachment in an isolated virtual environment and watches what it does, rather than comparing it against known signatures. Policies are created in the Microsoft Defender portal under **Email & collaboration > Policies & rules > Threat policies > Safe Attachments**, where the unknown malware response decides whether a suspicious file is blocked or the message body is delivered while scanning continues. A new tenant has none. This check requires at least one Safe Attachments policy to be configured.
+        Safe Attachments is the Microsoft Defender for Office 365 feature that opens each attachment in an isolated virtual environment and watches what it does, rather than comparing it against known signatures. Policies are created in the Microsoft Defender portal under **Email & collaboration > Policies & rules > Threat policies > Safe Attachments**, where the unknown malware response decides whether a suspicious file is blocked or the message body is delivered while scanning continues. This check requires at least one enabled Safe Attachments policy whose response is **Block** or **Dynamic Delivery**. A policy set to **Off** or **Monitor** delivers the attachment regardless of the verdict and does not count. In a tenant licensed for Defender for Office 365, the Built-In Protection Policy already blocks and satisfies the check unless it has been changed. The check reads the policy settings only and does not confirm that a rule assigns the policy to recipients.
 
         **Why this matters**
 
@@ -2244,9 +2356,9 @@ queries:
 
         1. Sign in to the Microsoft Defender portal at `https://security.microsoft.com`.
         2. Go to **Email & collaboration** > **Policies & rules** > **Threat policies** > **Safe Attachments**.
-        3. Review the configured Safe Attachments policies.
+        3. Open each policy and review **Safe Attachments unknown malware response**.
 
-        A passing tenant has at least one Safe Attachments policy configured. A failing tenant has none.
+        A passing tenant has at least one policy set to **Block** or **Dynamic Delivery**. A failing tenant has no policy, or only policies set to **Off** or **Monitor**.
 
         ### Audit via PowerShell
 
@@ -2254,10 +2366,10 @@ queries:
 
         ```powershell
         Connect-ExchangeOnline
-        Get-SafeAttachmentPolicy
+        Get-SafeAttachmentPolicy | Select-Object Name, Enable, Action
         ```
 
-        A passing tenant returns at least one policy. A failing tenant returns nothing.
+        A passing tenant returns at least one policy with `Enable : True` and `Action` of `Block` or `DynamicDelivery`. A failing tenant returns none.
       remediation:
         - id: console
           desc: |
@@ -2321,16 +2433,16 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: |
       ms365.exchangeonline.antiPhishPolicies.any(
-        enabled == true &&
         enableMailboxIntelligence == true &&
         enableMailboxIntelligenceProtection == true &&
+        mailboxIntelligenceProtectionAction == /^(MoveToJmf|Quarantine|Delete)$/ &&
         enableSpoofIntelligence == true
       )
     docs:
       desc: |
         This check verifies that impersonation protection is enabled and actually configured to act.
 
-        An anti-phishing policy in Microsoft Defender for Office 365 carries several distinct protections, and this check requires an enabled policy with three of them on: spoof intelligence, which analyzes sending infrastructure to identify mail falsely claiming a legitimate domain; mailbox intelligence, which learns each user's normal correspondents; and mailbox intelligence protection, which is what allows action to be taken on the result. You configure them in the Microsoft Defender portal under **Email & collaboration > Policies & rules > Threat policies > Anti-phishing**.
+        An anti-phishing policy in Microsoft Defender for Office 365 carries several distinct protections, and this check requires a policy with three of them on: spoof intelligence, which analyzes sending infrastructure to identify mail falsely claiming a legitimate domain; mailbox intelligence, which learns each user's normal correspondents; and mailbox intelligence protection, which is what allows action to be taken on the result. The action for mailbox intelligence protection must also move the message to Junk Email, quarantine it, or delete it. The default policy, Office365 AntiPhish Default, has mailbox intelligence protection off with no action, so it fails until it is edited. You configure them in the Microsoft Defender portal under **Email & collaboration > Policies & rules > Threat policies > Anti-phishing**.
 
         **Why this matters**
 
@@ -2346,9 +2458,9 @@ queries:
 
         1. Sign in to the Microsoft Defender portal at `https://security.microsoft.com`.
         2. Go to **Email & collaboration** > **Policies & rules** > **Threat policies** > **Anti-phishing**.
-        3. Review the configured anti-phishing policies.
+        3. Open each policy and review **Phishing threshold & protection** and **Actions**.
 
-        A passing tenant has at least one anti-phishing policy configured. A failing tenant has none.
+        A passing tenant has at least one policy with **Enable mailbox intelligence**, **Enable intelligence for impersonation protection**, and **Enable spoof intelligence** selected, and **If mailbox intelligence detects an impersonated user** set to move the message to Junk Email, quarantine it, or delete it. A failing tenant has no such policy. Every tenant has the default policy, so its presence alone proves nothing.
 
         ### Audit via PowerShell
 
@@ -2356,10 +2468,11 @@ queries:
 
         ```powershell
         Connect-ExchangeOnline
-        Get-AntiPhishPolicy
+        Get-AntiPhishPolicy |
+          Select-Object Name, EnableMailboxIntelligence, EnableMailboxIntelligenceProtection, MailboxIntelligenceProtectionAction, EnableSpoofIntelligence
         ```
 
-        A passing tenant returns at least one policy. A failing tenant returns nothing.
+        A passing tenant returns at least one policy with all three `Enable` values `True` and `MailboxIntelligenceProtectionAction` set to `MoveToJmf`, `Quarantine`, or `Delete`. A failing tenant has every policy at `NoAction` or with one of the protections off.
       remediation:
         - id: console
           desc: |
@@ -2368,14 +2481,14 @@ queries:
             1. Navigate to the [Microsoft Defender portal](https://security.microsoft.com).
             2. Go to **Email & collaboration** > **Policies & rules** > **Threat policies**.
             3. Select **Anti-phishing**.
-            4. Click **Create** to create a new policy (or edit the default policy).
+            4. Click **Create** to create a new policy, or open **Office365 AntiPhish Default** to edit the policy that already applies to every recipient.
             5. Configure the policy:
                - Under **Users and domains**, add users and domains to protect.
                - Under **Phishing threshold & protection**, set the phishing email threshold.
                - Enable **User impersonation protection** and add high-value users (executives, finance).
                - Enable **Domain impersonation protection** and add trusted domains.
-               - Enable **Mailbox intelligence** and **Intelligence for impersonation protection**.
-            6. Configure actions for detected impersonation attempts (quarantine recommended).
+               - Enable **Mailbox intelligence**, **Intelligence for impersonation protection**, and **Spoof intelligence**.
+            6. Under **Actions**, set **If mailbox intelligence detects an impersonated user** to **Move the message to the recipients' Junk Email folders** or **Quarantine the message**. Leaving it at **Don't apply any action** fails this check.
             7. Click **Submit** to save the policy.
         - id: powershell
           desc: |
@@ -2393,7 +2506,7 @@ queries:
               -MailboxIntelligenceProtectionAction Quarantine `
               -EnableSpoofIntelligence $true `
               -EnableFirstContactSafetyTips $true `
-              -PhishThresholdLevel 2
+              -PhishThresholdLevel 3
 
             # Create an anti-phishing rule to apply the policy
             New-AntiPhishRule -Name "Organization Anti-Phishing Rule" `
@@ -2430,7 +2543,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-2-1
     mql: |
-      ms365.sharepointonline.tenantConfiguration.sharingCapability != "ExternalUserAndGuestSharing"
+      ms365.sharepointonline.tenantConfiguration.sharingCapability == /^(ExternalUserSharingOnly|ExistingExternalUserSharingOnly|Disabled)$/
     docs:
       desc: |
         This check verifies that SharePoint and OneDrive do not permit anonymous sharing links.
@@ -2634,7 +2747,7 @@ queries:
 
         Deliberate insider activity disappears the same way, since a person copying files or reading colleagues' mailboxes leaves no trace to review.
 
-        Enabling it is a single change, and the log starts from that moment rather than backfilling, so turning it on today does nothing for what happened yesterday. Allow up to 60 minutes for the change to take effect across all workloads, and pair the log with retention and alerting appropriate to your licensing, since a record nobody queries is only useful after the fact.
+        Microsoft turns auditing on by default for most tenants, but not for Business Basic, Business Standard, and Business Premium subscriptions or for unmanaged trial tenants. Enabling it is a single change, and the log starts from that moment rather than backfilling, so turning it on today does nothing for what happened yesterday. Allow up to 60 minutes for the change to take effect across all workloads, and pair the log with retention and alerting appropriate to your licensing, since a record nobody queries is only useful after the fact.
       audit: |
         ### Audit via Console
 
@@ -2667,7 +2780,7 @@ queries:
           desc: |
             **Using Exchange Online PowerShell**
 
-            Requires the ExchangeOnlineManagement module and an Exchange Administrator role.
+            Requires the ExchangeOnlineManagement module and the Audit Logs role in Exchange Online, which the Organization Management and Compliance Management role groups hold by default.
 
             ```powershell
             Connect-ExchangeOnline
@@ -2711,7 +2824,7 @@ queries:
       desc: |
         This check verifies that mailbox rules cannot silently relay mail out of the organization.
 
-        Microsoft 365 permits automatic forwarding out of the box, and two settings govern it that both have to be closed. The outbound spam filter policies in the Microsoft Defender portal under **Email & collaboration > Policies & rules > Threat policies > Anti-spam** carry an automatic forwarding control that must be set to off, and each entry under **Mail flow > Remote domains** in the Exchange admin center carries an allow automatic forwarding option that must be cleared. This check requires forwarding to be off across the outbound spam policies and disabled on the remote domains.
+        Two settings govern it. The outbound spam filter policies in the Microsoft Defender portal under **Email & collaboration > Policies & rules > Threat policies > Anti-spam** carry an automatic forwarding control, and each entry under **Mail flow > Remote domains** in the Exchange admin center carries an allow automatic forwarding option. When one of them blocks forwarding, the block wins. The default for the outbound spam control is **Automatic - System-controlled**, which since 2021 means off for new tenants but can still mean on for an older tenant that was relying on it, and the default for remote domains is to allow forwarding. This check requires both layers to be closed explicitly: every outbound spam policy set to **Off**, and automatic forwarding disabled on every remote domain.
 
         **Why this matters**
 
@@ -2731,7 +2844,9 @@ queries:
         2. Go to **Email & collaboration** > **Policies & rules** > **Threat policies** > **Anti-spam**.
         3. Open each outbound spam policy and review the automatic forwarding setting.
 
-        A passing tenant has every outbound spam policy set to **Off - Forwarding is disabled**. A failing tenant has policies set to **Automatic** or **On**.
+        4. In the Exchange admin center at `https://admin.exchange.microsoft.com`, go to **Mail flow** > **Remote domains** and open each entry.
+
+        A passing tenant has every outbound spam policy set to **Off - Forwarding is disabled** and **Allow automatic forwarding** cleared on every remote domain. A failing tenant has a policy set to **Automatic - System-controlled** or **On**, or a remote domain that allows automatic forwarding.
 
         ### Audit via PowerShell
 
@@ -2740,10 +2855,10 @@ queries:
         ```powershell
         Connect-ExchangeOnline
         Get-HostedOutboundSpamFilterPolicy | Select-Object Name, AutoForwardingMode
-        Get-RemoteDomain Default | Select-Object DomainName, AutoForwardEnabled
+        Get-RemoteDomain | Select-Object DomainName, AutoForwardEnabled
         ```
 
-        A passing tenant returns `AutoForwardingMode : Off` for every outbound spam policy and `AutoForwardEnabled : False` for the default remote domain. A failing tenant returns `Automatic`, `On`, or `True`.
+        A passing tenant returns `AutoForwardingMode : Off` for every outbound spam policy and `AutoForwardEnabled : False` for every remote domain. A failing tenant returns `Automatic` or `On` for a policy, or `True` for a remote domain.
       remediation:
         - id: console
           desc: |
@@ -2806,12 +2921,13 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-8-1
       compliance/vda-isa-5: vda-isa-5-1-3-3
     mql: |
-      microsoft.policies.authorizationPolicy.defaultUserRolePermissions.permissionGrantPoliciesAssigned == empty
+      microsoft.policies.authorizationPolicy.defaultUserRolePermissions.permissionGrantPoliciesAssigned == empty ||
+      microsoft.policies.authorizationPolicy.defaultUserRolePermissions.permissionGrantPoliciesAssigned.none(_ == /^ManagePermissionGrantsForSelf\./i)
     docs:
       desc: |
         This check verifies that users cannot grant an application access to organizational data on their own authority.
 
-        Consent settings live in the Microsoft Entra admin center under **Identity > Applications > Enterprise applications > Consent and permissions > User consent settings**. Choosing not to allow user consent removes the permission grant policies from the default user role, which is the state this check requires, and routes every request for application access to an administrator instead.
+        Consent settings live in the Microsoft Entra admin center under **Entra ID > Enterprise apps > Consent and permissions > User consent settings**. Choosing not to allow user consent removes every `ManagePermissionGrantsForSelf` permission grant policy from the default user role, which is the state this check requires, and routes every request for application access to an administrator instead. Entries named `ManagePermissionGrantsForOwnedResource`, which let owners grant resource-specific consent for Teams and other resources they own, are a separate control and do not affect the result.
 
         **Why this matters**
 
@@ -2826,7 +2942,7 @@ queries:
         ### Audit via Console
 
         1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
-        2. Go to **Identity** > **Applications** > **Enterprise applications** > **Consent and permissions** > **User consent settings**.
+        2. Go to **Entra ID** > **Enterprise apps** > **Consent and permissions** > **User consent settings**.
         3. Review the **User consent for applications** setting.
 
         A passing tenant has user consent set to **Do not allow user consent**. A failing tenant allows users to consent for some or all applications.
@@ -2840,14 +2956,14 @@ queries:
         (Get-MgPolicyAuthorizationPolicy).DefaultUserRolePermissions.PermissionGrantPoliciesAssigned
         ```
 
-        A passing tenant returns no permission grant policies. A failing tenant returns one or more `ManagePermissionGrantsForSelf.*` policies.
+        A passing tenant returns no `ManagePermissionGrantsForSelf.*` policies. `ManagePermissionGrantsForOwnedResource.*` entries may remain. A failing tenant returns one or more `ManagePermissionGrantsForSelf.*` policies.
       remediation:
         - id: console
           desc: |
             **To restrict user consent using the Microsoft Entra admin center:**
 
             1. Sign in to the [Microsoft Entra admin center](https://entra.microsoft.com).
-            2. Go to **Identity** > **Applications** > **Enterprise applications** > **Consent and permissions** > **User consent settings**.
+            2. Go to **Entra ID** > **Enterprise apps** > **Consent and permissions** > **User consent settings**.
             3. Under **User consent for applications**, select **Do not allow user consent**.
             4. Save the change.
             5. Optionally, configure the admin consent workflow so users can request approval for the apps they need.
@@ -2858,14 +2974,19 @@ queries:
             ```powershell
             Connect-MgGraph -Scopes "Policy.ReadWrite.Authorization"
 
-            # Remove all permission grant policies from the default user role
+            # Keep the owner consent policies and drop only the user consent ones
+            $current = (Get-MgPolicyAuthorizationPolicy).DefaultUserRolePermissions.PermissionGrantPoliciesAssigned
+            $keep = @($current | Where-Object { $_ -notlike "ManagePermissionGrantsForSelf.*" })
+
             $params = @{
                 defaultUserRolePermissions = @{
-                    permissionGrantPoliciesAssigned = @()
+                    permissionGrantPoliciesAssigned = $keep
                 }
             }
             Update-MgPolicyAuthorizationPolicy -BodyParameter $params
             ```
+
+            Setting the list to empty also removes the `ManagePermissionGrantsForOwnedResource.*` entries, which turns off resource-specific consent for Teams owners. The filter above leaves those in place.
         # No Terraform remediation: the tenant authorization policy has no resource in the azuread Terraform provider.
     refs:
       - url: https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-user-consent
@@ -2894,12 +3015,12 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-3-3
       compliance/vda-isa-5: vda-isa-5-4-2-1
     mql: |
-      microsoft.identityAndAccess.roleEligibilityScheduleInstances != empty
+      microsoft.identityAndAccess.roleEligibilityScheduleInstances.any(roleDefinition.templateId == "62e90394-69f5-4237-9190-012177145e10")
     docs:
       desc: |
         This check verifies that privileged roles are held as activatable eligibility rather than as permanent standing access.
 
-        Microsoft Entra Privileged Identity Management changes the shape of an administrative assignment. Instead of holding a role continuously, a user is made eligible for it and must activate it for a bounded window, optionally passing a multifactor prompt, supplying a justification, and waiting for approval. You configure this in the Microsoft Entra admin center under **Identity governance > Privileged Identity Management > Microsoft Entra roles**, adding assignments with the type set to eligible and setting the activation requirements per role. This check requires at least one eligible role assignment to exist in the tenant. The feature needs Microsoft Entra ID P2 or Microsoft Entra ID Governance licensing.
+        Microsoft Entra Privileged Identity Management changes the shape of an administrative assignment. Instead of holding a role continuously, a user is made eligible for it and must activate it for a bounded window, optionally passing a multifactor prompt, supplying a justification, and waiting for approval. You configure this in the Microsoft Entra admin center under **ID Governance > Privileged Identity Management > Microsoft Entra roles**, adding assignments with the type set to eligible and setting the activation requirements per role. This check requires at least one eligible assignment to the Global Administrator role. It does not confirm that standing assignments were removed. The feature needs Microsoft Entra ID P2 or Microsoft Entra ID Governance licensing.
 
         **Why this matters**
 
@@ -2914,10 +3035,10 @@ queries:
         ### Audit via Console
 
         1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
-        2. Go to **Identity governance** > **Privileged Identity Management** > **Microsoft Entra roles** > **Assignments**.
+        2. Go to **ID Governance** > **Privileged Identity Management** > **Microsoft Entra roles** > **Assignments**.
         3. Review the **Eligible assignments** tab for privileged roles such as Global Administrator.
 
-        A passing tenant manages privileged roles through eligible assignments. A failing tenant has no eligible assignments and relies on permanent (active) assignments.
+        A passing tenant has at least one eligible Global Administrator assignment. A failing tenant has none and holds the role only through active assignments.
 
         ### Audit via PowerShell
 
@@ -2925,10 +3046,10 @@ queries:
 
         ```powershell
         Connect-MgGraph -Scopes "RoleManagement.Read.Directory"
-        Get-MgRoleManagementDirectoryRoleEligibilityScheduleInstance
+        Get-MgRoleManagementDirectoryRoleEligibilityScheduleInstance -Filter "roleDefinitionId eq '62e90394-69f5-4237-9190-012177145e10'"
         ```
 
-        A passing tenant returns one or more eligible role assignments. A failing tenant returns nothing.
+        A passing tenant returns one or more eligible Global Administrator assignments. A failing tenant returns nothing.
       remediation:
         - id: console
           desc: |
@@ -2937,7 +3058,7 @@ queries:
             Privileged Identity Management requires a Microsoft Entra ID P2 or Microsoft Entra ID Governance license. Confirm licensing before you begin.
 
             1. Sign in to the [Microsoft Entra admin center](https://entra.microsoft.com).
-            2. Go to **Identity governance** > **Privileged Identity Management** > **Microsoft Entra roles** > **Roles**.
+            2. Go to **ID Governance** > **Privileged Identity Management** > **Microsoft Entra roles** > **Roles**.
             3. Select a privileged role, such as **Global Administrator**.
             4. Select **Add assignments**, choose the user, and set the assignment type to **Eligible**.
             5. For each role, open **Settings** and require MFA, justification, and approval on activation.

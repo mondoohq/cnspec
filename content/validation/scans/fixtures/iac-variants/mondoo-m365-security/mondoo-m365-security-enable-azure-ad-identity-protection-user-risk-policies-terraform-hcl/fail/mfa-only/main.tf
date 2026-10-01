@@ -1,10 +1,10 @@
 resource "azuread_conditional_access_policy" "user_risk" {
-  display_name = "Block high user risk"
+  display_name = "MFA alone on medium and high user risk"
   state        = "enabled"
 
   conditions {
     client_app_types = ["all"]
-    user_risk_levels = ["high"]
+    user_risk_levels = ["medium", "high"]
 
     applications {
       included_applications = ["All"]
@@ -17,6 +17,6 @@ resource "azuread_conditional_access_policy" "user_risk" {
 
   grant_controls {
     operator          = "OR"
-    built_in_controls = ["block"]
+    built_in_controls = ["mfa"]
   }
 }
