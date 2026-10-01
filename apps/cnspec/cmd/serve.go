@@ -19,6 +19,7 @@ import (
 	"go.mondoo.com/cnspec"
 	"go.mondoo.com/cnspec/apps/cnspec/cmd/backgroundjob"
 	cnspec_config "go.mondoo.com/cnspec/apps/cnspec/cmd/config"
+	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/scan"
 	cli_errors "go.mondoo.com/mql/cli/errors"
 	"go.mondoo.com/mql/cli/execruntime"
@@ -167,7 +168,7 @@ var serveCmd = &cobra.Command{
 						}
 					}
 					// TODO: check in every 5 min via timer, init time in Background job
-					result, err := RunScan(ctx, scanConf, scan.DisableProgressBar(), scan.WithReportType(scan.ReportType_ERROR), scan.WithScanSource(scan.ScanSourceService))
+					result, err := RunScan(ctx, scanConf, scan.DisableProgressBar(), scan.WithReportType(scan.ReportType_ERROR), scan.WithScanSource(scan.ScanSourceService), scan.WithActivityTrigger(policy.AssetActivityTrigger_ASSET_ACTIVITY_TRIGGER_SCHEDULED))
 					if err != nil {
 						return cli_errors.NewCommandError(errors.Wrap(err, "could not successfully complete scan"), 1)
 					}

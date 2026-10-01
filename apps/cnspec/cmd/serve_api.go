@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	cnspec_config "go.mondoo.com/cnspec/apps/cnspec/cmd/config"
+	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/scan"
 	"go.mondoo.com/mql/cli/config"
 	"go.mondoo.com/mql/logger"
@@ -81,6 +82,8 @@ var serveApiCmd = &cobra.Command{
 			scan.DisableProgressBar(),
 			scan.WithRecording(recording.Null{}),
 			scan.WithScanSource(scan.ScanSourceService),
+			// Each run here is a remote request to the scan API.
+			scan.WithActivityTrigger(policy.AssetActivityTrigger_ASSET_ACTIVITY_TRIGGER_TRIGGERED),
 		)
 		if err := scanner.EnableQueue(); err != nil {
 			log.Fatal().Err(err).Msg("could not enable scan queue")

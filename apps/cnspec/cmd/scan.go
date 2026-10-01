@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
+	"github.com/mattn/go-isatty"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -640,11 +641,24 @@ func (c *scanConfig) loadPolicies(ctx context.Context) error {
 	return nil
 }
 
+// interactiveActivityTrigger says how a CLI scan came to be. A terminal on
+// stdin means a person ran it. Without one it could be cron, a fleet tool or
+// CI, which cannot be told apart from here, so it stays unspecified.
+func interactiveActivityTrigger() policy.AssetActivityTrigger {
+	if isatty.IsTerminal(os.Stdin.Fd()) {
+		return policy.AssetActivityTrigger_ASSET_ACTIVITY_TRIGGER_AD_HOC
+	}
+	return policy.AssetActivityTrigger_ASSET_ACTIVITY_TRIGGER_UNSPECIFIED
+}
+
 func RunScan(parentCtx context.Context, config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.ReportCollection, error) {
 	// RunScan is the entry point for the interactive CLI scan commands (scan,
 	// vuln, sbom, aibom, ...), so default the scan source to interactive. It is
 	// prepended so callers (e.g. `serve`) can override it via WithScanSource.
-	opts := append([]scan.ScannerOption{scan.WithScanSource(scan.ScanSourceInteractive)}, scannerOpts...)
+	opts := append([]scan.ScannerOption{
+		scan.WithScanSource(scan.ScanSourceInteractive),
+		scan.WithActivityTrigger(interactiveActivityTrigger()),
+	}, scannerOpts...)
 	if config.runtime.UpstreamConfig != nil {
 		opts = append(opts, scan.WithUpstream(config.runtime.UpstreamConfig))
 	}

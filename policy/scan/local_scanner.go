@@ -78,6 +78,10 @@ type LocalScanner struct {
 	// scanSource records how the scan was triggered (e.g. "interactive" or
 	// "service"). When set, it is applied as a label to every scanned asset.
 	scanSource string
+	// activityTrigger is how this scanner's runs came to be, reported upstream
+	// when a scan starts (ReportAssetActivityStarted). Unspecified when the
+	// invocation cannot tell.
+	activityTrigger policy.AssetActivityTrigger
 	// strict is the fallback MQL strict mode (mql ADR 043) for policies that
 	// declare none of their own. A policy that declares one always wins.
 	strict bool
@@ -157,6 +161,15 @@ func WithStrict(strict bool) ScannerOption {
 func WithScanSource(source string) ScannerOption {
 	return func(s *LocalScanner) {
 		s.scanSource = source
+	}
+}
+
+// WithActivityTrigger records how scans run by this scanner came to be:
+// started by a person, by a schedule, or by a remote request. It is reported
+// upstream when a scan starts so the platform can show assets being scanned.
+func WithActivityTrigger(trigger policy.AssetActivityTrigger) ScannerOption {
+	return func(s *LocalScanner) {
+		s.activityTrigger = trigger
 	}
 }
 
@@ -589,7 +602,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	resourceTracker.SetInFlightFunc(dispatcher.inFlight)
 	resourceTracker.Start(memSampleInterval)
 	defer resourceTracker.Stop()
-	batcher := newSyncBatcher(dispatcher, services, spaceMrn, s.recording, multiprogress)
+	batcher := newSyncBatcher(dispatcher, services, spaceMrn, s.recording, multiprogress, s.activityTrigger)
 
 	scanCtx := &scanContext{
 		explorer:           explorer,
@@ -824,6 +837,7 @@ func syncBatchWithUpstream(
 	services *policy.Services,
 	spaceMrn string,
 	rec llx.Recording,
+	trigger policy.AssetActivityTrigger,
 ) error {
 	if services != nil {
 		log.Info().Int("batch-size", len(batch)).Msg("synchronizing assets with upstream")
@@ -862,10 +876,16 @@ func syncBatchWithUpstream(
 		}
 		log.Debug().Int("assets", len(resp.Details)).Msg("got assets details")
 		platformAssetMapping := make(map[string]*policy.SynchronizeAssetsRespAssetDetail)
+		assetMrns := make([]string, 0, len(resp.Details))
 		for i := range resp.Details {
 			log.Debug().Str("platform-mrn", resp.Details[i].PlatformMrn).Str("asset", resp.Details[i].AssetMrn).Msg("asset mapping")
 			platformAssetMapping[resp.Details[i].PlatformMrn] = resp.Details[i]
+			if resp.Details[i].AssetMrn != "" {
+				assetMrns = append(assetMrns, resp.Details[i].AssetMrn)
+			}
 		}
+		// Concurrent with the scan it announces, and never in its way.
+		go reportAssetActivityStarted(ctx, services, spaceMrn, assetMrns, trigger)
 
 		for _, tracked := range batch {
 			asset := tracked.Asset
@@ -1063,6 +1083,31 @@ func reportAssetScanFailed(ctx context.Context, services policy.PolicyResolver, 
 	})
 	if err != nil {
 		log.Debug().Err(err).Str("asset", assetMrn).Msg("could not report the failed scan upstream")
+	}
+}
+
+// reportAssetActivityStartedTimeout bounds the start report. It runs beside the
+// scan, so a slow server must not keep it alive past any useful point.
+const reportAssetActivityStartedTimeout = 30 * time.Second
+
+// reportAssetActivityStarted tells upstream that scanning these synced assets
+// has begun, so the platform can show them as being scanned until their
+// results arrive. Best effort: the scan runs regardless, and a server that
+// predates the RPC answers NotFound.
+func reportAssetActivityStarted(ctx context.Context, services policy.PolicyResolver, spaceMrn string, assetMrns []string, trigger policy.AssetActivityTrigger) {
+	if len(assetMrns) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, reportAssetActivityStartedTimeout)
+	defer cancel()
+	_, err := services.ReportAssetActivityStarted(ctx, &policy.ReportAssetActivityStartedReq{
+		SpaceMrn:  spaceMrn,
+		AssetMrns: assetMrns,
+		Kind:      policy.AssetActivityKind_ASSET_ACTIVITY_KIND_AGENT,
+		Trigger:   trigger,
+	})
+	if err != nil {
+		log.Debug().Err(err).Int("assets", len(assetMrns)).Msg("could not report scan start upstream")
 	}
 }
 
