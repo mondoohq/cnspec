@@ -1,7 +1,7 @@
 extension microsoftGraphV1
 
 resource userRiskPolicy 'Microsoft.Graph/conditionalAccessPolicies@v1.0' = {
-  displayName: 'Restrict high user risk sessions'
+  displayName: 'Require password change for high user risk'
   state: 'enabled'
   conditions: {
     userRiskLevels: [
@@ -22,8 +22,9 @@ resource userRiskPolicy 'Microsoft.Graph/conditionalAccessPolicies@v1.0' = {
     }
   }
   grantControls: {
-    operator: 'OR'
+    operator: 'AND'
     builtInControls: [
+      'mfa'
       'passwordChange'
     ]
   }
