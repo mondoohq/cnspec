@@ -827,6 +827,66 @@ func (a *Migration_Action) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// ParseMigrationReason returns the reason for a name, case-insensitively.
+// Both the short name ("renumbered") and the full enum name
+// ("REASON_RENUMBERED") are accepted.
+func ParseMigrationReason(name string) (Migration_Reason, bool) {
+	v := strings.ToUpper(strings.TrimSpace(name))
+	if x, ok := Migration_Reason_value[v]; ok {
+		return Migration_Reason(x), true
+	}
+	if x, ok := Migration_Reason_value["REASON_"+v]; ok {
+		return Migration_Reason(x), true
+	}
+	return Migration_REASON_UNSPECIFIED, false
+}
+
+// MigrationReasonName returns the short, lower-case name of a reason as it is
+// written in policy bundles, e.g. "renumbered". It returns an empty string for
+// an unspecified or unknown reason.
+func MigrationReasonName(r Migration_Reason) string {
+	if r == Migration_REASON_UNSPECIFIED {
+		return ""
+	}
+	name, ok := Migration_Reason_name[int32(r)]
+	if !ok {
+		return ""
+	}
+	return strings.ToLower(strings.TrimPrefix(name, "REASON_"))
+}
+
+// UnmarshalJSON accepts a reason by name, case-insensitively and with or
+// without the REASON_ prefix, or by its number.
+func (r *Migration_Reason) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" {
+		*r = Migration_REASON_UNSPECIFIED
+		return nil
+	}
+
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		if str == "" {
+			*r = Migration_REASON_UNSPECIFIED
+			return nil
+		}
+		if x, ok := ParseMigrationReason(str); ok {
+			*r = x
+			return nil
+		}
+		return errors.New("failed to unmarshal '" + str + "' into migration reason")
+	}
+
+	var num int32
+	if err := json.Unmarshal(data, &num); err != nil {
+		return errors.New("failed to unmarshal '" + string(data) + "' into migration reason")
+	}
+	if _, ok := Migration_Reason_name[num]; !ok {
+		return errors.New("failed to unmarshal '" + string(data) + "' into migration reason: unknown value")
+	}
+	*r = Migration_Reason(num)
+	return nil
+}
+
 func variantsExecutionChecksum(q *Mquery, c checksums.Fast, includeImpact bool, getQuery func(ctx context.Context, mrn string) (*Mquery, error)) (checksums.Fast, error) {
 	// This code assumes there are no cycles in the variant graph.
 	c = c.
