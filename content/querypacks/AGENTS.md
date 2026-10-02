@@ -4,7 +4,7 @@ Authoring rules for the `*.mql.yaml` query packs in this directory. Loads
 alongside [`content/AGENTS.md`](../AGENTS.md), which covers MQL itself. Terse on
 purpose.
 
-36 files hold 38 packs and 853 query definitions.
+37 files hold 39 packs and 869 query definitions.
 `mondoo-github-inventory.mql.yaml` is the only file with more than one pack.
 
 ## A query pack collects; it never scores
