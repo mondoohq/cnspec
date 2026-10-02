@@ -45,9 +45,26 @@ func GetBundleMigrationsLintRules() []LintRule {
 	}
 }
 
+func yacRefs2ProtoRefs(refs []*MqueryRef) []*policy.MqueryRef {
+	if len(refs) == 0 {
+		return nil
+	}
+	res := make([]*policy.MqueryRef, 0, len(refs))
+	for _, ref := range refs {
+		if ref == nil {
+			continue
+		}
+		res = append(res, &policy.MqueryRef{Title: ref.Title, Url: ref.Url})
+	}
+	return res
+}
+
 func yacMigration2ProtoMigration(migration *Migration) *policy.Migration {
 	res := &policy.Migration{
-		Action: policy.Migration_Action(migration.Action),
+		Action:      policy.Migration_Action(migration.Action),
+		Reason:      policy.Migration_Reason(migration.Reason),
+		Description: migration.Description,
+		Refs:        yacRefs2ProtoRefs(migration.Refs),
 	}
 	if migration.Source != nil {
 		res.Source = &policy.MigrationSource{
@@ -97,9 +114,11 @@ func yacConditions2ProtoConditions(conditions *MigrationConditions) *policy.Migr
 
 func yacGroup2ProtoGroup(group *MigrationGroup) *policy.MigrationGroup {
 	res := &policy.MigrationGroup{
-		Title:      group.Title,
-		Conditions: yacConditions2ProtoConditions(group.Conditions),
-		Stages:     []*policy.MigrationStage{},
+		Title:       group.Title,
+		Description: group.Description,
+		Refs:        yacRefs2ProtoRefs(group.Refs),
+		Conditions:  yacConditions2ProtoConditions(group.Conditions),
+		Stages:      []*policy.MigrationStage{},
 	}
 	for _, s := range group.Stages {
 		res.Stages = append(res.Stages, yacStage2ProtoStage(s))

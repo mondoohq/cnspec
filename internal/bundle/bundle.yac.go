@@ -743,9 +743,12 @@ func (x *ImpactValue) addFileContext(node *yaml.Node) {
 }
 
 type Migration struct {
+	Refs        []*MqueryRef     `protobuf:"bytes,6,rep,name=refs,proto3" json:"refs,omitempty" yaml:"refs,omitempty"`
 	Source      *MigrationSource `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty" yaml:"source,omitempty"`
 	Target      *MigrationTarget `protobuf:"bytes,2,opt,name=target,proto3" json:"target,omitempty" yaml:"target,omitempty"`
 	Action      Migration_Action `protobuf:"varint,3,opt,name=action,proto3,enum=cnspec.policy.v1.Migration_Action" json:"action,omitempty" yaml:"action,omitempty"`
+	Reason      Migration_Reason `protobuf:"varint,4,opt,name=reason,proto3,enum=cnspec.policy.v1.Migration_Reason" json:"reason,omitempty" yaml:"reason,omitempty"`
+	Description string           `protobuf:"bytes,5,opt,name=description,proto3" json:"description,omitempty" yaml:"description,omitempty"`
 	FileContext FileContext      `json:"-" yaml:"-"`
 	Comments    Comments         `json:"-" yaml:"-"`
 }
@@ -847,8 +850,10 @@ type MigrationGroup struct {
 	Migrations  []*Migration         `protobuf:"bytes,2,rep,name=migrations,proto3" json:"migrations,omitempty" yaml:"migrations,omitempty"`
 	Conditions  *MigrationConditions `protobuf:"bytes,3,opt,name=conditions,proto3" json:"conditions,omitempty" yaml:"conditions,omitempty"`
 	Stages      []*MigrationStage    `protobuf:"bytes,4,rep,name=stages,proto3" json:"stages,omitempty" yaml:"stages,omitempty"`
+	Description string               `protobuf:"bytes,5,opt,name=description,proto3" json:"description,omitempty" yaml:"description,omitempty"`
 	Metadata    *MigrationMetadata   `protobuf:"bytes,20,opt,name=metadata,proto3" json:"metadata,omitempty" yaml:"metadata,omitempty"`
 	Title       string               `protobuf:"bytes,1,opt,name=title,proto3" json:"title,omitempty" yaml:"title,omitempty"`
+	Refs        []*MqueryRef         `protobuf:"bytes,6,rep,name=refs,proto3" json:"refs,omitempty" yaml:"refs,omitempty"`
 	FileContext FileContext          `json:"-" yaml:"-"`
 	Comments    Comments             `json:"-" yaml:"-"`
 }
@@ -1171,6 +1176,31 @@ func (s *Migration_Action) UnmarshalYAML(node *yaml.Node) error {
 	}
 
 	return errors.New("failed to unmarshal Migration_Action")
+}
+
+type Migration_Reason policy.Migration_Reason
+
+func (s *Migration_Reason) UnmarshalYAML(node *yaml.Node) error {
+
+	var decoded any
+	err := node.Decode(&decoded)
+	if err != nil {
+		return err
+	}
+
+	jsonData, err := json.Marshal(decoded)
+	if err != nil {
+		return err
+	}
+
+	var v policy.Migration_Reason
+	err = json.Unmarshal(jsonData, &v)
+	if err == nil {
+		*s = Migration_Reason(v)
+		return nil
+	}
+
+	return errors.New("failed to unmarshal Migration_Reason")
 }
 
 type Mquery struct {

@@ -293,3 +293,23 @@ func (x Action) MarshalYAML() (any, error) {
 
 	return node, nil
 }
+
+// MarshalYAML writes the short, lower-case reason name, e.g. "renumbered",
+// which is also what bundle authors write. It cannot be a pointer since the
+// reason is assigned as non-pointer to Migration.
+func (x Migration_Reason) MarshalYAML() (any, error) {
+	var value any = policy.MigrationReasonName(policy.Migration_Reason(x))
+	if value == "" {
+		// a value this version does not know is kept as its number, which
+		// parses back to the same value
+		value = int32(x)
+	}
+
+	node := yaml.Node{}
+	err := node.Encode(value)
+	if err != nil {
+		return nil, err
+	}
+
+	return node, nil
+}
