@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-macos-security
     name: Mondoo macOS Security
-    version: 1.4.5
+    version: 1.4.6
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -2662,17 +2662,14 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-2-4
     filters: command("id -u").stdout.trim == 0
     mql: |
-      file("/etc/security/audit_control").exists;
-      ["/etc/security/audit_control"].where(file(_).exists) {
-        file(_).content.lines.where( _ == /^expire-after/) {
-          _.split(":")[1] == /^([6-9]\d|[1-9]\d{2,})d$/ || _.split(":")[1] == /^[1-9]\d*G$/
-        }
-      }
+      openBSMAudit.minRetentionAge >= 60 * time.day ||
+        openBSMAudit.minRetentionBytes >= 1073741824 ||
+        openBSMAudit.expireAfterAge >= 60 * time.day && openBSMAudit.expireAfterBytes >= 1073741824
     docs:
       desc: |
         This check verifies that macOS keeps audit records long enough to be useful in an investigation.
 
-        Retention is configured in `/etc/security/audit_control` by the `expire-after` setting, which can be expressed as an age, a total size, or both. The check reads that setting, which must be at least `60d` or at least `1G`.
+        Retention is configured in `/etc/security/audit_control` by the `expire-after` setting, which can be expressed as an age, a total size, or both. The check reads that setting the way `auditd` parses it, and the setting must keep at least 60 days or at least 1 gigabyte of records. Every unit `auditd` accepts counts, so `60d`, `1440h`, `1y`, `1G`, and `1024M` all pass. When the setting combines two limits, `OR` expires records as soon as either limit is reached, so both must meet the minimum, as in `60d OR 5G`. `AND` expires records only once both limits are reached, so one of them meeting the minimum is enough, as in `60d AND 1G`. Only the first `expire-after` line counts, because it is the only one `auditd` reads. A missing `expire-after` line fails, and so does a value `auditd` rejects. Without one, `auditd` never removes trail files, so retention is not a decision anyone made: the trail grows until the volume fills, and from then on new events go unrecorded.
 
         **Why this matters**
 
@@ -2693,7 +2690,7 @@ queries:
            grep expire-after /etc/security/audit_control
            ```
 
-        A passing result shows `expire-after` set to at least `60d` or `1G`. A failing result shows a shorter retention period or no `expire-after` line.
+        A passing result shows the first `expire-after` line set to at least 60 days or 1 gigabyte, such as `60d`, `1y`, or `1G`. With two limits joined by `OR`, both must meet that minimum; with `AND`, one is enough. A failing result shows a shorter retention period, such as the `10M` OpenBSM default, a value `auditd` cannot parse, or no `expire-after` line.
       remediation:
         - id: cli
           desc: |
