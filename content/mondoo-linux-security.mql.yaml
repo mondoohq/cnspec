@@ -17412,7 +17412,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To limit SSH access, you can run the following bash script. Before running it, replace the example group with a group that contains every account that must retain SSH access, including your administrative accounts. Once `AllowGroups` is set, any account outside the listed groups is denied SSH access.
+            To limit SSH access, you can run the following bash script. Before running it, replace the example group with a group that contains every account that must retain SSH access, including your administrative accounts. Once `AllowGroups` is set, any account outside the listed groups is denied SSH access. `sshd -t` accepts a group that does not exist, so the script stops before changing anything if a listed group is missing, or if the account that ran it through `sudo` is in none of the listed groups.
 
             ```bash
             #!/bin/bash
@@ -17425,6 +17425,24 @@ queries:
             # place of it once that exists, so create it as a copy of the vendor file.
             if [ ! -f /etc/ssh/sshd_config ] && [ -f /usr/etc/ssh/sshd_config ]; then
               install -m 0600 -o root -g root /usr/etc/ssh/sshd_config /etc/ssh/sshd_config
+            fi
+
+            # sshd -t rejects an empty AllowGroups, but only after the line is already written.
+            if [ -z "${ALLOW_GROUPS// }" ]; then
+              echo "ALLOW_GROUPS is empty. Set it to a space-separated list of groups." >&2
+              exit 1
+            fi
+
+            # sshd -t accepts a group that does not exist, and AllowGroups then denies every account.
+            for group in $ALLOW_GROUPS; do
+              if ! getent group "$group" >/dev/null; then
+                echo "Group '$group' does not exist. Create it, add every account that must keep SSH access, and re-run." >&2
+                exit 1
+              fi
+            done
+            if [ -n "${SUDO_USER:-}" ] && ! id -nG "$SUDO_USER" | tr ' ' '\n' | grep -qxF -f <(tr ' ' '\n' <<< "$ALLOW_GROUPS"); then
+              echo "$SUDO_USER is in none of: $ALLOW_GROUPS. Add it first, or this change locks it out of SSH." >&2
+              exit 1
             fi
 
             if grep -q '^AllowGroups' /etc/ssh/sshd_config; then
@@ -17454,7 +17472,7 @@ queries:
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
             2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
 
-            **Warning: avoid locking yourself out.** Once `AllowGroups` is set, every account outside the listed groups is denied SSH access, including the account Ansible connects with. Before you run this playbook, set `ssh_allow_groups` to a space-separated list of groups that together contain every account that must keep SSH access, and make sure those groups already exist with their members. To limit SSH access using Ansible, use the following playbook:
+            **Warning: avoid locking yourself out.** Once `AllowGroups` is set, every account outside the listed groups is denied SSH access, including the account Ansible connects with. Before you run this playbook, set `ssh_allow_groups` to a space-separated list of groups that together contain every account that must keep SSH access, and make sure those groups already exist with their members. The playbook stops before changing anything if a listed group does not exist. To limit SSH access using Ansible, use the following playbook:
 
             ```yaml
             ---
@@ -17481,6 +17499,20 @@ queries:
                     group: root
                     mode: '0600'
                   when: vendor_ssh_sshd_config.stat.exists
+
+                # sshd -t accepts a group that does not exist, and AllowGroups then denies every account
+                - name: Read the local groups
+                  ansible.builtin.getent:
+                    database: group
+
+                - name: Find AllowGroups groups that do not exist
+                  ansible.builtin.set_fact:
+                    ssh_missing_groups: "{{ ssh_allow_groups.split() | difference(ansible_facts.getent_group.keys() | list) }}"
+
+                - name: Stop unless every AllowGroups group exists
+                  ansible.builtin.assert:
+                    that: ssh_missing_groups | length == 0
+                    fail_msg: "Create these groups and add every account that must keep SSH access first: {{ ssh_missing_groups | join(' ') }}"
 
                 - name: Set AllowGroups in sshd_config
                   ansible.builtin.lineinfile:
@@ -17516,7 +17548,7 @@ queries:
             1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
             2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
-            Use this Chef Infra recipe code to limit SSH access to a named group. Create the group and add your administrators to it before you apply this, or no one will be able to log in:
+            Use this Chef Infra recipe code to limit SSH access to a named group. Create the group and add your administrators to it before you apply this, or no one will be able to log in. The recipe stops if the group does not exist:
 
             ```ruby
             sshd_config = '/etc/ssh/sshd_config'
@@ -17539,7 +17571,23 @@ queries:
               only_if '/usr/sbin/sshd -t'
             end
 
-            { 'AllowGroups' => 'sshusers' }.each do |keyword, value|
+            allow_groups = 'sshusers'
+
+            # sshd -t accepts a group that does not exist, and AllowGroups then denies every account.
+            # node['etc'] comes from an Ohai plugin that is off by default, so ask the system.
+            ruby_block 'require the AllowGroups groups to exist' do
+              block do
+                missing = allow_groups.split.reject do |g|
+                  ::Etc.getgrnam(g)
+                  true
+                rescue ArgumentError
+                  false
+                end
+                raise "Create these groups and add every account that must keep SSH access first: #{missing.join(' ')}" unless missing.empty?
+              end
+            end
+
+            { 'AllowGroups' => allow_groups }.each do |keyword, value|
               file "set #{keyword} in sshd_config" do
                 path sshd_config
                 content(lazy do
