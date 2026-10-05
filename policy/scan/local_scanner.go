@@ -699,11 +699,7 @@ func inventoryAnnotation(inv *inventory.Inventory, key string) string {
 }
 
 // isReportableChildConnectError tells whether a failed child connection is a
-// scan error. Two outcomes are not: a duplicate of an asset that is already
-// connected, and a child its provider declined because the target holds
-// nothing for it (a repository discovered as a Kubernetes manifest candidate
-// that has no Kubernetes objects). Discovery proposed that child, the user did
-// not name it, so there is nothing to report against it.
+// scan error. A duplicate asset and a child its provider declined are not.
 func isReportableChildConnectError(err error) bool {
 	return !errors.Is(err, discovery.ErrDuplicateAsset) && !errors.Is(err, discovery.ErrNoMatch)
 }
