@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql"
+	"go.mondoo.com/mql/discovery"
 	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/mqlc"
 	"go.mondoo.com/mql/providers"
@@ -854,4 +855,15 @@ func TestReportAssetScanFailedCarriesTheKind(t *testing.T) {
 	r.err = errors.New("not found")
 	reportAssetScanFailed(context.Background(), r, "//assets/c", errors.New("boom"))
 	assert.Len(t, r.got, 3)
+}
+
+func TestIsReportableChildConnectError(t *testing.T) {
+	// The no-match arrives the way discovery builds it: the provider's own
+	// message, then the sentinel.
+	noMatch := fmt.Errorf("no Kubernetes objects found in /tmp/repo: not a match for this provider: %w", discovery.ErrNoMatch)
+	duplicate := fmt.Errorf("asset %q: %w", "repo", discovery.ErrDuplicateAsset)
+
+	assert.False(t, isReportableChildConnectError(noMatch))
+	assert.False(t, isReportableChildConnectError(duplicate))
+	assert.True(t, isReportableChildConnectError(errors.New("connection refused")))
 }
