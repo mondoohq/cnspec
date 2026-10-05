@@ -698,6 +698,12 @@ func inventoryAnnotation(inv *inventory.Inventory, key string) string {
 	return inv.Metadata.Annotations[key]
 }
 
+// isReportableChildConnectError tells whether a failed child connection is a
+// scan error. A duplicate asset and a child its provider declined are not.
+func isReportableChildConnectError(err error) bool {
+	return !errors.Is(err, discovery.ErrDuplicateAsset) && !errors.Is(err, discovery.ErrNoMatch)
+}
+
 // scanSubtree processes a single connected node's subtree depth-first.
 // It connects each child, feeds leaves to the syncBatcher (which batches
 // upstream sync calls), and the batcher forwards synced assets to the
@@ -732,7 +738,7 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 		connected, err := sc.explorer.Connect(child)
 		if err != nil {
 			<-sc.connSem
-			if !errors.Is(err, discovery.ErrDuplicateAsset) {
+			if isReportableChildConnectError(err) {
 				sc.reporter.AddScanError(child.Asset, err)
 			}
 			continue
