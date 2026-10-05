@@ -346,7 +346,12 @@ func createReporter(ctx context.Context, job *Job, upstream *upstream.UpstreamCo
 			}
 
 			// retrieve the bundle for the parent (which is the space). That bundle contains all policies, queries and checks
-			bundle, err := services.GetBundle(ctx, &policy.Mrn{Mrn: upstream.Creds.ParentMrn}) //nolint:staticcheck // SA1019: ParentMrn is deprecated but still used for backward compatibility
+			var bundle *policy.Bundle
+			err = upstreamRetryFrom(ctx).do(ctx, "GetBundle", func() error {
+				var err error
+				bundle, err = services.GetBundle(ctx, &policy.Mrn{Mrn: upstream.Creds.ParentMrn}) //nolint:staticcheck // SA1019: ParentMrn is deprecated but still used for backward compatibility
+				return err
+			})
 			if err != nil {
 				return nil, err
 			}
@@ -427,7 +432,12 @@ func (s *LocalScanner) resolveServerScanParameters(ctx context.Context, upstream
 		return ctx, nil, "", nil, err
 	}
 
-	resp, err := services.GetScanParameters(ctx, &policy.GetScanParametersReq{ScopeMrn: spaceMrn})
+	var resp *policy.ScanParameters
+	err = upstreamRetryFrom(ctx).do(ctx, "GetScanParameters", func() error {
+		var err error
+		resp, err = services.GetScanParameters(ctx, &policy.GetScanParametersReq{ScopeMrn: spaceMrn})
+		return err
+	})
 	if err != nil {
 		// A failed scan-parameters call must not abort the scan; proceed without
 		// server-activated features. Note that this also means we proceed without
@@ -475,6 +485,10 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	// be aggregated upstream. This is the single chokepoint for Run/RunIncognito
 	// and the admission-review and queue paths.
 	s.stampScanSource(job)
+
+	// Every Mondoo Platform call of this scan shares one retry policy, so an
+	// outage that outlasts one call's wait is not waited out again by the next.
+	ctx = withUpstreamRetry(ctx, newUpstreamRetry())
 
 	reporter, err := createReporter(ctx, job, upstream)
 	if err != nil {
@@ -852,32 +866,17 @@ func syncBatchWithUpstream(
 			assetsToSync = append(assetsToSync, tracked.Asset)
 		}
 
-		const maxSyncRetries = 3
 		var resp *policy.SynchronizeAssetsResp
-		var err error
-		for attempt := 1; attempt <= maxSyncRetries; attempt++ {
+		err := upstreamRetryFrom(ctx).do(ctx, "SynchronizeAssets", func() error {
+			var err error
 			resp, err = services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
 				SpaceMrn: spaceMrn,
 				List:     assetsToSync,
 			})
-			if err == nil {
-				break
-			}
-			if attempt < maxSyncRetries {
-				backoff := time.Duration(attempt) * 2 * time.Second
-				log.Warn().Err(err).Int("attempt", attempt).Dur("backoff", backoff).
-					Msg("SynchronizeAssets failed, retrying")
-				t := time.NewTimer(backoff)
-				select {
-				case <-ctx.Done():
-					t.Stop()
-					return ctx.Err()
-				case <-t.C:
-				}
-			}
-		}
+			return err
+		})
 		if err != nil {
-			log.Error().Err(err).Int("attempts", maxSyncRetries).Msg("SynchronizeAssets failed after all retries")
+			log.Error().Err(err).Msg("SynchronizeAssets failed")
 			return err
 		}
 		log.Debug().Int("assets", len(resp.Details)).Msg("got assets details")
@@ -1537,6 +1536,16 @@ func (s *localAssetScanner) fetchPublicRegistryBundle() error {
 	return err
 }
 
+// retryUpstream runs fn under the scan's upstream retry when the asset's
+// services call the Mondoo Platform. Without an upstream, fn runs once: a local
+// error is not a network failure to wait out.
+func (s *localAssetScanner) retryUpstream(what string, fn func() error) error {
+	if s.services.Upstream == nil {
+		return fn()
+	}
+	return upstreamRetryFrom(s.job.Ctx).do(s.job.Ctx, what, fn)
+}
+
 func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	var hub policy.PolicyHub = s.services
 	var resolver policy.PolicyResolver = s.services
@@ -1555,7 +1564,12 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 		scandump.YAML(s.job.Ctx, "assetBundle", assetBundle)
 	}
 
-	rawFilters, err := hub.GetPolicyFilters(s.job.Ctx, &policy.Mrn{Mrn: s.job.Asset.Mrn})
+	var rawFilters *policy.Mqueries
+	err := s.retryUpstream("GetPolicyFilters", func() error {
+		var err error
+		rawFilters, err = hub.GetPolicyFilters(s.job.Ctx, &policy.Mrn{Mrn: s.job.Asset.Mrn})
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -1577,9 +1591,14 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 		log.Warn().Err(err).Msg("failed to capture asset filters")
 	}
 
-	resolvedPolicy, err := resolver.ResolveAndUpdateJobs(s.job.Ctx, &policy.UpdateAssetJobsReq{
-		AssetMrn:     s.job.Asset.Mrn,
-		AssetFilters: filters,
+	var resolvedPolicy *policy.ResolvedPolicy
+	err = s.retryUpstream("ResolveAndUpdateJobs", func() error {
+		var err error
+		resolvedPolicy, err = resolver.ResolveAndUpdateJobs(s.job.Ctx, &policy.UpdateAssetJobsReq{
+			AssetMrn:     s.job.Asset.Mrn,
+			AssetFilters: filters,
+		})
+		return err
 	})
 	if err != nil {
 		return resolvedPolicy, err
