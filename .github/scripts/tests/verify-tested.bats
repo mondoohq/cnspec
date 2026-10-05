@@ -23,6 +23,8 @@ setup() {
 #!/usr/bin/env bash
 # Stub of `gh api`, answering from $STUB fixtures.
 url=$2
+# Real gh can write notices to stderr on a successful call.
+[ -n "${STUB_STDERR_NOISE:-}" ] && echo "warning: a notice on stderr" >&2
 case "$url" in
   */actions/workflows/*/runs\?head_sha=*)
     wf=${url#*/actions/workflows/}; wf=${wf%%/runs*}
@@ -40,7 +42,7 @@ case "$url" in
     echo "on:"; echo "  push:"; echo "    paths:"
     sed 's/^/      - "/; s/$/"/' "$STUB/paths/$wf"
     ;;
-  */commits\?sha=*) cat "$STUB/ancestors" ;;
+  */commits\?sha=*) echo "$url" >>"$STUB/commits-requests"; cat "$STUB/ancestors" ;;
   */compare/*)      cat "$STUB/compare" ;;
   *) echo "stub: unexpected $url" >&2; exit 1 ;;
 esac
@@ -158,4 +160,24 @@ runs() { printf '%s\n' "${@:2}" >"$STUB/runs/pr-test-lint.yml/$1"; }
   [ "$status" -ne 0 ]
   [[ "$output" == *"pr-test-lint.yml succeeded"* ]]
   [[ "$output" == *"pr-test-generated-files.yaml for tagged concluded 'failure'"* ]]
+}
+
+@test "a notice on stderr during a successful call does not corrupt the result" {
+  # With stderr mixed into the response, "warning:" was parsed as the run's
+  # status, and the gate waited out its deadline on a green commit.
+  runs tagged "completed success"
+  STUB_STDERR_NOISE=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pr-test-lint.yml succeeded"* ]]
+}
+
+@test "the walk asks for MAX_ANCESTORS ancestors, not counting the commit itself" {
+  # The listing starts with SHA itself, so it needs one more entry than the
+  # number of ancestors the error message promises were checked.
+  printf '%s\n' parent >"$STUB/ancestors"
+  runs parent "completed success"
+  printf '%s\n' README.md >"$STUB/compare"
+  MAX_ANCESTORS=7 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  grep -q 'per_page=8' "$STUB/commits-requests"
 }

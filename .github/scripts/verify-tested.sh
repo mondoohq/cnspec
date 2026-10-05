@@ -57,25 +57,35 @@ done
 # gh with retries, because a transient API failure must not decide a release
 # either way. Prints the response on stdout; returns non-zero only once retries
 # are exhausted.
+#
+# stderr is kept apart from the response. Mixed in, any line gh writes there on a
+# successful call -- a notice or a warning -- becomes the first line callers
+# parse, and run_state would read "warning:" as the run's status: neither `none`
+# nor `completed`, so the gate would wait out its deadline on a green commit.
 api() {
-  local out attempt delay=5
+  local out err errfile attempt delay=5
+  errfile=$(mktemp)
   for attempt in 1 2 3 4 5; do
-    if out=$(gh api "$@" 2>&1); then
+    if out=$(gh api "$@" 2>"$errfile"); then
+      rm -f "$errfile"
       printf '%s\n' "$out"
       return 0
     fi
+    err=$(cat "$errfile")
     # A missing commit or file is an answer, not an outage; retrying it only
     # delays the same refusal.
-    case "$out" in
+    case "$err" in
       *"HTTP 404"*|*"HTTP 422"*)
-        echo "GitHub API: ${out}" >&2
+        echo "GitHub API: ${err}" >&2
+        rm -f "$errfile"
         return 1
         ;;
     esac
-    echo "GitHub API call failed (attempt ${attempt}): ${out}" >&2
+    echo "GitHub API call failed (attempt ${attempt}): ${err}" >&2
     sleep "$delay"
     delay=$((delay * 2))
   done
+  rm -f "$errfile"
   return 1
 }
 
@@ -114,7 +124,8 @@ covered_by_ancestor() {
     return 1
   fi
 
-  for anc in $(api "repos/${REPO}/commits?sha=${SHA}&per_page=${MAX_ANCESTORS}" --jq '.[1:][].sha'); do
+  # The listing starts with SHA itself, hence one more than MAX_ANCESTORS.
+  for anc in $(api "repos/${REPO}/commits?sha=${SHA}&per_page=$((MAX_ANCESTORS + 1))" --jq '.[1:][].sha'); do
     state=$(run_state "$wf" "$anc")
     if [ "$state" = "completed success" ]; then
       base=$anc
