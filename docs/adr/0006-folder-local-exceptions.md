@@ -68,18 +68,44 @@ Discovery is a provider responsibility, performed at connect time and returned w
 asset. The provider is the only component that knows its own root, including when that
 root is a temporary clone.
 
-The first pass covers two paths:
+The first pass covers three paths:
 
 | Provider | Reads |
 |---|---|
+| `iac` | `mondoo.yml` at the root of the tree it walks |
 | `terraform` | `mondoo.yml` at the scanned path |
 | `github` | `mondoo.yml` at the repository root |
+
+`iac` is the case the design is built around. It walks one tree and hands each site it
+finds to the provider that claims it — terraform, cloudformation, helm, kustomize, k8s
+manifests, Dockerfiles, bicep, ansible — so one `mondoo.yml` at the tree root governs
+every asset the walk produces, each at its own path below that root. This is the
+monorepo case [§4.1](#41-path-scoping) exists for, and every provider `iac` reaches is
+covered without reading a config of its own.
 
 **Root only. No cascading lookup**, no walking up through parent directories. A
 consequence worth stating: the same Terraform module can be governed by a different file
 depending on how it is reached — scanned directly, the root is the module directory;
-discovered through a repository, the root is the repository. This is why reporting which
-config governed an asset (below) is a requirement and not a nicety.
+walked by `iac` or discovered through a repository, the root is the tree or the
+repository. This is why reporting which config governed an asset (below) is a
+requirement and not a nicety.
+
+**A config travels with what is discovered under it.** Whichever provider read the
+config, every asset reached from that root is governed by the same file. Three rules in
+mql make that hold without per-provider work:
+
+- **The walker sets it before the probe.** `iac` attaches the root's config, at the
+  candidate's path, to each candidate before it asks the claiming provider to connect
+  it. A provider that would read a config at its own path, as `terraform` does when
+  scanned directly, keeps the one it was given; a walk has one root. A file candidate's
+  path is the file, a directory candidate's the directory.
+- **Connect keeps it.** When a provider answers `Connect` with an asset of its own
+  making, the runtime carries the requested asset's config over unless the provider set
+  one. Providers that answer with the asset they were given keep it anyway, including
+  ones built before this field existed: protobuf preserves unknown fields.
+- **Discovered children inherit it.** An asset a provider discovers below another, a
+  workload in a k8s manifest for instance, lies within the root its parent was scanned
+  from. A child without a config of its own gets its parent's, at its parent's path.
 
 Each ingested config carries an **origin record** — provider, repository and ref where
 applicable, and path — so that reports can name the file that governed a result.
@@ -101,7 +127,7 @@ A `terraform` asset discovered by `github` arrives with the repository's config 
 attached, read from the default branch through the API, and the `terraform` provider
 keeps it. GitHub discovery emits one `terraform` asset per repository, covering the whole
 checkout at asset path `.`; until it emits one asset per module, `paths` cannot tell the
-modules of a repository apart.
+modules of a repository apart. `iac` over a checkout of the same repository can.
 
 ### 3. A context config may only carry exceptions
 
@@ -173,8 +199,9 @@ Deliberately absent:
 
 ### 4.1 Path scoping
 
-The `github` provider reads one `mondoo.yml` at the repository root and discovers every
-module beneath it, so in a monorepo — or any repository holding more than one module — a
+The `iac` provider reads one `mondoo.yml` at the root of the tree it walks, and the
+`github` provider one at the repository root, and both discover every module beneath
+it, so in a monorepo — or any repository holding more than one module — a
 single file governs assets that have nothing to do with one another. With no way to scope
 an entry, accepting a risk for `infra/staging` accepts it for `infra/prod` as well, and
 the file becomes an all-or-nothing instrument at exactly the scale where that is least
@@ -612,14 +639,18 @@ two halves disagree.
 
 **Neutral**
 
-- Provider work is per-provider. Two are covered here; the rest arrive as discovery
-  needs them.
+- Reading the config is per-provider; carrying it is not. Three providers read one
+  here, and everything `iac` reaches is governed through it; providers scanned directly
+  arrive as discovery needs them.
 
 ## Out of scope
 
 Deferred deliberately, so the first pass stays small:
 
-- Other providers — cloudformation, helm, kustomize, bicep, ansible, k8s, os, gitlab.
+- Reading `mondoo.yml` in other providers scanned directly — cloudformation, helm,
+  kustomize, bicep, ansible, k8s, os, gitlab. Reached through `iac`, they are covered
+  ([§2](#2-providers-find-and-expose-the-context-config)).
+- `iac` over a remote source; the first pass walks a local tree.
 - Cascading config lookup through parent directories.
 - Globs on check identifiers, and glob syntax in `paths` — prefix matching only in the
   first pass.
