@@ -96,6 +96,7 @@ Run the one that covers what you touched.
 | `make test/content/remediation/terraform` | one of them (also `/cloudformation`, `/bicep`, `/ansible`, `/powershell`, `/bash`, `/chef`) | that language's linter |
 | `make test/content/commands` | CLI and API calls; `CLOUD=aws` scopes it | that cloud's CLI |
 | `make test/content/commands/unit` | how those validators read a policy | none |
+| `make test/content/commands/exoscale` | `exo` commands in the Exoscale policy; local only, CI skips it | `exo` |
 | `make test/content/upstream` | which pins are behind | network |
 | `make test/content/upstream/unit` | the pin resolvers, against recorded payloads | none |
 | `make test/content/spelling` | `typos` over the repo | `brew install typos-cli` |

@@ -37,6 +37,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **AWS** - `mondoo-aws-security.mql.yaml` - Comprehensive AWS security baseline and best practices
 - **Azure** - `mondoo-azure-security.mql.yaml` - Microsoft Azure security configuration and compliance checks
 - **DigitalOcean** - `mondoo-digitalocean-security.mql.yaml` - DigitalOcean Droplets, Databases, Load Balancers, DOKS, Spaces, and App Platform security
+- **Exoscale** - `mondoo-exoscale-security.mql.yaml` - Exoscale security groups, compute instances, SKS clusters, managed databases, KMS keys, and IAM security
 - **GCP** - `mondoo-gcp-security.mql.yaml` - Google Cloud Platform security assessment and hardening
 - **Hetzner Cloud** - `mondoo-hetzner-security.mql.yaml` - Hetzner Cloud servers, firewalls, load balancers, certificates, and IP address security
 - **OCI** - `mondoo-oci-security.mql.yaml` - Oracle Cloud Infrastructure security assessment

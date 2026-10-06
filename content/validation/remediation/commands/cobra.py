@@ -107,6 +107,30 @@ COBRA_CLIS = {
             "  All platforms:    https://docs.databricks.com/dev-tools/cli/install.html"
         ),
     },
+    "exoscale": {
+        "cli": "exo",
+        "policies": ["mondoo-exoscale-security.mql.yaml"],
+        "include_audit": True,
+        # Validated locally with `make test/content/commands/exoscale`, not in
+        # CI: installing a vendor CLI into the pipeline only to check the
+        # documentation's commands waits on a proper integration-test concept.
+        # `validate.py all` skips it; naming it runs it.
+        "local_only": True,
+        # `exo dbaas update` hides each engine's flags (--pg-ip-filter, ...)
+        # from __complete and plain --help; they appear only under a
+        # per-engine help flag, so the walk reads those too.
+        "extra_help": {
+            "dbaas update": [
+                "--help-pg", "--help-mysql", "--help-valkey", "--help-kafka",
+                "--help-opensearch", "--help-grafana", "--help-clickhouse",
+                "--help-thanos",
+            ],
+        },
+        "install": (
+            "  macOS (Homebrew): brew tap exoscale/tap && brew install exoscale-cli\n"
+            "  All platforms:    https://github.com/exoscale/cli/releases"
+        ),
+    },
     "stackit": {
         "cli": "stackit",
         "policies": ["mondoo-stackit-security.mql.yaml"],
@@ -131,6 +155,12 @@ def _walk_env() -> dict:
     # Same for the STACKIT CLI's credentials file, which it reads from
     # $HOME/.stackit/credentials.json unless this points elsewhere.
     env["STACKIT_CREDENTIALS_PATH"] = "/dev/null"
+    # The exo CLI refuses every command, __complete included, until it has
+    # credentials. Placeholders that cannot authenticate satisfy it and take
+    # precedence over any config file, so the walk never reaches a live
+    # account. (Pointing EXOSCALE_CONFIG at /dev/null is rejected instead.)
+    env["EXOSCALE_API_KEY"] = "EXOplaceholder"
+    env["EXOSCALE_API_SECRET"] = "placeholder"
     for var in (
         "GH_TOKEN", "GITHUB_TOKEN",
         "GITLAB_TOKEN", "GLAB_TOKEN",
@@ -143,6 +173,7 @@ def _walk_env() -> dict:
         "STACKIT_PRIVATE_KEY_PATH", "STACKIT_ACCESS_TOKEN",
         "STACKIT_USE_OIDC", "STACKIT_SERVICE_ACCOUNT_EMAIL",
         "STACKIT_SERVICE_ACCOUNT_FEDERATED_TOKEN", "STACKIT_FEDERATED_TOKEN_FILE",
+        "EXOSCALE_KEY", "EXOSCALE_SECRET", "EXOSCALE_ACCOUNT", "EXOSCALE_CONFIG",
     ):
         env.pop(var, None)
     return env
@@ -191,18 +222,23 @@ def _complete(
     return names
 
 
-def _node_info(cli: str, path: str, env: dict) -> dict:
-    """Discover one command node: its subcommands and valid flags."""
+def _node_info(cli: str, path: str, env: dict, extra_help: list[str] | None = None) -> dict:
+    """Discover one command node: its subcommands and valid flags.
+
+    extra_help names additional help flags whose output lists flags that
+    plain --help hides (see the exo entry in COBRA_CLIS).
+    """
     subcommands = [
         c for c in _complete(cli, path, "", env, described_only=True)
         if _SUBCOMMAND_CANDIDATE_RE.match(c)
     ]
     flags = {f for f in _complete(cli, path, "--", env) if f.startswith("--")}
-    help_text = _run_cli([cli] + (path.split() if path else []) + ["--help"], env)
-    for line in help_text.split("\n"):
-        m = _HELP_FLAG_LINE_RE.match(line)
-        if m:
-            flags.add(m.group(1))
+    for help_flag in ["--help"] + (extra_help or []):
+        help_text = _run_cli([cli] + (path.split() if path else []) + [help_flag], env)
+        for line in help_text.split("\n"):
+            m = _HELP_FLAG_LINE_RE.match(line)
+            if m:
+                flags.add(m.group(1))
     return {"subcommands": sorted(set(subcommands)), "flags": sorted(flags)}
 
 
@@ -295,7 +331,9 @@ def build_cobra_commands_db(key: str, extra_services: list[str] | None = None) -
                 if path in visited:
                     continue
                 visited.add(path)
-                future_to_path[pool.submit(_node_info, cli, path, env)] = path
+                future_to_path[pool.submit(
+                    _node_info, cli, path, env, entry.get("extra_help", {}).get(path)
+                )] = path
             next_queue: list[str] = []
             for fut, path in future_to_path.items():
                 try:

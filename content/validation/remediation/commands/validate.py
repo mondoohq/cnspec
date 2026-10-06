@@ -73,7 +73,12 @@ def main():
             total_pass += p
             total_fail += f
 
-    for name in COBRA_CLIS:
+    for name, entry in COBRA_CLIS.items():
+        # A local-only CLI is not installed in CI, so `all` (what CI runs)
+        # skips it; it runs when asked for by name.
+        if target == "all" and entry.get("local_only"):
+            print(f"Skipping {name}: local-only, run `make test/content/commands/{name}`", file=sys.stderr)
+            continue
         if target in ("all", name):
             p, f = validate_cobra_cli(name)
             total_pass += p

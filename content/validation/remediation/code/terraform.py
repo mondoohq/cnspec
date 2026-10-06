@@ -57,6 +57,7 @@ TARGETS = {
     "digitalocean": [CONTENT_DIR / "mondoo-digitalocean-security.mql.yaml"],
     "dns": [CONTENT_DIR / "mondoo-dns-security.mql.yaml"],
     "email": [CONTENT_DIR / "mondoo-email-security.mql.yaml"],
+    "exoscale": [CONTENT_DIR / "mondoo-exoscale-security.mql.yaml"],
     "hcp": [CONTENT_DIR / "mondoo-hcp-security.mql.yaml"],
     "hetzner": [CONTENT_DIR / "mondoo-hetzner-security.mql.yaml"],
     "neon": [CONTENT_DIR / "mondoo-neon-security.mql.yaml"],
@@ -106,6 +107,7 @@ PROVIDER_MAP = {
     "databricks": ("databricks/databricks", "~> 1.0"),
     "datadog": ("DataDog/datadog", "~> 4.0"),
     "digitalocean": ("digitalocean/digitalocean", "~> 2.0"),
+    "exoscale": ("exoscale/exoscale", "~> 0.74"),
     "hcloud": ("hetznercloud/hcloud", "~> 1.0"),
     "hcp": ("hashicorp/hcp", "~> 0.114"),
     # Neon has no official provider. kislerdm/neon is the one Neon's own docs

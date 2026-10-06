@@ -58,7 +58,7 @@ func init() {
 		"github", "digitalocean", "unifi", "portainer", "snowflake",
 		"hetzner", "tailscale", "ms365", "databricks", "vercel",
 		"clickhousecloud", "hcp", "neon", "netlify", "stackit",
-		"datadog",
+		"datadog", "exoscale",
 	)
 }
 
@@ -107,6 +107,7 @@ var tfVariantPolicies = []tfVariantPolicy{
 	{"mondoo-vercel-security-", "mondoo-vercel-security.mql.yaml", ""},
 	{"mondoo-netlify-security-", "mondoo-netlify-security.mql.yaml", ""},
 	{"mondoo-stackit-security-", "mondoo-stackit-security.mql.yaml", ""},
+	{"mondoo-exoscale-security-", "mondoo-exoscale-security.mql.yaml", ""},
 	{"mondoo-datadog-security-", "mondoo-datadog-security.mql.yaml", ""},
 }
 
