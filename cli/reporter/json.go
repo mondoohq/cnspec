@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/reports/reportdoc"
@@ -16,6 +17,7 @@ import (
 	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/utils/iox"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 func printScore(score *policy.Score, mrn string, out iox.OutputHelper, prefix string) bool {
@@ -266,6 +268,17 @@ func ConvertToJSON(data *policy.ReportCollection, out iox.OutputHelper) error {
 			_ = out.WriteString(llx.PrettyPrintString(id) + ":" + string(raw))
 		}
 		_ = out.WriteString("}")
+	}
+
+	// What became of the exceptions read from config files (ADR-0006). A scan
+	// without any writes nothing here, so its output keeps today's shape.
+	if decisions := convertExceptionDecisions(data.ExceptionDecisions); decisions != nil {
+		raw, err := protojson.Marshal(&Report{Exceptions: decisions})
+		if err != nil {
+			return err
+		}
+		// {"exceptions":{...}} without its braces
+		_ = out.WriteString("," + strings.TrimSuffix(strings.TrimPrefix(string(raw), "{"), "}"))
 	}
 	_ = out.WriteString("}")
 

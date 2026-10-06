@@ -28,6 +28,8 @@ func ConvertToProto(data *policy.ReportCollection) (*Report, error) {
 		return protoReport, nil
 	}
 
+	protoReport.Exceptions = convertExceptionDecisions(data.ExceptionDecisions)
+
 	// Queries with identical MQL compile to the same code id and run once, so a
 	// code id can stand for several queries; each of them gets an entry.
 	qid2mrns := map[string][]string{}

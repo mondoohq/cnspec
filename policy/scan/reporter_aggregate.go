@@ -25,6 +25,7 @@ type AggregateReporter struct {
 	assetErrors      map[string]error
 	bundle           *policy.Bundle
 	resolvedPolicies map[string]*policy.ResolvedPolicy
+	exceptions       map[string]*policy.ExceptionDecisions
 	worstScore       *policy.Score
 }
 
@@ -35,6 +36,7 @@ func NewAggregateReporter() *AggregateReporter {
 		assetErrors:      map[string]error{},
 		resolvedPolicies: map[string]*policy.ResolvedPolicy{},
 		assetVulnReports: map[string]*mvd.VulnReport{},
+		exceptions:       map[string]*policy.ExceptionDecisions{},
 	}
 }
 
@@ -56,6 +58,9 @@ func (r *AggregateReporter) AddReport(asset *inventory.Asset, results *AssetRepo
 	r.assets[asset.Mrn] = asset
 	r.assetReports[asset.Mrn] = results.Report
 	r.resolvedPolicies[asset.Mrn] = results.ResolvedPolicy
+	if results.ExceptionDecisions != nil {
+		r.exceptions[asset.Mrn] = results.ExceptionDecisions
+	}
 
 	if r.worstScore == nil || results.Report.Score.Value < r.worstScore.Value {
 		r.worstScore = results.Report.Score
@@ -118,13 +123,14 @@ func (r *AggregateReporter) Reports() *ScanResult {
 		WorstScore: r.worstScore,
 		Result: &ScanResult_Full{
 			Full: &policy.ReportCollection{
-				Assets:           r.assets,
-				Reports:          r.assetReports,
-				Errors:           errors,
-				ErrorDetails:     errorDetails,
-				Bundle:           r.bundle,
-				ResolvedPolicies: r.resolvedPolicies,
-				VulnReports:      r.assetVulnReports,
+				Assets:             r.assets,
+				Reports:            r.assetReports,
+				Errors:             errors,
+				ErrorDetails:       errorDetails,
+				Bundle:             r.bundle,
+				ResolvedPolicies:   r.resolvedPolicies,
+				VulnReports:        r.assetVulnReports,
+				ExceptionDecisions: r.exceptions,
 			},
 		},
 	}

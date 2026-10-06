@@ -85,6 +85,8 @@ type LocalScanner struct {
 	// strict is the fallback MQL strict mode (mql ADR 043) for policies that
 	// declare none of their own. A policy that declares one always wins.
 	strict bool
+	// exceptions is how exceptions from config files are treated (ADR-0006).
+	exceptions *exceptionsConfig
 }
 
 const (
@@ -1100,6 +1102,7 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 			fetcher:          s.fetcher,
 			Runtime:          job.runtime,
 			ProgressReporter: job.ProgressReporter,
+			exceptions:       s.exceptions,
 		}
 		log.Debug().Str("asset", job.Asset.Name).Msg("run scan")
 		res, policyErr = scanner.run()
@@ -1288,6 +1291,13 @@ type localAssetScanner struct {
 
 	Runtime          llx.Runtime
 	ProgressReporter progress.Progress
+
+	// exceptions is the scanner's exception handling; nil when exceptions
+	// come only from the asset's own context config.
+	exceptions *exceptionsConfig
+	// compiledQueries are the queries of the asset's compiled bundle, set
+	// when the bundle is compiled locally; they translate excepted check UIDs.
+	compiledQueries []*policy.Mquery
 }
 
 // run() runs a bundle on a single asset. It returns the results of the scan and an error if the scan failed. Even in
@@ -1320,6 +1330,10 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 		return nil, err
 	}
 
+	// Exceptions are decided before the policy is resolved: they change which
+	// checks run and how they score, and both are settled by resolution.
+	exceptionDecisions := s.applyExceptions()
+
 	resolvedPolicy, err := s.runPolicy()
 	if err != nil {
 		return nil, err
@@ -1351,8 +1365,9 @@ func (s *localAssetScanner) run() (*AssetReport, error) {
 	}
 
 	ar := &AssetReport{
-		Mrn:            s.job.Asset.Mrn,
-		ResolvedPolicy: resolvedPolicy,
+		Mrn:                s.job.Asset.Mrn,
+		ResolvedPolicy:     resolvedPolicy,
+		ExceptionDecisions: exceptionDecisions,
 	}
 
 	report, err := s.getReport(resolvedPolicy)
@@ -1448,6 +1463,7 @@ func (s *localAssetScanner) prepareAsset() error {
 	if err := s.services.SetBundleMap(s.job.Ctx, bundleMap); err != nil {
 		return err
 	}
+	s.compiledQueries = bundle.Queries
 
 	policyMrns := filterPolicyMrns(bundle, s.job.PolicyFilters)
 

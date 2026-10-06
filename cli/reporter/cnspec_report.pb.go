@@ -26,11 +26,14 @@ const (
 )
 
 type Report struct {
-	state         protoimpl.MessageState          `protogen:"open.v1"`
-	Assets        map[string]*reporter.Asset      `protobuf:"bytes,1,rep,name=assets,proto3" json:"assets,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Data          map[string]*reporter.DataValues `protobuf:"bytes,2,rep,name=data,proto3" json:"data,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Errors        map[string]string               `protobuf:"bytes,3,rep,name=errors,proto3" json:"errors,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Scores        map[string]*ScoreValues         `protobuf:"bytes,4,rep,name=scores,proto3" json:"scores,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	state  protoimpl.MessageState          `protogen:"open.v1"`
+	Assets map[string]*reporter.Asset      `protobuf:"bytes,1,rep,name=assets,proto3" json:"assets,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Data   map[string]*reporter.DataValues `protobuf:"bytes,2,rep,name=data,proto3" json:"data,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Errors map[string]string               `protobuf:"bytes,3,rep,name=errors,proto3" json:"errors,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Scores map[string]*ScoreValues         `protobuf:"bytes,4,rep,name=scores,proto3" json:"scores,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// What became of each exception read from config files, keyed by asset
+	// (cnspec ADR-0006). Absent when the scan read none.
+	Exceptions    map[string]*ExceptionDecisions `protobuf:"bytes,5,rep,name=exceptions,proto3" json:"exceptions,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -89,6 +92,13 @@ func (x *Report) GetErrors() map[string]string {
 func (x *Report) GetScores() map[string]*ScoreValues {
 	if x != nil {
 		return x.Scores
+	}
+	return nil
+}
+
+func (x *Report) GetExceptions() map[string]*ExceptionDecisions {
+	if x != nil {
+		return x.Exceptions
 	}
 	return nil
 }
@@ -189,16 +199,277 @@ func (x *ScoreValue) GetRiskScore() uint32 {
 	return 0
 }
 
+type ExceptionDecisions struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Items         []*ExceptionDecision   `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExceptionDecisions) Reset() {
+	*x = ExceptionDecisions{}
+	mi := &file_cnspec_report_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExceptionDecisions) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExceptionDecisions) ProtoMessage() {}
+
+func (x *ExceptionDecisions) ProtoReflect() protoreflect.Message {
+	mi := &file_cnspec_report_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExceptionDecisions.ProtoReflect.Descriptor instead.
+func (*ExceptionDecisions) Descriptor() ([]byte, []int) {
+	return file_cnspec_report_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ExceptionDecisions) GetItems() []*ExceptionDecision {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+type ExceptionDecision struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// the check as the config names it
+	Check    string `protobuf:"bytes,1,opt,name=check,proto3" json:"check,omitempty"`
+	CheckMrn string `protobuf:"bytes,2,opt,name=checkMrn,proto3" json:"checkMrn,omitempty"`
+	// disable, risk-accepted, false-positive or workaround
+	Action string `protobuf:"bytes,3,opt,name=action,proto3" json:"action,omitempty"`
+	// applied, accepted, auto-accepted, pending, rejected, expired,
+	// not-submitted or unknown-check
+	Outcome       string   `protobuf:"bytes,4,opt,name=outcome,proto3" json:"outcome,omitempty"`
+	Reason        string   `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
+	Approvers     []string `protobuf:"bytes,6,rep,name=approvers,proto3" json:"approvers,omitempty"`
+	Title         string   `protobuf:"bytes,7,opt,name=title,proto3" json:"title,omitempty"`
+	Justification string   `protobuf:"bytes,8,opt,name=justification,proto3" json:"justification,omitempty"`
+	// RFC3339; empty when the exception does not expire
+	ValidUntil    string           `protobuf:"bytes,9,opt,name=validUntil,proto3" json:"validUntil,omitempty"`
+	Paths         []string         `protobuf:"bytes,10,rep,name=paths,proto3" json:"paths,omitempty"`
+	MatchedPath   string           `protobuf:"bytes,11,opt,name=matchedPath,proto3" json:"matchedPath,omitempty"`
+	Source        *ExceptionSource `protobuf:"bytes,12,opt,name=source,proto3" json:"source,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExceptionDecision) Reset() {
+	*x = ExceptionDecision{}
+	mi := &file_cnspec_report_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExceptionDecision) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExceptionDecision) ProtoMessage() {}
+
+func (x *ExceptionDecision) ProtoReflect() protoreflect.Message {
+	mi := &file_cnspec_report_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExceptionDecision.ProtoReflect.Descriptor instead.
+func (*ExceptionDecision) Descriptor() ([]byte, []int) {
+	return file_cnspec_report_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ExceptionDecision) GetCheck() string {
+	if x != nil {
+		return x.Check
+	}
+	return ""
+}
+
+func (x *ExceptionDecision) GetCheckMrn() string {
+	if x != nil {
+		return x.CheckMrn
+	}
+	return ""
+}
+
+func (x *ExceptionDecision) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *ExceptionDecision) GetOutcome() string {
+	if x != nil {
+		return x.Outcome
+	}
+	return ""
+}
+
+func (x *ExceptionDecision) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *ExceptionDecision) GetApprovers() []string {
+	if x != nil {
+		return x.Approvers
+	}
+	return nil
+}
+
+func (x *ExceptionDecision) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *ExceptionDecision) GetJustification() string {
+	if x != nil {
+		return x.Justification
+	}
+	return ""
+}
+
+func (x *ExceptionDecision) GetValidUntil() string {
+	if x != nil {
+		return x.ValidUntil
+	}
+	return ""
+}
+
+func (x *ExceptionDecision) GetPaths() []string {
+	if x != nil {
+		return x.Paths
+	}
+	return nil
+}
+
+func (x *ExceptionDecision) GetMatchedPath() string {
+	if x != nil {
+		return x.MatchedPath
+	}
+	return ""
+}
+
+func (x *ExceptionDecision) GetSource() *ExceptionSource {
+	if x != nil {
+		return x.Source
+	}
+	return nil
+}
+
+type ExceptionSource struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// user or context
+	Scope         string `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	Provider      string `protobuf:"bytes,2,opt,name=provider,proto3" json:"provider,omitempty"`
+	Repository    string `protobuf:"bytes,3,opt,name=repository,proto3" json:"repository,omitempty"`
+	Ref           string `protobuf:"bytes,4,opt,name=ref,proto3" json:"ref,omitempty"`
+	Path          string `protobuf:"bytes,5,opt,name=path,proto3" json:"path,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExceptionSource) Reset() {
+	*x = ExceptionSource{}
+	mi := &file_cnspec_report_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExceptionSource) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExceptionSource) ProtoMessage() {}
+
+func (x *ExceptionSource) ProtoReflect() protoreflect.Message {
+	mi := &file_cnspec_report_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExceptionSource.ProtoReflect.Descriptor instead.
+func (*ExceptionSource) Descriptor() ([]byte, []int) {
+	return file_cnspec_report_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ExceptionSource) GetScope() string {
+	if x != nil {
+		return x.Scope
+	}
+	return ""
+}
+
+func (x *ExceptionSource) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+func (x *ExceptionSource) GetRepository() string {
+	if x != nil {
+		return x.Repository
+	}
+	return ""
+}
+
+func (x *ExceptionSource) GetRef() string {
+	if x != nil {
+		return x.Ref
+	}
+	return ""
+}
+
+func (x *ExceptionSource) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
 var File_cnspec_report_proto protoreflect.FileDescriptor
 
 const file_cnspec_report_proto_rawDesc = "" +
 	"\n" +
-	"\x13cnspec_report.proto\x12\x17mondoo.report.cnspec.v1\x1a\x1dcli/reporter/mql_report.proto\"\xe5\x04\n" +
+	"\x13cnspec_report.proto\x12\x17mondoo.report.cnspec.v1\x1a\x1dcli/reporter/mql_report.proto\"\xa2\x06\n" +
 	"\x06Report\x12C\n" +
 	"\x06assets\x18\x01 \x03(\v2+.mondoo.report.cnspec.v1.Report.AssetsEntryR\x06assets\x12=\n" +
 	"\x04data\x18\x02 \x03(\v2).mondoo.report.cnspec.v1.Report.DataEntryR\x04data\x12C\n" +
 	"\x06errors\x18\x03 \x03(\v2+.mondoo.report.cnspec.v1.Report.ErrorsEntryR\x06errors\x12C\n" +
-	"\x06scores\x18\x04 \x03(\v2+.mondoo.report.cnspec.v1.Report.ScoresEntryR\x06scores\x1aV\n" +
+	"\x06scores\x18\x04 \x03(\v2+.mondoo.report.cnspec.v1.Report.ScoresEntryR\x06scores\x12O\n" +
+	"\n" +
+	"exceptions\x18\x05 \x03(\v2/.mondoo.report.cnspec.v1.Report.ExceptionsEntryR\n" +
+	"exceptions\x1aV\n" +
 	"\vAssetsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x121\n" +
 	"\x05value\x18\x02 \x01(\v2\x1b.mondoo.report.mql.v1.AssetR\x05value:\x028\x01\x1aY\n" +
@@ -210,7 +481,10 @@ const file_cnspec_report_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a_\n" +
 	"\vScoresEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12:\n" +
-	"\x05value\x18\x02 \x01(\v2$.mondoo.report.cnspec.v1.ScoreValuesR\x05value:\x028\x01\"\xb7\x01\n" +
+	"\x05value\x18\x02 \x01(\v2$.mondoo.report.cnspec.v1.ScoreValuesR\x05value:\x028\x01\x1aj\n" +
+	"\x0fExceptionsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12A\n" +
+	"\x05value\x18\x02 \x01(\v2+.mondoo.report.cnspec.v1.ExceptionDecisionsR\x05value:\x028\x01\"\xb7\x01\n" +
 	"\vScoreValues\x12H\n" +
 	"\x06values\x18\x01 \x03(\v20.mondoo.report.cnspec.v1.ScoreValues.ValuesEntryR\x06values\x1a^\n" +
 	"\vValuesEntry\x12\x10\n" +
@@ -219,7 +493,33 @@ const file_cnspec_report_proto_rawDesc = "" +
 	"\n" +
 	"ScoreValue\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x1c\n" +
-	"\triskScore\x18\x03 \x01(\rR\triskScoreJ\x04\b\x01\x10\x02R\x05scoreB#Z!go.mondoo.com/cnspec/cli/reporterb\x06proto3"
+	"\triskScore\x18\x03 \x01(\rR\triskScoreJ\x04\b\x01\x10\x02R\x05score\"V\n" +
+	"\x12ExceptionDecisions\x12@\n" +
+	"\x05items\x18\x01 \x03(\v2*.mondoo.report.cnspec.v1.ExceptionDecisionR\x05items\"\x83\x03\n" +
+	"\x11ExceptionDecision\x12\x14\n" +
+	"\x05check\x18\x01 \x01(\tR\x05check\x12\x1a\n" +
+	"\bcheckMrn\x18\x02 \x01(\tR\bcheckMrn\x12\x16\n" +
+	"\x06action\x18\x03 \x01(\tR\x06action\x12\x18\n" +
+	"\aoutcome\x18\x04 \x01(\tR\aoutcome\x12\x16\n" +
+	"\x06reason\x18\x05 \x01(\tR\x06reason\x12\x1c\n" +
+	"\tapprovers\x18\x06 \x03(\tR\tapprovers\x12\x14\n" +
+	"\x05title\x18\a \x01(\tR\x05title\x12$\n" +
+	"\rjustification\x18\b \x01(\tR\rjustification\x12\x1e\n" +
+	"\n" +
+	"validUntil\x18\t \x01(\tR\n" +
+	"validUntil\x12\x14\n" +
+	"\x05paths\x18\n" +
+	" \x03(\tR\x05paths\x12 \n" +
+	"\vmatchedPath\x18\v \x01(\tR\vmatchedPath\x12@\n" +
+	"\x06source\x18\f \x01(\v2(.mondoo.report.cnspec.v1.ExceptionSourceR\x06source\"\x89\x01\n" +
+	"\x0fExceptionSource\x12\x14\n" +
+	"\x05scope\x18\x01 \x01(\tR\x05scope\x12\x1a\n" +
+	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x1e\n" +
+	"\n" +
+	"repository\x18\x03 \x01(\tR\n" +
+	"repository\x12\x10\n" +
+	"\x03ref\x18\x04 \x01(\tR\x03ref\x12\x12\n" +
+	"\x04path\x18\x05 \x01(\tR\x04pathB#Z!go.mondoo.com/cnspec/cli/reporterb\x06proto3"
 
 var (
 	file_cnspec_report_proto_rawDescOnce sync.Once
@@ -233,34 +533,42 @@ func file_cnspec_report_proto_rawDescGZIP() []byte {
 	return file_cnspec_report_proto_rawDescData
 }
 
-var file_cnspec_report_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_cnspec_report_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_cnspec_report_proto_goTypes = []any{
 	(*Report)(nil),              // 0: mondoo.report.cnspec.v1.Report
 	(*ScoreValues)(nil),         // 1: mondoo.report.cnspec.v1.ScoreValues
 	(*ScoreValue)(nil),          // 2: mondoo.report.cnspec.v1.ScoreValue
-	nil,                         // 3: mondoo.report.cnspec.v1.Report.AssetsEntry
-	nil,                         // 4: mondoo.report.cnspec.v1.Report.DataEntry
-	nil,                         // 5: mondoo.report.cnspec.v1.Report.ErrorsEntry
-	nil,                         // 6: mondoo.report.cnspec.v1.Report.ScoresEntry
-	nil,                         // 7: mondoo.report.cnspec.v1.ScoreValues.ValuesEntry
-	(*reporter.Asset)(nil),      // 8: mondoo.report.mql.v1.Asset
-	(*reporter.DataValues)(nil), // 9: mondoo.report.mql.v1.DataValues
+	(*ExceptionDecisions)(nil),  // 3: mondoo.report.cnspec.v1.ExceptionDecisions
+	(*ExceptionDecision)(nil),   // 4: mondoo.report.cnspec.v1.ExceptionDecision
+	(*ExceptionSource)(nil),     // 5: mondoo.report.cnspec.v1.ExceptionSource
+	nil,                         // 6: mondoo.report.cnspec.v1.Report.AssetsEntry
+	nil,                         // 7: mondoo.report.cnspec.v1.Report.DataEntry
+	nil,                         // 8: mondoo.report.cnspec.v1.Report.ErrorsEntry
+	nil,                         // 9: mondoo.report.cnspec.v1.Report.ScoresEntry
+	nil,                         // 10: mondoo.report.cnspec.v1.Report.ExceptionsEntry
+	nil,                         // 11: mondoo.report.cnspec.v1.ScoreValues.ValuesEntry
+	(*reporter.Asset)(nil),      // 12: mondoo.report.mql.v1.Asset
+	(*reporter.DataValues)(nil), // 13: mondoo.report.mql.v1.DataValues
 }
 var file_cnspec_report_proto_depIdxs = []int32{
-	3, // 0: mondoo.report.cnspec.v1.Report.assets:type_name -> mondoo.report.cnspec.v1.Report.AssetsEntry
-	4, // 1: mondoo.report.cnspec.v1.Report.data:type_name -> mondoo.report.cnspec.v1.Report.DataEntry
-	5, // 2: mondoo.report.cnspec.v1.Report.errors:type_name -> mondoo.report.cnspec.v1.Report.ErrorsEntry
-	6, // 3: mondoo.report.cnspec.v1.Report.scores:type_name -> mondoo.report.cnspec.v1.Report.ScoresEntry
-	7, // 4: mondoo.report.cnspec.v1.ScoreValues.values:type_name -> mondoo.report.cnspec.v1.ScoreValues.ValuesEntry
-	8, // 5: mondoo.report.cnspec.v1.Report.AssetsEntry.value:type_name -> mondoo.report.mql.v1.Asset
-	9, // 6: mondoo.report.cnspec.v1.Report.DataEntry.value:type_name -> mondoo.report.mql.v1.DataValues
-	1, // 7: mondoo.report.cnspec.v1.Report.ScoresEntry.value:type_name -> mondoo.report.cnspec.v1.ScoreValues
-	2, // 8: mondoo.report.cnspec.v1.ScoreValues.ValuesEntry.value:type_name -> mondoo.report.cnspec.v1.ScoreValue
-	9, // [9:9] is the sub-list for method output_type
-	9, // [9:9] is the sub-list for method input_type
-	9, // [9:9] is the sub-list for extension type_name
-	9, // [9:9] is the sub-list for extension extendee
-	0, // [0:9] is the sub-list for field type_name
+	6,  // 0: mondoo.report.cnspec.v1.Report.assets:type_name -> mondoo.report.cnspec.v1.Report.AssetsEntry
+	7,  // 1: mondoo.report.cnspec.v1.Report.data:type_name -> mondoo.report.cnspec.v1.Report.DataEntry
+	8,  // 2: mondoo.report.cnspec.v1.Report.errors:type_name -> mondoo.report.cnspec.v1.Report.ErrorsEntry
+	9,  // 3: mondoo.report.cnspec.v1.Report.scores:type_name -> mondoo.report.cnspec.v1.Report.ScoresEntry
+	10, // 4: mondoo.report.cnspec.v1.Report.exceptions:type_name -> mondoo.report.cnspec.v1.Report.ExceptionsEntry
+	11, // 5: mondoo.report.cnspec.v1.ScoreValues.values:type_name -> mondoo.report.cnspec.v1.ScoreValues.ValuesEntry
+	4,  // 6: mondoo.report.cnspec.v1.ExceptionDecisions.items:type_name -> mondoo.report.cnspec.v1.ExceptionDecision
+	5,  // 7: mondoo.report.cnspec.v1.ExceptionDecision.source:type_name -> mondoo.report.cnspec.v1.ExceptionSource
+	12, // 8: mondoo.report.cnspec.v1.Report.AssetsEntry.value:type_name -> mondoo.report.mql.v1.Asset
+	13, // 9: mondoo.report.cnspec.v1.Report.DataEntry.value:type_name -> mondoo.report.mql.v1.DataValues
+	1,  // 10: mondoo.report.cnspec.v1.Report.ScoresEntry.value:type_name -> mondoo.report.cnspec.v1.ScoreValues
+	3,  // 11: mondoo.report.cnspec.v1.Report.ExceptionsEntry.value:type_name -> mondoo.report.cnspec.v1.ExceptionDecisions
+	2,  // 12: mondoo.report.cnspec.v1.ScoreValues.ValuesEntry.value:type_name -> mondoo.report.cnspec.v1.ScoreValue
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_cnspec_report_proto_init() }
@@ -274,7 +582,7 @@ func file_cnspec_report_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cnspec_report_proto_rawDesc), len(file_cnspec_report_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

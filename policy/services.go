@@ -51,6 +51,12 @@ type LocalServices struct {
 	// only decides what an undeclared policy inherits.
 	Strict      bool
 	NowProvider func() time.Time
+
+	// AssetExceptions are exception groups (IGNORED or DISABLE) to apply to an
+	// asset's policy when it is resolved locally, keyed by asset MRN. They are
+	// the exceptions read from config files (ADR-0006). With an upstream they
+	// are never applied here: the upstream resolves, and decides what applies.
+	AssetExceptions map[string][]*PolicyGroup
 }
 
 // NewLocalServices initializes a reasonably configured local services struct

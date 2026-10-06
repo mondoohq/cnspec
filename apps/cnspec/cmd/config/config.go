@@ -17,7 +17,7 @@ const (
 func ReadConfig() (*CliConfig, error) {
 	// load viper config into a struct
 	var opts CliConfig
-	err := viper.Unmarshal(&opts)
+	err := viper.Unmarshal(&opts, config.DecoderOption())
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to decode into config struct")
 	}

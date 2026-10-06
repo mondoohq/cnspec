@@ -89,6 +89,20 @@ returns each asset's path **relative to that config's directory**. That relative
 what path scoping matches against, and an asset that has none is governed only by
 unscoped entries.
 
+The channel is `Asset.context_config` in the mql inventory proto: the file content, the
+origin record and the asset's relative path. The provider drops every top-level key but
+`exceptions` before it attaches the content (`inventory.FilterContextConfig`), because a
+connected asset is synced upstream and written into reports; a credential committed to
+the scanned repository must not travel with it. A file is read only when it is a regular
+file of at most 1 MiB: in a cloned repository, a symlink named `mondoo.yml` could
+otherwise point at the client's own config.
+
+A `terraform` asset discovered by `github` arrives with the repository's config already
+attached, read from the default branch through the API, and the `terraform` provider
+keeps it. GitHub discovery emits one `terraform` asset per repository, covering the whole
+checkout at asset path `.`; until it emits one asset per module, `paths` cannot tell the
+modules of a repository apart.
+
 ### 3. A context config may only carry exceptions
 
 The config schema includes credentials, endpoints and feature flags. A context config is
@@ -146,7 +160,7 @@ exceptions:
 | `paths` | no | Path prefixes, relative to the config's own directory, that scope the entry. Absent means the whole config scope. See [§4.1](#41-path-scoping). |
 | `action` | yes | See below. |
 | `justification` | **yes** | An exception without a stated reason cannot be defended when it comes up for renewal. |
-| `valid_until` | no | RFC3339. Only meaningful for the scoring actions; on `disable` it has no effect, and lint warns. |
+| `valid_until` | no | RFC3339 date or date-time; a date is valid through the end of that day, UTC. Only meaningful for the scoring actions; on `disable` it has no effect, and lint warns. |
 
 Deliberately absent:
 
@@ -225,22 +239,35 @@ not know, and warns — one stale entry must never sink the whole submission.
 
 ### 6. How exceptions take effect
 
-The resolver is not modified.
+**Without an upstream**, cnspec applies the exceptions itself, as policy groups on the
+asset policy at resolution: each entry in effect becomes an `IGNORED` or `DISABLE`
+group naming its check, carried on `LocalServices.AssetExceptions` and added to the
+asset policy by `tryResolve` ([policy/resolver.go](../../policy/resolver.go)) before the
+resolved policy is built. The asset policy is the root of resolution, so its groups
+override every check beneath it; an upstream applies the exceptions it holds the same
+way.
 
-**Without an upstream**, cnspec applies the exceptions itself: after the resolved policy
-is built and before `executor.ExecuteResolvedPolicy`
-([policy/scan/local_scanner.go](../../policy/scan/local_scanner.go)), set the `ChildJobs`
-impact for each excepted check according to the table above, and for `disable` drop the
-query from the `ExecutionJob` so it genuinely does not run.
+The builder then does the rest with machinery that already exists: a `DISABLE` group
+swaps the check for the shared disabled placeholder query, so it does not execute and
+scores `disabled`; an `IGNORED` group puts `IGNORE_SCORE` on the edge to the check's
+parent, so it runs and does not score; `isGroupMatching` skips a group past its
+`valid.until`.
 
-This is the same representation `buildExceptionSet`
-([cli/reporter/print_compact.go](../../cli/reporter/print_compact.go)) already reads, so
-the CLI's exception output, the JSON reporter and SARIF pick the result up with no
-further work.
+Mutating the resolved policy after it is built was considered and rejected. Removing a
+query from `ExecutionJob.Queries` leaves its reporting jobs, collector datapoints and
+parent `ChildJobs` entries in place; the in-memory datalake has already initialized a
+score for each of them, so the parent never completes. Doing it safely means
+re-implementing the builder's disabled-placeholder wiring outside the builder.
 
-The resolved policy is **not** re-checksummed after this mutation. Changing impacts does
-not change reporting-job UUIDs, so result storage keys stay valid, but
-`GraphExecutionChecksum` must keep matching what was cached.
+The cost is that the resolver takes an input it did not have. A resolution that applies
+exceptions folds them into the asset policy's `GraphExecutionChecksum`, and it is
+neither served from nor stored in the resolved-policy cache, which is keyed by policy
+and asset filters alone.
+
+The compact output reads the result through `buildExceptionSet`
+([cli/reporter/print_compact.go](../../cli/reporter/print_compact.go)) as before, and
+reports every exception separately ([below](#reporting-the-decisions)). JSON and SARIF
+show the resulting `skip` or `disabled` status, not the exception that caused it.
 
 **With an upstream, the upstream decides.** cnspec sends the exceptions for the asset
 *before* the asset's policy is resolved, and from that point the decision is not
@@ -250,10 +277,17 @@ upstream's call.
 The flow is:
 
 1. cnspec reads the exceptions for the asset from the user and context configs.
-2. cnspec sends them upstream, before resolution.
-3. The upstream decides on each one and returns its decision along with the resolved
-   policy, which already reflects whatever it accepted.
+2. cnspec sends them upstream with `PolicyResolver.SubmitExceptions`, before
+   `ResolveAndUpdateJobs`.
+3. The upstream decides on each one and returns its decision in the response to the
+   submission. The resolved policy it returns afterwards already reflects whatever it
+   accepted. Decisions are per scan and per asset, so they travel on the submission
+   response rather than on `ResolvedPolicy`, which is a cached artifact.
 4. cnspec executes that resolved policy normally. No special path, no local adjustment.
+
+An upstream that predates `SubmitExceptions` answers `NotFound`. cnspec then reports the
+exceptions as not submitted and not in effect. It does not apply them locally, for the
+same reason it does not mutate an upstream-resolved policy.
 
 cnspec does not mutate an upstream-resolved policy, and it does not second-guess a
 decision. An exception the upstream did not accept simply is not in effect, and the
@@ -288,11 +322,18 @@ Sending every exception on every scan is wasteful, and against an upstream whose
 exception API only creates would actively accumulate duplicates. Three measures, in
 order of how much they buy:
 
-**Only authoritative runs sync.** A local scan of a feature branch applies exceptions and
-reports them, but does not submit them. Only a run cnspec considers authoritative — CI,
-on the default branch — submits. `execruntime.Detect()` already reports the environment
-and the ref. This removes most of the volume before any protocol work, and it stops a
+**Only authoritative runs sync.** A scan of a feature branch reports exceptions but does
+not submit them. Only a run cnspec considers authoritative — CI, on the default branch —
+submits. `execruntime.RuntimeEnv.OnDefaultBranch` decides that: on GitLab CI from
+`CI_COMMIT_BRANCH` and `CI_DEFAULT_BRANCH`, on GitHub Actions from the pushed branch and
+the event payload's `repository.default_branch`, since Actions exposes no variable for
+it. Everywhere else it is false. `--exceptions-submit always|never` overrides the
+decision. This removes most of the volume before any protocol work, and it stops a
 developer's local experiment from becoming a shared exception.
+
+Disconnected, a non-authoritative run applies its exceptions as in §6. Connected, it
+cannot: resolution belongs to the upstream, and the upstream has not seen them. Those
+exceptions are reported as not submitted and are not in effect.
 
 **Batch, don't drip.** One submission per scope carrying the whole exception set, not one
 call per entry.
@@ -506,8 +547,9 @@ an integration:
 5. **Allow the scan identity to submit exceptions.** Submitting is a distinct permission
    from scanning.
 
-An upstream that offers none of this still works: cnspec applies exceptions locally and
-reports them, and simply does not sync.
+An upstream that offers none of this still works, without exceptions: cnspec reports
+them as not submitted and does not apply them ([§6](#6-how-exceptions-take-effect)).
+A disconnected scan applies them locally and reports them.
 
 ## Alternatives considered
 
@@ -529,8 +571,8 @@ resolution.
 
 **Applying local exceptions by mutating an upstream-resolved policy.** Rejected as the
 primary path. The local report would reflect the exception and the upstream record would
-not, and the two would disagree silently. Local mutation is used only when there is no
-upstream.
+not, and the two would disagree silently. Without an upstream, exceptions are applied at
+resolution rather than by mutation ([§6](#6-how-exceptions-take-effect)).
 
 **Carrying exception decisions on `ResolvedPolicy`.** Rejected. It is a checksummed,
 cacheable artifact keyed by execution checksum; per-scan, per-asset status does not
@@ -547,9 +589,9 @@ two halves disagree.
 - Exceptions are reviewed where the code is reviewed, by the people who own it.
 - One config schema rather than a new file format, with room for folder-local properties
   and policy selection later.
-- Reporting comes almost free: the local application produces exactly the impacts
-  `buildExceptionSet` already reads.
-- Expiry is enforced by machinery that already exists.
+- Local application reuses the resolver: the impacts it produces are the ones
+  `buildExceptionSet` already reads, and disable and expiry are handled by machinery that
+  already exists.
 - A repository-root config can govern a monorepo without becoming all-or-nothing:
   `paths` scopes an entry to the module it was written for.
 
