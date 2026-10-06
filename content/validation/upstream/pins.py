@@ -359,6 +359,7 @@ WORKFLOW_CHECKSUMMED = [
     ("hcloud", "HCLOUD", lambda: latest_github_release("hetznercloud/cli")),
     ("databricks", "DATABRICKS", lambda: latest_github_release("databricks/cli")),
     ("stackit", "STACKIT", lambda: latest_github_release("stackitcloud/stackit-cli")),
+    ("exo", "EXO", lambda: latest_github_release("exoscale/cli")),
 ]
 
 
