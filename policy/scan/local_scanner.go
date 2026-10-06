@@ -1248,8 +1248,8 @@ type localAssetScanner struct {
 	services *policy.LocalServices
 	job      *AssetJob
 	fetcher  *fetcher
-	autoUpdate bool
 
+	autoUpdate       bool
 	Runtime          llx.Runtime
 	ProgressReporter progress.Progress
 }
