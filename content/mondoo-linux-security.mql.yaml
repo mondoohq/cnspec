@@ -12997,11 +12997,28 @@ queries:
                 echo '$Umask 0077' >> /etc/rsyslog.conf
               fi
 
-              systemctl restart rsyslog
+              # The config file can outlive the package, and a masked unit refuses a
+              # restart even while its process is still running. Either would abort
+              # the script under set -e, so restart only an active, unmasked unit.
+              rsyslog_state=$(systemctl is-enabled rsyslog 2>/dev/null || true)
+              case "$rsyslog_state" in
+                masked*)
+                  echo "rsyslog.service is masked; not restarting it. The new settings apply if it is unmasked and started."
+                  ;;
+                *)
+                  if systemctl is-active --quiet rsyslog 2>/dev/null; then
+                    systemctl restart rsyslog
+                  else
+                    echo "rsyslog is not running; the new settings apply when it next starts."
+                  fi
+                  ;;
+              esac
             fi
 
-            echo "Configuring tmpfiles.d to set default permissions for newly created log files..."
-            cat <<EOF > /etc/tmpfiles.d/log-permissions.conf
+            # /etc/tmpfiles.d belongs to systemd and is absent on hosts without it.
+            if [ -d /etc/tmpfiles.d ]; then
+              echo "Configuring tmpfiles.d to set default permissions for newly created log files..."
+              cat <<EOF > /etc/tmpfiles.d/log-permissions.conf
             f /var/log/alternatives.log 0640 root utmp -
             f /var/log/apt/history.log 0640 root utmp -
             f /var/log/auth.log 0640 root utmp -
@@ -13014,6 +13031,7 @@ queries:
             f /var/log/sudo.log 0640 root utmp -
             f /var/log/wtmp 0640 root utmp -
             EOF
+            fi
 
             # apt rewrites its own logs with mode 0644 on every package operation, which
             # the tmpfiles entries above only correct at boot.
