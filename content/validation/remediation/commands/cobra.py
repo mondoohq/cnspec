@@ -111,6 +111,11 @@ COBRA_CLIS = {
         "cli": "exo",
         "policies": ["mondoo-exoscale-security.mql.yaml"],
         "include_audit": True,
+        # Validated locally with `make test/content/commands/exoscale`, not in
+        # CI: installing a vendor CLI into the pipeline only to check the
+        # documentation's commands waits on a proper integration-test concept.
+        # `validate.py all` skips it; naming it runs it.
+        "local_only": True,
         # `exo dbaas update` hides each engine's flags (--pg-ip-filter, ...)
         # from __complete and plain --help; they appear only under a
         # per-engine help flag, so the walk reads those too.
