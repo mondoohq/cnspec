@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"testing"
 
@@ -866,4 +867,65 @@ func TestIsReportableChildConnectError(t *testing.T) {
 	assert.False(t, isReportableChildConnectError(noMatch))
 	assert.False(t, isReportableChildConnectError(duplicate))
 	assert.True(t, isReportableChildConnectError(errors.New("connection refused")))
+}
+
+// countingRegistry stands in for the provider registry and counts the version
+// lookups that start every provider installation.
+type countingRegistry struct {
+	lookups []string
+}
+
+func (r *countingRegistry) GetLatestVersion(_ context.Context, name string) (string, error) {
+	r.lookups = append(r.lookups, name)
+	return "", errors.New("the test registry serves no providers")
+}
+
+func (r *countingRegistry) DownloadProvider(_ context.Context, name, _, _, _ string) (io.ReadCloser, error) {
+	return nil, errors.New("the test registry serves no providers")
+}
+
+func (r *countingRegistry) DownloadProviderMetadata(_ context.Context, name, _ string) ([]byte, []byte, error) {
+	return nil, nil, errors.New("the test registry serves no providers")
+}
+
+// useCountingRegistry makes this process see no installed providers and routes
+// every installation attempt to the returned registry.
+func useCountingRegistry(t *testing.T) *countingRegistry {
+	t.Helper()
+	registry := &countingRegistry{}
+	cached := providers.CachedProviders
+	providers.CachedProviders = []*providers.Provider{}
+	providers.SetProviderRegistry(registry)
+	t.Cleanup(func() {
+		providers.CachedProviders = cached
+		providers.SetProviderRegistry(providers.NewMondooProviderRegistry())
+	})
+	return registry
+}
+
+func TestPrepareAssetInstallsRequiredProvidersOnlyWithAutoUpdate(t *testing.T) {
+	bundleWithRequirement := func() *policy.Bundle {
+		bundle := sharedTestBundle()
+		bundle.Policies[0].Require = []*policy.Requirement{{Provider: "proxmox"}}
+		return bundle
+	}
+
+	t.Run("auto-update off", func(t *testing.T) {
+		registry := useCountingRegistry(t)
+		scanner := newTestAssetScanner(t, bundleWithRequirement(), "//assets/test-1")
+		scanner.autoUpdate = false
+
+		require.NoError(t, scanner.prepareAsset())
+		assert.Empty(t, registry.lookups, "a missing provider must not be installed when auto-update is off")
+	})
+
+	t.Run("auto-update on", func(t *testing.T) {
+		registry := useCountingRegistry(t)
+		scanner := newTestAssetScanner(t, bundleWithRequirement(), "//assets/test-1")
+		scanner.autoUpdate = true
+
+		// The installation fails against the test registry, which the scan tolerates.
+		require.NoError(t, scanner.prepareAsset())
+		assert.Equal(t, []string{"proxmox"}, registry.lookups)
+	})
 }
