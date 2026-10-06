@@ -3,6 +3,9 @@
 **Date:** 2026-08-22
 **Status:** Proposed
 
+The feature ships as a **preview**: the `mondoo.yml` exception format, the
+`--exceptions-submit` flag and the reported outcomes may still change.
+
 ## Context
 
 An exception suppresses a check for a good reason: the finding is wrong, the risk is

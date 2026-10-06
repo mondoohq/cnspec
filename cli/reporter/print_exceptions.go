@@ -39,9 +39,9 @@ func (r *defaultReporter) printExceptionDecisions(assetMrn string) {
 		}
 	}
 
-	r.printDecisionSection("Exceptions from config files:", inEffect, false)
-	r.printDecisionSection("Exceptions awaiting approval (not in effect):", pending, true)
-	r.printDecisionSection("Exceptions not in effect:", notInEffect, true)
+	r.printDecisionSection("Exceptions from config files [preview]:", inEffect, false)
+	r.printDecisionSection("Exceptions awaiting approval (not in effect) [preview]:", pending, true)
+	r.printDecisionSection("Exceptions not in effect [preview]:", notInEffect, true)
 }
 
 func (r *defaultReporter) printDecisionSection(heading string, decisions []*policy.ExceptionDecision, faint bool) {
