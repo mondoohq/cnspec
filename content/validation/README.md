@@ -12,6 +12,7 @@ The policies are the product. A check that compiles but never matches an asset, 
 | **[`scans/`](scans)** | When this check meets this input, does it reach the verdict we claim? | Go, provider-backed | `scans/*_test.go` |
 | **[`compliance/`](compliance)** | Are the framework tags internally coherent? | Go, static | `compliance/*_test.go` |
 | **[`filters/`](filters)** | Is every multi-condition filter written so it means what it says? | Go, static | `filters/*_test.go` |
+| **[`icons/`](icons)** | Does every policy and query pack name the icon the console shows for it? | Go, static | `icons/*_test.go` |
 | **[`remediation/code/`](remediation/code)** | Is the fix we ship well-formed in its own language? | Python + each language's linter | `remediation/code/*.py` |
 | **[`remediation/commands/`](remediation/commands)** | Do the CLI and API calls we ship actually exist? | Python + CLI grammars / OpenAPI specs | `remediation/commands/*.py` |
 | **[`upstream/`](upstream)** | Is what we validate *against* still current? | Python, network | `upstream/*.py` |
@@ -41,6 +42,9 @@ content/validation/
 │
 ├── filters/                   static Go suite over filters: shape, no providers
 │   └── filters_test.go
+│
+├── icons/                     static Go suite over the mondoo.com/icon tag, no providers
+│   └── icons_test.go
 │
 ├── remediation/
 │   ├── code/                  one validator per remediation language
@@ -88,6 +92,7 @@ Run the one that covers what you touched.
 | `make test/content/scans` | whole-bundle smoke scans | Go |
 | `make test/content/compliance` | compliance-tag mappings | Go |
 | `make test/content/filters` | `filters:` shape | Go |
+| `make test/content/icons` | every policy and query pack carries `mondoo.com/icon` | Go |
 | `make test/content/iac` | all five IaC fixture suites | Go, ~30 min |
 | `make test/content/iac/terraform` | one IaC suite (also `/cloudformation`, `/bicep`, `/dockerfile`, `/kubernetes`) | Go |
 | `make test/content/iac/coverage` | every IaC variant has pass+fail fixtures | Go, no scans |
@@ -127,7 +132,7 @@ python3 content/validation/remediation/commands/validate.py ?     # any unknown 
 | Workflow | Trigger | Runs | Blocking |
 |---|---|---|---|
 | `policies_lint.yaml` | PR + push to main, `content/**` | `cnspec policy lint`, uploaded as SARIF | yes, on `error` findings |
-| `pr-test-lint.yml` (Code Test) | PR + push | `go test ./...`, which includes `scans` (untagged), `compliance` and `filters` | yes |
+| `pr-test-lint.yml` (Code Test) | PR + push | `go test ./...`, which includes `scans` (untagged), `compliance`, `filters` and `icons` | yes |
 | `content-iac-tests.yaml` | PR + push to main, `content/**` | the five IaC suites, the coverage gate, and the closed loop, as a matrix | yes |
 | `validate-remediation.yaml` | PR + push to main, `content/**` | all seven code-block validators and the command validator, one job each | yes |
 | `spell-check.yaml` | PR | `crate-ci/typos` | yes |
@@ -228,6 +233,14 @@ A `filters:` written as a list of `- mql:` items is an OR: the resolver applies 
 Every multi-item list in `content/` was an AND written as a list when the test was added, twelve of them, all in query packs. Workstation-only inventory ran on container images, and an incident-response pack listed every S3 bucket as public and every IAM user as an administrator.
 
 Static, like `compliance/`: it reads the bundle files and needs no providers.
+
+### Icon tag (`icons/`)
+
+The Mondoo console shows a vendor mark next to every policy and query pack. Following ADR 0042, each bundle names that mark in its own tags as `mondoo.com/icon`, the same key the compliance frameworks use. A bundle without the tag gets its mark from keyword matching on its title, and a title the console doesn't recognise gets the generic icon.
+
+`TestEveryBundleNamesItsIcon` requires the tag on every top-level policy and pack, and requires the value to be a lowercase kebab-case icon name. `TestIconTagOnlyOnBundles` rejects the key anywhere below that level: a check variant names its mark with `mondoo.com/filter-icon`.
+
+The test checks the shape of the value, not that the console ships an icon by that name. The vocabulary belongs to the console, and a name it doesn't know falls back to title matching rather than failing, so a misspelling shows up as the wrong icon on screen.
 
 ### Remediation code blocks (`remediation/code/`)
 

@@ -112,13 +112,18 @@ that opens with one prose sentence on what the pack collects and closes with a
 fenced `cnspec scan` invocation naming the file. 32 of the 38 also point at
 Mondoo Platform for automatic enablement. Match the neighbours.
 
-`tags: mondoo.com/category` is `security`, `best-practices`, or `inventory`, and
+`tags: mondoo.com/category` is `security`, `best-practices`, or `inventory`,
+`tags: mondoo.com/icon` names the mark the console shows for the pack (the same
+value its policy counterpart uses, see `content/AGENTS.md`), and
 `require: - provider: <name>` names the provider the queries need.
 
 ## Validation
 
-Lint is the only gate on this directory. There is no Go test, no fixture suite,
-and no remediation validator here, so a mistake that lint accepts ships.
+Lint is the main gate on this directory. Beyond it, only two static Go tests
+read these files: `content/validation/filters` (filter shape) and
+`content/validation/icons` (the `mondoo.com/icon` tag). There is no fixture
+suite and no remediation validator here, so a query mistake that lint accepts
+ships.
 
 ```bash
 cnspec policy lint ./content/querypacks       # what `make test/content/lint` runs

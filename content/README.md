@@ -290,6 +290,7 @@ policies:
     tags:
       mondoo.com/category: security
       mondoo.com/platform: linux
+      mondoo.com/icon: linux
     require:
       - provider: os
     authors:
@@ -313,7 +314,7 @@ policies:
 
 - **Metadata**: Unique identifier, version, license, and authorship
 - **`summary`**: A one-line description, 130 characters or fewer, shown in policy listings
-- **`tags`**: `mondoo.com/category` and `mondoo.com/platform` are required; `cnspec policy lint` warns without them
+- **`tags`**: `mondoo.com/category` and `mondoo.com/platform` are required; `cnspec policy lint` warns without them. `mondoo.com/icon` names the mark the Mondoo console shows for the policy, and every policy shipped in this directory sets it
 - **`require`**: The providers the policy needs, so cnspec can install them on demand
 - **Platform Filters**: Which assets a check applies to (`asset.platform == "linux"`). This is asset selection, not check logic
 - **Security Checks**: MQL queries that validate security configurations and compliance requirements
