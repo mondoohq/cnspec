@@ -346,7 +346,12 @@ func createReporter(ctx context.Context, job *Job, upstream *upstream.UpstreamCo
 			}
 
 			// retrieve the bundle for the parent (which is the space). That bundle contains all policies, queries and checks
-			bundle, err := services.GetBundle(ctx, &policy.Mrn{Mrn: upstream.Creds.ParentMrn}) //nolint:staticcheck // SA1019: ParentMrn is deprecated but still used for backward compatibility
+			var bundle *policy.Bundle
+			err = upstreamRetryFrom(ctx).do(ctx, "GetBundle", func() error {
+				var err error
+				bundle, err = services.GetBundle(ctx, &policy.Mrn{Mrn: upstream.Creds.ParentMrn}) //nolint:staticcheck // SA1019: ParentMrn is deprecated but still used for backward compatibility
+				return err
+			})
 			if err != nil {
 				return nil, err
 			}
@@ -427,7 +432,12 @@ func (s *LocalScanner) resolveServerScanParameters(ctx context.Context, upstream
 		return ctx, nil, "", nil, err
 	}
 
-	resp, err := services.GetScanParameters(ctx, &policy.GetScanParametersReq{ScopeMrn: spaceMrn})
+	var resp *policy.ScanParameters
+	err = upstreamRetryFrom(ctx).do(ctx, "GetScanParameters", func() error {
+		var err error
+		resp, err = services.GetScanParameters(ctx, &policy.GetScanParametersReq{ScopeMrn: spaceMrn})
+		return err
+	})
 	if err != nil {
 		// A failed scan-parameters call must not abort the scan; proceed without
 		// server-activated features. Note that this also means we proceed without
@@ -475,6 +485,13 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	// be aggregated upstream. This is the single chokepoint for Run/RunIncognito
 	// and the admission-review and queue paths.
 	s.stampScanSource(job)
+
+	// With MONDOO_UPSTREAM_RETRY, every Mondoo Platform call of this scan shares
+	// one retry policy, so an outage that outlasts one call's wait is not waited
+	// out again by the next. Without it, each call runs as before.
+	if upstreamRetryEnabled() {
+		ctx = withUpstreamRetry(ctx, newUpstreamRetry())
+	}
 
 	reporter, err := createReporter(ctx, job, upstream)
 	if err != nil {
@@ -835,6 +852,37 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 	return nil
 }
 
+// syncAssetsLegacy is SynchronizeAssets without MONDOO_UPSTREAM_RETRY: three
+// attempts on any error, 2s and then 4s apart.
+func syncAssetsLegacy(ctx context.Context, services *policy.Services, req *policy.SynchronizeAssetsReq) (*policy.SynchronizeAssetsResp, error) {
+	const maxSyncRetries = 3
+	var resp *policy.SynchronizeAssetsResp
+	var err error
+	for attempt := 1; attempt <= maxSyncRetries; attempt++ {
+		resp, err = services.SynchronizeAssets(ctx, req)
+		if err == nil {
+			break
+		}
+		if attempt < maxSyncRetries {
+			backoff := time.Duration(attempt) * 2 * time.Second
+			log.Warn().Err(err).Int("attempt", attempt).Dur("backoff", backoff).
+				Msg("SynchronizeAssets failed, retrying")
+			t := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return nil, ctx.Err()
+			case <-t.C:
+			}
+		}
+	}
+	if err != nil {
+		log.Error().Err(err).Int("attempts", maxSyncRetries).Msg("SynchronizeAssets failed after all retries")
+		return nil, err
+	}
+	return resp, nil
+}
+
 // syncBatchWithUpstream synchronizes a batch of connected assets with the
 // upstream Mondoo Platform, or assigns local MRNs when running in incognito mode.
 func syncBatchWithUpstream(
@@ -852,32 +900,22 @@ func syncBatchWithUpstream(
 			assetsToSync = append(assetsToSync, tracked.Asset)
 		}
 
-		const maxSyncRetries = 3
+		req := &policy.SynchronizeAssetsReq{SpaceMrn: spaceMrn, List: assetsToSync}
 		var resp *policy.SynchronizeAssetsResp
 		var err error
-		for attempt := 1; attempt <= maxSyncRetries; attempt++ {
-			resp, err = services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
-				SpaceMrn: spaceMrn,
-				List:     assetsToSync,
+		if retry := upstreamRetryFrom(ctx); retry != nil {
+			err = retry.do(ctx, "SynchronizeAssets", func() error {
+				var err error
+				resp, err = services.SynchronizeAssets(ctx, req)
+				return err
 			})
-			if err == nil {
-				break
+			if err != nil {
+				log.Error().Err(err).Msg("SynchronizeAssets failed")
 			}
-			if attempt < maxSyncRetries {
-				backoff := time.Duration(attempt) * 2 * time.Second
-				log.Warn().Err(err).Int("attempt", attempt).Dur("backoff", backoff).
-					Msg("SynchronizeAssets failed, retrying")
-				t := time.NewTimer(backoff)
-				select {
-				case <-ctx.Done():
-					t.Stop()
-					return ctx.Err()
-				case <-t.C:
-				}
-			}
+		} else {
+			resp, err = syncAssetsLegacy(ctx, services, req)
 		}
 		if err != nil {
-			log.Error().Err(err).Int("attempts", maxSyncRetries).Msg("SynchronizeAssets failed after all retries")
 			return err
 		}
 		log.Debug().Int("assets", len(resp.Details)).Msg("got assets details")
@@ -1537,6 +1575,16 @@ func (s *localAssetScanner) fetchPublicRegistryBundle() error {
 	return err
 }
 
+// retryUpstream runs fn under the scan's upstream retry when the asset's
+// services call the Mondoo Platform. Without an upstream, fn runs once: a local
+// error is not a network failure to wait out.
+func (s *localAssetScanner) retryUpstream(what string, fn func() error) error {
+	if s.services.Upstream == nil {
+		return fn()
+	}
+	return upstreamRetryFrom(s.job.Ctx).do(s.job.Ctx, what, fn)
+}
+
 func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	var hub policy.PolicyHub = s.services
 	var resolver policy.PolicyResolver = s.services
@@ -1555,7 +1603,12 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 		scandump.YAML(s.job.Ctx, "assetBundle", assetBundle)
 	}
 
-	rawFilters, err := hub.GetPolicyFilters(s.job.Ctx, &policy.Mrn{Mrn: s.job.Asset.Mrn})
+	var rawFilters *policy.Mqueries
+	err := s.retryUpstream("GetPolicyFilters", func() error {
+		var err error
+		rawFilters, err = hub.GetPolicyFilters(s.job.Ctx, &policy.Mrn{Mrn: s.job.Asset.Mrn})
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -1577,9 +1630,14 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 		log.Warn().Err(err).Msg("failed to capture asset filters")
 	}
 
-	resolvedPolicy, err := resolver.ResolveAndUpdateJobs(s.job.Ctx, &policy.UpdateAssetJobsReq{
-		AssetMrn:     s.job.Asset.Mrn,
-		AssetFilters: filters,
+	var resolvedPolicy *policy.ResolvedPolicy
+	err = s.retryUpstream("ResolveAndUpdateJobs", func() error {
+		var err error
+		resolvedPolicy, err = resolver.ResolveAndUpdateJobs(s.job.Ctx, &policy.UpdateAssetJobsReq{
+			AssetMrn:     s.job.Asset.Mrn,
+			AssetFilters: filters,
+		})
+		return err
 	})
 	if err != nil {
 		return resolvedPolicy, err

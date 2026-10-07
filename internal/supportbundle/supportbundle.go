@@ -294,7 +294,7 @@ func (b *Bundle) writeManifest() error {
 var loggedEnvVars = []string{
 	"DEBUG", "TRACE", "MONDOO_CONFIG_PATH", "MONDOO_CONFIG_HOME",
 	"MONDOO_HOME", "MONDOO_AUTO_UPDATE", "NO_COLOR", "HTTP_PROXY",
-	"HTTPS_PROXY", "NO_PROXY", "MEM_DEBUG",
+	"HTTPS_PROXY", "NO_PROXY", "MEM_DEBUG", "MONDOO_UPSTREAM_RETRY",
 }
 
 func collectRelevantEnv() map[string]string {
