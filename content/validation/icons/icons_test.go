@@ -27,21 +27,22 @@ var contentGlobs = []string{
 	"../../querypacks/*.mql.yaml",
 }
 
-// iconName is the shape of a console icon name: the stem of the mark's SVG
-// file, lowercase kebab-case.
+// iconName is the shape of a console icon name: a member of the Mondoo
+// GraphQL API's ICON_IDS enum in lowercase kebab-case.
 var iconName = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // TestEveryBundleNamesItsIcon requires every policy and query pack to name the
 // mark the console shows for it (ADR 0042).
 //
-// The value is the console's icon name, such as `aws`, `postgre-sql` or
-// `hetzner-cloud`. Without the tag the console falls back to matching keywords
-// in the title, and a title it does not recognise gets the generic icon. Name
-// the product's mark where the console ships one, the vendor's otherwise, and
-// `generic-policy` for a policy that covers no single product.
+// The value is a member of the Mondoo GraphQL API's ICON_IDS enum in lowercase
+// kebab-case, such as `aws`, `postgresql` or `palo-alto-networks`. Without the
+// tag the console falls back to matching keywords in the title, and a title it
+// does not recognise gets the generic icon. Name the product's mark where the
+// enum has one, the vendor's otherwise, and `policy` for a policy that covers
+// no single product.
 //
-// The vocabulary lives in the console, so this test checks the shape of the
-// value and not that the console ships it. A misspelt name renders as the
+// The enum lives in the API, so this test checks the shape of the value and
+// not that the enum has it. A name outside the enum renders as the
 // title-matched icon, not as an error.
 func TestEveryBundleNamesItsIcon(t *testing.T) {
 	var offenders []string
