@@ -38,8 +38,8 @@ var iconName = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 // kebab-case, such as `aws`, `postgresql` or `palo-alto-networks`. Without the
 // tag the console falls back to matching keywords in the title, and a title it
 // does not recognise gets the generic icon. Name the product's mark where the
-// enum has one, the vendor's otherwise, and `policy` for a policy that covers
-// no single product.
+// enum has one and the vendor's otherwise. Use `policy` when neither has a
+// member, and for a policy that covers no single product.
 //
 // The enum lives in the API, so this test checks the shape of the value and
 // not that the enum has it. A name outside the enum renders as the
