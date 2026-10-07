@@ -328,6 +328,13 @@ var policyDeleteCmd = &cobra.Command{
 	},
 }
 
+func policyInfoIdentifier(mrn, uid string) string {
+	if mrn != "" {
+		return mrn
+	}
+	return uid
+}
+
 var policyInfoCmd = &cobra.Command{
 	Use:     "info UID/MRN",
 	Short:   "Show more info about a policy from the connected space",
@@ -393,13 +400,13 @@ var policyInfoCmd = &cobra.Command{
 					sections = append(sections, g)
 				}
 				for _, c := range g.Checks {
-					checks[c.Mrn] = struct{}{}
+					checks[policyInfoIdentifier(c.Mrn, c.Uid)] = struct{}{}
 				}
 				for _, q := range g.Queries {
-					queries[q.Mrn] = struct{}{}
+					queries[policyInfoIdentifier(q.Mrn, q.Uid)] = struct{}{}
 				}
 				for _, p := range g.Policies {
-					referenced[p.Mrn] = struct{}{}
+					referenced[policyInfoIdentifier(p.Mrn, p.Uid)] = struct{}{}
 				}
 			}
 
