@@ -6,6 +6,8 @@ package scan
 import (
 	"context"
 	"math/rand/v2"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,10 +16,13 @@ import (
 )
 
 // Waiting out an unreachable Mondoo Platform. The calls a scan cannot do
-// without (the space bundle, asset synchronization, policy resolution) used to
-// fail the scan on the first transient error, or after a few seconds of
-// retries. A server restart or a rolling deployment takes longer than that, so
-// a scan that started at the wrong moment failed and waited for the next one.
+// without (the space bundle, asset synchronization, policy resolution) fail the
+// scan on the first transient error, or after a few seconds of retries. A
+// server restart or a rolling deployment takes longer than that, so a scan that
+// starts at the wrong moment fails and waits for the next one.
+//
+// Off by default while it is tested: MONDOO_UPSTREAM_RETRY turns it on. Off,
+// every call behaves as before: one attempt, and SynchronizeAssets' own three.
 const (
 	// defaultUpstreamWait is how long one call keeps retrying a transient
 	// error: long enough to outlast a server restart.
@@ -26,6 +31,24 @@ const (
 	upstreamRetryBaseWait = time.Second
 	upstreamRetryMaxWait  = 15 * time.Second
 )
+
+// UpstreamRetryEnv turns the scan-start retry on. Any value but "", 0, false,
+// no and off (any case) is on, like MONDOO_WINDOWS_NATIVE.
+const UpstreamRetryEnv = "MONDOO_UPSTREAM_RETRY"
+
+// upstreamRetryEnabled reports whether UpstreamRetryEnv turns the retry on.
+func upstreamRetryEnabled() bool {
+	return envEnabled(os.Getenv(UpstreamRetryEnv))
+}
+
+// envEnabled treats any value but "", 0, false, no and off as on.
+func envEnabled(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "0", "false", "no", "off":
+		return false
+	}
+	return true
+}
 
 // upstreamRetry retries the Mondoo Platform calls a scan depends on, on
 // transient errors only (upstream.RetryableRPCError: unavailable, deadline
@@ -72,18 +95,21 @@ func withUpstreamRetry(ctx context.Context, r *upstreamRetry) context.Context {
 	return context.WithValue(ctx, upstreamRetryKey{}, r)
 }
 
-// upstreamRetryFrom returns the scan's upstreamRetry, or a new one for a call
-// made outside a scan.
+// upstreamRetryFrom returns the scan's upstreamRetry, or nil when the scan has
+// none (the retry is off). A nil upstreamRetry runs each call once.
 func upstreamRetryFrom(ctx context.Context) *upstreamRetry {
 	if r, ok := ctx.Value(upstreamRetryKey{}).(*upstreamRetry); ok && r != nil {
 		return r
 	}
-	return newUpstreamRetry()
+	return nil
 }
 
 // do runs fn, and runs it again on a transient error until it succeeds, fails
 // permanently, or the call's wait is used up. what names the call in the log.
 func (r *upstreamRetry) do(ctx context.Context, what string, fn func() error) error {
+	if r == nil {
+		return fn()
+	}
 	r.mu.Lock()
 	down := r.down
 	r.mu.Unlock()

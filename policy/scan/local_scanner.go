@@ -486,9 +486,12 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	// and the admission-review and queue paths.
 	s.stampScanSource(job)
 
-	// Every Mondoo Platform call of this scan shares one retry policy, so an
-	// outage that outlasts one call's wait is not waited out again by the next.
-	ctx = withUpstreamRetry(ctx, newUpstreamRetry())
+	// With MONDOO_UPSTREAM_RETRY, every Mondoo Platform call of this scan shares
+	// one retry policy, so an outage that outlasts one call's wait is not waited
+	// out again by the next. Without it, each call runs as before.
+	if upstreamRetryEnabled() {
+		ctx = withUpstreamRetry(ctx, newUpstreamRetry())
+	}
 
 	reporter, err := createReporter(ctx, job, upstream)
 	if err != nil {
@@ -849,6 +852,37 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 	return nil
 }
 
+// syncAssetsLegacy is SynchronizeAssets without MONDOO_UPSTREAM_RETRY: three
+// attempts on any error, 2s and then 4s apart.
+func syncAssetsLegacy(ctx context.Context, services *policy.Services, req *policy.SynchronizeAssetsReq) (*policy.SynchronizeAssetsResp, error) {
+	const maxSyncRetries = 3
+	var resp *policy.SynchronizeAssetsResp
+	var err error
+	for attempt := 1; attempt <= maxSyncRetries; attempt++ {
+		resp, err = services.SynchronizeAssets(ctx, req)
+		if err == nil {
+			break
+		}
+		if attempt < maxSyncRetries {
+			backoff := time.Duration(attempt) * 2 * time.Second
+			log.Warn().Err(err).Int("attempt", attempt).Dur("backoff", backoff).
+				Msg("SynchronizeAssets failed, retrying")
+			t := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return nil, ctx.Err()
+			case <-t.C:
+			}
+		}
+	}
+	if err != nil {
+		log.Error().Err(err).Int("attempts", maxSyncRetries).Msg("SynchronizeAssets failed after all retries")
+		return nil, err
+	}
+	return resp, nil
+}
+
 // syncBatchWithUpstream synchronizes a batch of connected assets with the
 // upstream Mondoo Platform, or assigns local MRNs when running in incognito mode.
 func syncBatchWithUpstream(
@@ -866,17 +900,22 @@ func syncBatchWithUpstream(
 			assetsToSync = append(assetsToSync, tracked.Asset)
 		}
 
+		req := &policy.SynchronizeAssetsReq{SpaceMrn: spaceMrn, List: assetsToSync}
 		var resp *policy.SynchronizeAssetsResp
-		err := upstreamRetryFrom(ctx).do(ctx, "SynchronizeAssets", func() error {
-			var err error
-			resp, err = services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
-				SpaceMrn: spaceMrn,
-				List:     assetsToSync,
+		var err error
+		if retry := upstreamRetryFrom(ctx); retry != nil {
+			err = retry.do(ctx, "SynchronizeAssets", func() error {
+				var err error
+				resp, err = services.SynchronizeAssets(ctx, req)
+				return err
 			})
-			return err
-		})
+			if err != nil {
+				log.Error().Err(err).Msg("SynchronizeAssets failed")
+			}
+		} else {
+			resp, err = syncAssetsLegacy(ctx, services, req)
+		}
 		if err != nil {
-			log.Error().Err(err).Msg("SynchronizeAssets failed")
 			return err
 		}
 		log.Debug().Int("assets", len(resp.Details)).Msg("got assets details")

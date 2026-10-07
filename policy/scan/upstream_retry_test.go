@@ -116,7 +116,28 @@ func TestUpstreamRetryIsSharedThroughTheContext(t *testing.T) {
 	r := newUpstreamRetry()
 	ctx := withUpstreamRetry(context.Background(), r)
 	assert.Same(t, r, upstreamRetryFrom(ctx))
-	assert.NotNil(t, upstreamRetryFrom(context.Background()), "a call outside a scan gets its own")
+	assert.Nil(t, upstreamRetryFrom(context.Background()), "no retry in the context: the retry is off")
+}
+
+// Off unless MONDOO_UPSTREAM_RETRY says otherwise, with MONDOO_WINDOWS_NATIVE's
+// values.
+func TestUpstreamRetryEnv(t *testing.T) {
+	for v, want := range map[string]bool{
+		"": false, "0": false, "false": false, "FALSE": false, "no": false, "off": false, " off ": false,
+		"1": true, "true": true, "on": true, "yes": true,
+	} {
+		t.Setenv(UpstreamRetryEnv, v)
+		assert.Equal(t, want, upstreamRetryEnabled(), "%q", v)
+	}
+}
+
+// Without a retry (MONDOO_UPSTREAM_RETRY unset), a call runs once, even on a
+// transient error.
+func TestUpstreamRetryOffRunsOnce(t *testing.T) {
+	var r *upstreamRetry
+	fn, calls := failing(1000, errUnavailable)
+	require.ErrorIs(t, r.do(context.Background(), "GetBundle", fn), errUnavailable)
+	assert.Equal(t, 1, *calls)
 }
 
 func TestUpstreamRetryWait(t *testing.T) {
@@ -144,8 +165,9 @@ func (f *flakySync) SynchronizeAssets(ctx context.Context, req *policy.Synchroni
 	return f.activityRecorder.SynchronizeAssets(ctx, req)
 }
 
-// Asset synchronization waits out a restart through the scan's retry, and a
-// permanent error fails it at once (it used to be tried 3 times, whatever it was).
+// With the retry on, asset synchronization waits out a restart through the
+// scan's retry, and a permanent error fails it at once. With it off, it keeps
+// its own three attempts on any error.
 func TestSyncBatchRetriesThroughTheScanRetry(t *testing.T) {
 	batch := []*discovery.TrackedAsset{{Asset: &inventory.Asset{Name: "a"}}}
 	trigger := policy.AssetActivityTrigger_ASSET_ACTIVITY_TRIGGER_AD_HOC
@@ -163,4 +185,11 @@ func TestSyncBatchRetriesThroughTheScanRetry(t *testing.T) {
 	f = &flakySync{activityRecorder: newActivityRecorder(), fails: 3, err: denied}
 	require.Error(t, syncBatchWithUpstream(ctx, batch, &policy.Services{PolicyResolver: f}, "//spaces/s", nil, trigger))
 	assert.Equal(t, 1, f.calls)
+
+	if testing.Short() {
+		return // the legacy loop waits 2s and 4s
+	}
+	f = &flakySync{activityRecorder: newActivityRecorder(), fails: 5, err: denied}
+	require.Error(t, syncBatchWithUpstream(context.Background(), batch, &policy.Services{PolicyResolver: f}, "//spaces/s", nil, trigger))
+	assert.Equal(t, 3, f.calls, "retry off: three attempts, as before")
 }
