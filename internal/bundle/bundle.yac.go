@@ -437,7 +437,6 @@ func (x *Filters) addFileContext(node *yaml.Node) {
 }
 
 type Framework struct {
-	Summary                string            `protobuf:"bytes,46,opt,name=summary,proto3" json:"summary,omitempty" yaml:"summary,omitempty"`
 	Created                int64             `protobuf:"varint,32,opt,name=created,proto3" json:"created,omitempty" yaml:"created,omitempty"`
 	Modified               int64             `protobuf:"varint,33,opt,name=modified,proto3" json:"modified,omitempty" yaml:"modified,omitempty"`
 	Dependencies           []*FrameworkRef   `protobuf:"bytes,35,rep,name=dependencies,proto3" json:"dependencies,omitempty" yaml:"dependencies,omitempty"`
@@ -450,6 +449,7 @@ type Framework struct {
 	OwnerMrn               string            `protobuf:"bytes,8,opt,name=owner_mrn,json=ownerMrn,proto3" json:"owner_mrn,omitempty" yaml:"owner_mrn,omitempty"`
 	Mrn                    string            `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
 	Name                   string            `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty" yaml:"name,omitempty"`
+	Summary                string            `protobuf:"bytes,46,opt,name=summary,proto3" json:"summary,omitempty" yaml:"summary,omitempty"`
 	Version                string            `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty" yaml:"version,omitempty"`
 	License                string            `protobuf:"bytes,21,opt,name=license,proto3" json:"license,omitempty" yaml:"license,omitempty"`
 	Tags                   map[string]string `protobuf:"bytes,34,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"tags,omitempty"`
@@ -1424,7 +1424,6 @@ func (d ObjectRef) MarshalYAML() (any, error) {
 }
 
 type Policy struct {
-	Summary                string               `protobuf:"bytes,46,opt,name=summary,proto3" json:"summary,omitempty" yaml:"summary,omitempty"`
 	Created                int64                `protobuf:"varint,32,opt,name=created,proto3" json:"created,omitempty" yaml:"created,omitempty"`
 	Modified               int64                `protobuf:"varint,33,opt,name=modified,proto3" json:"modified,omitempty" yaml:"modified,omitempty"`
 	RiskFactors            []*RiskFactor        `protobuf:"bytes,47,rep,name=risk_factors,json=riskFactors,proto3" json:"risk_factors,omitempty" yaml:"risk_factors,omitempty"`
@@ -1439,6 +1438,7 @@ type Policy struct {
 	OwnerMrn               string               `protobuf:"bytes,8,opt,name=owner_mrn,json=ownerMrn,proto3" json:"owner_mrn,omitempty" yaml:"owner_mrn,omitempty"`
 	Mrn                    string               `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
 	Name                   string               `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty" yaml:"name,omitempty"`
+	Summary                string               `protobuf:"bytes,46,opt,name=summary,proto3" json:"summary,omitempty" yaml:"summary,omitempty"`
 	Version                string               `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty" yaml:"version,omitempty"`
 	License                string               `protobuf:"bytes,21,opt,name=license,proto3" json:"license,omitempty" yaml:"license,omitempty"`
 	Tags                   map[string]string    `protobuf:"bytes,34,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"tags,omitempty"`
@@ -1880,7 +1880,6 @@ func (d QueryGroup) MarshalYAML() (any, error) {
 type QueryPack struct {
 	Context                string            `protobuf:"bytes,8,opt,name=context,proto3" json:"context,omitempty" yaml:"context,omitempty"`
 	ComputedFilters        *Filters          `protobuf:"bytes,47,opt,name=computed_filters,json=computedFilters,proto3" json:"computed_filters,omitempty" yaml:"computed_filters,omitempty"`
-	Summary                string            `protobuf:"bytes,46,opt,name=summary,proto3" json:"summary,omitempty" yaml:"summary,omitempty"`
 	Created                int64             `protobuf:"varint,32,opt,name=created,proto3" json:"created,omitempty" yaml:"created,omitempty"`
 	Modified               int64             `protobuf:"varint,33,opt,name=modified,proto3" json:"modified,omitempty" yaml:"modified,omitempty"`
 	Strict                 *bool             `protobuf:"varint,50,opt,name=strict,proto3,oneof" json:"strict,omitempty" yaml:"strict,omitempty"`
@@ -1890,6 +1889,7 @@ type QueryPack struct {
 	OwnerMrn               string            `protobuf:"bytes,4,opt,name=owner_mrn,json=ownerMrn,proto3" json:"owner_mrn,omitempty" yaml:"owner_mrn,omitempty"`
 	Mrn                    string            `protobuf:"bytes,1,opt,name=mrn,proto3" json:"mrn,omitempty" yaml:"mrn,omitempty"`
 	Name                   string            `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty" yaml:"name,omitempty"`
+	Summary                string            `protobuf:"bytes,46,opt,name=summary,proto3" json:"summary,omitempty" yaml:"summary,omitempty"`
 	Version                string            `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty" yaml:"version,omitempty"`
 	License                string            `protobuf:"bytes,21,opt,name=license,proto3" json:"license,omitempty" yaml:"license,omitempty"`
 	Filters                *Filters          `protobuf:"bytes,48,opt,name=filters,proto3" json:"filters,omitempty" yaml:"filters,omitempty"`
