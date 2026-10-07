@@ -113,6 +113,26 @@ func snapshotAsset(asset *inventory.Asset) *inventory.Asset {
 	if asset.Platform != nil {
 		snapshot.Platform = asset.Platform.CloneVT()
 	}
+	if len(asset.Relationships) > 0 {
+		snapshot.Relationships = make([]*inventory.AssetRelationship, 0, len(asset.Relationships))
+		for _, relationship := range asset.Relationships {
+			if relationship == nil {
+				continue
+			}
+			snapshotRelationship := &inventory.AssetRelationship{
+				ResourceType: relationship.ResourceType,
+				ResourceId:   relationship.ResourceId,
+			}
+			if related := relationship.Asset; related != nil {
+				snapshotRelationship.Asset = &inventory.Asset{
+					Id:   related.Id,
+					Mrn:  related.Mrn,
+					Name: related.Name,
+				}
+			}
+			snapshot.Relationships = append(snapshot.Relationships, snapshotRelationship)
+		}
+	}
 	return snapshot
 }
 

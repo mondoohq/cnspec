@@ -216,7 +216,17 @@ func TestPullsFromRegistry(t *testing.T) {
 
 func TestAggregateReporterSnapshotsAssets(t *testing.T) {
 	r := NewAggregateReporter()
-	asset := &inventory.Asset{Mrn: "//assets/1", Name: "target", Labels: map[string]string{"env": "prod"}, Connections: []*inventory.Config{{Type: "ssh", Options: map[string]string{"key": strings.Repeat("k", 2048)}}}}
+	asset := &inventory.Asset{
+		Mrn:         "//assets/1",
+		Name:        "target",
+		Labels:      map[string]string{"env": "prod"},
+		Connections: []*inventory.Config{{Type: "ssh", Options: map[string]string{"key": strings.Repeat("k", 2048)}}},
+		Relationships: []*inventory.AssetRelationship{{
+			Asset:        &inventory.Asset{Mrn: "//assets/parent", Name: "parent", Connections: []*inventory.Config{{Type: "ssh"}}},
+			ResourceType: "k8s.pod",
+			ResourceId:   "pod-1",
+		}},
+	}
 	r.AddReport(asset, &AssetReport{ResolvedPolicy: &policy.ResolvedPolicy{}, Report: &policy.Report{Score: &policy.Score{Value: 100}}})
 	asset.Name = "mutated"
 	asset.Labels["env"] = "dev"
@@ -225,4 +235,8 @@ func TestAggregateReporterSnapshotsAssets(t *testing.T) {
 	assert.Equal(t, "target", got.Name)
 	assert.Equal(t, "prod", got.Labels["env"])
 	assert.Nil(t, got.Connections)
+	require.Len(t, got.Relationships, 1)
+	assert.Equal(t, "pod-1", got.Relationships[0].ResourceId)
+	assert.Equal(t, "//assets/parent", got.Relationships[0].Asset.Mrn)
+	assert.Nil(t, got.Relationships[0].Asset.Connections)
 }
