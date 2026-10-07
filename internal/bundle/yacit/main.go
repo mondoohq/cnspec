@@ -38,6 +38,8 @@ func main() {
 			"Mrn":   99,
 			"Name":  98,
 			"Title": 98,
+			// after the name, which ties at 98 and is declared first
+			"Summary": 98,
 
 			// policy & queries
 			"Version":  97,

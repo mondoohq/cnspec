@@ -28,6 +28,7 @@ policies:
           - uid: query1
     version: "1.0.0"
     scoring_system: highest impact
+    summary: Secure the SSH server
 queries:
   - uid: query1
     docs:
@@ -52,6 +53,7 @@ queries:
 policies:
   - uid: sshd-server-policy
     name: SSH Server Policy
+    summary: Secure the SSH server
     version: 1.0.0
     tags:
       another-key: another-value
