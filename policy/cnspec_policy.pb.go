@@ -113,10 +113,10 @@ const (
 	// Experimental: BANDED scoring mechanism which creates a score based on
 	// the 4 categories of criticality (critical, high, medium, low) and
 	// positions scores so that:
-	// 1. Any critical/high issues won't generate a high score (upper limit)
-	// 2. Lower scoring categories can have an impact on the score
-	//    (e.g. 1 crit + 200 medium failures will be lower than 1 crit only)
-	// 3. A large collection of medium findings won't generate a critical score
+	//  1. Any critical/high issues won't generate a high score (upper limit)
+	//  2. Lower scoring categories can have an impact on the score
+	//     (e.g. 1 crit + 200 medium failures will be lower than 1 crit only)
+	//  3. A large collection of medium findings won't generate a critical score
 	ScoringSystem_BANDED ScoringSystem = 6
 	// Experimental: DECAYED scoring uses a scaled decay function to estimate a
 	// score value. This means that a few critical findings will quickly reduce
@@ -1741,7 +1741,7 @@ type MqueryDocs struct {
 	Audit string `protobuf:"bytes,2,opt,name=audit,proto3" json:"audit,omitempty"`
 	// Optional. References to external sources, typical URLs
 	Refs []*MqueryRef `protobuf:"bytes,4,rep,name=refs,proto3" json:"refs,omitempty"`
-	//  Optional. Remediation instructions for the query
+	// Optional. Remediation instructions for the query
 	Remediation   *Remediation `protobuf:"bytes,5,opt,name=remediation,proto3" json:"remediation,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -4183,68 +4183,68 @@ type RiskFactor struct {
 	//
 	// 1. Contextual risks
 	//
-	// - Internet-facing asset   [internet-facing]
-	//   Any assets that are facing the internet may be at risk of being breached
+	//   - Internet-facing asset   [internet-facing]
+	//     Any assets that are facing the internet may be at risk of being breached
 	//
-	// - Asset or service in use   [asset-in-use]
-	//   Assets or services that are currently being used. If vulnerabilities
-	//   are found on an asset in use, their priority is increased. However,
-	//   vulnerabilities on an asset not in use may be reduced in priority.
+	//   - Asset or service in use   [asset-in-use]
+	//     Assets or services that are currently being used. If vulnerabilities
+	//     are found on an asset in use, their priority is increased. However,
+	//     vulnerabilities on an asset not in use may be reduced in priority.
 	//
-	// - Exploitable vulnerabilities   [exploitable]
-	//   Exploitable vulnerabilities are detected on the asset. These are more
-	//   likely to lead to a breach.
+	//   - Exploitable vulnerabilities   [exploitable]
+	//     Exploitable vulnerabilities are detected on the asset. These are more
+	//     likely to lead to a breach.
 	//
-	// - Code Execution risks   [code-execution]
-	//   Vulnerabilities are detected which contain (remote) code executions.
-	//   These can cause serious damage to other resources on the asset.
+	//   - Code Execution risks   [code-execution]
+	//     Vulnerabilities are detected which contain (remote) code executions.
+	//     These can cause serious damage to other resources on the asset.
 	//
-	// - End of life   [eol]
-	//   The asset or some of its resources have reached their end of life and
-	//   no longer receive security updates. Vulnerability analysis is
-	//   unreliable and may not be actionable.
+	//   - End of life   [eol]
+	//     The asset or some of its resources have reached their end of life and
+	//     no longer receive security updates. Vulnerability analysis is
+	//     unreliable and may not be actionable.
 	//
-	// - Defensive countermeasures   [defensive]
-	//   Defensive countermeasures have been detected on the asset. These may
-	//   contain security modules, firewalls, or other mitigations.
+	//   - Defensive countermeasures   [defensive]
+	//     Defensive countermeasures have been detected on the asset. These may
+	//     contain security modules, firewalls, or other mitigations.
 	//
 	// 2. Downstream exposure
 	//
-	// - DB access   [db-access]
-	//   Databases are downstream exposures that may hold valuable customer data
+	//   - DB access   [db-access]
+	//     Databases are downstream exposures that may hold valuable customer data
 	//
-	// - User risks   [user-risk]
-	//   Users, often with elevated privileges, that are at risk
+	//   - User risks   [user-risk]
+	//     Users, often with elevated privileges, that are at risk
 	//
-	// - Sensitive data   [sensitive-data]
-	//   The asset contains sensitive data, which an attacker may access if
-	//   they manage to breach it.
+	//   - Sensitive data   [sensitive-data]
+	//     The asset contains sensitive data, which an attacker may access if
+	//     they manage to breach it.
 	//
-	// - Credential risks   [credentials]
-	//   Credentials are found on the asset that attackers may use to elevate
-	//   their privileges or breach other systems.
+	//   - Credential risks   [credentials]
+	//     Credentials are found on the asset that attackers may use to elevate
+	//     their privileges or breach other systems.
 	//
-	// - Containers or Kubernetes   [containers]
-	//   Containers or Kubernetes environments are found on the asset. Attackers
-	//   may expand their attacks to these virtual systems.
+	//   - Containers or Kubernetes   [containers]
+	//     Containers or Kubernetes environments are found on the asset. Attackers
+	//     may expand their attacks to these virtual systems.
 	//
-	// - Packages [package]
-	//   The asset contains software packages that are at risk or has other
-	//   related risks such as incompletely removed packages.
+	//   - Packages [package]
+	//     The asset contains software packages that are at risk or has other
+	//     related risks such as incompletely removed packages.
 	//
-	// - Ports [port]
-	//   The asset has processes listening on open or public ports.
+	//   - Ports [port]
+	//     The asset has processes listening on open or public ports.
 	//
 	// 3. Misc
 	//
-	// - Tagged assets   [tagged]
-	//   Tagged assets may be increased or decreased in priority, depending on
-	//   a users' needs. For example: Critical production infrastructure may
-	//   increase the risk of findings.
+	//   - Tagged assets   [tagged]
+	//     Tagged assets may be increased or decreased in priority, depending on
+	//     a users' needs. For example: Critical production infrastructure may
+	//     increase the risk of findings.
 	//
-	// - Other risks   [uncategorized]
-	//   This captures any other type of risk factor, that doesn't fit the above
-	//   risk categories.
+	//   - Other risks   [uncategorized]
+	//     This captures any other type of risk factor, that doesn't fit the above
+	//     risk categories.
 	Indicator     string            `protobuf:"bytes,75,opt,name=indicator,proto3" json:"indicator,omitempty"`
 	Action        Action            `protobuf:"varint,77,opt,name=action,proto3,enum=cnspec.policy.v1.Action" json:"action,omitempty"`
 	Tags          map[string]string `protobuf:"bytes,78,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
