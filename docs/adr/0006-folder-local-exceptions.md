@@ -354,11 +354,25 @@ order of how much they buy:
 
 **Only authoritative runs sync.** A scan of a feature branch reports exceptions but does
 not submit them. Only a run cnspec considers authoritative — CI, on the default branch —
-submits. `execruntime.RuntimeEnv.OnDefaultBranch` decides that: on GitLab CI from
-`CI_COMMIT_BRANCH` and `CI_DEFAULT_BRANCH`, on GitHub Actions from the pushed branch and
-the event payload's `repository.default_branch`, since Actions exposes no variable for
-it. Everywhere else it is false. `--exceptions-submit always|never` overrides the
-decision. This removes most of the volume before any protocol work, and it stops a
+submits. `execruntime.RuntimeEnv.OnDefaultBranch` decides that, per platform:
+
+| Platform | Default branch from | Never counts |
+|---|---|---|
+| GitLab CI | `CI_COMMIT_BRANCH` equals `CI_DEFAULT_BRANCH` | merge requests, tags (`CI_COMMIT_BRANCH` unset) |
+| GitHub Actions | `GITHUB_REF_NAME` equals the event payload's `repository.default_branch`; Actions exposes no variable for it | `pull_request`, `pull_request_target`, `merge_group`, tags |
+| Jenkins | `BRANCH_IS_PRIMARY=true`, set by the SCM source in multibranch projects; otherwise `BRANCH_NAME`, or `GIT_BRANCH` without `origin/`, equals `MONDOO_DEFAULT_BRANCH` | change requests (`CHANGE_ID`), tags (`TAG_NAME`) |
+| Azure Pipelines | `BUILD_SOURCEBRANCH` equals `refs/heads/` plus `MONDOO_DEFAULT_BRANCH`; Azure has no variable for the default branch | `BUILD_REASON=PullRequest`, any ref outside `refs/heads/` |
+| CircleCI | `CIRCLE_BRANCH` equals `MONDOO_DEFAULT_BRANCH`; `pipeline.git.branch.is_default` is a pipeline value, not an environment variable | tags (`CIRCLE_TAG`); fork pull requests build as `pull/<n>` |
+
+`MONDOO_DEFAULT_BRANCH` is opt-in. It takes a branch name or `refs/heads/<name>`, and it
+counts only on the three platforms that cannot tell the default branch themselves; it
+does not override GitHub Actions or GitLab CI, and does nothing outside a detected CI
+platform, so a local run never submits. It grants nothing `--exceptions-submit always`
+does not: whoever can set it is already editing the pipeline. Where nothing names the
+default branch the result is false. `--exceptions-submit always|never` overrides the
+decision. Jenkins, Azure Pipelines, CircleCI and `MONDOO_DEFAULT_BRANCH` were proposed
+by Tim Smith ([@tas50](https://github.com/tas50)) in
+[mondoohq/mql#11712](https://github.com/mondoohq/mql/pull/11712#issuecomment-6027413289). This removes most of the volume before any protocol work, and it stops a
 developer's local experiment from becoming a shared exception.
 
 Disconnected, a non-authoritative run applies its exceptions as in §6. Connected, it
@@ -678,5 +692,8 @@ Deferred deliberately, so the first pass stays small:
 - `mql/cli/config` — the `mondoo.yml` schema and loader
 - `mql/providers-sdk/v1/plugin` — the connect-time channel for the context config
 - `mql/cli/execruntime` — CI identity and ref detection
+- [mondoohq/mql#11712 (comment)](https://github.com/mondoohq/mql/pull/11712#issuecomment-6027413289)
+  — default-branch detection on Jenkins, Azure Pipelines and CircleCI, and
+  `MONDOO_DEFAULT_BRANCH`, proposed by @tas50
 - [ADR-0001](0001-scan-parallelization-pipeline.md) — scan pipeline the connect-time
   config ingestion has to fit into

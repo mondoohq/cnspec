@@ -90,7 +90,7 @@ func init() {
 	_ = scanCmd.Flags().MarkHidden("output-scan-db")
 	_ = scanCmd.Flags().Bool("collect-support-bundle", false, "Collect a support bundle (debug logs, asset bundle, inventory, resolved policy, report, provider versions) for sharing with Mondoo support. By default writes to a timestamped directory in the current working dir; override with --support-bundle-dir.")
 	_ = scanCmd.Flags().String("support-bundle-dir", "", "Directory to write the support bundle into. Only used when --collect-support-bundle is set. Defaults to ./cnspec-support-bundle-<timestamp>/.")
-	_ = scanCmd.Flags().String("exceptions-submit", "auto", "Preview: When to submit exceptions from mondoo.yml files to Mondoo Platform: auto (a CI run on the default branch), always, or never")
+	_ = scanCmd.Flags().String("exceptions-submit", "auto", "Preview: When to submit exceptions from mondoo.yml files to Mondoo Platform: auto (a CI run on the default branch; set MONDOO_DEFAULT_BRANCH on Jenkins, Azure Pipelines or CircleCI if they cannot tell it), always, or never")
 }
 
 var scanCmd = &cobra.Command{
