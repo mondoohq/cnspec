@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -30,6 +29,7 @@ func init() {
 	aibomCmd.Flags().StringToString("annotation", nil, "Add an annotation to the asset in the form KEY=VALUE")
 	aibomCmd.Flags().StringP("output", "o", "markdown", "Set output format: "+aibom.AllFormats())
 	aibomCmd.Flags().String("output-target", "", "Set output target to which the AIBOM report will be written")
+	addInventoryFlags(aibomCmd, "Set the path to the inventory file. With several assets, --output-target gets one file per asset")
 }
 
 var aibomCmd = &cobra.Command{
@@ -55,13 +55,24 @@ Output formats:
 - cyclonedx-json
 - cyclonedx-xml
 
+To generate AIBOMs for the assets of an inventory file, with the credentials
+it defines, use --inventory-file instead of a provider subcommand. An
+inventory with several assets produces one AIBOM per asset. With
+--output-target, each is written to its own file, with the index inserted
+before the extension (aibom-0.json, aibom-1.json, ...), ordered by asset name.
+Assets that could not be scanned get no AIBOM; they are listed and the
+command exits 1 after writing the others.
+
 Examples:
   cnspec aibom local
   cnspec aibom local -o json
   cnspec aibom ollama -o cyclonedx-json
   cnspec aibom aws -o cyclonedx-json
+  cnspec aibom --inventory-file inventory.yml -o json --output-target aibom.json
 `,
 	PreRun: func(cmd *cobra.Command, args []string) {
+		bindInventoryFlags(cmd)
+
 		if err := viper.BindPFlag("output", cmd.Flags().Lookup("output")); err != nil {
 			log.Fatal().Err(err).Msg("failed to bind output flag")
 		}
@@ -111,26 +122,29 @@ var aibomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *p
 	// Assets that could not be scanned get no bill of materials; they are
 	// reported, and fail the command, after the others are written.
 	collected, failures := withoutFailedAssets(cnspecReport.ToCnqueryReport())
-	boms := generator.GenerateAiBom(collected)
+	boms := []*aibom.AiBom{}
+	for _, bom := range generator.GenerateAiBom(collected) {
+		// A failed asset has no data. Rendering it would write an AIBOM that
+		// looks like an asset without any AI usage.
+		if bom.Status == aibom.Status_STATUS_FAILED {
+			failures = append(failures, bomFailure{Asset: aibomAssetName(bom), Reason: strings.Join(bom.Errors, "; ")})
+			continue
+		}
+		boms = append(boms, bom)
+	}
+	// Sorted after the failed assets are dropped, so the index in each output
+	// file name counts only the documents that are written.
+	sortBomsByAssetName(boms, aibomAssetName)
 
 	// the output format is validated in PreRun, aibom.NewFormatter always returns a handler
 	formatter := aibom.NewFormatter(viper.GetString("output"))
 
 	outputTarget := viper.GetString("output-target")
-	generated := 0
+	if len(boms) > 1 && outputTarget == "" {
+		log.Warn().Int("assets", len(boms)).Msg("printing one AIBOM per asset; use --output-target to write each to its own file")
+	}
 	for i := range boms {
 		bom := boms[i]
-		// A failed asset has no data. Rendering it would write an AIBOM that
-		// looks like an asset without any AI usage.
-		if bom.Status == aibom.Status_STATUS_FAILED {
-			name := ""
-			if bom.Asset != nil {
-				name = bom.Asset.Name
-			}
-			failures = append(failures, bomFailure{Asset: name, Reason: strings.Join(bom.Errors, "; ")})
-			continue
-		}
-		generated++
 		buf := bytes.Buffer{}
 		err := formatter.Render(&buf, bom)
 		if err != nil {
@@ -138,10 +152,7 @@ var aibomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *p
 		}
 
 		if outputTarget != "" {
-			filename := outputTarget
-			if len(boms) > 1 {
-				filename = fmt.Sprintf("%s-%d.%s", path.Base(outputTarget), i, path.Ext(outputTarget))
-			}
+			filename := bomOutputFile(outputTarget, i, len(boms))
 			if err := os.WriteFile(filename, buf.Bytes(), 0o600); err != nil {
 				log.Fatal().Err(err).Msg("failed to write AIBOM to file")
 			}
@@ -150,7 +161,16 @@ var aibomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *p
 		}
 	}
 
-	if err := bomFailuresError("AIBOM", failures, generated); err != nil {
+	if err := bomFailuresError("AIBOM", failures, len(boms)); err != nil {
 		log.Fatal().Msg(err.Error())
 	}
+}
+
+// aibomAssetName is the name of the asset an AIBOM describes, or "" if it has
+// none.
+func aibomAssetName(b *aibom.AiBom) string {
+	if b == nil || b.Asset == nil {
+		return ""
+	}
+	return b.Asset.Name
 }
