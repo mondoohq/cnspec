@@ -152,10 +152,7 @@ var serveCmd = &cobra.Command{
 				}
 			}
 
-			autoUpdate := true
-			if viper.IsSet("auto_update") {
-				autoUpdate = viper.GetBool("auto_update")
-			}
+			autoUpdate := AutoUpdateEnabled()
 
 			return &backgroundjob.ServiceConfig{
 				Timer:          time.Duration(cliConfig.ScanInterval.Timer) * time.Minute,

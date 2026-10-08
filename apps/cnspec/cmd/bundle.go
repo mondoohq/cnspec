@@ -110,10 +110,7 @@ var policyPublishCmd = &cobra.Command{
 			log.Fatal().Err(err).Msg("could not find bundle files")
 		}
 
-		autoUpdate := true
-		if viper.IsSet("auto-update") {
-			autoUpdate = viper.GetBool("auto-update")
-		}
+		autoUpdate := AutoUpdateEnabled()
 
 		noLint := viper.GetBool("no-lint")
 		if !noLint {
