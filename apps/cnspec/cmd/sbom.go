@@ -111,7 +111,10 @@ var sbomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		scandump.JSON(ctx, "sbom-report", data)
 	}
 
-	boms := generator.GenerateBom(cnspecReport.ToCnqueryReport())
+	// Assets that could not be scanned get no bill of materials; they are
+	// reported, and fail the command, after the others are written.
+	collected, failures := withoutFailedAssets(cnspecReport.ToCnqueryReport())
+	boms := generator.GenerateBom(collected)
 
 	// the output format is validated in PreRun, sbom.New always returns a handler
 	exporter := sbom.New(viper.GetString("output"))
@@ -125,8 +128,16 @@ var sbomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	}
 
 	outputTarget := viper.GetString("output-target")
+	generated := 0
 	for i := range boms {
 		bom := boms[i]
+		// A failed asset has no packages. Rendering it would write a valid but
+		// empty SBOM that is indistinguishable from an asset with no software.
+		if bom.Status == sbom.Status_STATUS_FAILED {
+			failures = append(failures, bomFailure{Asset: bom.GetAsset().GetName(), Reason: bom.ErrorMessage})
+			continue
+		}
+		generated++
 		output := bytes.Buffer{}
 		err := exporter.Render(&output, bom)
 		if err != nil {
@@ -145,5 +156,9 @@ var sbomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		} else {
 			fmt.Println(output.String())
 		}
+	}
+
+	if err := bomFailuresError("SBOM", failures, generated); err != nil {
+		log.Fatal().Msg(err.Error())
 	}
 }

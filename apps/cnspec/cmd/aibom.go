@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -107,14 +108,29 @@ var aibomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *p
 		logger.DebugDumpJSON("mondoo-aibom-report", data)
 	}
 
-	boms := generator.GenerateAiBom(cnspecReport.ToCnqueryReport())
+	// Assets that could not be scanned get no bill of materials; they are
+	// reported, and fail the command, after the others are written.
+	collected, failures := withoutFailedAssets(cnspecReport.ToCnqueryReport())
+	boms := generator.GenerateAiBom(collected)
 
 	// the output format is validated in PreRun, aibom.NewFormatter always returns a handler
 	formatter := aibom.NewFormatter(viper.GetString("output"))
 
 	outputTarget := viper.GetString("output-target")
+	generated := 0
 	for i := range boms {
 		bom := boms[i]
+		// A failed asset has no data. Rendering it would write an AIBOM that
+		// looks like an asset without any AI usage.
+		if bom.Status == aibom.Status_STATUS_FAILED {
+			name := ""
+			if bom.Asset != nil {
+				name = bom.Asset.Name
+			}
+			failures = append(failures, bomFailure{Asset: name, Reason: strings.Join(bom.Errors, "; ")})
+			continue
+		}
+		generated++
 		buf := bytes.Buffer{}
 		err := formatter.Render(&buf, bom)
 		if err != nil {
@@ -132,5 +148,9 @@ var aibomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *p
 		} else {
 			fmt.Println(buf.String())
 		}
+	}
+
+	if err := bomFailuresError("AIBOM", failures, generated); err != nil {
+		log.Fatal().Msg(err.Error())
 	}
 }
