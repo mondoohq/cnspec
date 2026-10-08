@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -113,8 +114,21 @@ var aibomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *p
 	formatter := aibom.NewFormatter(viper.GetString("output"))
 
 	outputTarget := viper.GetString("output-target")
+	var failures []bomFailure
+	generated := 0
 	for i := range boms {
 		bom := boms[i]
+		// A failed asset has no data. Rendering it would write an AIBOM that
+		// looks like an asset without any AI usage.
+		if bom.Status == aibom.Status_STATUS_FAILED {
+			name := ""
+			if bom.Asset != nil {
+				name = bom.Asset.Name
+			}
+			failures = append(failures, bomFailure{Asset: name, Reason: strings.Join(bom.Errors, "; ")})
+			continue
+		}
+		generated++
 		buf := bytes.Buffer{}
 		err := formatter.Render(&buf, bom)
 		if err != nil {
@@ -132,5 +146,9 @@ var aibomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *p
 		} else {
 			fmt.Println(buf.String())
 		}
+	}
+
+	if err := bomFailuresError("AIBOM", failures, report.GetErrors(), assetNamesByMrn(report), generated); err != nil {
+		log.Fatal().Msg(err.Error())
 	}
 }

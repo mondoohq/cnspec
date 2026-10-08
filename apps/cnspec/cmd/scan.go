@@ -501,6 +501,13 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 	// NOTE: even if we have incognito, we want to set the upstream config. Otherwise we would not be able to
 	// use the policies that are defined in Mondoo Platform
 	if serviceAccount != nil {
+		// Providers build their own upstream client from these credentials
+		// when they connect to an asset. A key that cannot be loaded fails
+		// that connection, and in an incognito collection (sbom, aibom) the
+		// failure only surfaces as an empty result. Reject it here instead.
+		if err := verifyServiceAccount(serviceAccount, configSourceDescription()); err != nil {
+			return nil, err
+		}
 		log.Info().Msg("using service account credentials")
 
 		spaceMrn := opts.GetParentMrn()

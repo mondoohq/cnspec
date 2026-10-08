@@ -125,8 +125,17 @@ var sbomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	}
 
 	outputTarget := viper.GetString("output-target")
+	var failures []bomFailure
+	generated := 0
 	for i := range boms {
 		bom := boms[i]
+		// A failed asset has no packages. Rendering it would write a valid but
+		// empty SBOM that is indistinguishable from an asset with no software.
+		if bom.Status == sbom.Status_STATUS_FAILED {
+			failures = append(failures, bomFailure{Asset: bom.GetAsset().GetName(), Reason: bom.ErrorMessage})
+			continue
+		}
+		generated++
 		output := bytes.Buffer{}
 		err := exporter.Render(&output, bom)
 		if err != nil {
@@ -145,5 +154,9 @@ var sbomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		} else {
 			fmt.Println(output.String())
 		}
+	}
+
+	if err := bomFailuresError("SBOM", failures, report.GetErrors(), assetNamesByMrn(report), generated); err != nil {
+		log.Fatal().Msg(err.Error())
 	}
 }
