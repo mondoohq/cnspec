@@ -186,10 +186,7 @@ var policyUploadCmd = &cobra.Command{
 				log.Fatal().Err(err).Msg("could not find bundle files")
 			}
 
-			autoUpdate := true
-			if viper.IsSet("auto-update") {
-				autoUpdate = viper.GetBool("auto-update")
-			}
+			autoUpdate := AutoUpdateEnabled()
 
 			runtime := providers.DefaultRuntime()
 			result, err := bundle.Lint(runtime.Schema(), bundle.LintOptions{
@@ -627,10 +624,7 @@ var policyFmtCmd = &cobra.Command{
 func runPolicyFmt(cmd *cobra.Command, args []string) {
 	sort, _ := cmd.Flags().GetBool("sort")
 
-	autoUpdate := true
-	if viper.IsSet("auto-update") {
-		autoUpdate = viper.GetBool("auto-update")
-	}
+	autoUpdate := AutoUpdateEnabled()
 
 	for _, path := range args {
 		err := bundle.FormatRecursive(path, bundle.FormatOptions{
@@ -668,10 +662,7 @@ var policyLintCmd = &cobra.Command{
 func runPolicyLint(cmd *cobra.Command, args []string) {
 	log.Info().Strs("files", args).Msg("lint policy bundle(s)")
 
-	autoUpdate := true
-	if viper.IsSet("auto-update") {
-		autoUpdate = viper.GetBool("auto-update")
-	}
+	autoUpdate := AutoUpdateEnabled()
 
 	files, err := policy.WalkPolicyBundleFiles(args...)
 	if err != nil {

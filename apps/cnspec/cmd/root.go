@@ -149,7 +149,7 @@ func init() {
 	rootCmd.PersistentFlags().String("log-level", "info", "Set the log level: error, warn, info, debug, trace")
 	rootCmd.PersistentFlags().String("logging-config", "", "Path to a logging configuration file (YAML or JSON) that selects the log writer, level, and writer-specific options")
 	rootCmd.PersistentFlags().String("api-proxy", "", "Set the proxy for communications with Mondoo Platform API")
-	rootCmd.PersistentFlags().Bool("auto-update", true, "Enable automatic provider installation and update")
+	rootCmd.PersistentFlags().Bool("auto-update", true, "Enable automatic updates of cnspec and its providers; overrides auto_update in the config file")
 	rootCmd.PersistentFlags().Bool("strict", false, "Default MQL strict mode for policies that do not declare one: every link in an MQL chain must resolve")
 	// Set NoOptDefVal to allow space-separated bool values (--auto-update false)
 	// Without this, "false" would be treated as a positional argument instead of the flag value
@@ -158,11 +158,9 @@ func init() {
 	_ = viper.BindPFlag("log-level", rootCmd.PersistentFlags().Lookup("log-level"))
 	_ = viper.BindPFlag("logging-config", rootCmd.PersistentFlags().Lookup("logging-config"))
 	_ = viper.BindPFlag("api_proxy", rootCmd.PersistentFlags().Lookup("api-proxy"))
-	// Bound under both spellings. Readers here are split between "auto-update"
-	// (bundle.go, policy.go, scan.go) and "auto_update" (serve.go,
-	// serve_api.go, and config.GetAutoUpdate), and viper's key delimiter is
-	// disabled so neither normalizes to the other. Binding one meant
-	// --auto-update=false was invisible to half of them.
+	// Bound under both spellings, because viper's key delimiter is disabled
+	// and neither normalizes to the other. Read the setting through
+	// AutoUpdateEnabled, which also honors both spellings in mondoo.yml.
 	_ = viper.BindPFlag("auto-update", rootCmd.PersistentFlags().Lookup("auto-update"))
 	_ = viper.BindPFlag("auto_update", rootCmd.PersistentFlags().Lookup("auto-update"))
 	_ = viper.BindPFlag("strict", rootCmd.PersistentFlags().Lookup("strict"))

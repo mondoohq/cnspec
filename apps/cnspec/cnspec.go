@@ -182,8 +182,8 @@ func shouldTrySelfUpdate() bool {
 		return false
 	}
 
-	// Get auto_update setting from config (defaults to true if not set)
-	autoUpdate := config.GetAutoUpdate()
+	// Get the auto_update setting (either spelling; defaults to true if not set)
+	autoUpdate := cmd.AutoUpdateEnabled()
 
 	// Check for --auto-update=VALUE flag (already normalized from space-separated format)
 	for _, arg := range os.Args {
