@@ -26,10 +26,11 @@ func ReadConfig() (*CliConfig, error) {
 	// mapping, e.g.
 	//   scan_interval.timer: 360
 	//   scan_interval.splay: 30
+	//   scan_interval.start_time: "04:00"
 	// cnquery sets viper's key delimiter to "\\" (see mql cli/config), so viper
 	// does not expand dotted keys into nested maps and the Unmarshal above leaves
 	// these nested fields unset. Detect the dotted form and fold it in.
-	if viper.IsSet("scan_interval.timer") || viper.IsSet("scan_interval.splay") {
+	if viper.IsSet("scan_interval.timer") || viper.IsSet("scan_interval.splay") || viper.IsSet("scan_interval.start_time") {
 		if opts.ScanInterval == nil {
 			opts.ScanInterval = &ScanInterval{}
 		}
@@ -38,6 +39,9 @@ func ReadConfig() (*CliConfig, error) {
 		}
 		if viper.IsSet("scan_interval.splay") {
 			opts.ScanInterval.Splay = viper.GetInt("scan_interval.splay")
+		}
+		if viper.IsSet("scan_interval.start_time") {
+			opts.ScanInterval.StartTime = viper.GetString("scan_interval.start_time")
 		}
 	}
 	if viper.IsSet("auth.method") {
@@ -65,4 +69,8 @@ type CliConfig struct {
 type ScanInterval struct {
 	Timer int `json:"timer,omitempty" mapstructure:"timer"`
 	Splay int `json:"splay,omitempty" mapstructure:"splay"`
+	// StartTime anchors the schedule to a local time of day, as "HH:MM". Scans
+	// then run at StartTime and every Timer minutes after it, restarting at
+	// StartTime each day. Empty keeps the plain interval.
+	StartTime string `json:"start_time,omitempty" mapstructure:"start_time"`
 }

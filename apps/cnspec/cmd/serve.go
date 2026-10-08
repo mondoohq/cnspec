@@ -39,6 +39,7 @@ func init() {
 	// background scan flags
 	serveCmd.Flags().Int("timer", cnspec_config.DefaultScanIntervalTimer, "Set the scan interval in minutes")
 	serveCmd.Flags().Int("splay", cnspec_config.DefaultScanIntervalSplay, "Randomize the timer by up to this many minutes")
+	serveCmd.Flags().String("start-time", "", "Run scans at this local time of day (HH:MM), then every --timer minutes, restarting at it each day")
 	// set inventory
 	serveCmd.Flags().String("inventory-file", "", "Set the path to the inventory file")
 	_ = serveCmd.Flags().String("inventory-template", "", "Set the path to the inventory template")
@@ -89,6 +90,8 @@ var serveCmd = &cobra.Command{
 		// and the closure runs on the service's goroutine.
 		timerFlag, timerSet := intFlag(cmd, "timer")
 		splayFlag, splaySet := intFlag(cmd, "splay")
+		startTimeFlag, _ := cmd.Flags().GetString("start-time")
+		startTimeSet := cmd.Flags().Changed("start-time")
 
 		// Everything below runs inside the service, after it has reported
 		// itself started to the operating system. It is the slow part of
@@ -116,6 +119,18 @@ var serveCmd = &cobra.Command{
 			}
 			if splaySet {
 				cliConfig.ScanInterval.Splay = splayFlag
+			}
+			if startTimeSet {
+				cliConfig.ScanInterval.StartTime = startTimeFlag
+			}
+
+			var startTime *backgroundjob.TimeOfDay
+			if cliConfig.ScanInterval.StartTime != "" {
+				tod, err := backgroundjob.ParseTimeOfDay(cliConfig.ScanInterval.StartTime)
+				if err != nil {
+					return nil, cli_errors.NewCommandError(errors.Wrap(err, "could not load configuration"), ConfigurationErrorCode)
+				}
+				startTime = &tod
 			}
 
 			ctx := mql.SetFeatures(context.Background(), mql.DefaultFeatures)
@@ -146,6 +161,7 @@ var serveCmd = &cobra.Command{
 				Timer:          time.Duration(cliConfig.ScanInterval.Timer) * time.Minute,
 				Splay:          time.Duration(cliConfig.ScanInterval.Splay) * time.Minute,
 				FirstScanDelay: backgroundjob.FleetStartDelay(),
+				StartTime:      startTime,
 				Shutdown:       shutdown,
 				Scan: func() error {
 					// Try to update the os provider before each scan

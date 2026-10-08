@@ -57,31 +57,48 @@ scan_interval:
 // compatibility. These tests reproduce production by setting that delimiter.
 func TestConfigParsingDottedKeys(t *testing.T) {
 	tests := []struct {
-		name       string
-		data       string
-		wantTimer  int
-		wantSplay  int
-		wantMethod string
+		name          string
+		data          string
+		wantTimer     int
+		wantSplay     int
+		wantStartTime string
+		wantMethod    string
 	}{
 		{
-			name:       "nested",
-			data:       "scan_interval:\n  timer: 360\n  splay: 30\nauth:\n  method: wif\n",
-			wantTimer:  360,
-			wantSplay:  30,
-			wantMethod: "wif",
+			name:          "nested",
+			data:          "scan_interval:\n  timer: 360\n  splay: 30\n  start_time: \"04:00\"\nauth:\n  method: wif\n",
+			wantTimer:     360,
+			wantSplay:     30,
+			wantStartTime: "04:00",
+			wantMethod:    "wif",
 		},
 		{
-			name:       "dotted",
-			data:       "scan_interval.timer: 360\nscan_interval.splay: 30\nauth.method: wif\n",
-			wantTimer:  360,
-			wantSplay:  30,
-			wantMethod: "wif",
+			name:          "dotted",
+			data:          "scan_interval.timer: 360\nscan_interval.splay: 30\nscan_interval.start_time: \"04:00\"\nauth.method: wif\n",
+			wantTimer:     360,
+			wantSplay:     30,
+			wantStartTime: "04:00",
+			wantMethod:    "wif",
 		},
 		{
 			name:      "dotted partial timer only",
 			data:      "scan_interval.timer: 360\n",
 			wantTimer: 360,
 			wantSplay: 0,
+		},
+		{
+			// YAML 1.1 would read an unquoted 04:00 as the base-60 number
+			// 240. viper's YAML 1.2 parser keeps it a string, and people
+			// will write it without quotes.
+			name:          "unquoted start time",
+			data:          "scan_interval:\n  timer: 1440\n  start_time: 04:00\n",
+			wantTimer:     1440,
+			wantStartTime: "04:00",
+		},
+		{
+			name:          "dotted partial start time only",
+			data:          "scan_interval.start_time: \"04:00\"\n",
+			wantStartTime: "04:00",
 		},
 	}
 
@@ -99,6 +116,7 @@ func TestConfigParsingDottedKeys(t *testing.T) {
 			require.NotNil(t, cfg.ScanInterval)
 			assert.Equal(t, tc.wantTimer, cfg.ScanInterval.Timer)
 			assert.Equal(t, tc.wantSplay, cfg.ScanInterval.Splay)
+			assert.Equal(t, tc.wantStartTime, cfg.ScanInterval.StartTime)
 
 			if tc.wantMethod != "" {
 				require.NotNil(t, cfg.Authentication)
