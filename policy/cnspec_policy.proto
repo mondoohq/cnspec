@@ -1043,6 +1043,9 @@ message ReportCollection {
   // collection is local output; a synced asset's failure reaches upstream
   // through ReportAssetScanFailed.
   map<string, mql.llx.ErrorDetail> error_details = 7;
+  // What became of each exception read from config for an asset (ADR-0006),
+  // keyed by asset MRN. Local output, never sent upstream.
+  map<string, ExceptionDecisions> exception_decisions = 8;
 }
 
 message FrameworkReport {
@@ -1283,6 +1286,14 @@ service PolicyResolver {
   rpc ResolveAndUpdateJobs(UpdateAssetJobsReq) returns (ResolvedPolicy) {}
   // GetResolvedPolicy retrieves the current resolved policy for the given asset
   rpc GetResolvedPolicy(Mrn) returns (ResolvedPolicy) {}
+  // Submits the exceptions read from config files for a scope, before that
+  // scope's assets are resolved, and returns a decision for each one (ADR-0006).
+  // The decision on whether an exception applies is the upstream's; the
+  // resolved policy it returns afterwards reflects the ones it accepted.
+  // Servers that predate this RPC answer NotFound (ranger's unknown-method
+  // response); in-process local services answer Unimplemented. Clients treat
+  // either as an upstream that takes no exceptions: none is in effect.
+  rpc SubmitExceptions(SubmitExceptionsReq) returns (SubmitExceptionsResp) {}
 
   rpc StoreResults(StoreResultsReq) returns (Empty) {}
   // Reports that scanning a synced asset failed, so the failure is known
@@ -1356,6 +1367,114 @@ message ResolveReq {
 message UpdateAssetJobsReq {
   string asset_mrn = 1;
   repeated Mquery asset_filters = 2;
+}
+
+// ExceptionAction is why an exception exists, as written in a config file. The
+// three scoring actions have the same effect, the check runs and does not
+// score; they differ in the reason. DISABLE stops the check from running.
+enum ExceptionAction {
+  EXCEPTION_ACTION_UNSPECIFIED = 0;
+  EXCEPTION_ACTION_DISABLE = 1;
+  EXCEPTION_ACTION_RISK_ACCEPTED = 2;
+  EXCEPTION_ACTION_FALSE_POSITIVE = 3;
+  EXCEPTION_ACTION_WORKAROUND = 4;
+}
+
+// ExceptionSource names the config file exceptions were read from. A source is
+// a file, not an asset: one file can govern many assets.
+message ExceptionSource {
+  // "user" for the client config, "context" for a mondoo.yml at a scanned root
+  string scope = 1;
+  // provider that found a context config
+  string provider = 2;
+  // repository the file was read from, e.g. "github.com/org/repo"
+  string repository = 3;
+  // ref the file was read at, where known
+  string ref = 4;
+  // path of the file, relative to the repository root when there is one
+  string path = 5;
+}
+
+// ExceptionEntry is one check exception: a config entry naming N checks is N
+// entries.
+message ExceptionEntry {
+  // identifies the entry within its source: derived from the entry's path
+  // scope, the check and the action, so it is stable across reorderings
+  string key = 1;
+  string check_mrn = 2;
+  // the check as the file names it, when that is a UID
+  string check_uid = 3;
+  ExceptionAction action = 4;
+  string title = 5;
+  string justification = 6;
+  // unset when the exception does not expire
+  HumanTime valid_until = 7;
+  // the entry's path scope, relative to the config's directory; empty when
+  // the entry applies to every asset the config governs
+  repeated string paths = 8;
+  // the prefix in paths that matched the asset this entry was sent for
+  string matched_path = 9;
+  ExceptionSource source = 10;
+}
+
+// ExceptionSourceDeclaration declares every entry a source holds. Entries are
+// sent per asset, as the subset that matched it; completeness is declared here
+// against the source's full key list and never inferred from one asset's
+// subset. An entry the upstream recorded from this source, whose key is absent
+// here, is no longer in effect.
+message ExceptionSourceDeclaration {
+  ExceptionSource source = 1;
+  repeated string keys = 2;
+  // checksum over the source's normalized entries; when the upstream already
+  // holds a source with this checksum it has nothing to write
+  string checksum = 3;
+}
+
+enum ExceptionOutcome {
+  EXCEPTION_OUTCOME_UNSPECIFIED = 0;
+  // in effect, applied by cnspec without an upstream
+  EXCEPTION_OUTCOME_APPLIED = 1;
+  // in effect, approved by a person upstream
+  EXCEPTION_OUTCOME_ACCEPTED = 2;
+  // in effect, taken on submission because the upstream requires no approval
+  EXCEPTION_OUTCOME_AUTO_ACCEPTED = 3;
+  // not in effect yet, awaiting a decision upstream
+  EXCEPTION_OUTCOME_PENDING = 4;
+  // not in effect, refused upstream
+  EXCEPTION_OUTCOME_REJECTED = 5;
+  // not in effect, past valid_until
+  EXCEPTION_OUTCOME_EXPIRED = 6;
+  // not in effect, not sent: the run is not authoritative, or the upstream
+  // does not take exceptions
+  EXCEPTION_OUTCOME_NOT_SUBMITTED = 7;
+  // not in effect, the check is not known
+  EXCEPTION_OUTCOME_UNKNOWN_CHECK = 8;
+}
+
+message ExceptionDecision {
+  ExceptionEntry entry = 1;
+  ExceptionOutcome outcome = 2;
+  // why, for an outcome that is not in effect, where there is a reason
+  string reason = 3;
+  // who approved an ACCEPTED exception
+  repeated Author approvers = 4;
+}
+
+message ExceptionDecisions {
+  repeated ExceptionDecision items = 1;
+}
+
+message SubmitExceptionsReq {
+  // the asset the entries were matched against, or the space for user-scope
+  // exceptions, which apply across the whole space
+  string scope_mrn = 1;
+  repeated ExceptionEntry entries = 2;
+  repeated ExceptionSourceDeclaration sources = 3;
+}
+
+message SubmitExceptionsResp {
+  // one decision per submitted entry, matched by source and key
+  repeated ExceptionDecision decisions = 1;
 }
 
 message StoreResultsReq {

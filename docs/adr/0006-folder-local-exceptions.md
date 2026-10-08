@@ -3,6 +3,9 @@
 **Date:** 2026-08-22
 **Status:** Proposed
 
+The feature ships as a **preview**: the `mondoo.yml` exception format, the
+`--exceptions-submit` flag and the reported outcomes may still change.
+
 ## Context
 
 An exception suppresses a check for a good reason: the finding is wrong, the risk is
@@ -68,18 +71,44 @@ Discovery is a provider responsibility, performed at connect time and returned w
 asset. The provider is the only component that knows its own root, including when that
 root is a temporary clone.
 
-The first pass covers two paths:
+The first pass covers three paths:
 
 | Provider | Reads |
 |---|---|
+| `iac` | `mondoo.yml` at the root of the tree it walks |
 | `terraform` | `mondoo.yml` at the scanned path |
 | `github` | `mondoo.yml` at the repository root |
+
+`iac` is the case the design is built around. It walks one tree and hands each site it
+finds to the provider that claims it — terraform, cloudformation, helm, kustomize, k8s
+manifests, Dockerfiles, bicep, ansible — so one `mondoo.yml` at the tree root governs
+every asset the walk produces, each at its own path below that root. This is the
+monorepo case [§4.1](#41-path-scoping) exists for, and every provider `iac` reaches is
+covered without reading a config of its own.
 
 **Root only. No cascading lookup**, no walking up through parent directories. A
 consequence worth stating: the same Terraform module can be governed by a different file
 depending on how it is reached — scanned directly, the root is the module directory;
-discovered through a repository, the root is the repository. This is why reporting which
-config governed an asset (below) is a requirement and not a nicety.
+walked by `iac` or discovered through a repository, the root is the tree or the
+repository. This is why reporting which config governed an asset (below) is a
+requirement and not a nicety.
+
+**A config travels with what is discovered under it.** Whichever provider read the
+config, every asset reached from that root is governed by the same file. Three rules in
+mql make that hold without per-provider work:
+
+- **The walker sets it before the probe.** `iac` attaches the root's config, at the
+  candidate's path, to each candidate before it asks the claiming provider to connect
+  it. A provider that would read a config at its own path, as `terraform` does when
+  scanned directly, keeps the one it was given; a walk has one root. A file candidate's
+  path is the file, a directory candidate's the directory.
+- **Connect keeps it.** When a provider answers `Connect` with an asset of its own
+  making, the runtime carries the requested asset's config over unless the provider set
+  one. Providers that answer with the asset they were given keep it anyway, including
+  ones built before this field existed: protobuf preserves unknown fields.
+- **Discovered children inherit it.** An asset a provider discovers below another, a
+  workload in a k8s manifest for instance, lies within the root its parent was scanned
+  from. A child without a config of its own gets its parent's, at its parent's path.
 
 Each ingested config carries an **origin record** — provider, repository and ref where
 applicable, and path — so that reports can name the file that governed a result.
@@ -88,6 +117,20 @@ Because one config can govern many assets ([§4.1](#41-path-scoping)), the provi
 returns each asset's path **relative to that config's directory**. That relative path is
 what path scoping matches against, and an asset that has none is governed only by
 unscoped entries.
+
+The channel is `Asset.context_config` in the mql inventory proto: the file content, the
+origin record and the asset's relative path. The provider drops every top-level key but
+`exceptions` before it attaches the content (`inventory.FilterContextConfig`), because a
+connected asset is synced upstream and written into reports; a credential committed to
+the scanned repository must not travel with it. A file is read only when it is a regular
+file of at most 1 MiB: in a cloned repository, a symlink named `mondoo.yml` could
+otherwise point at the client's own config.
+
+A `terraform` asset discovered by `github` arrives with the repository's config already
+attached, read from the default branch through the API, and the `terraform` provider
+keeps it. GitHub discovery emits one `terraform` asset per repository, covering the whole
+checkout at asset path `.`; until it emits one asset per module, `paths` cannot tell the
+modules of a repository apart. `iac` over a checkout of the same repository can.
 
 ### 3. A context config may only carry exceptions
 
@@ -146,7 +189,7 @@ exceptions:
 | `paths` | no | Path prefixes, relative to the config's own directory, that scope the entry. Absent means the whole config scope. See [§4.1](#41-path-scoping). |
 | `action` | yes | See below. |
 | `justification` | **yes** | An exception without a stated reason cannot be defended when it comes up for renewal. |
-| `valid_until` | no | RFC3339. Only meaningful for the scoring actions; on `disable` it has no effect, and lint warns. |
+| `valid_until` | no | RFC3339 date or date-time; a date is valid through the end of that day, UTC. Only meaningful for the scoring actions; on `disable` it has no effect, and lint warns. |
 
 Deliberately absent:
 
@@ -159,8 +202,9 @@ Deliberately absent:
 
 ### 4.1 Path scoping
 
-The `github` provider reads one `mondoo.yml` at the repository root and discovers every
-module beneath it, so in a monorepo — or any repository holding more than one module — a
+The `iac` provider reads one `mondoo.yml` at the root of the tree it walks, and the
+`github` provider one at the repository root, and both discover every module beneath
+it, so in a monorepo — or any repository holding more than one module — a
 single file governs assets that have nothing to do with one another. With no way to scope
 an entry, accepting a risk for `infra/staging` accepts it for `infra/prod` as well, and
 the file becomes an all-or-nothing instrument at exactly the scale where that is least
@@ -225,22 +269,35 @@ not know, and warns — one stale entry must never sink the whole submission.
 
 ### 6. How exceptions take effect
 
-The resolver is not modified.
+**Without an upstream**, cnspec applies the exceptions itself, as policy groups on the
+asset policy at resolution: each entry in effect becomes an `IGNORED` or `DISABLE`
+group naming its check, carried on `LocalServices.AssetExceptions` and added to the
+asset policy by `tryResolve` ([policy/resolver.go](../../policy/resolver.go)) before the
+resolved policy is built. The asset policy is the root of resolution, so its groups
+override every check beneath it; an upstream applies the exceptions it holds the same
+way.
 
-**Without an upstream**, cnspec applies the exceptions itself: after the resolved policy
-is built and before `executor.ExecuteResolvedPolicy`
-([policy/scan/local_scanner.go](../../policy/scan/local_scanner.go)), set the `ChildJobs`
-impact for each excepted check according to the table above, and for `disable` drop the
-query from the `ExecutionJob` so it genuinely does not run.
+The builder then does the rest with machinery that already exists: a `DISABLE` group
+swaps the check for the shared disabled placeholder query, so it does not execute and
+scores `disabled`; an `IGNORED` group puts `IGNORE_SCORE` on the edge to the check's
+parent, so it runs and does not score; `isGroupMatching` skips a group past its
+`valid.until`.
 
-This is the same representation `buildExceptionSet`
-([cli/reporter/print_compact.go](../../cli/reporter/print_compact.go)) already reads, so
-the CLI's exception output, the JSON reporter and SARIF pick the result up with no
-further work.
+Mutating the resolved policy after it is built was considered and rejected. Removing a
+query from `ExecutionJob.Queries` leaves its reporting jobs, collector datapoints and
+parent `ChildJobs` entries in place; the in-memory datalake has already initialized a
+score for each of them, so the parent never completes. Doing it safely means
+re-implementing the builder's disabled-placeholder wiring outside the builder.
 
-The resolved policy is **not** re-checksummed after this mutation. Changing impacts does
-not change reporting-job UUIDs, so result storage keys stay valid, but
-`GraphExecutionChecksum` must keep matching what was cached.
+The cost is that the resolver takes an input it did not have. A resolution that applies
+exceptions folds them into the asset policy's `GraphExecutionChecksum`, and it is
+neither served from nor stored in the resolved-policy cache, which is keyed by policy
+and asset filters alone.
+
+The compact output reads the result through `buildExceptionSet`
+([cli/reporter/print_compact.go](../../cli/reporter/print_compact.go)) as before, and
+reports every exception separately ([below](#reporting-the-decisions)). JSON and SARIF
+show the resulting `skip` or `disabled` status, not the exception that caused it.
 
 **With an upstream, the upstream decides.** cnspec sends the exceptions for the asset
 *before* the asset's policy is resolved, and from that point the decision is not
@@ -250,10 +307,17 @@ upstream's call.
 The flow is:
 
 1. cnspec reads the exceptions for the asset from the user and context configs.
-2. cnspec sends them upstream, before resolution.
-3. The upstream decides on each one and returns its decision along with the resolved
-   policy, which already reflects whatever it accepted.
+2. cnspec sends them upstream with `PolicyResolver.SubmitExceptions`, before
+   `ResolveAndUpdateJobs`.
+3. The upstream decides on each one and returns its decision in the response to the
+   submission. The resolved policy it returns afterwards already reflects whatever it
+   accepted. Decisions are per scan and per asset, so they travel on the submission
+   response rather than on `ResolvedPolicy`, which is a cached artifact.
 4. cnspec executes that resolved policy normally. No special path, no local adjustment.
+
+An upstream that predates `SubmitExceptions` answers `NotFound`. cnspec then reports the
+exceptions as not submitted and not in effect. It does not apply them locally, for the
+same reason it does not mutate an upstream-resolved policy.
 
 cnspec does not mutate an upstream-resolved policy, and it does not second-guess a
 decision. An exception the upstream did not accept simply is not in effect, and the
@@ -288,11 +352,32 @@ Sending every exception on every scan is wasteful, and against an upstream whose
 exception API only creates would actively accumulate duplicates. Three measures, in
 order of how much they buy:
 
-**Only authoritative runs sync.** A local scan of a feature branch applies exceptions and
-reports them, but does not submit them. Only a run cnspec considers authoritative — CI,
-on the default branch — submits. `execruntime.Detect()` already reports the environment
-and the ref. This removes most of the volume before any protocol work, and it stops a
+**Only authoritative runs sync.** A scan of a feature branch reports exceptions but does
+not submit them. Only a run cnspec considers authoritative — CI, on the default branch —
+submits. `execruntime.RuntimeEnv.OnDefaultBranch` decides that, per platform:
+
+| Platform | Default branch from | Never counts |
+|---|---|---|
+| GitLab CI | `CI_COMMIT_BRANCH` equals `CI_DEFAULT_BRANCH` | merge requests, tags (`CI_COMMIT_BRANCH` unset) |
+| GitHub Actions | `GITHUB_REF_NAME` equals the event payload's `repository.default_branch`; Actions exposes no variable for it | `pull_request`, `pull_request_target`, `merge_group`, tags |
+| Jenkins | `BRANCH_IS_PRIMARY=true`, set by the SCM source in multibranch projects; otherwise `BRANCH_NAME`, or `GIT_BRANCH` without `origin/`, equals `MONDOO_DEFAULT_BRANCH` | change requests (`CHANGE_ID`), tags (`TAG_NAME`) |
+| Azure Pipelines | `BUILD_SOURCEBRANCH` equals `refs/heads/` plus `MONDOO_DEFAULT_BRANCH`; Azure has no variable for the default branch | `BUILD_REASON=PullRequest`, any ref outside `refs/heads/` |
+| CircleCI | `CIRCLE_BRANCH` equals `MONDOO_DEFAULT_BRANCH`; `pipeline.git.branch.is_default` is a pipeline value, not an environment variable | tags (`CIRCLE_TAG`); fork pull requests build as `pull/<n>` |
+
+`MONDOO_DEFAULT_BRANCH` is opt-in. It takes a branch name or `refs/heads/<name>`, and it
+counts only on the three platforms that cannot tell the default branch themselves; it
+does not override GitHub Actions or GitLab CI, and does nothing outside a detected CI
+platform, so a local run never submits. It grants nothing `--exceptions-submit always`
+does not: whoever can set it is already editing the pipeline. Where nothing names the
+default branch the result is false. `--exceptions-submit always|never` overrides the
+decision. Jenkins, Azure Pipelines, CircleCI and `MONDOO_DEFAULT_BRANCH` were proposed
+by Tim Smith ([@tas50](https://github.com/tas50)) in
+[mondoohq/mql#11712](https://github.com/mondoohq/mql/pull/11712#issuecomment-6027413289). This removes most of the volume before any protocol work, and it stops a
 developer's local experiment from becoming a shared exception.
+
+Disconnected, a non-authoritative run applies its exceptions as in §6. Connected, it
+cannot: resolution belongs to the upstream, and the upstream has not seen them. Those
+exceptions are reported as not submitted and are not in effect.
 
 **Batch, don't drip.** One submission per scope carrying the whole exception set, not one
 call per entry.
@@ -506,8 +591,9 @@ an integration:
 5. **Allow the scan identity to submit exceptions.** Submitting is a distinct permission
    from scanning.
 
-An upstream that offers none of this still works: cnspec applies exceptions locally and
-reports them, and simply does not sync.
+An upstream that offers none of this still works, without exceptions: cnspec reports
+them as not submitted and does not apply them ([§6](#6-how-exceptions-take-effect)).
+A disconnected scan applies them locally and reports them.
 
 ## Alternatives considered
 
@@ -529,8 +615,8 @@ resolution.
 
 **Applying local exceptions by mutating an upstream-resolved policy.** Rejected as the
 primary path. The local report would reflect the exception and the upstream record would
-not, and the two would disagree silently. Local mutation is used only when there is no
-upstream.
+not, and the two would disagree silently. Without an upstream, exceptions are applied at
+resolution rather than by mutation ([§6](#6-how-exceptions-take-effect)).
 
 **Carrying exception decisions on `ResolvedPolicy`.** Rejected. It is a checksummed,
 cacheable artifact keyed by execution checksum; per-scan, per-asset status does not
@@ -547,9 +633,9 @@ two halves disagree.
 - Exceptions are reviewed where the code is reviewed, by the people who own it.
 - One config schema rather than a new file format, with room for folder-local properties
   and policy selection later.
-- Reporting comes almost free: the local application produces exactly the impacts
-  `buildExceptionSet` already reads.
-- Expiry is enforced by machinery that already exists.
+- Local application reuses the resolver: the impacts it produces are the ones
+  `buildExceptionSet` already reads, and disable and expiry are handled by machinery that
+  already exists.
 - A repository-root config can govern a monorepo without becoming all-or-nothing:
   `paths` scopes an entry to the module it was written for.
 
@@ -570,14 +656,18 @@ two halves disagree.
 
 **Neutral**
 
-- Provider work is per-provider. Two are covered here; the rest arrive as discovery
-  needs them.
+- Reading the config is per-provider; carrying it is not. Three providers read one
+  here, and everything `iac` reaches is governed through it; providers scanned directly
+  arrive as discovery needs them.
 
 ## Out of scope
 
 Deferred deliberately, so the first pass stays small:
 
-- Other providers — cloudformation, helm, kustomize, bicep, ansible, k8s, os, gitlab.
+- Reading `mondoo.yml` in other providers scanned directly — cloudformation, helm,
+  kustomize, bicep, ansible, k8s, os, gitlab. Reached through `iac`, they are covered
+  ([§2](#2-providers-find-and-expose-the-context-config)).
+- `iac` over a remote source; the first pass walks a local tree.
 - Cascading config lookup through parent directories.
 - Globs on check identifiers, and glob syntax in `paths` — prefix matching only in the
   first pass.
@@ -602,5 +692,8 @@ Deferred deliberately, so the first pass stays small:
 - `mql/cli/config` — the `mondoo.yml` schema and loader
 - `mql/providers-sdk/v1/plugin` — the connect-time channel for the context config
 - `mql/cli/execruntime` — CI identity and ref detection
+- [mondoohq/mql#11712 (comment)](https://github.com/mondoohq/mql/pull/11712#issuecomment-6027413289)
+  — default-branch detection on Jenkins, Azure Pipelines and CircleCI, and
+  `MONDOO_DEFAULT_BRANCH`, proposed by @tas50
 - [ADR-0001](0001-scan-parallelization-pipeline.md) — scan pipeline the connect-time
   config ingestion has to fit into

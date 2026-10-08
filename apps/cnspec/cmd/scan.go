@@ -90,6 +90,7 @@ func init() {
 	_ = scanCmd.Flags().MarkHidden("output-scan-db")
 	_ = scanCmd.Flags().Bool("collect-support-bundle", false, "Collect a support bundle (debug logs, asset bundle, inventory, resolved policy, report, provider versions) for sharing with Mondoo support. By default writes to a timestamped directory in the current working dir; override with --support-bundle-dir.")
 	_ = scanCmd.Flags().String("support-bundle-dir", "", "Directory to write the support bundle into. Only used when --collect-support-bundle is set. Defaults to ./cnspec-support-bundle-<timestamp>/.")
+	_ = scanCmd.Flags().String("exceptions-submit", "auto", "Preview: When to submit exceptions from mondoo.yml files to Mondoo Platform: auto (a CI run on the default branch; set MONDOO_DEFAULT_BRANCH on Jenkins, Azure Pipelines or CircleCI if they cannot tell it), always, or never")
 }
 
 var scanCmd = &cobra.Command{
@@ -135,6 +136,7 @@ To manually configure a policy, use this:
 		_ = viper.BindPFlag("report-type", cmd.Flags().Lookup("report-type"))
 		_ = viper.BindPFlag("score-threshold", cmd.Flags().Lookup("score-threshold"))
 		_ = viper.BindPFlag("risk-threshold", cmd.Flags().Lookup("risk-threshold"))
+		_ = viper.BindPFlag("exceptions-submit", cmd.Flags().Lookup("exceptions-submit"))
 
 		// for all assets
 		_ = viper.BindPFlag("incognito", cmd.Flags().Lookup("incognito"))
@@ -324,6 +326,13 @@ type scanConfig struct {
 
 	DoRecord bool
 	AgentMrn string
+
+	// Exceptions are the user-scope exceptions of the client config at
+	// ExceptionsConfigPath (ADR-0006).
+	Exceptions           []config.Exception
+	ExceptionsConfigPath string
+	// SubmitExceptions says whether this run submits exceptions upstream.
+	SubmitExceptions bool
 }
 
 func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *plugin.ParseCLIRes) (*scanConfig, error) {
@@ -469,6 +478,13 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 
 	// detect CI/CD runs and read labels from runtime and apply them to all assets in the inventory
 	runtimeEnv := execruntime.Detect()
+
+	conf.Exceptions = opts.Exceptions
+	conf.ExceptionsConfigPath = viper.ConfigFileUsed()
+	conf.SubmitExceptions, err = submitExceptions(viper.GetString("exceptions-submit"), runtimeEnv)
+	if err != nil {
+		return nil, err
+	}
 	if opts.AutoDetectCICDCategory && runtimeEnv.IsAutomatedEnv() || opts.Category == "cicd" {
 		log.Info().Msg("detected ci-cd environment")
 		// NOTE: we only apply those runtime environment labels for CI/CD runs to ensure other assets from the
@@ -641,6 +657,22 @@ func (c *scanConfig) loadPolicies(ctx context.Context) error {
 	return nil
 }
 
+// submitExceptions decides whether a run submits exceptions from config files
+// upstream. Only an authoritative run does by default, a CI run on the default
+// branch: a scan of a feature branch applies and reports exceptions, but never
+// turns a developer's experiment into a shared exception (ADR-0006).
+func submitExceptions(mode string, env *execruntime.RuntimeEnv) (bool, error) {
+	switch mode {
+	case "", "auto":
+		return env.IsAutomatedEnv() && env.OnDefaultBranch(), nil
+	case "always":
+		return true, nil
+	case "never":
+		return false, nil
+	}
+	return false, fmt.Errorf("invalid --exceptions-submit %q, use auto, always or never", mode)
+}
+
 // interactiveActivityTrigger says how a CLI scan came to be. A terminal on
 // stdin means a person ran it. Without one it could be cron, a fleet tool or
 // CI, which cannot be told apart from here, so it stays unspecified.
@@ -668,6 +700,7 @@ func RunScan(parentCtx context.Context, config *scanConfig, scannerOpts ...scan.
 	// parameter here, not the config package - the two are easy to confuse in
 	// this file, so this reads the per-scan value deliberately.
 	opts = append(opts, scan.WithStrict(config.Strict))
+	opts = append(opts, scan.WithExceptions(config.Exceptions, config.ExceptionsConfigPath, config.SubmitExceptions))
 
 	scanner := scan.NewLocalScanner(opts...)
 	// parentCtx carries scandump.WithRun (when debug dumping is on) plus

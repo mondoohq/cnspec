@@ -375,6 +375,10 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 			r.printAssetQueries(resolved, report, queries, previewChecks, assetMrn, asset)
 		}
 
+		if r.Conf.printChecks {
+			r.printExceptionDecisions(assetMrn)
+		}
+
 		if r.Conf.printRisks {
 			r.printAssetRisks(resolved, report, assetMrn, asset)
 		}

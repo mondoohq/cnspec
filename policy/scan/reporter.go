@@ -13,6 +13,9 @@ type AssetReport struct {
 	Mrn            string
 	ResolvedPolicy *policy.ResolvedPolicy
 	Report         *policy.Report
+	// ExceptionDecisions accounts for every exception read from config for
+	// the asset (ADR-0006); nil when there were none.
+	ExceptionDecisions *policy.ExceptionDecisions
 }
 
 type VulnReporter interface {

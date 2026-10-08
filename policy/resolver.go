@@ -289,6 +289,16 @@ func (s *LocalServices) GetDownloadURL(ctx context.Context, req *GetDownloadURLR
 	return nil, status.Error(codes.Unimplemented, "local services do not support download URLs")
 }
 
+// SubmitExceptions forwards exceptions read from config files to the upstream,
+// which decides on them (ADR-0006). Without an upstream, exceptions are not
+// submitted but applied: see LocalServices.AssetExceptions.
+func (s *LocalServices) SubmitExceptions(ctx context.Context, req *SubmitExceptionsReq) (*SubmitExceptionsResp, error) {
+	if s.Upstream != nil && !s.Incognito {
+		return s.Upstream.SubmitExceptions(ctx, req)
+	}
+	return nil, status.Error(codes.Unimplemented, "local services apply exceptions instead of taking submissions")
+}
+
 // GetReport retrieves a report for a given asset and policy
 func (s *LocalServices) GetReport(ctx context.Context, req *EntityScoreReq) (*Report, error) {
 	return s.DataLake.GetReport(ctx, req.EntityMrn, req.ScoreMrn)
@@ -452,19 +462,28 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		return nil, err
 	}
 
-	var rp *ResolvedPolicy
-	rp, err = s.DataLake.CachedResolvedPolicy(ctx, bundleMrn, allFiltersChecksum, V2Code)
-	if err != nil {
-		return nil, err
-	}
-	if rp != nil {
-		return rp, nil
+	// Exceptions from config files are per asset, so a resolution that applies
+	// them is neither served from nor stored in the resolved-policy cache,
+	// which is keyed by the policy and the asset filters alone.
+	exceptionGroups := s.AssetExceptions[bundleMrn]
+
+	if len(exceptionGroups) == 0 {
+		rp, err := s.DataLake.CachedResolvedPolicy(ctx, bundleMrn, allFiltersChecksum, V2Code)
+		if err != nil {
+			return nil, err
+		}
+		if rp != nil {
+			return rp, nil
+		}
 	}
 
 	// next we will try to only use the matching asset filters for the given policy...
 	bundle, err := s.DataLake.GetValidatedBundle(ctx, bundleMrn)
 	if err != nil {
 		return nil, err
+	}
+	if len(exceptionGroups) != 0 {
+		bundle = withExceptionGroups(bundle, bundleMrn, exceptionGroups)
 	}
 
 	bundleMap := bundle.ToMap()
@@ -484,9 +503,11 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 		return nil, err
 	}
 
-	err = s.DataLake.SetResolvedPolicy(ctx, bundleMrn, resolvedPolicy, V2Code, false)
-	if err != nil {
-		return nil, err
+	if len(exceptionGroups) == 0 {
+		err = s.DataLake.SetResolvedPolicy(ctx, bundleMrn, resolvedPolicy, V2Code, false)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return resolvedPolicy, nil
