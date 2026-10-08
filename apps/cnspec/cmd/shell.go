@@ -17,14 +17,24 @@ func init() {
 
 	shellCmd.Flags().StringP("command", "c", "", "MQL query to execute in the shell")
 	shellCmd.Flags().String("platform-id", "", "Select a specific target asset by providing its platform ID")
+	addInventoryFlags(shellCmd, "Set the path to an inventory file that defines exactly one asset to connect to, with its credentials")
 }
 
 var shellCmd = &cobra.Command{
 	Use:   "shell",
 	Short: "Interactive query shell for MQL",
-	Long:  `Allows the interactive exploration of MQL queries.`,
+	Long: `Allows the interactive exploration of MQL queries.
+
+To open a shell on an asset defined in an inventory file, with the
+credentials it defines, use --inventory-file instead of a provider
+subcommand. The inventory must define exactly one asset; assets discovered
+below it are offered for selection once it is connected:
+
+  cnspec shell --inventory-file inventory.yml
+`,
 	PreRun: func(cmd *cobra.Command, args []string) {
 		_ = viper.BindPFlag("platform-id", cmd.Flags().Lookup("platform-id"))
+		bindInventoryFlags(cmd)
 	},
 }
 
