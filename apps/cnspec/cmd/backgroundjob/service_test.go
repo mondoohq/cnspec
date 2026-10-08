@@ -259,3 +259,32 @@ func TestRunService_StopsWhileSetupIsStillBlocked(t *testing.T) {
 		t.Fatal("service did not stop; it is waiting for setup to unwind")
 	}
 }
+
+// TestRunService_StartTimeHasNoStartupScan checks that a service anchored to
+// a start time waits for it instead of scanning shortly after it starts. A
+// startup scan would put one outside the operator's window on every reboot
+// and upgrade.
+func TestRunService_StartTimeHasNoStartupScan(t *testing.T) {
+	start := TimeOfDay{Hour: time.Now().Add(12 * time.Hour).Hour()}
+	stop := make(chan struct{})
+	done := make(chan error, 1)
+	setupDone := make(chan struct{})
+
+	go func() {
+		done <- runService(
+			func() {},
+			func() (*ServiceConfig, error) {
+				defer close(setupDone)
+				// A zero FirstScanDelay would scan at once if the start time
+				// were ignored.
+				return &ServiceConfig{Timer: 24 * time.Hour, FirstScanDelay: 0, StartTime: &start, Scan: neverScan(t)}, nil
+			},
+			stop,
+		)
+	}()
+
+	<-setupDone
+	time.Sleep(50 * time.Millisecond)
+	close(stop)
+	require.NoError(t, <-done)
+}

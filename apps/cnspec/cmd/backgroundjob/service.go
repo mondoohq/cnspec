@@ -24,6 +24,11 @@ type ServiceConfig struct {
 	// it to FleetStartDelay(); it is a field rather than a constant inside
 	// runService so the schedule is deterministic under test.
 	FirstScanDelay time.Duration
+	// StartTime, when set, anchors scans to the local wall clock: they run at
+	// StartTime and every Timer after it, restarting at StartTime each day,
+	// and each one is delayed by up to Splay. There is no scan at startup, so
+	// FirstScanDelay is not used. See TimeOfDay.next.
+	StartTime *TimeOfDay
 	// Shutdown releases what Setup started -- today the upstream check-in
 	// pinger. It may be nil, and it runs once, when the service stops.
 	Shutdown func()
@@ -99,10 +104,14 @@ func runService(started func(), setup Setup, stop <-chan struct{}) error {
 		defer cfg.Shutdown()
 	}
 
-	log.Info().Msgf("scan interval is %d minute(s) with a splay of %d minute(s)",
-		int(cfg.Timer.Minutes()), int(cfg.Splay.Minutes()))
+	log.Info().Msg(cfg.describeSchedule())
 
-	t := time.NewTimer(cfg.FirstScanDelay)
+	due := cfg.firstScan(time.Now())
+	if cfg.StartTime != nil {
+		log.Info().Time("next scan", due).Msg("waiting for the first scheduled scan")
+	}
+
+	t := time.NewTimer(untilDue(due))
 	defer t.Stop()
 
 	for {
@@ -118,6 +127,13 @@ func runService(started func(), setup Setup, stop <-chan struct{}) error {
 		case <-stop:
 			return nil
 		case <-t.C:
+			// The timer is capped at wallClockRecheck, so it can go off
+			// before the scan is due. Keep waiting until it is.
+			if time.Now().Before(due) {
+				t.Reset(untilDue(due))
+				continue
+			}
+
 			log.Info().Msg("starting background scan")
 			if err := cfg.Scan(); err != nil {
 				log.Error().Err(err).Send()
@@ -125,12 +141,9 @@ func runService(started func(), setup Setup, stop <-chan struct{}) error {
 				log.Info().Msg("scan completed")
 			}
 
-			next := cfg.Timer
-			if cfg.Splay > 0 {
-				next += time.Duration(rand.Int63n(int64(cfg.Splay)))
-			}
-			log.Info().Time("next scan", time.Now().Add(next)).Msgf("next scan in %v", next)
-			t.Reset(next)
+			due = cfg.nextScan(time.Now())
+			log.Info().Time("next scan", due).Msgf("next scan in %v", time.Until(due).Round(time.Second))
+			t.Reset(untilDue(due))
 		}
 	}
 }
