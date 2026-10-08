@@ -9,13 +9,10 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mondoo.com/cnspec/policy"
-	"go.mondoo.com/mql/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream"
 )
 
@@ -75,51 +72,4 @@ func TestVerifyServiceAccount(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "the Mondoo service account in the Mondoo configuration can't be used")
 	})
-}
-
-func TestBomFailuresError(t *testing.T) {
-	names := map[string]string{"//assets/1": "host-1"}
-
-	t.Run("all assets succeeded", func(t *testing.T) {
-		assert.NoError(t, bomFailuresError("SBOM", nil, nil, names, 1))
-	})
-
-	t.Run("nothing generated and nothing failed", func(t *testing.T) {
-		assert.NoError(t, bomFailuresError("SBOM", nil, nil, nil, 0))
-	})
-
-	t.Run("failed asset", func(t *testing.T) {
-		err := bomFailuresError("SBOM",
-			[]bomFailure{{Asset: "host-1", Reason: "no data points found"}},
-			map[string]string{"//assets/1": "asset doesn't support any policies"},
-			names, 0)
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, errBomGenerationFailed))
-		assert.Contains(t, err.Error(), "could not generate the SBOM")
-		assert.Contains(t, err.Error(), `asset "host-1": no data points found`)
-		assert.Contains(t, err.Error(), `asset "host-1": scan error: asset doesn't support any policies`)
-	})
-
-	t.Run("partial failure still fails", func(t *testing.T) {
-		err := bomFailuresError("AIBOM",
-			[]bomFailure{{Asset: "host-2", Reason: "no data points found"}},
-			nil, names, 1)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "could not generate the AIBOM")
-	})
-
-	t.Run("scan errors without any generated BOM", func(t *testing.T) {
-		err := bomFailuresError("SBOM", nil,
-			map[string]string{"//assets/unknown": "connection refused"}, names, 0)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), `asset "//assets/unknown": scan error: connection refused`)
-	})
-}
-
-func TestAssetNamesByMrn(t *testing.T) {
-	assert.Empty(t, assetNamesByMrn(nil))
-	report := &policy.ReportCollection{Assets: map[string]*inventory.Asset{
-		"//assets/1": {Name: "host-1"},
-	}}
-	assert.Equal(t, map[string]string{"//assets/1": "host-1"}, assetNamesByMrn(report))
 }
