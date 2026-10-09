@@ -205,6 +205,28 @@ func getFrameworkMapsNoop(ctx context.Context, mrn string) ([]*FrameworkMap, err
 	return []*FrameworkMap{}, nil
 }
 
+// HasOverrides reports whether the framework sets an action on a control:
+// a control in a disable, ignore or out-of-scope group, or a control entry
+// with an action other than modify. These are exactly what
+// gatherGlobalInfoFromFramework records.
+//
+// The resolved policy builder applies them by control MRN across the whole
+// build, so they reach controls of other frameworks, not just this one's.
+// Like Policy.HasOverrides, this is the signal to invalidate every resolved
+// policy in the framework's spaces when it changes, rather than only the ones
+// that list it as a dependency.
+func (f *Framework) HasOverrides() bool {
+	for _, g := range f.Groups {
+		for _, c := range g.Controls {
+			action := normalizeAction(g.Type, c.Action, nil)
+			if action != Action_UNSPECIFIED && action != Action_MODIFY {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (f *Framework) ClearGraphChecksums() {
 	f.GraphContentChecksum = ""
 	f.GraphExecutionChecksum = ""

@@ -121,12 +121,118 @@ func TestResolveV2_Dependencies(t *testing.T) {
 	})
 
 	t.Run("only admitted policies and frameworks", func(t *testing.T) {
+		// The asset's own policy and framework are left out: they are scopes,
+		// not content.
 		assert.Equal(t, []string{
 			frameworkMrn("framework1"),
 			policyMrn("admitted"),
-			"asset1",
 		}, rp.Dependencies)
 	})
+}
+
+// Assets with the same bundle and filters share a resolved policy, so its
+// dependencies cannot name whichever asset resolved it first.
+func TestResolveV2_DependenciesSharedAcrossAssets(t *testing.T) {
+	ctx := context.Background()
+	b := parseBundle(t, rpDependenciesBundle)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("admitted")}, frameworks: []string{frameworkMrn("framework1")}},
+		{asset: "asset2", policies: []string{policyMrn("admitted")}, frameworks: []string{frameworkMrn("framework1")}},
+	}, []*policy.Bundle{b})
+
+	var deps [][]string
+	for _, asset := range []string{"asset1", "asset2"} {
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+			PolicyMrn:    asset,
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		assert.NotContains(t, rp.Dependencies, "asset1")
+		assert.NotContains(t, rp.Dependencies, "asset2")
+		deps = append(deps, rp.Dependencies)
+	}
+	assert.Equal(t, deps[0], deps[1])
+	assert.Equal(t, []string{frameworkMrn("framework1"), policyMrn("admitted")}, deps[0])
+}
+
+// A framework's control actions reach controls of the frameworks it depends
+// on. The builder ignores the action on a framework reference, so even a
+// framework referenced with "deactivate" is admitted and its control actions
+// apply. It is listed as a dependency, and HasOverrides flags it too.
+func TestResolveV2_DependenciesFrameworkOverrides(t *testing.T) {
+	ctx := context.Background()
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: fw-policy
+  groups:
+  - filters: "true"
+    checks:
+    - uid: fw-check-1
+      mql: 1 == 1
+    - uid: fw-check-2
+      mql: 2 == 2
+frameworks:
+- uid: base-framework
+  groups:
+  - title: controls
+    controls:
+    - uid: control-a
+      title: a
+    - uid: control-b
+      title: b
+- uid: custom-framework
+  dependencies:
+  - mrn: //test.sth/frameworks/base-framework
+  groups:
+  - title: scoped out
+    type: out_of_scope_group
+    controls:
+    - uid: control-a
+- uid: parent-framework
+  dependencies:
+  - mrn: //test.sth/frameworks/base-framework
+  - mrn: //test.sth/frameworks/custom-framework
+    action: deactivate
+framework_maps:
+- uid: base-map
+  framework_owner:
+    uid: base-framework
+  policy_dependencies:
+  - uid: fw-policy
+  controls:
+  - uid: control-a
+    checks:
+    - uid: fw-check-1
+  - uid: control-b
+    checks:
+    - uid: fw-check-2
+`)
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("fw-policy")}, frameworks: []string{frameworkMrn("parent-framework")}},
+	}, []*policy.Bundle{b})
+
+	rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+		PolicyMrn:    "asset1",
+		AssetFilters: []*policy.Mquery{{Mql: "true"}},
+	})
+	require.NoError(t, err)
+
+	// custom-framework scoped control-a out of base-framework.
+	assert.Nil(t, findReportingJobByQrId(rp, controlMrn("control-a")))
+	assert.NotNil(t, findReportingJobByQrId(rp, controlMrn("control-b")))
+	assert.Contains(t, rp.Dependencies, frameworkMrn("custom-framework"))
+
+	for mrn, want := range map[string]bool{
+		frameworkMrn("custom-framework"): true,
+		frameworkMrn("base-framework"):   false,
+		frameworkMrn("parent-framework"): false,
+	} {
+		f, err := srv.DataLake.GetFramework(ctx, mrn)
+		require.NoError(t, err)
+		assert.Equal(t, want, f.HasOverrides(), mrn)
+	}
 }
 
 func TestResolveV2_DependenciesWithoutLeak(t *testing.T) {
@@ -236,6 +342,14 @@ policies:
   - uid: own-risk
     magnitude:
       value: 0.9
+- uid: risk-queries-only
+  risk_factors:
+  - uid: data-risk
+    magnitude:
+      value: 0.9
+    queries:
+    - uid: data-risk-query
+      mql: asset.name
 queries:
 - uid: defined-check
   mql: 4 == 4
@@ -262,6 +376,9 @@ queries:
 		{policy: "policy-ref-impact", want: true},
 		{policy: "policy-ref-scoring", want: true},
 		{policy: "risk-reference", want: true},
+		// The builder never adds a risk factor without checks, but still
+		// applies its magnitude to one another policy defines.
+		{policy: "risk-queries-only", want: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.policy, func(t *testing.T) {
