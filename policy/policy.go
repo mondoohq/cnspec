@@ -148,100 +148,59 @@ func gatherLocalAssetFilters(ctx context.Context, policy *Policy, lookupQueryByM
 	return filters, nil
 }
 
-// HasUngatedGlobalInfo reports whether the policy carries an override that a
-// resolved policy can pick up without admitting the policy.
+// HasOverrides reports whether the policy contains an entry that adjusts
+// content it does not define: an entry in an override, disable, ignore or
+// out-of-scope group, a check or query entry with an action, a check or
+// query reference (no mql, no variants) that sets an impact, a policy
+// reference with an action, impact or scoring system, or a risk factor
+// reference (no checks, no queries) with a magnitude or an action.
 //
-// The resolved policy builder gathers actions, impacts, scoring systems and
-// risk magnitudes from every policy in a matching group before it decides
-// which policies to admit, so a policy whose filters don't match the asset
-// still shapes its resolved policy. One that raises the impact of a check an
-// admitted policy shares changes the admitted policy's score. A filter gates
-// such an override only when it sits on the group or on the check it targets:
-// those filters are part of the policy's computed filters, so a resolved
-// policy that applies the override has also admitted the policy. Anything
-// else is ungated, and a change to it can reach any resolved policy in the
-// policy's spaces.
+// The resolved policy builder applies these by target MRN across the whole
+// build, and gathers them from every policy in a matching group before it
+// decides which policies to admit. A policy whose filters never match an
+// asset can still raise the impact of a check an admitted policy runs, so
+// the policies a resolved policy admitted are not all it depends on.
+// Dependency tracking cannot see that, so a policy with overrides has to
+// invalidate every resolved policy in its spaces when it changes.
 //
-// It is conservative: a policy reference with an override counts as ungated
-// without following it, and a check whose base cannot be looked up counts as
-// unfiltered. A risk factor is judged by the filters on this policy's copy of
-// it, which assumes one definition per risk factor MRN.
-func (p *Policy) HasUngatedGlobalInfo(ctx context.Context, getQuery func(ctx context.Context, mrn string) (*Mquery, error)) (bool, error) {
-	for _, r := range p.RiskFactors {
-		if r.Magnitude == nil && (r.Action == Action_UNSPECIFIED || r.Action == Action_MODIFY) {
-			continue
-		}
-		// Risk factors sit in no group, and the builder gathers their
-		// magnitude and action without looking at any filter. Only the risk
-		// factor's own filters gate it, the ones gatherLocalAssetFilters adds.
-		filters := &Filters{Items: map[string]*Mquery{}}
-		filters.AddFilters(r.Filters)
-		for _, c := range r.Checks {
-			filters.AddFilters(c.Filters)
-		}
-		if len(filters.Items) == 0 {
-			return true, nil
-		}
-	}
-
-	writesAction := func(groupType GroupType, action Action, impact *Impact) bool {
-		action = normalizeAction(groupType, action, impact)
-		return action != Action_UNSPECIFIED && action != Action_MODIFY
-	}
-
+// A check's impact on its own definition and a risk factor's magnitude on its
+// own definition are not overrides: they travel with the content.
+func (p *Policy) HasOverrides() bool {
 	for _, g := range p.Groups {
-		if len(g.Filters.GetItems()) != 0 {
-			continue
+		switch g.Type {
+		case GroupType_OVERRIDE, GroupType_DISABLE, GroupType_IGNORED, GroupType_OUT_OF_SCOPE_GROUP:
+			if len(g.Policies) != 0 || len(g.Checks) != 0 || len(g.Queries) != 0 {
+				return true
+			}
 		}
 
 		for _, pRef := range g.Policies {
-			if writesAction(g.Type, pRef.Action, pRef.Impact) || pRef.Impact != nil || pRef.ScoringSystem != ScoringSystem_SCORING_UNSPECIFIED {
-				return true, nil
+			if pRef.Action != Action_UNSPECIFIED || pRef.Impact != nil || pRef.ScoringSystem != ScoringSystem_SCORING_UNSPECIFIED {
+				return true
 			}
 		}
 
-		for _, c := range g.Checks {
-			// An override entry is folded onto the check it references, whatever
-			// it sets. A plain entry contributes only an impact it sets itself:
-			// the check's own impact is the same whichever policy lists it.
-			if !IsOverrideEntry(c.Action, g.Type) && c.Impact == nil {
-				continue
-			}
-			filtered, err := hasTargetFilters(ctx, c, getQuery)
-			if err != nil || !filtered {
-				return true, err
-			}
-		}
-
-		for _, q := range g.Queries {
-			if q.Action == Action_UNSPECIFIED || !writesAction(g.Type, q.Action, q.Impact) {
-				continue
-			}
-			filtered, err := hasTargetFilters(ctx, q, getQuery)
-			if err != nil || !filtered {
-				return true, err
+		for _, entries := range [][]*Mquery{g.Checks, g.Queries} {
+			for _, q := range entries {
+				if q.Action != Action_UNSPECIFIED {
+					return true
+				}
+				isReference := q.Mql == "" && len(q.Variants) == 0
+				if isReference && q.Impact != nil {
+					return true
+				}
 			}
 		}
 	}
 
-	return false, nil
-}
-
-// hasTargetFilters reports whether the query a group entry targets has filters
-// of its own, merging the entry onto its base the way gatherLocalAssetFilters
-// does. A base that cannot be looked up counts as unfiltered.
-func hasTargetFilters(ctx context.Context, entry *Mquery, getQuery func(ctx context.Context, mrn string) (*Mquery, error)) (bool, error) {
-	base, err := getQuery(ctx, entry.Mrn)
-	if err != nil || base == nil {
-		return false, nil
+	for _, r := range p.RiskFactors {
+		isReference := len(r.Checks) == 0 && len(r.Queries) == 0
+		if isReference && (r.Magnitude != nil || r.Action != Action_UNSPECIFIED) {
+			return true
+		}
 	}
-	merged := entry.Merge(base)
 
-	filters := &Filters{Items: map[string]*Mquery{}}
-	if err := filters.AddQueryFiltersFn(ctx, merged, getQuery); err != nil {
-		return false, err
-	}
-	return len(filters.Items) != 0, nil
+	return false
 }
 
 // ComputeAssetFilters of a given policy resolving them as you go
