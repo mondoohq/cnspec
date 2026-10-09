@@ -5453,10 +5453,10 @@ type ResolvedPolicy struct {
 	FiltersChecksum        string                 `protobuf:"bytes,20,opt,name=filters_checksum,json=filtersChecksum,proto3" json:"filters_checksum,omitempty"`
 	ReportingJobUuid       string                 `protobuf:"bytes,21,opt,name=reporting_job_uuid,json=reportingJobUuid,proto3" json:"reporting_job_uuid,omitempty"`
 	Features               []ServerFeature        `protobuf:"varint,8,rep,packed,name=features,proto3,enum=cnspec.policy.v1.ServerFeature" json:"features,omitempty"`
-	// MRNs of the policies and frameworks this resolved policy depends on:
-	// every policy and framework the builder admitted, plus every policy whose
-	// override (action, impact, scoring system, risk magnitude) reached the
-	// resolved policy. Sorted and deduplicated.
+	// MRNs of the policies and frameworks the builder admitted into this
+	// resolved policy, including the root. Sorted and deduplicated. Overrides
+	// from policies that were not admitted are not listed: see
+	// Policy.HasOverrides.
 	Dependencies  []string `protobuf:"bytes,22,rep,name=dependencies,proto3" json:"dependencies,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
