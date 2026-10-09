@@ -5588,9 +5588,10 @@ type ResolvedPolicy struct {
 	ReportingJobUuid       string                 `protobuf:"bytes,21,opt,name=reporting_job_uuid,json=reportingJobUuid,proto3" json:"reporting_job_uuid,omitempty"`
 	Features               []ServerFeature        `protobuf:"varint,8,rep,packed,name=features,proto3,enum=cnspec.policy.v1.ServerFeature" json:"features,omitempty"`
 	// MRNs of the policies and frameworks the builder admitted into this
-	// resolved policy, including the root. Sorted and deduplicated. Overrides
-	// from policies that were not admitted are not listed: see
-	// Policy.HasOverrides.
+	// resolved policy, sorted and deduplicated. The root and other scope MRNs
+	// (asset, space, organization, ...) are left out, since a resolved policy
+	// is shared across assets. Overrides from policies that were not admitted
+	// are not listed: see Policy.HasOverrides and Framework.HasOverrides.
 	Dependencies  []string `protobuf:"bytes,22,rep,name=dependencies,proto3" json:"dependencies,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
