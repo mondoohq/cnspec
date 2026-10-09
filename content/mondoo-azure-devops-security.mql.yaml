@@ -1,0 +1,827 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-azure-devops-repository-security
+    name: Mondoo Azure DevOps Repository Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: azuredevops
+      mondoo.com/icon: azure-devops
+    require:
+      - provider: azuredevops
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure Azure DevOps Git repositories against unreviewed, forced, and exposed changes
+    docs:
+      desc: |
+        The Mondoo Azure DevOps Repository Security policy identifies misconfigurations that let code reach the default branch of an Azure DevOps Git repository without review, rewrite its history, or send its events over an unencrypted connection. An attacker who controls a single account with Contribute permission can otherwise push malicious code straight to the branch that ships, hide the change by force pushing over it, or read repository details from service hook traffic.
+
+        This policy validates branch policies on the default branch, the repository permissions that bypass or rewrite them, and the service hooks that send the repository's events to other systems.
+
+        ## Authentication
+
+        Scanning Azure DevOps repositories requires a Microsoft Entra service principal or a personal access token.
+
+        A service principal is an Entra application with a client secret, added to the Azure DevOps organization with Basic access and to the Readers group of each project to scan. Readers cannot see a project's service hooks, so the service hook check also needs the **View subscriptions** permission on each project, which only the `az devops security permission update` command can grant.
+
+        ### Configure environment variables
+
+        #### Linux / macOS
+
+        ```bash
+        export AZURE_TENANT_ID=<tenant id>
+        export AZURE_CLIENT_ID=<client id>
+        export AZURE_CLIENT_SECRET=<client secret>
+        ```
+
+        #### Windows
+
+        ```powershell
+        $Env:AZURE_TENANT_ID = "<tenant id>"
+        $Env:AZURE_CLIENT_ID = "<client id>"
+        $Env:AZURE_CLIENT_SECRET = "<client secret>"
+        ```
+
+        To use a personal access token instead, set `AZURE_DEVOPS_TOKEN`.
+
+        ## Scanning Azure DevOps repositories
+
+        To scan the configuration of one repository:
+
+        ```bash
+        cnspec scan azuredevops repo <ORG_NAME>/<PROJECT>/<REPO_NAME>
+        ```
+
+        To scan every repository the credential can read in an organization:
+
+        ```bash
+        cnspec scan azuredevops org <ORG_NAME> --discover repositories
+        ```
+
+        ## Join the community!
+
+        Our goal is to build policies that are simple to deploy, accurate, and actionable.
+
+        If you have any suggestions for how to improve this policy, or if you need support, [join the community](https://github.com/orgs/mondoohq/discussions) in GitHub Discussions.
+    groups:
+      - title: Branch policies
+        checks:
+          - uid: mondoo-azure-devops-repository-security-default-branch-protected
+          - uid: mondoo-azure-devops-repository-security-require-two-reviewers
+          - uid: mondoo-azure-devops-repository-security-require-build-validation
+      - title: Repository permissions
+        checks:
+          - uid: mondoo-azure-devops-repository-security-prevent-policy-bypass
+          - uid: mondoo-azure-devops-repository-security-prevent-force-pushes
+      - title: Service hooks
+        checks:
+          - uid: mondoo-azure-devops-repository-security-service-hooks-use-https
+    scoring_system: highest impact
+queries:
+  - uid: mondoo-azure-devops-repository-security-default-branch-protected
+    title: Ensure the default branch is protected by a required branch policy
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-c-1-integrity
+      compliance/iso-27001-2022: iso-27001-2022-a-8-32
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-2
+      compliance/nist-csf-2: nist-csf-2-pr-ps-06
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-5
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a08
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-8-3
+      compliance/vda-isa-5: vda-isa-5-5-2-1
+    variants:
+      - uid: mondoo-azure-devops-repository-security-default-branch-protected-azuredevops
+        tags:
+          mondoo.com/filter-title: Azure DevOps Repository
+          mondoo.com/filter-icon: azure-devops
+      - uid: mondoo-azure-devops-repository-security-default-branch-protected-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-devops-repository-security-default-branch-protected-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-devops-repository-security-default-branch-protected-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that changes to the repository's default branch must go through at least one required branch policy.
+
+        Azure DevOps protects a branch with branch policies, under Project Settings, Repositories, the repository, Policies, Branch Policies. A policy protects the branch only when it is turned on and set to **Required**. An optional policy only warns, and a pull request still completes. Once a required policy applies, Azure DevOps also refuses direct pushes to the branch, so every change has to arrive through a pull request. The Terraform version of this check reads the `enabled` and `blocking` arguments of every `azuredevops_branch_policy_*` resource and requires that neither be false.
+
+        A repository with no commits has no default branch yet, and an administrator-disabled repository accepts no pushes, so both pass.
+
+        **Why this matters**
+
+        Without a required policy, anyone with Contribute permission on the repository pushes straight to the branch that builds and deploys. One phished or leaked account, or one stolen personal access token, is enough to land a backdoor in production code with no reviewer, no build, and no pull request on record.
+
+        Direct pushes also skip every other control this policy checks. Reviewer counts, build validation, and comment resolution are all branch policies, so none of them run for a change that never becomes a pull request.
+
+        Pair this with the reviewer and build validation checks, since a required policy that demands nothing meaningful, such as a work item link, stops direct pushes without adding a review.
+      audit: |
+        ### Audit via Console
+
+        1. In Azure DevOps, open **Project settings** > **Repositories** and select the repository.
+        2. Open the **Policies** tab and select the default branch under **Branch Policies**.
+        3. Review the policies listed for the branch.
+
+        If at least one policy is turned on and set to **Required**, the check passes. If none is, the check fails.
+
+        ### Audit via CLI
+
+        1. List the policies that apply to the default branch:
+
+           ```bash
+           az repos policy list --repository-id <repository-id> --branch main --project <project> --org https://dev.azure.com/<organization> --query "[?isEnabled && isBlocking].type.displayName"
+           ```
+
+        If the command returns at least one policy, the check passes. If it returns an empty list, the check fails.
+      remediation:
+        - id: console
+          desc: |
+            To require a branch policy on the default branch using the Azure DevOps web portal:
+
+            1. Open **Project settings** > **Repositories** and select the repository.
+            2. Open the **Policies** tab and select the default branch under **Branch Policies**.
+            3. Turn on **Require a minimum number of reviewers** and set **Minimum number of reviewers** to 2.
+            4. Turn on any other policies the branch needs, such as **Build Validation**, and set each to **Required**.
+
+            For more details, see [Branch policies and settings](https://learn.microsoft.com/en-us/azure/devops/repos/git/branch-policies) in the Azure DevOps documentation.
+        - id: terraform
+          desc: |
+            To require approving reviews on the default branch using Terraform:
+
+            ```hcl
+            resource "azuredevops_branch_policy_min_reviewers" "default_branch" {
+              project_id = azuredevops_project.example.id
+              enabled    = true
+              blocking   = true
+
+              settings {
+                reviewer_count     = 2
+                submitter_can_vote = false
+
+                scope {
+                  repository_id  = azuredevops_git_repository.example.id
+                  repository_ref = azuredevops_git_repository.example.default_branch
+                  match_type     = "Exact"
+                }
+              }
+            }
+            ```
+
+            `enabled` and `blocking` both default to `true`. Setting either to `false` leaves the branch unprotected.
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/devops/repos/git/branch-policies
+        title: Azure DevOps - Branch policies and settings
+  - uid: mondoo-azure-devops-repository-security-default-branch-protected-azuredevops
+    filters: asset.platform == "azuredevops-repo"
+    mql: |
+      azuredevops.repository.isEmpty == true ||
+        azuredevops.repository.isDisabled == true ||
+        azuredevops.repository.branches.where(isDefault == true).any(isProtected == true)
+  - uid: mondoo-azure-devops-repository-security-default-branch-protected-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /^azuredevops_branch_policy_/)
+    mql: |
+      terraform.resources.where(nameLabel == /^azuredevops_branch_policy_/).all(
+        arguments["enabled"] != false && arguments["blocking"] != false
+      )
+  - uid: mondoo-azure-devops-repository-security-default-branch-protected-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == /^azuredevops_branch_policy_/)
+    mql: |
+      terraform.plan.resourceChanges.where(type == /^azuredevops_branch_policy_/).map(change.after).all(
+        _["enabled"] != false && _["blocking"] != false
+      )
+  - uid: mondoo-azure-devops-repository-security-default-branch-protected-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == /^azuredevops_branch_policy_/)
+    mql: |
+      terraform.state.resources.where(type == /^azuredevops_branch_policy_/).map(values).all(
+        _["enabled"] != false && _["blocking"] != false
+      )
+  - uid: mondoo-azure-devops-repository-security-require-two-reviewers
+    title: Ensure default branch pull requests need two approving reviews
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-c-1-integrity
+      compliance/iso-27001-2022: iso-27001-2022-a-8-32
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-2
+      compliance/nist-csf-2: nist-csf-2-pr-ps-06
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-3
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-3
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a08
+      compliance/pci-dss-4: pcidss-requirement-6-2-3-1
+      compliance/soc2-2017: soc2-control-cc8-1-8
+      compliance/vda-isa-5: vda-isa-5-5-2-1
+    variants:
+      - uid: mondoo-azure-devops-repository-security-require-two-reviewers-azuredevops
+        tags:
+          mondoo.com/filter-title: Azure DevOps Repository
+          mondoo.com/filter-icon: azure-devops
+      - uid: mondoo-azure-devops-repository-security-require-two-reviewers-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-devops-repository-security-require-two-reviewers-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-devops-repository-security-require-two-reviewers-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that a pull request into the repository's default branch cannot complete until at least two reviewers approve it.
+
+        Azure DevOps calls this **Require a minimum number of reviewers**, a branch policy under Project Settings, Repositories, the repository, Policies, Branch Policies. The check requires the policy to be turned on and **Required**, with **Minimum number of reviewers** set to 2 or more. When several such policies apply to the branch, the highest count counts. The Terraform version of this check reads `reviewer_count` in the `settings` block of every `azuredevops_branch_policy_min_reviewers` resource.
+
+        A repository with no commits has no default branch yet, and an administrator-disabled repository accepts no pushes, so both pass.
+
+        **Why this matters**
+
+        A single required reviewer still lets two accounts merge anything between them, and one of them can be the author's second account, a service account, or a colleague approving a large diff on trust. Two approvals mean an attacker has to compromise or deceive two people before a malicious change reaches the default branch.
+
+        The count only means what it says when the author's own vote is excluded. Clear **Allow requestors to approve their own changes**, or the author becomes one of the two approvers. Consider **When new changes are pushed, reset all approval votes** as well, so an approval given to one version of a pull request does not carry over to the commits pushed after it.
+      audit: |
+        ### Audit via Console
+
+        1. Open **Project settings** > **Repositories** and select the repository.
+        2. Open the **Policies** tab and select the default branch under **Branch Policies**.
+        3. Review **Require a minimum number of reviewers**.
+
+        If the policy is on, set to **Required**, and **Minimum number of reviewers** is 2 or more, the check passes. Otherwise, the check fails.
+
+        ### Audit via CLI
+
+        1. List the minimum reviewer policies that apply to the default branch:
+
+           ```bash
+           az repos policy list --repository-id <repository-id> --branch main --project <project> --org https://dev.azure.com/<organization> --query "[?isEnabled && isBlocking && type.displayName=='Minimum number of reviewers'].settings.minimumApproverCount"
+           ```
+
+        If the command returns a value of 2 or more, the check passes. If it returns nothing or only values below 2, the check fails.
+      remediation:
+        - id: console
+          desc: |
+            To require two approving reviews using the Azure DevOps web portal:
+
+            1. Open **Project settings** > **Repositories** and select the repository.
+            2. Open the **Policies** tab and select the default branch under **Branch Policies**.
+            3. Turn on **Require a minimum number of reviewers**.
+            4. Set **Minimum number of reviewers** to 2.
+            5. Clear **Allow requestors to approve their own changes**.
+
+            For more details, see [Require a minimum number of reviewers](https://learn.microsoft.com/en-us/azure/devops/repos/git/branch-policies#require-a-minimum-number-of-reviewers) in the Azure DevOps documentation.
+        - id: terraform
+          desc: |
+            To require two approving reviews using Terraform:
+
+            ```hcl
+            resource "azuredevops_branch_policy_min_reviewers" "default_branch" {
+              project_id = azuredevops_project.example.id
+              enabled    = true
+              blocking   = true
+
+              settings {
+                reviewer_count               = 2
+                submitter_can_vote           = false
+                on_push_reset_approved_votes = true
+
+                scope {
+                  repository_id  = azuredevops_git_repository.example.id
+                  repository_ref = azuredevops_git_repository.example.default_branch
+                  match_type     = "Exact"
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/devops/repos/git/branch-policies#require-a-minimum-number-of-reviewers
+        title: Azure DevOps - Require a minimum number of reviewers
+  - uid: mondoo-azure-devops-repository-security-require-two-reviewers-azuredevops
+    filters: asset.platform == "azuredevops-repo"
+    mql: |
+      azuredevops.repository.isEmpty == true ||
+        azuredevops.repository.isDisabled == true ||
+        azuredevops.repository.branches.where(isDefault == true).any(protectionRules.requiredApprovingReviewCount >= 2)
+  - uid: mondoo-azure-devops-repository-security-require-two-reviewers-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azuredevops_branch_policy_min_reviewers")
+    mql: |
+      terraform.resources("azuredevops_branch_policy_min_reviewers").all(
+        arguments["enabled"] != false &&
+        arguments["blocking"] != false &&
+        blocks.where(type == "settings").all(arguments["reviewer_count"] >= 2)
+      )
+  - uid: mondoo-azure-devops-repository-security-require-two-reviewers-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azuredevops_branch_policy_min_reviewers")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azuredevops_branch_policy_min_reviewers").map(change.after).all(
+        _["enabled"] != false &&
+        _["blocking"] != false &&
+        _["settings"] != empty &&
+        _["settings"].all(_["reviewer_count"] >= 2)
+      )
+  - uid: mondoo-azure-devops-repository-security-require-two-reviewers-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azuredevops_branch_policy_min_reviewers")
+    mql: |
+      terraform.state.resources.where(type == "azuredevops_branch_policy_min_reviewers").map(values).all(
+        _["enabled"] != false &&
+        _["blocking"] != false &&
+        _["settings"] != empty &&
+        _["settings"].all(_["reviewer_count"] >= 2)
+      )
+  - uid: mondoo-azure-devops-repository-security-require-build-validation
+    title: Ensure default branch pull requests need a passing build or status check
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-c-1-integrity
+      compliance/iso-27001-2022: iso-27001-2022-a-8-32
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-2
+      compliance/nist-csf-2: nist-csf-2-pr-ps-06
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-3
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-3
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a08
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc8-1-7
+      compliance/vda-isa-5: vda-isa-5-5-2-1
+    variants:
+      - uid: mondoo-azure-devops-repository-security-require-build-validation-azuredevops
+        tags:
+          mondoo.com/filter-title: Azure DevOps Repository
+          mondoo.com/filter-icon: azure-devops
+      - uid: mondoo-azure-devops-repository-security-require-build-validation-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-devops-repository-security-require-build-validation-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-devops-repository-security-require-build-validation-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that a pull request into the repository's default branch cannot complete until a build or an external status check succeeds.
+
+        Azure DevOps offers two branch policies for this, under Project Settings, Repositories, the repository, Policies, Branch Policies. **Build Validation** queues a pipeline for every pull request, and **Status Checks** waits for a status that another service, such as a scanner or an external CI system, posts to the pull request. The check requires at least one of them to be turned on and **Required**. The Terraform version of this check reads the `enabled` and `blocking` arguments of every `azuredevops_branch_policy_build_validation` and `azuredevops_branch_policy_status_check` resource and requires that neither be false.
+
+        A repository with no commits has no default branch yet, and an administrator-disabled repository accepts no pushes, so both pass.
+
+        **Why this matters**
+
+        Reviewers read diffs. They do not compile them, run the test suite, or scan dependencies in their heads, and a change that looks harmless in review can still break the build, disable a test, or pull in a vulnerable or malicious package. A required build makes those failures block the merge instead of surfacing after the change has shipped.
+
+        It also closes the gap between what was reviewed and what was tested. Without the policy, a pull request can complete while its pipeline is still running, has failed, or never started.
+      audit: |
+        ### Audit via Console
+
+        1. Open **Project settings** > **Repositories** and select the repository.
+        2. Open the **Policies** tab and select the default branch under **Branch Policies**.
+        3. Review the **Build Validation** and **Status Checks** sections.
+
+        If at least one build or status policy is listed and set to **Required**, the check passes. Otherwise, the check fails.
+
+        ### Audit via CLI
+
+        1. List the build and status policies that apply to the default branch:
+
+           ```bash
+           az repos policy list --repository-id <repository-id> --branch main --project <project> --org https://dev.azure.com/<organization> --query "[?isEnabled && isBlocking && (type.displayName=='Build' || type.displayName=='Status')].type.displayName"
+           ```
+
+        If the command returns at least one policy, the check passes. If it returns an empty list, the check fails.
+      remediation:
+        - id: console
+          desc: |
+            To require a build before pull requests complete using the Azure DevOps web portal:
+
+            1. Open **Project settings** > **Repositories** and select the repository.
+            2. Open the **Policies** tab and select the default branch under **Branch Policies**.
+            3. Next to **Build Validation**, select **+** and choose the pipeline that builds and tests the repository.
+            4. Set **Policy requirement** to **Required** and save.
+
+            For more details, see [Build validation](https://learn.microsoft.com/en-us/azure/devops/repos/git/branch-policies#build-validation) in the Azure DevOps documentation.
+        - id: terraform
+          desc: |
+            To require a build before pull requests complete using Terraform:
+
+            ```hcl
+            resource "azuredevops_branch_policy_build_validation" "default_branch" {
+              project_id = azuredevops_project.example.id
+              enabled    = true
+              blocking   = true
+
+              settings {
+                display_name        = "Pull request build"
+                build_definition_id = azuredevops_build_definition.example.id
+                valid_duration      = 720
+
+                scope {
+                  repository_id  = azuredevops_git_repository.example.id
+                  repository_ref = azuredevops_git_repository.example.default_branch
+                  match_type     = "Exact"
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/devops/repos/git/branch-policies#build-validation
+        title: Azure DevOps - Build validation
+  - uid: mondoo-azure-devops-repository-security-require-build-validation-azuredevops
+    filters: asset.platform == "azuredevops-repo"
+    mql: |
+      azuredevops.repository.isEmpty == true ||
+        azuredevops.repository.isDisabled == true ||
+        azuredevops.repository.branches.where(isDefault == true).any(protectionRules.requiredStatusChecksEnabled == true)
+  - uid: mondoo-azure-devops-repository-security-require-build-validation-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /^azuredevops_branch_policy_(build_validation|status_check)$/)
+    mql: |
+      terraform.resources.where(nameLabel == /^azuredevops_branch_policy_(build_validation|status_check)$/).all(
+        arguments["enabled"] != false && arguments["blocking"] != false
+      )
+  - uid: mondoo-azure-devops-repository-security-require-build-validation-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == /^azuredevops_branch_policy_(build_validation|status_check)$/)
+    mql: |
+      terraform.plan.resourceChanges.where(type == /^azuredevops_branch_policy_(build_validation|status_check)$/).map(change.after).all(
+        _["enabled"] != false && _["blocking"] != false
+      )
+  - uid: mondoo-azure-devops-repository-security-require-build-validation-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == /^azuredevops_branch_policy_(build_validation|status_check)$/)
+    mql: |
+      terraform.state.resources.where(type == /^azuredevops_branch_policy_(build_validation|status_check)$/).map(values).all(
+        _["enabled"] != false && _["blocking"] != false
+      )
+  - uid: mondoo-azure-devops-repository-security-prevent-policy-bypass
+    title: Ensure no user or group can bypass the branch policies of the repository
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-c-1-integrity
+      compliance/iso-27001-2022: iso-27001-2022-a-8-4
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-2
+      compliance/nist-csf-2: nist-csf-2-pr-ps-06
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-5
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a08
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-8-3
+      compliance/vda-isa-5: vda-isa-5-5-2-1
+    variants:
+      - uid: mondoo-azure-devops-repository-security-prevent-policy-bypass-azuredevops
+        tags:
+          mondoo.com/filter-title: Azure DevOps Repository
+          mondoo.com/filter-icon: azure-devops
+      - uid: mondoo-azure-devops-repository-security-prevent-policy-bypass-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-devops-repository-security-prevent-policy-bypass-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-devops-repository-security-prevent-policy-bypass-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that no person or group can skip the repository's branch policies.
+
+        Azure DevOps has two repository permissions for this, under Project Settings, Repositories, the repository, Security: **Bypass policies when pushing** and **Bypass policies when completing pull requests**. A holder of either can push past a required policy or complete a pull request that has not met it. Azure DevOps has no setting that applies branch policies to administrators as well, so these permissions are the only control. The check fails when any user or group other than a build or release service identity is allowed either permission at repository scope, including permissions the repository inherits from the project. The Terraform version of this check reads the `PolicyExempt` and `PullRequestBypassPolicy` keys of `permissions` on every `azuredevops_git_permissions` resource and requires that neither be `Allow`.
+
+        A repository with no commits has no default branch yet, and an administrator-disabled repository accepts no pushes, so both pass.
+
+        **Why this matters**
+
+        Branch policies exist to hold for everyone. A bypass permission turns each required review and build into a suggestion for its holders, and those holders are typically the most privileged accounts in the project, which are also the most valuable to an attacker. Taking over one of them is then enough to merge an unreviewed change, with the pull request recorded as completed.
+
+        Grant bypass to a build service identity only when a pipeline genuinely has to push to a protected branch, such as a release pipeline that tags or bumps versions, and grant it to no person. When a human needs to bypass a policy in an emergency, grant the permission temporarily and remove it afterwards.
+      audit: |
+        ### Audit via Console
+
+        1. Open **Project settings** > **Repositories** and select the repository.
+        2. Open the **Security** tab.
+        3. Select each user and group in turn and review **Bypass policies when completing pull requests** and **Bypass policies when pushing**.
+
+        If neither permission shows **Allow** or **Allow (inherited)** for any user or group other than build and release service identities, the check passes. Otherwise, the check fails.
+
+        ### Audit via CLI
+
+        1. Look up the project and repository GUIDs:
+
+           ```bash
+           az repos show --repository <repository> --project <project> --org https://dev.azure.com/<organization> --query "{PROJECT_ID: project.id, REPOSITORY_ID: id}"
+           ```
+
+        2. Set `PROJECT_ID` and `REPOSITORY_ID` to the two GUIDs it prints, then show the repository permissions of a group, such as Project Administrators:
+
+           ```bash
+           az devops security permission show --namespace-id 2e9eb7ed-3c0a-47d4-87c1-0ffdd275fd87 --subject <group-descriptor> --token "repoV2/$PROJECT_ID/$REPOSITORY_ID" --org https://dev.azure.com/<organization>
+           ```
+
+        Bit 128 is **Bypass policies when pushing** and bit 32768 is **Bypass policies when completing pull requests**. If neither is allowed for any user or group other than build and release service identities, the check passes. Otherwise, the check fails.
+      remediation:
+        - id: console
+          desc: |
+            To remove the bypass permissions using the Azure DevOps web portal:
+
+            1. Open **Project settings** > **Repositories** and select the repository.
+            2. Open the **Security** tab.
+            3. For each user and group other than build and release service identities, set **Bypass policies when completing pull requests** and **Bypass policies when pushing** to **Deny**. Use **Deny** rather than **Not set** where the group inherits **Allow** from the project.
+
+            For more details, see [Set Git repository permissions](https://learn.microsoft.com/en-us/azure/devops/repos/git/set-git-repository-permissions) in the Azure DevOps documentation.
+        - id: terraform
+          desc: |
+            To deny both bypass permissions to a group using Terraform:
+
+            ```hcl
+            resource "azuredevops_git_permissions" "deny_bypass" {
+              project_id    = azuredevops_project.example.id
+              repository_id = azuredevops_git_repository.example.id
+              principal     = data.azuredevops_group.project_administrators.id
+              permissions = {
+                PolicyExempt            = "Deny"
+                PullRequestBypassPolicy = "Deny"
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/devops/repos/git/set-git-repository-permissions
+        title: Azure DevOps - Set Git repository permissions
+  - uid: mondoo-azure-devops-repository-security-prevent-policy-bypass-azuredevops
+    filters: asset.platform == "azuredevops-repo"
+    mql: |
+      azuredevops.repository.isEmpty == true ||
+        azuredevops.repository.isDisabled == true ||
+        azuredevops.repository.branches.where(isDefault == true).any(protectionRules.enforceAdminsEnabled == true)
+  - uid: mondoo-azure-devops-repository-security-prevent-policy-bypass-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azuredevops_git_permissions")
+    mql: |
+      terraform.resources("azuredevops_git_permissions").all(
+        arguments["permissions"]["PolicyExempt"] != "Allow" &&
+        arguments["permissions"]["PullRequestBypassPolicy"] != "Allow"
+      )
+  - uid: mondoo-azure-devops-repository-security-prevent-policy-bypass-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azuredevops_git_permissions")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azuredevops_git_permissions").map(change.after).all(
+        _["permissions"]["PolicyExempt"] != "Allow" &&
+        _["permissions"]["PullRequestBypassPolicy"] != "Allow"
+      )
+  - uid: mondoo-azure-devops-repository-security-prevent-policy-bypass-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azuredevops_git_permissions")
+    mql: |
+      terraform.state.resources.where(type == "azuredevops_git_permissions").map(values).all(
+        _["permissions"]["PolicyExempt"] != "Allow" &&
+        _["permissions"]["PullRequestBypassPolicy"] != "Allow"
+      )
+  - uid: mondoo-azure-devops-repository-security-prevent-force-pushes
+    title: Ensure no user or group can force push to the repository
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-c-1-integrity
+      compliance/iso-27001-2022: iso-27001-2022-a-8-4
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-2
+      compliance/nist-csf-2: nist-csf-2-pr-ps-06
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-5
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a08
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-8-3
+      compliance/vda-isa-5: vda-isa-5-5-2-1
+    variants:
+      - uid: mondoo-azure-devops-repository-security-prevent-force-pushes-azuredevops
+        tags:
+          mondoo.com/filter-title: Azure DevOps Repository
+          mondoo.com/filter-icon: azure-devops
+      - uid: mondoo-azure-devops-repository-security-prevent-force-pushes-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-devops-repository-security-prevent-force-pushes-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-devops-repository-security-prevent-force-pushes-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that no person or group can rewrite the history of the repository.
+
+        Azure DevOps grants this with the **Force push (rewrite history, delete branches and tags)** repository permission, under Project Settings, Repositories, the repository, Security. The check fails when any user or group other than a build or release service identity is allowed it at repository scope, including a grant the repository inherits from the project. The Project Administrators group holds it by default, so a repository whose permissions were never changed fails. The Terraform version of this check reads the `ForcePush` key of `permissions` on every `azuredevops_git_permissions` resource and requires that it not be `Allow`.
+
+        A repository with no commits has no default branch yet, and an administrator-disabled repository accepts no pushes, so both pass.
+
+        **Why this matters**
+
+        A normal push adds to history. A force push replaces it, which lets its holder swap the content of an approved pull request after review, delete the commit that introduced a backdoor once it has run, or delete a branch or tag outright. Every fresh clone then shows the rewritten history, and the original commits survive only in the clones and pipelines that fetched them before.
+
+        Azure DevOps applies the permission to the whole repository, so one grant covers the default branch, every release branch, and every tag. Branch policies do not stop it: a holder of Force push can still delete or rewrite any branch the policies do not lock.
+      audit: |
+        ### Audit via Console
+
+        1. Open **Project settings** > **Repositories** and select the repository.
+        2. Open the **Security** tab.
+        3. Select each user and group in turn and review **Force push (rewrite history, delete branches and tags)**.
+
+        If the permission does not show **Allow** or **Allow (inherited)** for any user or group other than build and release service identities, the check passes. Otherwise, the check fails.
+
+        ### Audit via CLI
+
+        1. Look up the project and repository GUIDs:
+
+           ```bash
+           az repos show --repository <repository> --project <project> --org https://dev.azure.com/<organization> --query "{PROJECT_ID: project.id, REPOSITORY_ID: id}"
+           ```
+
+        2. Set `PROJECT_ID` and `REPOSITORY_ID` to the two GUIDs it prints, then show the repository permissions of a group, such as Project Administrators:
+
+           ```bash
+           az devops security permission show --namespace-id 2e9eb7ed-3c0a-47d4-87c1-0ffdd275fd87 --subject <group-descriptor> --token "repoV2/$PROJECT_ID/$REPOSITORY_ID" --org https://dev.azure.com/<organization>
+           ```
+
+        Bit 8 is **Force push (rewrite history, delete branches and tags)**. If it is not allowed for any user or group other than build and release service identities, the check passes. Otherwise, the check fails.
+      remediation:
+        - id: console
+          desc: |
+            To remove force push using the Azure DevOps web portal:
+
+            1. Open **Project settings** > **Repositories** and select the repository.
+            2. Open the **Security** tab.
+            3. For each user and group other than build and release service identities, set **Force push (rewrite history, delete branches and tags)** to **Deny**. Use **Deny** rather than **Not set** for Project Administrators, which inherit **Allow** from the project.
+
+            For more details, see [Set Git repository permissions](https://learn.microsoft.com/en-us/azure/devops/repos/git/set-git-repository-permissions) in the Azure DevOps documentation.
+        - id: terraform
+          desc: |
+            To deny force push to a group using Terraform:
+
+            ```hcl
+            resource "azuredevops_git_permissions" "deny_force_push" {
+              project_id    = azuredevops_project.example.id
+              repository_id = azuredevops_git_repository.example.id
+              principal     = data.azuredevops_group.project_administrators.id
+              permissions = {
+                ForcePush = "Deny"
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/devops/repos/git/set-git-repository-permissions
+        title: Azure DevOps - Set Git repository permissions
+  - uid: mondoo-azure-devops-repository-security-prevent-force-pushes-azuredevops
+    filters: asset.platform == "azuredevops-repo"
+    mql: |
+      azuredevops.repository.isEmpty == true ||
+        azuredevops.repository.isDisabled == true ||
+        azuredevops.repository.branches.where(isDefault == true).any(protectionRules.allowForcePushesEnabled == false)
+  - uid: mondoo-azure-devops-repository-security-prevent-force-pushes-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azuredevops_git_permissions")
+    mql: |
+      terraform.resources("azuredevops_git_permissions").all(arguments["permissions"]["ForcePush"] != "Allow")
+  - uid: mondoo-azure-devops-repository-security-prevent-force-pushes-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azuredevops_git_permissions")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azuredevops_git_permissions").map(change.after).all(_["permissions"]["ForcePush"] != "Allow")
+  - uid: mondoo-azure-devops-repository-security-prevent-force-pushes-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azuredevops_git_permissions")
+    mql: |
+      terraform.state.resources.where(type == "azuredevops_git_permissions").map(values).all(_["permissions"]["ForcePush"] != "Allow")
+  - uid: mondoo-azure-devops-repository-security-service-hooks-use-https
+    title: Ensure service hooks send repository events only over HTTPS
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-azure-devops-repository-security-service-hooks-use-https-azuredevops
+        tags:
+          mondoo.com/filter-title: Azure DevOps Repository
+          mondoo.com/filter-icon: azure-devops
+      - uid: mondoo-azure-devops-repository-security-service-hooks-use-https-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-devops-repository-security-service-hooks-use-https-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-devops-repository-security-service-hooks-use-https-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every service hook sending the repository's events to another system does so over an encrypted connection.
+
+        Service hooks are configured per project, under Project Settings, Service hooks. A hook subscribes to events, such as a code push or a pull request update, for one repository or for every repository in the project, and posts each event to a URL. The check covers every hook with a target URL that names this repository or all repositories, and requires each URL to use `https`. The Terraform version of this check reads the `url` argument of every `azuredevops_servicehook_webhook_tfs` resource and requires it to start with `https://`.
+
+        Reading service hooks requires the **View subscriptions** permission on the project, which the Readers group does not have. Without it, the check reports an error rather than passing on a list it cannot see.
+
+        **Why this matters**
+
+        Repository events describe the code: repository and branch names, commit messages, authors, changed paths, and pull request titles and descriptions. A hook that posts them over plain HTTP exposes all of it to anyone on the network path, along with any credential the hook sends, such as a basic authentication password or a token in a custom header. An attacker in that position can also alter or forge events, which matters when the receiving system triggers deployments from them.
+      audit: |
+        ### Audit via Console
+
+        1. Open **Project settings** > **Service hooks**.
+        2. For each subscription on a code or pull request event, open it and note its target URL and the repository it filters on.
+
+        If every subscription that covers this repository posts to an `https://` URL, the check passes. Otherwise, the check fails.
+
+        ### Audit via CLI
+
+        1. List the service hook subscriptions of the organization:
+
+           ```bash
+           az devops invoke --area hooks --resource subscriptions --http-method GET --api-version 7.1 --org https://dev.azure.com/<organization> --query "value[].{event: eventType, url: consumerInputs.url}"
+           ```
+
+        If every subscription for this repository's project posts to an `https://` URL, the check passes. Otherwise, the check fails.
+      remediation:
+        - id: console
+          desc: |
+            To move a service hook to HTTPS using the Azure DevOps web portal:
+
+            1. Open **Project settings** > **Service hooks**.
+            2. Select the subscription and choose **Edit**.
+            3. Change the URL to the receiving system's `https://` address, or delete the subscription if nothing uses it.
+            4. Select **Test** to confirm the receiver accepts the request, then **Finish**.
+
+            For more details, see [Create a service hook](https://learn.microsoft.com/en-us/azure/devops/service-hooks/create-subscription) in the Azure DevOps documentation.
+        - id: terraform
+          desc: |
+            To send repository events over HTTPS using Terraform:
+
+            ```hcl
+            resource "azuredevops_servicehook_webhook_tfs" "push" {
+              project_id = azuredevops_project.example.id
+              url        = "https://hooks.example.com/azure-devops"
+
+              git_push {
+                repository_id = azuredevops_git_repository.example.id
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/devops/service-hooks/overview
+        title: Azure DevOps - Integrate with service hooks
+  - uid: mondoo-azure-devops-repository-security-service-hooks-use-https-azuredevops
+    filters: asset.platform == "azuredevops-repo"
+    mql: |
+      azuredevops.repository.webhooks.all(isHttps == true)
+  - uid: mondoo-azure-devops-repository-security-service-hooks-use-https-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azuredevops_servicehook_webhook_tfs")
+    mql: |
+      terraform.resources("azuredevops_servicehook_webhook_tfs").all(arguments["url"] == /^https:\/\//)
+  - uid: mondoo-azure-devops-repository-security-service-hooks-use-https-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azuredevops_servicehook_webhook_tfs")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azuredevops_servicehook_webhook_tfs").map(change.after).all(_["url"] == /^https:\/\//)
+  - uid: mondoo-azure-devops-repository-security-service-hooks-use-https-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azuredevops_servicehook_webhook_tfs")
+    mql: |
+      terraform.state.resources.where(type == "azuredevops_servicehook_webhook_tfs").map(values).all(_["url"] == /^https:\/\//)

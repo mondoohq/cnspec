@@ -38,6 +38,7 @@ from paths import CONTENT_DIR, REPO_ROOT  # noqa: E402
 TARGETS = {
     "aws": [CONTENT_DIR / "mondoo-aws-security.mql.yaml"],
     "azure": [CONTENT_DIR / "mondoo-azure-security.mql.yaml"],
+    "azuredevops": [CONTENT_DIR / "mondoo-azure-devops-security.mql.yaml"],
     "gcp": [CONTENT_DIR / "mondoo-gcp-security.mql.yaml"],
     "oci": [CONTENT_DIR / "mondoo-oci-security.mql.yaml"],
     "github": [
@@ -81,6 +82,7 @@ PROVIDER_MAP = {
     "azurerm": ("hashicorp/azurerm", "~> 5.0"),
     "azuread": ("hashicorp/azuread", "~> 3.0"),
     "azapi": ("azure/azapi", "~> 2.0"),
+    "azuredevops": ("microsoft/azuredevops", "~> 1.0"),
     "google": ("hashicorp/google", "~> 8.0"),
     "google-beta": ("hashicorp/google-beta", "~> 8.0"),
     "oci": ("oracle/oci", "~> 9.0"),
