@@ -52,7 +52,6 @@ AZURE_EXTENSIONS = (
     "account",
     "alertsmanagement",  # `az monitor alert-processing-rule`
     "automation",
-    "azure-devops",  # `az repos`, `az devops` (mondoo-azure-devops-security)
     "azure-firewall",
     "bastion",
     "cdn",  # also provides the `az afd` (Front Door Standard/Premium) commands
@@ -354,7 +353,6 @@ def detect_policy_commands(commands: dict) -> set[str]:
     policy_files = [
         policy_dir / "mondoo-azure-security.mql.yaml",
         policy_dir / "mondoo-m365-security.mql.yaml",
-        policy_dir / "mondoo-azure-devops-security.mql.yaml",
     ]
 
     policy_commands = set()

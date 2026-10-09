@@ -17,13 +17,11 @@ from common import DATA_DIR, FAILURES, CONTENT_DIR, extract_command_sources, pol
 
 AZURE_POLICY_FILE = CONTENT_DIR / "mondoo-azure-security.mql.yaml"
 M365_POLICY_FILE = CONTENT_DIR / "mondoo-m365-security.mql.yaml"
-AZURE_DEVOPS_POLICY_FILE = CONTENT_DIR / "mondoo-azure-devops-security.mql.yaml"
 AZURE_COMMANDS_FILE = DATA_DIR / "azure_commands.json"
 
 # Policy files whose `id: cli` remediations use the Azure CLI (`az`). The M365
-# policy is included here because its CLI remediations also target `az`, and
-# the Azure DevOps policy because its fixes use the `azure-devops` extension.
-AZURE_CLI_POLICY_FILES = [AZURE_POLICY_FILE, M365_POLICY_FILE, AZURE_DEVOPS_POLICY_FILE]
+# policy is included here because its CLI remediations also target `az`.
+AZURE_CLI_POLICY_FILES = [AZURE_POLICY_FILE, M365_POLICY_FILE]
 
 
 def parse_az_command(cmd: str, commands_db: dict[str, list[str]]) -> tuple[str, list[str]]:
