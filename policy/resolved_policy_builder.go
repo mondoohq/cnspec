@@ -55,6 +55,9 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 		disabledQuery:        disabledQuery,
 		riskDataQueryInfos:   map[string][]riskDataQueryRef{},
 		foldedOverrideMql:    map[string]string{},
+		admitted:             map[string]struct{}{},
+		considered:           map[string]struct{}{},
+		overrideSources:      map[string]map[string]struct{}{},
 	}
 
 	builder.gatherGlobalInfoFromPolicy(policyObj)
@@ -96,6 +99,7 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 		Filters:                assetFilters,
 		GraphExecutionChecksum: resolvedPolicyExecutionChecksum,
 		FiltersChecksum:        assetFiltersChecksum,
+		Dependencies:           builder.dependencies(),
 	}
 
 	// We will walk the graph from the non prunable nodes out. This means that if something is not connected
@@ -272,6 +276,55 @@ type resolvedPolicyBuilder struct {
 	// same check's implementation, which is last-writer-wins and otherwise
 	// silent. See the fold in gatherGlobalInfoFromPolicy.
 	foldedOverrideMql map[string]string
+
+	// admitted holds the policies and frameworks the builder let into the
+	// graph: past their action and filter gates.
+	admitted map[string]struct{}
+	// considered holds every policy, check, query, risk factor, framework and
+	// control the builder tried to add. It is wider than what ends up in the
+	// resolved policy on purpose: an override that deactivates its target
+	// keeps the target out of the resolved policy, and the policy that wrote
+	// it is still something the resolved policy depends on.
+	considered map[string]struct{}
+	// overrideSources maps the target of every action, impact, scoring system
+	// and risk magnitude recorded by gatherGlobalInfoFromPolicy and
+	// gatherGlobalInfoFromFramework to the policies and frameworks that wrote
+	// one. Those are gathered from every policy in a matching group, admitted
+	// or not, so a policy can shape a resolved policy it is not part of.
+	overrideSources map[string]map[string]struct{}
+}
+
+// recordOverride notes that source wrote an override for target
+func (b *resolvedPolicyBuilder) recordOverride(target, source string) {
+	if _, ok := b.overrideSources[target]; !ok {
+		b.overrideSources[target] = map[string]struct{}{}
+	}
+	b.overrideSources[target][source] = struct{}{}
+}
+
+// dependencies returns the MRNs of the policies and frameworks the resolved
+// policy depends on, sorted: every admitted one, plus every source of an
+// override whose target the builder considered.
+func (b *resolvedPolicyBuilder) dependencies() []string {
+	deps := make(map[string]struct{}, len(b.admitted))
+	for mrn := range b.admitted {
+		deps[mrn] = struct{}{}
+	}
+	for target, sources := range b.overrideSources {
+		if _, ok := b.considered[target]; !ok {
+			continue
+		}
+		for source := range sources {
+			deps[source] = struct{}{}
+		}
+	}
+
+	res := make([]string, 0, len(deps))
+	for mrn := range deps {
+		res = append(res, mrn)
+	}
+	slices.Sort(res)
+	return res
 }
 
 type riskDataQueryRef struct {
@@ -644,6 +697,7 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromFramework(framework *Framewo
 			action := normalizeAction(g.Type, c.Action, nil)
 			if action != Action_UNSPECIFIED && action != Action_MODIFY {
 				actions[c.Mrn] = action
+				b.recordOverride(c.Mrn, framework.Mrn)
 			}
 		}
 	}
@@ -669,15 +723,18 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 			action := normalizeAction(g.Type, pRef.Action, pRef.Impact)
 			if action != Action_UNSPECIFIED && action != Action_MODIFY {
 				actions[pRef.Mrn] = action
+				b.recordOverride(pRef.Mrn, policy.Mrn)
 			}
 
 			if pRef.Impact != nil {
 				impacts[pRef.Mrn] = pRef.Impact
+				b.recordOverride(pRef.Mrn, policy.Mrn)
 			}
 			scoringSystem := pRef.ScoringSystem
 
 			if scoringSystem != ScoringSystem_SCORING_UNSPECIFIED {
 				scoringSystems[pRef.Mrn] = pRef.ScoringSystem
+				b.recordOverride(pRef.Mrn, policy.Mrn)
 			} else {
 				if p, ok := b.bundleMap.Policies[pRef.Mrn]; ok {
 					scoringSystems[pRef.Mrn] = p.ScoringSystem
@@ -742,6 +799,7 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 					b.foldedOverrideMql[c.Mrn] = c.Mql
 				}
 				b.bundleMap.Queries[c.Mrn] = merged
+				b.recordOverride(c.Mrn, policy.Mrn)
 			}
 
 			impact := c.Impact
@@ -755,6 +813,7 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 			action := normalizeAction(g.Type, c.Action, impact)
 			if action != Action_UNSPECIFIED && action != Action_MODIFY {
 				actions[c.Mrn] = action
+				b.recordOverride(c.Mrn, policy.Mrn)
 
 				// If the action is ignore, then the check is snoozed
 				if action == Action_IGNORE {
@@ -768,6 +827,9 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 
 			if impact != nil {
 				impacts[c.Mrn] = impact
+				// Only the worst impact is kept, but every policy that offered
+				// one is recorded: it may be the worst after its next change.
+				b.recordOverride(c.Mrn, policy.Mrn)
 			}
 		}
 
@@ -776,6 +838,7 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 				action := normalizeAction(g.Type, q.Action, q.Impact)
 				if action != Action_UNSPECIFIED && action != Action_MODIFY {
 					actions[q.Mrn] = action
+					b.recordOverride(q.Mrn, policy.Mrn)
 				}
 			}
 		}
@@ -784,10 +847,12 @@ func (b *resolvedPolicyBuilder) gatherGlobalInfoFromPolicy(policy *Policy) {
 	for _, r := range policy.RiskFactors {
 		if r.Magnitude != nil {
 			riskMagnitudes[r.Mrn] = r.Magnitude
+			b.recordOverride(r.Mrn, policy.Mrn)
 		}
 
 		if r.Action != Action_UNSPECIFIED && r.Action != Action_MODIFY {
 			actions[r.Mrn] = r.Action
+			b.recordOverride(r.Mrn, policy.Mrn)
 		}
 	}
 }
@@ -854,6 +919,7 @@ func (b *resolvedPolicyBuilder) isGroupMatching(group group) bool {
 
 // addPolicy recurses a policy and adds all the nodes and edges to the graph. It will add the policy, its dependent policies, checks, and queries
 func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
+	b.considered[policy.Mrn] = struct{}{}
 	action := b.actionOverrides[policy.Mrn]
 
 	// Check if we can run this policy. If not, then we do not add it to the graph
@@ -865,6 +931,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 		return false
 	}
 
+	b.admitted[policy.Mrn] = struct{}{}
 	b.propsCache.Add(policy.Props...)
 
 	// Add node for policy
@@ -981,6 +1048,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 
 // addQuery adds a query to the graph. It will add the query, its variants, and connect the query to the variants
 func (b *resolvedPolicyBuilder) addQuery(query *Mquery) (string, bool) {
+	b.considered[query.Mrn] = struct{}{}
 	action := b.actionOverrides[query.Mrn]
 	impact := b.impactOverrides[query.Mrn]
 	queryType := b.queryTypes[query.Mrn]
@@ -1053,6 +1121,7 @@ func (b *resolvedPolicyBuilder) addQuery(query *Mquery) (string, bool) {
 
 // addRiskFactor adds a risk factor to the graph. It will add the risk factor, its checks, and connect the checks to the risk factor
 func (b *resolvedPolicyBuilder) addRiskFactor(riskFactor *RiskFactor) (bool, error) {
+	b.considered[riskFactor.Mrn] = struct{}{}
 	action := b.actionOverrides[riskFactor.Mrn]
 	if !canRun(action) {
 		return false, nil
@@ -1131,10 +1200,12 @@ func (b *resolvedPolicyBuilder) anyFilterMatches(f *Filters) bool {
 // addFramework adds a framework to the graph. It will add the framework, its dependent frameworks, its controls, and connect
 // the controls to the framework
 func (b *resolvedPolicyBuilder) addFramework(framework *Framework) bool {
+	b.considered[framework.Mrn] = struct{}{}
 	action := b.actionOverrides[framework.Mrn]
 	if !canRun(action) {
 		return false
 	}
+	b.admitted[framework.Mrn] = struct{}{}
 
 	// Create a node for the framework, but only if it's a valid framework mrn
 	// Otherwise, we have the asset / space policies which we will connect
@@ -1173,6 +1244,7 @@ func (b *resolvedPolicyBuilder) addFramework(framework *Framework) bool {
 
 // addControl adds a control to the graph and connect policies, controls, checks, and queries to the control
 func (b *resolvedPolicyBuilder) addControl(control *ControlMap) bool {
+	b.considered[control.Mrn] = struct{}{}
 	action := b.actionOverrides[control.Mrn]
 	if !canRun(action) {
 		return false
