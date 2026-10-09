@@ -357,7 +357,7 @@ Our goal is to secure all layers of your infrastructure. If you need support or 
 
 ## Development
 
-See our [development documentation](docs/development.md) for information on building and contributing to cnspec.
+See [AGENTS.md](AGENTS.md) for information on building, testing, and contributing to cnspec.
 
 ## Legal
 
