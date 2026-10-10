@@ -14,6 +14,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/mqlc"
+	"go.mondoo.com/mql/mrn"
 )
 
 // buildResolvedPolicy builds a resolved policy from a bundle
@@ -55,6 +56,7 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 		disabledQuery:        disabledQuery,
 		riskDataQueryInfos:   map[string][]riskDataQueryRef{},
 		foldedOverrideMql:    map[string]string{},
+		admitted:             map[string]struct{}{},
 	}
 
 	builder.gatherGlobalInfoFromPolicy(policyObj)
@@ -96,6 +98,7 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 		Filters:                assetFilters,
 		GraphExecutionChecksum: resolvedPolicyExecutionChecksum,
 		FiltersChecksum:        assetFiltersChecksum,
+		Dependencies:           builder.dependencies(),
 	}
 
 	// We will walk the graph from the non prunable nodes out. This means that if something is not connected
@@ -272,6 +275,43 @@ type resolvedPolicyBuilder struct {
 	// same check's implementation, which is last-writer-wins and otherwise
 	// silent. See the fold in gatherGlobalInfoFromPolicy.
 	foldedOverrideMql map[string]string
+
+	// admitted holds the policies and frameworks the builder let into the
+	// graph: past their action and filter gates. They are the resolved
+	// policy's dependencies.
+	admitted map[string]struct{}
+}
+
+// admit records a policy or framework the builder let into the graph. The
+// root and other scope MRNs (asset, space, organization, ...) are left out:
+// a resolved policy is shared by every asset with the same bundle and
+// filters, so the root's MRN depends on which asset resolved first.
+func (b *resolvedPolicyBuilder) admit(m string) {
+	if m == b.bundleMrn || !isContentMrn(m) {
+		return
+	}
+	b.admitted[m] = struct{}{}
+}
+
+// isContentMrn reports whether mrn names a policy or framework, as opposed to
+// a scope that only holds assignments
+func isContentMrn(m string) bool {
+	if id, _ := mrn.GetResource(m, MRN_RESOURCE_POLICY); id != "" {
+		return true
+	}
+	id, _ := mrn.GetResource(m, MRN_RESOURCE_FRAMEWORK)
+	return id != ""
+}
+
+// dependencies returns the MRNs of the policies and frameworks the builder
+// admitted, sorted.
+func (b *resolvedPolicyBuilder) dependencies() []string {
+	res := make([]string, 0, len(b.admitted))
+	for m := range b.admitted {
+		res = append(res, m)
+	}
+	slices.Sort(res)
+	return res
 }
 
 type riskDataQueryRef struct {
@@ -865,6 +905,7 @@ func (b *resolvedPolicyBuilder) addPolicy(policy *Policy) bool {
 		return false
 	}
 
+	b.admit(policy.Mrn)
 	b.propsCache.Add(policy.Props...)
 
 	// Add node for policy
@@ -1135,6 +1176,7 @@ func (b *resolvedPolicyBuilder) addFramework(framework *Framework) bool {
 	if !canRun(action) {
 		return false
 	}
+	b.admit(framework.Mrn)
 
 	// Create a node for the framework, but only if it's a valid framework mrn
 	// Otherwise, we have the asset / space policies which we will connect

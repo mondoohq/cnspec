@@ -148,6 +148,63 @@ func gatherLocalAssetFilters(ctx context.Context, policy *Policy, lookupQueryByM
 	return filters, nil
 }
 
+// HasOverrides reports whether the policy contains an entry that adjusts
+// content it does not define: an entry in an override, disable, ignore or
+// out-of-scope group, a check or query entry with an action, a check or
+// query reference (no mql, no variants) that sets an impact, a policy
+// reference with an action, impact or scoring system, or a risk factor
+// without checks that sets a magnitude or an action.
+//
+// The resolved policy builder applies these by target MRN across the whole
+// build, and gathers them from every policy in a matching group before it
+// decides which policies to admit. A policy whose filters never match an
+// asset can still raise the impact of a check an admitted policy runs, so
+// the policies a resolved policy admitted are not all it depends on.
+// Dependency tracking cannot see that, so a policy with overrides has to
+// invalidate every resolved policy in its spaces when it changes.
+//
+// A check's impact on its own definition and a risk factor's magnitude on its
+// own definition are not overrides: they travel with the content.
+func (p *Policy) HasOverrides() bool {
+	for _, g := range p.Groups {
+		switch g.Type {
+		case GroupType_OVERRIDE, GroupType_DISABLE, GroupType_IGNORED, GroupType_OUT_OF_SCOPE_GROUP:
+			if len(g.Policies) != 0 || len(g.Checks) != 0 || len(g.Queries) != 0 {
+				return true
+			}
+		}
+
+		for _, pRef := range g.Policies {
+			if pRef.Action != Action_UNSPECIFIED || pRef.Impact != nil || pRef.ScoringSystem != ScoringSystem_SCORING_UNSPECIFIED {
+				return true
+			}
+		}
+
+		for _, entries := range [][]*Mquery{g.Checks, g.Queries} {
+			for _, q := range entries {
+				if q.Action != Action_UNSPECIFIED {
+					return true
+				}
+				isReference := q.Mql == "" && len(q.Variants) == 0
+				if isReference && q.Impact != nil {
+					return true
+				}
+			}
+		}
+	}
+
+	for _, r := range p.RiskFactors {
+		// The builder only adds risk factors that have checks, but gathers
+		// the magnitude and action of every one.
+		isReference := len(r.Checks) == 0
+		if isReference && (r.Magnitude != nil || r.Action != Action_UNSPECIFIED) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // ComputeAssetFilters of a given policy resolving them as you go
 // recursive tells us if we want to call this function for all policy dependencies (costly; set to false by default)
 func (p *Policy) ComputeAssetFilters(ctx context.Context,

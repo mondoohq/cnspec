@@ -5587,8 +5587,14 @@ type ResolvedPolicy struct {
 	FiltersChecksum        string                 `protobuf:"bytes,20,opt,name=filters_checksum,json=filtersChecksum,proto3" json:"filters_checksum,omitempty"`
 	ReportingJobUuid       string                 `protobuf:"bytes,21,opt,name=reporting_job_uuid,json=reportingJobUuid,proto3" json:"reporting_job_uuid,omitempty"`
 	Features               []ServerFeature        `protobuf:"varint,8,rep,packed,name=features,proto3,enum=cnspec.policy.v1.ServerFeature" json:"features,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// MRNs of the policies and frameworks the builder admitted into this
+	// resolved policy, sorted and deduplicated. The root and other scope MRNs
+	// (asset, space, organization, ...) are left out, since a resolved policy
+	// is shared across assets. Overrides from policies that were not admitted
+	// are not listed: see Policy.HasOverrides and Framework.HasOverrides.
+	Dependencies  []string `protobuf:"bytes,22,rep,name=dependencies,proto3" json:"dependencies,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ResolvedPolicy) Reset() {
@@ -5666,6 +5672,13 @@ func (x *ResolvedPolicy) GetReportingJobUuid() string {
 func (x *ResolvedPolicy) GetFeatures() []ServerFeature {
 	if x != nil {
 		return x.Features
+	}
+	return nil
+}
+
+func (x *ResolvedPolicy) GetDependencies() []string {
+	if x != nil {
+		return x.Dependencies
 	}
 	return nil
 }
@@ -11083,7 +11096,7 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\x03mrn\x18\x01 \x01(\tR\x03mrn\x12\x12\n" +
 	"\x04name\x18\x12 \x01(\tR\x04name\x12\x10\n" +
 	"\x03url\x18\x13 \x01(\tR\x03url\x12:\n" +
-	"\bplatform\x18\x15 \x01(\v2\x1e.cnquery.providers.v1.PlatformR\bplatformJ\x04\b\x14\x10\x15\"\x9e\x03\n" +
+	"\bplatform\x18\x15 \x01(\v2\x1e.cnquery.providers.v1.PlatformR\bplatformJ\x04\b\x14\x10\x15\"\xc2\x03\n" +
 	"\x0eResolvedPolicy\x12C\n" +
 	"\rexecution_job\x18\x02 \x01(\v2\x1e.cnspec.policy.v1.ExecutionJobR\fexecutionJob\x12C\n" +
 	"\rcollector_job\x18\x03 \x01(\v2\x1e.cnspec.policy.v1.CollectorJobR\fcollectorJob\x122\n" +
@@ -11091,7 +11104,8 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\x18graph_execution_checksum\x18\a \x01(\tR\x16graphExecutionChecksum\x12)\n" +
 	"\x10filters_checksum\x18\x14 \x01(\tR\x0ffiltersChecksum\x12,\n" +
 	"\x12reporting_job_uuid\x18\x15 \x01(\tR\x10reportingJobUuid\x12;\n" +
-	"\bfeatures\x18\b \x03(\x0e2\x1f.cnspec.policy.v1.ServerFeatureR\bfeatures\"\xcf\x01\n" +
+	"\bfeatures\x18\b \x03(\x0e2\x1f.cnspec.policy.v1.ServerFeatureR\bfeatures\x12\"\n" +
+	"\fdependencies\x18\x16 \x03(\tR\fdependencies\"\xcf\x01\n" +
 	"\fExecutionJob\x12\x1a\n" +
 	"\bchecksum\x18\x01 \x01(\tR\bchecksum\x12E\n" +
 	"\aqueries\x18\x02 \x03(\v2+.cnspec.policy.v1.ExecutionJob.QueriesEntryR\aqueries\x1a\\\n" +
