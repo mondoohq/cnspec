@@ -123,7 +123,7 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 		)
 		// This is the way we avoid Grant Admin Consent issue.
 		//
-		// => https://docs.microsoft.com/en-us/azure/active-directory/roles/permissions-reference#directory-readers
+		// => https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/permissions-reference#directory-readers
 		//
 		resourceADReadersDirectoryRole = tfgen.NewResource("azuread_directory_role", "readers",
 			tfgen.HclResourceWithAttributes(tfgen.Attributes{"display_name": "Directory Readers"}),

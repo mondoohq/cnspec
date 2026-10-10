@@ -349,7 +349,7 @@ Explore our:
 - [MQL](https://github.com/mondoohq/mql), our open source, cloud-native asset inventory framework
 - [MQL introduction](https://mondoohq.github.io/mql-intro/index.html)
 - [MQL resource packs](https://mondoo.com/docs/mql/resources)
-- [HashiCorp Packer plugin](https://github.com/mondoohq/packer-plugin-mondoo) to integrate cnspec with HashiCorp Packer!
+- [HashiCorp Packer plugin](https://github.com/mondoohq/packer-plugin-cnspec) to integrate cnspec with HashiCorp Packer!
 
 ## Join the community!
 

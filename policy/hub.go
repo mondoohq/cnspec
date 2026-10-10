@@ -41,8 +41,6 @@ func (s *LocalServices) ValidateBundle(ctx context.Context, bundle *Bundle) (*Em
 
 // SetBundle stores a bundle of policies and queries in this marketplace
 func (s *LocalServices) SetBundle(ctx context.Context, bundle *Bundle) (*Empty, error) {
-	// See https://gitlab.com/mondoolabs/mondoo/-/issues/595
-
 	bundleMap, err := bundle.Compile(ctx, s.Runtime.Schema(), s.DataLake)
 	if err != nil {
 		return globalEmpty, err

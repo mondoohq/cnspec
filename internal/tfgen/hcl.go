@@ -260,7 +260,7 @@ func HclModuleWithVersion(version string) HclModuleModifier {
 //
 // Note: The values supplied become traversals
 //
-//	e.g. https://www.terraform.io/docs/language/modules/develop/providers.html#passing-providers-explicitly
+//	e.g. https://developer.hashicorp.com/terraform/language/modules/develop/providers#passing-providers-explicitly
 func HclModuleWithProviderDetails(providerDetails map[string]string) HclModuleModifier {
 	return func(p *HclModule) {
 		p.providerDetails = providerDetails
