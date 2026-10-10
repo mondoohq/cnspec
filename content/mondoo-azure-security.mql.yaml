@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-azure-security
     name: Mondoo Microsoft Azure Security
-    version: 10.1.2
+    version: 10.1.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -905,7 +905,7 @@ queries:
           properties.access == 'Allow'
             && direction == 'Inbound'
             && properties.protocol == /TCP|\*/i
-            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|Internet|\/0|internet|any/
+            && properties.sourceAddressPrefix == /^\*$|^0\.0\.0\.0$|\/0$|^internet$|^any$/i
         )
       allNsgTCP.all(properties.destinationPortRange != "*")
       props.mondooAzureSecurityDisallowedPortsSSH {
@@ -1148,7 +1148,7 @@ queries:
           properties.access == 'Allow'
             && direction == 'Inbound'
             && properties.protocol == /TCP|\*/i
-            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|Internet|\/0|internet|any/
+            && properties.sourceAddressPrefix == /^\*$|^0\.0\.0\.0$|\/0$|^internet$|^any$/i
         )
       allNsgTCP.all(properties.destinationPortRange != "*")
       props.mondooAzureSecurityDisallowedPortsRDP {
@@ -1391,7 +1391,7 @@ queries:
           properties.access == 'Allow'
             && direction == 'Inbound'
             && properties.protocol == /TCP|\*/i
-            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|Internet|\/0|internet|any/
+            && properties.sourceAddressPrefix == /^\*$|^0\.0\.0\.0$|\/0$|^internet$|^any$/i
         )
       allNsgTCP.all(properties.destinationPortRange != "*")
       props.mondooAzureSecurityDisallowedPortsVNC {
@@ -4490,7 +4490,7 @@ queries:
       desc: |
         This check verifies that the vault is not reachable from the whole internet.
 
-        A vault satisfies the control when `publicNetworkAccess` is `Disabled`, or when its network ACLs name specific IP rules or virtual network subnets. New vaults accept connections from any public address, so anyone holding a valid token can reach secrets from any internet-connected host. The setting lives under Networking in the Azure portal; from the CLI, `az keyvault update --set properties.publicNetworkAccess='Disabled'`, or configure firewall rules and virtual network links to restrict access to selected networks.
+        A vault satisfies the control when public network access is disabled, or when its firewall allows only selected networks: the network ACLs' default action is `Deny`, so only the IP rules and virtual network subnets they name get through. IP or subnet rules on a vault whose default action is `Allow` restrict nothing, since every other address is let in as well. New vaults accept connections from any public address, so anyone holding a valid token can reach secrets from any internet-connected host. The setting lives under Networking in the Azure portal; from the CLI, `az keyvault update --set properties.publicNetworkAccess='Disabled'`, or configure firewall rules and virtual network links to restrict access to selected networks.
 
         **Why this matters**
 
@@ -4502,7 +4502,7 @@ queries:
 
         A vault that refuses unauthorized networks also stops responding to probes, which removes the reconnaissance path where an attacker confirms a vault exists and maps its firewall behavior from error responses.
 
-        The check is satisfied by either posture, so a vault that keeps public access enabled but restricts it with IP or virtual network rules passes. Disabling public access outright generally requires a private endpoint first, which a companion check in this policy covers.
+        The check is satisfied by either posture, so a vault that keeps public access enabled but allows only selected networks passes. Disabling public access outright generally requires a private endpoint first, which a companion check in this policy covers.
       audit: |
         **Manual Audit via Azure Portal:**
 
@@ -4512,17 +4512,17 @@ queries:
         4. In the key vault's **Settings**, select **Networking**.
         5. Check the **Firewalls and virtual networks** settings to ensure public access is either disabled or limited:
           - Verify that **Public network access** is set to **Disabled**.
-          - If public access is enabled, ensure that access is restricted to selected networks by configuring IP rules or linking to specific virtual networks.
+          - If public access is enabled, ensure that **Allow public access from specific virtual networks and IP addresses** is selected, so that only the configured IP rules and virtual networks are allowed.
 
         **Automated Audit with Azure CLI:**
 
         You can check the public network access settings for all key vaults in a given subscription using the Azure CLI:
 
         ```bash
-        az keyvault list --query "[].{Name:name, PublicNetworkAccess:properties.publicNetworkAccess}" -o table
+        az keyvault list --query "[].{Name:name, PublicNetworkAccess:properties.publicNetworkAccess, DefaultAction:properties.networkAcls.defaultAction}" -o table
         ```
 
-        This command outputs the public network access settings for each key vault, allowing you to quickly identify configurations that do not align with best practices.
+        A vault passes when `PublicNetworkAccess` is `Disabled` or `DefaultAction` is `Deny`. A vault with public network access enabled and a default action of `Allow`, or none, fails, whatever IP rules it lists.
       remediation:
         - id: portal
           desc: |
@@ -4534,7 +4534,7 @@ queries:
             4. Locate the **Public network access** setting.
             5. Change the setting to **Disabled** to completely block public access or to **Enabled** with specific IP rules or virtual network links to restrict access to selected networks only.
             6. If you need to allow access from specific networks:
-              - Set **Public network access** to **Enabled**.
+              - Set **Public network access** to **Allow public access from specific virtual networks and IP addresses**, which sets the firewall's default action to deny.
               - Configure **Firewall rules** to define allowed IP address ranges.
               - Link to specific **Virtual networks** to restrict access to designated networks only.
         - id: cli
@@ -4545,7 +4545,12 @@ queries:
             az keyvault update --name <KeyVaultName> --resource-group <ResourceGroupName> --set properties.publicNetworkAccess='Disabled'
             ```
 
-            Replace `<KeyVaultName>` and `<ResourceGroupName>` with your actual key vault names and resource group names. For granular control, manually configure network settings in the Azure Portal to specify allowed networks if opting for the "Enabled" setting.
+            Replace `<KeyVaultName>` and `<ResourceGroupName>` with your actual key vault names and resource group names. To keep public access for selected networks instead, deny every other network and then add the allowed ones:
+
+            ```bash
+            az keyvault update --name <KeyVaultName> --resource-group <ResourceGroupName> --default-action Deny
+            az keyvault network-rule add --name <KeyVaultName> --resource-group <ResourceGroupName> --ip-address <AllowedCidr>
+            ```
         - id: powershell
           desc: |
             To ensure Key Vault public access is disabled or limited to selected networks using PowerShell, disable public network access for key vaults, you can use the following PowerShell command:
@@ -5519,7 +5524,7 @@ queries:
           properties.access == 'Allow'
             && direction == 'Inbound'
             && properties.protocol == /UDP|\*/i
-            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|Internet|\/0|internet|any/
+            && properties.sourceAddressPrefix == /^\*$|^0\.0\.0\.0$|\/0$|^internet$|^any$/i
         )
       allNsgUDP.all(properties.destinationPortRange != "*")
       props.mondooAzureSecurityDisallowedPortsUDP {
@@ -6034,8 +6039,8 @@ queries:
     filters: |
       asset.platform == "azure-storage-container"
     mql: |
-      azure.subscription.storage.account.container.publicAccess != "Blob"
-      azure.subscription.storage.account.container.publicAccess != "Container"
+      azure.subscription.storageService.account.container.publicAccess != "Blob"
+      azure.subscription.storageService.account.container.publicAccess != "Container"
   - uid: mondoo-azure-security-storage-container-no-anonymous-access-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_storage_container")
     mql: |
@@ -6167,8 +6172,8 @@ queries:
     filters: |
       asset.platform == "azure-storage-container"
     mql: |
-      azure.subscription.storage.account.container.immutabilityPolicyState == "" ||
-      azure.subscription.storage.account.container.immutabilityPolicyState == "Locked"
+      azure.subscription.storageService.account.container.immutabilityPolicyState == "" ||
+      azure.subscription.storageService.account.container.immutabilityPolicyState == "Locked"
   - uid: mondoo-azure-security-storage-container-immutability-policy-locked-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_storage_container_immutability_policy")
     mql: |
@@ -6240,7 +6245,7 @@ queries:
 
         The degradation is invisible from the container. Override happens per blob at write time and leaves no signal in the container configuration, so encryption posture drifts without any visible change to review. Any control that depends on data being encrypted under a specific key is only as strong as the guarantee that the key cannot be bypassed on the way in.
 
-        The check passes for containers that have no default encryption scope, since there is nothing to override. Override can be fixed only at creation, so a non-compliant container has to be recreated with the setting and its data migrated.
+        The check passes for containers that have no default encryption scope of their own, since there is nothing to override. Azure reports such a container's default as `$account-encryption-key`, the storage account's own encryption. Override can be fixed only at creation, so a non-compliant container has to be recreated with the setting and its data migrated.
       audit: |
         **Manual Audit via Azure Portal:**
 
@@ -6255,7 +6260,7 @@ queries:
         az storage container-rm show --storage-account <StorageAccountName> --name <ContainerName> --resource-group <ResourceGroupName> --query "{defaultEncryptionScope:defaultEncryptionScope, denyEncryptionScopeOverride:denyEncryptionScopeOverride}"
         ```
 
-        A container that has a default encryption scope but reports `denyEncryptionScopeOverride` as `false` fails this check.
+        A container whose `defaultEncryptionScope` is `$account-encryption-key` has no scope of its own and passes. A container that names another default encryption scope but reports `denyEncryptionScopeOverride` as `false` fails this check.
       remediation:
         - id: portal
           desc: |
@@ -6309,8 +6314,9 @@ queries:
     filters: |
       asset.platform == "azure-storage-container"
     mql: |
-      azure.subscription.storage.account.container.defaultEncryptionScope == "" ||
-      azure.subscription.storage.account.container.denyEncryptionScopeOverride == true
+      azure.subscription.storageService.account.container.defaultEncryptionScope == "" ||
+      azure.subscription.storageService.account.container.defaultEncryptionScope == "$account-encryption-key" ||
+      azure.subscription.storageService.account.container.denyEncryptionScopeOverride == true
   - uid: mondoo-azure-security-storage-container-encryption-scope-override-denied-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_storage_container")
     mql: |
@@ -14129,7 +14135,7 @@ queries:
     filters: |
       asset.platform == "azure-compute-vm-api"
     mql: |
-      azure.subscription.compute.vm.osDisk.properties.managedDisk != empty
+      azure.subscription.compute.vm.properties["storageProfile"]["osDisk"]["managedDisk"] != empty
   - uid: mondoo-azure-security-compute-managed-disks-only-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /azurerm_(linux|windows)_virtual_machine/)
     mql: |
@@ -15033,7 +15039,7 @@ queries:
           properties.access == 'Allow'
             && direction == 'Inbound'
             && properties.protocol == /TCP|\*/i
-            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|Internet|\/0|internet|any/
+            && properties.sourceAddressPrefix == /^\*$|^0\.0\.0\.0$|\/0$|^internet$|^any$/i
         )
       allNsgTCP.all(properties.destinationPortRange != "*")
       props.mondooAzureSecurityDisallowedPortsDB {
@@ -23178,8 +23184,7 @@ queries:
       asset.platform == "azure-keyvault-vault"
     mql: |
       azure.subscription.keyVault.vault.publicNetworkAccess == "Disabled"
-        || azure.subscription.keyVault.vault.networkAcls.ipRules != empty
-        || azure.subscription.keyVault.vault.networkAcls.virtualNetworkSubnetIds != empty
+        || azure.subscription.keyVault.vault.networkAcls.defaultAction == "Deny"
   - uid: mondoo-azure-security-keyvault-public-access-disabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_key_vault")
     mql: |
@@ -27246,7 +27251,7 @@ queries:
           properties.access == 'Allow'
             && direction == 'Outbound'
             && properties.protocol == /\*/i
-            && properties.destinationAddressPrefix == /\*|0\.0\.0\.0|internet|any/i
+            && properties.destinationAddressPrefix == /^\*$|^0\.0\.0\.0$|\/0$|^internet$|^any$/i
             && properties.destinationPortRange == "*"
         ).length == 0
   - uid: mondoo-azure-security-nsg-no-unrestricted-egress-terraform-hcl
@@ -27623,7 +27628,7 @@ queries:
         .where(
           properties.access == 'Allow'
             && direction == 'Inbound'
-            && properties.sourceAddressPrefix == /\*|0\.0\.0\.0|Internet|\/0|internet|any/
+            && properties.sourceAddressPrefix == /^\*$|^0\.0\.0\.0$|\/0$|^internet$|^any$/i
         )
       sensitivePortRules.none(
         properties.destinationPortRange == "*" ||
@@ -34948,7 +34953,7 @@ queries:
       desc: |
         This check verifies that deleted backup items in a Recovery Services vault are retained rather than destroyed immediately, by requiring soft delete to be enabled.
 
-        Soft delete keeps backup data for 14 additional days after a delete operation, during which it can be undeleted. Configure it under Recovery Services vaults, the vault, then Properties under Settings, in Security settings, or with `az backup vault backup-properties set --soft-delete-feature-state Enable`. The state must be `Enabled` or `AlwaysOn`; the always-on form cannot subsequently be turned off by the vault administrator.
+        Soft delete keeps backup data for 14 additional days after a delete operation, during which it can be undeleted. Configure it under Recovery Services vaults, the vault, then Properties under Settings, in Security settings, or with `az backup vault backup-properties set --soft-delete-feature-state Enable`. The state must be `Enabled` or always on, which Azure reports as `AlwaysON`; the always-on form cannot subsequently be turned off by the vault administrator.
 
         **Why this matters**
 
@@ -34958,7 +34963,7 @@ queries:
 
         The same window covers the far more common accidental case, where a cleanup script or a misidentified vault removes protection from a workload that still needs it.
 
-        The `AlwaysOn` state is the stronger choice for production vaults, since it removes the attacker's ability to disable soft delete first and then delete the data. Pair this with the immutability and critical-operation alerting checks in this policy, which cover tampering that soft delete alone does not prevent.
+        The always-on state is the stronger choice for production vaults, since it removes the attacker's ability to disable soft delete first and then delete the data. Pair this with the immutability and critical-operation alerting checks in this policy, which cover tampering that soft delete alone does not prevent.
       audit: |
         **Manual Audit via Azure Portal:**
 
@@ -35045,8 +35050,7 @@ queries:
     filters: |
       asset.platform == "azure-recovery-services-vault"
     mql: |
-      azure.subscription.recoveryServices.vault.securitySettings.softDeleteState == "Enabled" ||
-      azure.subscription.recoveryServices.vault.securitySettings.softDeleteState == "AlwaysOn"
+      azure.subscription.recoveryServices.vault.securitySettings.softDeleteState == /^enabled$|^alwayson$/i
   - uid: mondoo-azure-security-recovery-vault-soft-delete-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_recovery_services_vault")
     mql: |
@@ -35254,7 +35258,7 @@ queries:
       desc: |
         This check verifies that a Recovery Services vault requires additional verification before destructive backup operations, by confirming that enhanced security is enabled.
 
-        Enhanced security, exposed through the vault's hybrid backup security features, adds multi-user authorization for critical operations, PIN-based verification before destructive actions, and additional retention of deleted backup data. Configure it under Recovery Services vaults, the vault, then Properties under Settings, in Security settings, or with `az backup vault backup-properties set --hybrid-backup-security-features Enable`. The state must be `Enabled` or `AlwaysOn`.
+        Enhanced security, exposed through the vault's hybrid backup security features, adds multi-user authorization for critical operations, PIN-based verification before destructive actions, and additional retention of deleted backup data. Configure it under Recovery Services vaults, the vault, then Properties under Settings, in Security settings, or with `az backup vault backup-properties set --hybrid-backup-security-features Enable`. The state must be `Enabled` or always on, which Azure reports as `AlwaysON`.
 
         **Why this matters**
 
@@ -35323,8 +35327,7 @@ queries:
     filters: |
       asset.platform == "azure-recovery-services-vault"
     mql: |
-      azure.subscription.recoveryServices.vault.securitySettings.enhancedSecurityState == "Enabled" ||
-      azure.subscription.recoveryServices.vault.securitySettings.enhancedSecurityState == "AlwaysOn"
+      azure.subscription.recoveryServices.vault.securitySettings.enhancedSecurityState == /^enabled$|^alwayson$/i
   - uid: mondoo-azure-security-recovery-vault-public-access-disabled
     title: Ensure Recovery Services Vaults disable public access
     impact: 80
@@ -37848,7 +37851,8 @@ queries:
     filters: |
       asset.platform == "azure-sql-server"
     mql: |
-      azure.subscription.sql.server.databases.all(blobAuditingPolicy.state == "Enabled")
+      azure.subscription.sql.server.blobAuditingPolicy.state == "Enabled" ||
+        azure.subscription.sql.server.databases.all(blobAuditingPolicy.state == "Enabled")
   - uid: mondoo-azure-security-sql-database-audit-on-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_mssql_database_extended_auditing_policy")
     mql: |
@@ -51994,7 +51998,7 @@ queries:
       desc: |
         This check verifies that requests for managed identity tokens on a virtual machine are authenticated before they are answered, by requiring the Metadata Security Protocol proxy agent in enforcement mode.
 
-        The Instance Metadata Service answers on a link-local address reachable by every process on the machine, and it issues managed identity access tokens to any caller that asks. The proxy agent places an authenticating broker in front of that endpoint. This check requires the proxy agent to be enabled with its mode set to `Enforce`. In the portal the section is Metadata Security Protocol on the machine's Configuration blade. From the CLI it is `az vm update --set securityProfile.proxyAgentSettings.enabled=true securityProfile.proxyAgentSettings.mode=Enforce`. In Bicep the properties are `enabled` and `mode` under `proxyAgentSettings` in the security profile.
+        The Instance Metadata Service answers on a link-local address reachable by every process on the machine, and it issues managed identity access tokens to any caller that asks. The proxy agent places an authenticating broker in front of that endpoint. This check requires the proxy agent to be enabled and to enforce on both endpoints it protects, the WireServer and the Instance Metadata Service. Current API versions set that per endpoint, as `wireServer` and `imds` with a mode of `Enforce` under `proxyAgentSettings` in the security profile, and reject the older single `mode` setting, which the check still accepts on machines configured with it. In the portal the section is Metadata Security Protocol on the machine's Configuration blade. From the CLI it is `az vm update --enable-proxy-agent true --wire-server-mode Enforce --imds-mode Enforce`.
 
         **Why this matters**
 
@@ -52011,7 +52015,7 @@ queries:
         1. Navigate to **Virtual machines** in the Azure Portal.
         2. Select the virtual machine and open **Settings**, then **Configuration**.
         3. Review the **Metadata Security Protocol** section.
-        4. A passing machine shows the proxy agent enabled with mode **Enforce**.
+        4. A passing machine shows the proxy agent enabled with mode **Enforce** for both the WireServer and the Instance Metadata Service.
 
         ### Audit via Azure CLI
 
@@ -52019,7 +52023,7 @@ queries:
         az vm show --name <VMName> --resource-group <ResourceGroupName> --query "securityProfile.proxyAgentSettings"
         ```
 
-        A passing machine returns an enabled value of `true` and a mode of `Enforce`.
+        A passing machine returns an enabled value of `true` and a mode of `Enforce` under both `wireServer` and `imds`, or, on a machine configured with an older API version, a single mode of `Enforce`.
       remediation:
         - id: portal
           desc: |
@@ -52028,31 +52032,36 @@ queries:
             1. Navigate to **Virtual machines** in the Azure Portal.
             2. Select the virtual machine and open **Settings**, then **Configuration**.
             3. In the **Metadata Security Protocol** section, enable the proxy agent.
-            4. Set the mode to **Enforce**. Run in **Audit** first if you need to confirm which processes request tokens.
+            4. Set the mode to **Enforce** for both the WireServer and the Instance Metadata Service. Run in **Audit** first if you need to confirm which processes request tokens.
             5. Select **Save** and restart the machine so the setting takes effect.
         - id: cli
           desc: |
             To enforce Metadata Security Protocol using the Azure CLI:
 
-            1. If you do not yet know which processes on the machine request tokens, run the command with `mode=Audit` first and review the proxy agent audit log.
-            2. Run the command with `mode=Enforce`, the only mode that passes. From then on any process the agent does not authorize receives an error instead of a token, so a workload calling the metadata service from an unexpected process stops working.
+            1. If you do not yet know which processes on the machine request tokens, run the command with both modes set to `Audit` first and review the proxy agent audit log.
+            2. Run the command with both modes set to `Enforce`, the only mode that passes. From then on any process the agent does not authorize receives an error instead of a token, so a workload calling the metadata service from an unexpected process stops working.
 
             ```bash
-            az vm update --name <VMName> --resource-group <ResourceGroupName> --set securityProfile.proxyAgentSettings.enabled=true securityProfile.proxyAgentSettings.mode=Enforce
+            az vm update --name <VMName> --resource-group <ResourceGroupName> --enable-proxy-agent true --wire-server-mode Enforce --imds-mode Enforce
             ```
         - id: bicep
           desc: |
             To enforce Metadata Security Protocol in Bicep:
 
             ```bicep
-            resource virtualMachine 'Microsoft.Compute/virtualMachines@2024-07-01' = {
+            resource virtualMachine 'Microsoft.Compute/virtualMachines@2024-11-01' = {
               name: 'example-vm'
               location: resourceGroup().location
               properties: {
                 securityProfile: {
                   proxyAgentSettings: {
                     enabled: true
-                    mode: 'Enforce'
+                    wireServer: {
+                      mode: 'Enforce'
+                    }
+                    imds: {
+                      mode: 'Enforce'
+                    }
                   }
                 }
               }
@@ -52067,14 +52076,19 @@ queries:
       asset.platform == "azure-compute-vm-api"
     mql: |
       azure.subscription.compute.vm.proxyAgentEnabled == true
-      azure.subscription.compute.vm.proxyAgentMode == "Enforce"
+      azure.subscription.compute.vm.proxyAgentMode == "Enforce" ||
+        azure.subscription.compute.vm.properties["securityProfile"]["proxyAgentSettings"]["wireServer"]["mode"] == "Enforce" &&
+        azure.subscription.compute.vm.properties["securityProfile"]["proxyAgentSettings"]["imds"]["mode"] == "Enforce"
   - uid: mondoo-azure-security-compute-vm-proxy-agent-enabled-bicep
     filters: |
       asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Compute/virtualMachines")
     mql: |
       bicep.resources.where(type == "Microsoft.Compute/virtualMachines").all(
         properties["securityProfile"]["proxyAgentSettings"]["enabled"] == true &&
-        properties["securityProfile"]["proxyAgentSettings"]["mode"] == "Enforce"
+          properties["securityProfile"]["proxyAgentSettings"]["mode"] == "Enforce" ||
+        properties["securityProfile"]["proxyAgentSettings"]["enabled"] == true &&
+          properties["securityProfile"]["proxyAgentSettings"]["wireServer"]["mode"] == "Enforce" &&
+          properties["securityProfile"]["proxyAgentSettings"]["imds"]["mode"] == "Enforce"
       )
   # No Terraform or Bicep variants: the agent is deployed as a separate virtual machine
   # extension resource, and neither HCL, plan, state, nor Bicep expresses which machines an
