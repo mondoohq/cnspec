@@ -29,7 +29,7 @@ NCLI_COMMANDS_FILE = DATA_DIR / "ncli_commands.json"
 # KB articles.
 NCLI_ENTITY_ALIASES = {
     # `ncli ngt list` is the canonical NGT status check in Nutanix KBs,
-    # e.g. https://portal.nutanix.com/kb/3567
+    # e.g. https://portal.nutanix.com/page/documents/kbs/details?targetId=kA032000000PMaOCAW
     "ngt": "nutanix-guest-tools",
 }
 

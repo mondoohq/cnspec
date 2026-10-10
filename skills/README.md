@@ -32,7 +32,7 @@ cnspec skills are compatible with Claude Code, Codex, Gemini CLI, and Cursor.
 
 ### Codex
 
-1. Copy or symlink skill directories from `skills/` into one of Codex's standard `.agents/skills` locations (e.g., `$REPO_ROOT/.agents/skills` or `$HOME/.agents/skills`) as described in the [Codex Skills guide](https://developers.openai.com/codex/skills/).
+1. Copy or symlink skill directories from `skills/` into one of Codex's standard `.agents/skills` locations (e.g., `$REPO_ROOT/.agents/skills` or `$HOME/.agents/skills`) as described in the [Codex Skills guide](https://learn.chatgpt.com/docs/build-skills).
 
 2. Once available, Codex will discover the skill and load the `SKILL.md` instructions automatically.
 

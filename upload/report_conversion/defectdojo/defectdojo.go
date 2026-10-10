@@ -8,7 +8,7 @@
 // This lets manual/pentest findings and arbitrary tools be imported without a
 // tool-specific converter.
 //
-// Format reference: https://documentation.defectdojo.com (Generic Findings Import).
+// Format reference: https://docs.defectdojo.com/ (Generic Findings Import).
 package defectdojo
 
 import (
