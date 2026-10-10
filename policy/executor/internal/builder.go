@@ -63,6 +63,7 @@ type GraphBuilder struct {
 	rescoreScores map[string]*policy.Score
 
 	// featureFlagFailErrors is a feature flag to count errors as failures
+	// See https://www.notion.so/mondoo/Errors-and-Scoring-5dc554348aad4118a1dbf35123368329
 	featureFlagFailErrors bool
 
 	dumpDatapoints bool
