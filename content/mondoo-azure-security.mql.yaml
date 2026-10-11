@@ -17979,7 +17979,7 @@ queries:
       desc: |
         This check verifies that an Azure Firewall blocks traffic matched by Microsoft threat intelligence rather than only recording it.
 
-        Threat intelligence-based filtering compares every flow against Microsoft feeds of IP addresses and domains known to be malicious. The mode is set on the **Threat intelligence** page under **Settings** on the firewall, or through `threatIntelMode` on the firewall resource, and the check requires the value `Deny`, shown in the portal as **Alert and deny**. The service default is `Alert`, which logs matches and forwards the traffic anyway.
+        Threat intelligence-based filtering compares every flow against Microsoft feeds of IP addresses and domains known to be malicious. The mode is set on the **Threat intelligence** page under **Settings** on the firewall, or through `threatIntelMode` on the firewall resource; a firewall managed by a firewall policy takes the mode from the policy's `threatIntelMode` instead, and the firewall's own value is then ignored. The check reads the policy's mode when there is a policy and the firewall's otherwise, and requires the value `Deny`, shown in the portal as **Alert and deny**. The service default is `Alert`, which logs matches and forwards the traffic anyway.
 
         **Why this matters**
 
@@ -18001,8 +18001,10 @@ queries:
         **Automated Audit with Azure CLI:**
 
         ```bash
-        az network firewall list --query "[].{Name:name, ResourceGroup:resourceGroup, ThreatIntelMode:threatIntelMode}" -o table
+        az network firewall list --query "[].{Name:name, ResourceGroup:resourceGroup, ThreatIntelMode:threatIntelMode, Policy:firewallPolicy.id}" -o table
         ```
+
+        For a firewall with a policy, read the policy's mode instead: `az network firewall policy show --ids <PolicyId> --query threatIntelMode`.
 
         **Automated Audit with PowerShell:**
 
@@ -18073,7 +18075,8 @@ queries:
   - uid: mondoo-azure-security-firewall-threat-intel-deny-azure
     filters: asset.platform == "azure-firewall"
     mql: |
-      azure.subscription.networkService.firewall.threatIntelMode == "Deny"
+      azure.subscription.networkService.firewall.policy != empty && azure.subscription.networkService.firewall.policy.threatIntelMode == "Deny" ||
+        azure.subscription.networkService.firewall.policy == empty && azure.subscription.networkService.firewall.threatIntelMode == "Deny"
   - uid: mondoo-azure-security-firewall-threat-intel-deny-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_firewall")
     mql: |
@@ -30963,7 +30966,7 @@ queries:
           --output json
         ```
 
-        A passing resource returns a non-empty JSON object with a `cmk` block containing a `key` with a valid `keyVaultUrl`. A failing resource returns `null` or an empty result.
+        A passing resource returns a `cmk` block containing a `key` with a valid `keyVaultUrl`. A failing resource returns `null`, or an object without `cmk`, such as `{"doubleEncryptionEnabled": false}` for a workspace on the service-managed key.
       remediation:
         - id: portal
           desc: |
@@ -31079,7 +31082,7 @@ queries:
     filters: |
       asset.platform == "azure-synapse-workspace"
     mql: |
-      azure.subscription.synapse.workspace.encryption != empty
+      azure.subscription.synapse.workspace.encryption["cmk"] != empty
   - uid: mondoo-azure-security-synapse-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_synapse_workspace")
     mql: |
@@ -50595,7 +50598,7 @@ queries:
         title: Azure Firewall Premium IDPS features
   - uid: mondoo-azure-security-firewall-no-idps-bypass-rules-azure
     filters: |
-      asset.platform == "azure-firewall"
+      asset.platform == "azure-firewall" && azure.subscription.networkService.firewall.policy != empty
     mql: |
       azure.subscription.networkService.firewall.policy.intrusionDetectionBypassRules.length == 0
   - uid: mondoo-azure-security-firewall-no-idps-bypass-rules-terraform-hcl
