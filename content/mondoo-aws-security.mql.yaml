@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 12.14.2
+    version: 12.14.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -6646,7 +6646,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that the cluster parameter group attached to an Amazon RDS cluster mandates TLS for all connections. For Aurora PostgreSQL that means setting `ssl=1`; for Aurora MySQL it means `require_secure_transport` set to `ON`. Without cluster-level enforcement, individual instances and applications can still open unencrypted connections even when TLS is available.
+        This check verifies that the cluster parameter group attached to an Amazon RDS cluster mandates TLS for all connections. For Aurora PostgreSQL that means `rds.force_ssl` set to `1`; for Aurora MySQL it means `require_secure_transport` set to `ON`. Without cluster-level enforcement, individual instances and applications can still open unencrypted connections even when TLS is available. The Aurora PostgreSQL `ssl` parameter does not enforce anything: it is on by default and only makes TLS available to clients that ask for it.
 
         The parameters are edited under **Parameter groups** in the RDS console after selecting the group associated with the cluster, or with `aws rds modify-db-cluster-parameter-group` after checking the current value with `aws rds describe-db-cluster-parameters`.
 
@@ -6665,10 +6665,10 @@ queries:
         1. Sign in to the AWS Management Console and open the RDS console.
         2. In the left navigation pane, select **Parameter groups**.
         3. Select the cluster parameter group associated with your RDS cluster.
-        4. Search for the parameter named `ssl` (for Aurora PostgreSQL) or `require_secure_transport` (for Aurora MySQL).
+        4. Search for the parameter named `rds.force_ssl` (for Aurora PostgreSQL) or `require_secure_transport` (for Aurora MySQL).
         5. Check the current value.
 
-        A passing parameter group shows the `ssl` parameter set to `1` (PostgreSQL) or `require_secure_transport` set to `ON` (MySQL). A failing parameter group shows `ssl` set to `0` or `require_secure_transport` set to `OFF` (or the parameter not present).
+        A passing parameter group shows `rds.force_ssl` set to `1` (PostgreSQL) or `require_secure_transport` set to `ON` (MySQL). A failing parameter group shows `rds.force_ssl` set to `0` or `require_secure_transport` set to `OFF`, or has no value for the parameter.
 
         ### Audit via CLI
 
@@ -6685,11 +6685,11 @@ queries:
         ```bash
         aws rds describe-db-cluster-parameters \
           --db-cluster-parameter-group-name <parameter-group-name> \
-          --query "Parameters[?ParameterName=='ssl' || ParameterName=='require_secure_transport'].{Name:ParameterName,Value:ParameterValue}" \
+          --query "Parameters[?ParameterName=='rds.force_ssl' || ParameterName=='require_secure_transport'].{Name:ParameterName,Value:ParameterValue}" \
           --output table
         ```
 
-        A passing parameter group returns `"ParameterValue": "1"` for `ssl` or `"ParameterValue": "ON"` for `require_secure_transport`. A failing parameter group returns `"ParameterValue": "0"` for `ssl` or `"ParameterValue": "OFF"` for `require_secure_transport`.
+        A passing parameter group returns `1` for `rds.force_ssl` or `ON` for `require_secure_transport`. A failing parameter group returns `0` for `rds.force_ssl` or `OFF` for `require_secure_transport`.
 
       remediation:
         - id: console
@@ -6700,8 +6700,8 @@ queries:
             2. In the left navigation panel, select Parameter groups.
             3. Identify the cluster parameter group associated with your RDS cluster.
             4. Select the parameter group and choose Edit parameters.
-            5. In the parameter search field, search for "ssl".
-            6. Change the value of the ssl parameter from "0" to "1" to enforce SSL connections.
+            5. In the parameter search field, search for "rds.force_ssl" (Aurora PostgreSQL) or "require_secure_transport" (Aurora MySQL).
+            6. Set `rds.force_ssl` to "1" or `require_secure_transport` to "ON" to enforce TLS connections.
             7. Select Save changes to apply the modified parameter.
             8. If this is a new parameter group, you need to associate it with your RDS cluster:
                - Navigate to Databases in the left panel.
@@ -6713,28 +6713,30 @@ queries:
             10. Note that the cluster may require a reboot to apply the parameter change.
         - id: cli
           desc: |
-            To ensure RDS cluster parameter groups enforce encryption in transit using the AWS CLI, first, check if the cluster parameter group has SSL enabled:
+            To ensure RDS cluster parameter groups enforce encryption in transit using the AWS CLI, first, check if the cluster parameter group forces TLS:
 
             ```bash
             aws rds describe-db-cluster-parameters \
               --db-cluster-parameter-group-name <parameter-group-name> \
-              --query "Parameters[?ParameterName=='ssl']"
+              --query "Parameters[?ParameterName=='rds.force_ssl' || ParameterName=='require_secure_transport']"
             ```
 
-            If SSL is not enabled (value is "0"), create a modified parameter group:
+            If TLS is not forced, create a cluster parameter group that forces it. For Aurora PostgreSQL:
 
             ```bash
             # First, create a new parameter group (if needed)
             aws rds create-db-cluster-parameter-group \
               --db-cluster-parameter-group-name secure-cluster-params \
-              --db-parameter-group-family aurora-mysql5.7 \
-              --description "Cluster parameter group with SSL enabled"
+              --db-parameter-group-family aurora-postgresql15 \
+              --description "Cluster parameter group that forces TLS"
 
-            # Modify the SSL parameter to enforce SSL connections
+            # Force TLS for every connection
             aws rds modify-db-cluster-parameter-group \
               --db-cluster-parameter-group-name secure-cluster-params \
-              --parameters "ParameterName=ssl,ParameterValue=1,ApplyMethod=immediate"
+              --parameters "ParameterName=rds.force_ssl,ParameterValue=1,ApplyMethod=immediate"
             ```
+
+            For Aurora MySQL, set `require_secure_transport` to `ON` in a group of an `aurora-mysql` family instead.
 
             Apply the parameter group to your RDS cluster:
 
@@ -6754,7 +6756,7 @@ queries:
 
             aws rds describe-db-cluster-parameters \
               --db-cluster-parameter-group-name secure-cluster-params \
-              --query "Parameters[?ParameterName=='ssl']"
+              --query "Parameters[?ParameterName=='rds.force_ssl']"
             ```
         - id: terraform
           desc: |
@@ -6773,14 +6775,14 @@ queries:
               }
             }
 
-            # Create a Postgresql cluster parameter group with SSL enabled
+            # Create a PostgreSQL cluster parameter group that forces TLS
             resource "aws_rds_cluster_parameter_group" "secure_cluster_params_pg" {
-              name        = "secure-cluster-params-pg10"
-              family      = "aurora-postgresql10"
-              description = "Cluster parameter group with SSL enabled"
+              name        = "secure-cluster-params-pg15"
+              family      = "aurora-postgresql15"
+              description = "Cluster parameter group that forces TLS"
 
               parameter {
-                name  = "ssl"
+                name  = "rds.force_ssl"
                 value = "1"
               }
             }
@@ -6803,17 +6805,17 @@ queries:
                     - Key: "Name"
                       Value: "secure-cluster-params"
 
-              # Create a cluster parameter group with SSL enabled
-              SecureClusterParameterGroupPG10:
+              # Create a cluster parameter group that forces TLS
+              SecureClusterParameterGroupPG15:
                 Type: "AWS::RDS::DBClusterParameterGroup"
                 Properties:
-                  Description: "Cluster parameter group with SSL enabled"
-                  Family: "aurora-postgresql10"
+                  Description: "Cluster parameter group that forces TLS"
+                  Family: "aurora-postgresql15"
                   Parameters:
-                    ssl: 1
+                    rds.force_ssl: 1
                   Tags:
                     - Key: "Name"
-                      Value: "secure-cluster-params-pg10"
+                      Value: "secure-cluster-params-pg15"
             ```
     refs:
       - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.html
@@ -6827,7 +6829,7 @@ queries:
       aws.rds.clusterParameterGroups.where(name == clusterParameterGroup) != empty
       aws.rds.clusterParameterGroups.where(name == clusterParameterGroup)
         .all(
-          parameters.where(name == 'ssl').any(value == 1)
+          parameters.where(name == 'rds.force_ssl').any(value == 1)
             || parameters.where(name == 'require_secure_transport').any(value == "ON")
         )
   - uid: mondoo-aws-security-rds-cluster-parameter-group-ssl-terraform-hcl
@@ -6842,7 +6844,7 @@ queries:
 
       terraform.resources("aws_rds_cluster_parameter_group").where(arguments.family == /postgres/).all(
         blocks.any(
-          attributes.name.value =='ssl'
+          attributes.name.value =='rds.force_ssl'
             && attributes.value.value == "1"
         )
       )
@@ -6853,7 +6855,7 @@ queries:
         change.after.parameter.where(name == "require_secure_transport").map(value).first == "ON"
       )
       terraform.plan.resourceChanges.where(type == "aws_rds_cluster_parameter_group" && change.after.family == /postgres/).all(
-        change.after.parameter.where(name == "ssl").map(value).first == 1
+        change.after.parameter.where(name == "rds.force_ssl").map(value).first == 1
       )
   - uid: mondoo-aws-security-rds-cluster-parameter-group-ssl-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_rds_cluster_parameter_group")
@@ -6862,7 +6864,7 @@ queries:
         values.parameter.where(name == 'require_secure_transport').map(value).first == "ON"
       )
       terraform.state.resources.where(type == "aws_rds_cluster_parameter_group" && values.family == /postgres/).all(
-        values.parameter.where(name == 'ssl').map(value).first == 1
+        values.parameter.where(name == 'rds.force_ssl').map(value).first == 1
       )
   - uid: mondoo-aws-security-rds-cluster-parameter-group-ssl-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::RDS::DBClusterParameterGroup")
@@ -6871,7 +6873,7 @@ queries:
         properties['Parameters']['require_secure_transport'] == "ON"
       )
       cloudformation.template.resources.where(type == "AWS::RDS::DBClusterParameterGroup" && properties['Family'] == /postgres/).all(
-        properties['Parameters']['ssl'] == 1 || properties['Parameters']['ssl'] == "1"
+        properties['Parameters']['rds.force_ssl'] == 1 || properties['Parameters']['rds.force_ssl'] == "1"
       )
   # No Terraform variants: Pending OS updates are runtime telemetry queried from the AWS API (`aws.rds.dbcluster.pendingMaintenanceActions`), not configuration. There is no Terraform attribute that represents pending maintenance actions.
   - uid: mondoo-aws-security-rds-cluster-no-pending-os-upgrades
@@ -33765,7 +33767,7 @@ queries:
         title: AWS KMS Customer Managed Keys
   - uid: mondoo-aws-security-documentdb-cluster-cmk-encryption-aws
     filters: asset.platform == "aws-documentdb-cluster"
-    mql: aws.documentdb.cluster.kmsKey { metadata.KeyManager == "CUSTOMER" }
+    mql: aws.documentdb.cluster.kmsKey != null && aws.documentdb.cluster.kmsKey.keyManager == "CUSTOMER"
   - uid: mondoo-aws-security-documentdb-cluster-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_docdb_cluster")
     mql: |
@@ -35815,7 +35817,7 @@ queries:
         title: AWS KMS Customer Managed Keys
   - uid: mondoo-aws-security-memorydb-cluster-cmk-encryption-aws
     filters: asset.platform == "aws-memorydb-cluster"
-    mql: aws.memorydb.cluster.kmsKey { metadata.KeyManager == "CUSTOMER" }
+    mql: aws.memorydb.cluster.kmsKey != null && aws.memorydb.cluster.kmsKey.keyManager == "CUSTOMER"
   - uid: mondoo-aws-security-memorydb-cluster-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_memorydb_cluster")
     mql: |
@@ -38122,7 +38124,7 @@ queries:
         title: AWS KMS Customer Managed Keys
   - uid: mondoo-aws-security-neptune-cluster-cmk-encryption-aws
     filters: asset.platform == "aws-neptune-cluster"
-    mql: aws.neptune.cluster.kmsKey { metadata.KeyManager == "CUSTOMER" }
+    mql: aws.neptune.cluster.kmsKey != null && aws.neptune.cluster.kmsKey.keyManager == "CUSTOMER"
   - uid: mondoo-aws-security-neptune-cluster-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_neptune_cluster")
     mql: |
@@ -38304,9 +38306,7 @@ queries:
         title: AWS KMS Customer Managed Keys
   - uid: mondoo-aws-security-redshift-cluster-cmk-encryption-aws
     filters: asset.platform == "aws-redshift-cluster"
-    mql: |
-      aws.redshift.cluster.kmsKey != null
-      aws.redshift.cluster.kmsKey.metadata.KeyManager == "CUSTOMER"
+    mql: aws.redshift.cluster.kmsKey != null && aws.redshift.cluster.kmsKey.keyManager == "CUSTOMER"
   - uid: mondoo-aws-security-redshift-cluster-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_redshift_cluster")
     mql: |
@@ -38846,7 +38846,7 @@ queries:
         title: AWS KMS Customer Managed Keys
   - uid: mondoo-aws-security-opensearch-cmk-encryption-aws
     filters: asset.platform == "aws-opensearch-domain"
-    mql: aws.opensearch.domain.encryptionAtRestKmsKey { metadata.KeyManager == "CUSTOMER" }
+    mql: aws.opensearch.domain.encryptionAtRestKmsKey != null && aws.opensearch.domain.encryptionAtRestKmsKey.keyManager == "CUSTOMER"
   - uid: mondoo-aws-security-opensearch-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_opensearch_domain")
     mql: |
@@ -56062,8 +56062,7 @@ queries:
         title: AWS Documentation - AWS KMS concepts
   - uid: mondoo-aws-security-rds-cluster-cmk-encryption-aws
     filters: asset.platform == "aws-rds-dbcluster"
-    mql: |
-      aws.rds.dbcluster.kmsKey { metadata["KeyManager"] == "CUSTOMER" }
+    mql: aws.rds.dbcluster.kmsKey != null && aws.rds.dbcluster.kmsKey.keyManager == "CUSTOMER"
   - uid: mondoo-aws-security-rds-cluster-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_rds_cluster")
     mql: |
@@ -56279,7 +56278,9 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that Amazon EMR cluster master nodes have no public DNS name assigned. A master node with a public DNS name is directly reachable from the internet.
+        This check verifies that the primary node of an Amazon EMR cluster has no public IP address. A primary node with a public IP address is directly reachable from the internet.
+
+        The node's public IP address is shown on the cluster's **Instances** tab and in the EC2 console. The **Primary node public DNS** field of the cluster is not a reliable signal: for a cluster in a private subnet, EMR fills it with the node's private DNS name.
 
         Cluster network placement cannot be changed after launch, so remediation means terminating the cluster and launching a replacement in a private subnet, reached through a VPN or AWS Systems Manager Session Manager.
 
@@ -56291,28 +56292,29 @@ queries:
 
         A compromised master node also yields the cluster's IAM role and the connected data stores it reaches, including S3 and DynamoDB, so the compromise extends well past the cluster itself.
 
-        Launching clusters in private subnets removes the public path, and restricting the security groups to known ranges narrows what can reach the cluster from inside the VPC. A companion check in this policy requires the account-level block public access guardrail, which prevents publicly reachable clusters being created at all.
+        Launching clusters in private subnets removes the public path, and restricting the security groups to known ranges narrows what can reach the cluster from inside the VPC. The account-level EMR block public access guardrail prevents publicly reachable clusters being created at all.
       audit: |
         ### Audit via Console
 
         1. Sign in to the AWS Management Console and open the **EMR** console.
         2. In the left navigation pane, choose **Clusters**.
-        3. Select a cluster and review the **Summary** tab.
-        4. Check the **Master public DNS** field.
+        3. Select a cluster and open the **Instances** tab.
+        4. Expand the primary instance group and check the **Public IP address** of each instance.
 
-        A passing cluster shows an empty or absent **Master public DNS** field. A failing cluster shows a public DNS hostname in that field, indicating the master node is internet-accessible.
+        A passing cluster shows no public IP address on its primary node. A failing cluster shows a public IP address, so the primary node is reachable from the internet.
 
         ### Audit via CLI
 
-        1. Check whether an EMR cluster has a public master DNS name:
+        1. List the public IP addresses of the cluster's primary node:
 
         ```bash
-        aws emr describe-cluster \
+        aws emr list-instances \
           --cluster-id <cluster-id> \
-          --query "Cluster.MasterPublicDnsName"
+          --instance-group-types MASTER \
+          --query "Instances[].PublicIpAddress"
         ```
 
-        A passing cluster returns `null` or an empty string. A failing cluster returns a public DNS hostname such as `ec2-1-2-3-4.compute-1.amazonaws.com`.
+        A passing cluster returns an empty list or `null` values. A failing cluster returns a public IP address such as `"203.0.113.10"`.
 
       remediation:
         - id: console
@@ -56321,17 +56323,18 @@ queries:
 
             1. Navigate to the **EMR Console**.
             2. Select the cluster to review.
-            3. Under **Summary**, check the **Master public DNS** field.
-            4. If a public DNS name is present, the master node is publicly accessible.
+            3. On the **Instances** tab, check the **Public IP address** of the primary node.
+            4. If the primary node has a public IP address, it is publicly accessible.
             5. Terminate the cluster and recreate it in a private subnet with no public IP assignment.
         - id: cli
           desc: |
-            To ensure EMR clusters are not publicly accessible using the AWS CLI, check if an EMR cluster has a public master node:
+            To ensure EMR clusters are not publicly accessible using the AWS CLI, check if the cluster's primary node has a public IP address:
 
             ```bash
-            aws emr describe-cluster \
+            aws emr list-instances \
               --cluster-id <cluster-id> \
-              --query "Cluster.MasterPublicDnsName"
+              --instance-group-types MASTER \
+              --query "Instances[].PublicIpAddress"
             ```
 
             Create a new cluster in a private subnet:
@@ -56390,8 +56393,7 @@ queries:
         title: AWS Documentation - Security in Amazon EMR
   - uid: mondoo-aws-security-emr-not-publicly-accessible-aws
     filters: asset.platform == "aws-emr-cluster"
-    mql: |
-      aws.emr.cluster.masterPublicDnsName == "" || aws.emr.cluster.masterPublicDnsName == empty
+    mql: aws.emr.cluster.masterInstances.all(PublicIpAddress == empty)
   - uid: mondoo-aws-security-emr-not-publicly-accessible-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_emr_cluster")
     mql: |
@@ -57134,8 +57136,7 @@ queries:
         title: AWS Documentation - Managing Amazon Redshift admin passwords using AWS Secrets Manager
   - uid: mondoo-aws-security-redshift-secrets-manager-cmk-aws
     filters: asset.platform == "aws-redshift-cluster"
-    mql: |
-      aws.redshift.cluster.masterPasswordSecretKmsKey { metadata["KeyManager"] == "CUSTOMER" }
+    mql: aws.redshift.cluster.masterPasswordSecretKmsKey != null && aws.redshift.cluster.masterPasswordSecretKmsKey.keyManager == "CUSTOMER"
   - uid: mondoo-aws-security-redshift-secrets-manager-cmk-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_redshift_cluster")
     mql: |
@@ -59062,8 +59063,7 @@ queries:
         title: AWS Documentation - Security in Amazon ElastiCache
   - uid: mondoo-aws-security-elasticache-cmk-encryption-aws
     filters: asset.platform == "aws-elasticache-cluster" && aws.elasticache.cluster.engine == "redis"
-    mql: |
-      aws.elasticache.cluster.kmsKey { metadata["KeyManager"] == "CUSTOMER" }
+    mql: aws.elasticache.cluster.kmsKey != null && aws.elasticache.cluster.kmsKey.keyManager == "CUSTOMER"
   - uid: mondoo-aws-security-elasticache-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_elasticache_replication_group")
     mql: |
