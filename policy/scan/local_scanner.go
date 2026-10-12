@@ -1100,6 +1100,7 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 			services:         services,
 			job:              job,
 			fetcher:          s.fetcher,
+			autoUpdate:       s.autoUpdate,
 			Runtime:          job.runtime,
 			ProgressReporter: job.ProgressReporter,
 			exceptions:       s.exceptions,
@@ -1289,6 +1290,7 @@ type localAssetScanner struct {
 	job      *AssetJob
 	fetcher  *fetcher
 
+	autoUpdate       bool
 	Runtime          llx.Runtime
 	ProgressReporter progress.Progress
 
@@ -1443,7 +1445,7 @@ func (s *localAssetScanner) prepareAsset() error {
 	// Ensure any required providers declared in the bundle are installed
 	// before we try to compile it. This handles bundles with Require metadata.
 	if bundle.HasRequirements() {
-		if err := bundle.EnsureRequirements(true); err != nil {
+		if err := bundle.EnsureRequirements(s.autoUpdate); err != nil {
 			log.Warn().Err(err).Msg("failed to ensure some policy requirements, continuing with available providers")
 		}
 	}
