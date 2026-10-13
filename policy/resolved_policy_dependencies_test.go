@@ -350,6 +350,19 @@ policies:
     queries:
     - uid: data-risk-query
       mql: asset.name
+- uid: risk-platform-scored
+  risk_factors:
+  - uid: known-exploited
+    title: Known exploited vulnerability
+    indicator: exploitable
+    docs:
+      active: The vulnerability is known to be exploited.
+      inactive: The vulnerability is not known to be exploited.
+    magnitude: 0.6
+    is_absolute: true
+    scope: 5
+    filters:
+    - mql: asset.family.contains('os')
 queries:
 - uid: defined-check
   mql: 4 == 4
@@ -376,9 +389,10 @@ queries:
 		{policy: "policy-ref-impact", want: true},
 		{policy: "policy-ref-scoring", want: true},
 		{policy: "risk-reference", want: true},
-		// The builder never adds a risk factor without checks, but still
-		// applies its magnitude to one another policy defines.
-		{policy: "risk-queries-only", want: true},
+		// Definitions, whatever their checks and queries: one with only data
+		// queries, and one the platform scores itself (no checks, no queries).
+		{policy: "risk-queries-only", want: false},
+		{policy: "risk-platform-scored", want: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.policy, func(t *testing.T) {

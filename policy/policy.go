@@ -153,7 +153,8 @@ func gatherLocalAssetFilters(ctx context.Context, policy *Policy, lookupQueryByM
 // out-of-scope group, a check or query entry with an action, a check or
 // query reference (no mql, no variants) that sets an impact, a policy
 // reference with an action, impact or scoring system, or a risk factor
-// without checks that sets a magnitude or an action.
+// reference (no title, docs, indicator, filters, checks, queries, software,
+// resources or tags) that sets a magnitude or an action.
 //
 // The resolved policy builder applies these by target MRN across the whole
 // build, and gathers them from every policy in a matching group before it
@@ -194,15 +195,30 @@ func (p *Policy) HasOverrides() bool {
 	}
 
 	for _, r := range p.RiskFactors {
-		// The builder only adds risk factors that have checks, but gathers
-		// the magnitude and action of every one.
-		isReference := len(r.Checks) == 0
-		if isReference && (r.Magnitude != nil || r.Action != Action_UNSPECIFIED) {
+		if isRiskFactorReference(r) && (r.Magnitude != nil || r.Action != Action_UNSPECIFIED) {
 			return true
 		}
 	}
 
 	return false
+}
+
+// isRiskFactorReference reports whether a risk factor only points at one
+// defined elsewhere: it carries no defining content at all. Anything else is
+// a definition, including risk factors without checks or queries that the
+// platform scores itself (end of life, known exploited, ...). Scope is not
+// looked at: compiling a bundle fills it in for every risk factor (see
+// DetectScope), references included.
+func isRiskFactorReference(r *RiskFactor) bool {
+	return r.Title == "" &&
+		r.Docs == nil &&
+		r.Indicator == "" &&
+		len(r.Filters.GetItems()) == 0 &&
+		len(r.Checks) == 0 &&
+		len(r.Queries) == 0 &&
+		len(r.Software) == 0 &&
+		len(r.Resources) == 0 &&
+		len(r.Tags) == 0
 }
 
 // ComputeAssetFilters of a given policy resolving them as you go
