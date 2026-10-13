@@ -89327,9 +89327,21 @@ queries:
           statements.where(effect == "Allow").any(actions.any(_ == /^(\*|iam:\*|iam:put\*|iam:createpolicyversion|iam:setdefaultpolicyversion|iam:attach(user|group|role)policy|iam:put(user|group|role)policy|iam:create(accesskey|loginprofile)|iam:updateloginprofile|iam:addusertogroup|iam:updateassumerolepolicy)$/i))
         )
       )
+      aws.iam.users.all(
+        inlinePolicyDetails.none(
+          statements.where(effect == "Allow").any(actions.any(_ == /^(\*|iam:\*|iam:passrole)$/i)) &&
+          statements.where(effect == "Allow").any(actions.any(_ == /^(\*|ec2:\*|ec2:runinstances|ec2:requestspotinstances|lambda:\*|lambda:createfunction|lambda:updatefunctioncode|glue:createdevendpoint|glue:updatedevendpoint|cloudformation:createstack|cloudformation:updatestack|sagemaker:createnotebookinstance|datapipeline:createpipeline)$/i))
+        )
+      )
       aws.iam.roles.all(
         inlinePolicyDetails.none(
           statements.where(effect == "Allow").any(actions.any(_ == /^(\*|iam:\*|iam:put\*|iam:createpolicyversion|iam:setdefaultpolicyversion|iam:attach(user|group|role)policy|iam:put(user|group|role)policy|iam:create(accesskey|loginprofile)|iam:updateloginprofile|iam:addusertogroup|iam:updateassumerolepolicy)$/i))
+        )
+      )
+      aws.iam.roles.all(
+        inlinePolicyDetails.none(
+          statements.where(effect == "Allow").any(actions.any(_ == /^(\*|iam:\*|iam:passrole)$/i)) &&
+          statements.where(effect == "Allow").any(actions.any(_ == /^(\*|ec2:\*|ec2:runinstances|ec2:requestspotinstances|lambda:\*|lambda:createfunction|lambda:updatefunctioncode|glue:createdevendpoint|glue:updatedevendpoint|cloudformation:createstack|cloudformation:updatestack|sagemaker:createnotebookinstance|datapipeline:createpipeline)$/i))
         )
       )
       aws.iam.groups.all(
@@ -89337,9 +89349,15 @@ queries:
           statements.where(effect == "Allow").any(actions.any(_ == /^(\*|iam:\*|iam:put\*|iam:createpolicyversion|iam:setdefaultpolicyversion|iam:attach(user|group|role)policy|iam:put(user|group|role)policy|iam:create(accesskey|loginprofile)|iam:updateloginprofile|iam:addusertogroup|iam:updateassumerolepolicy)$/i))
         )
       )
+      aws.iam.groups.all(
+        inlinePolicyDetails.none(
+          statements.where(effect == "Allow").any(actions.any(_ == /^(\*|iam:\*|iam:passrole)$/i)) &&
+          statements.where(effect == "Allow").any(actions.any(_ == /^(\*|ec2:\*|ec2:runinstances|ec2:requestspotinstances|lambda:\*|lambda:createfunction|lambda:updatefunctioncode|glue:createdevendpoint|glue:updatedevendpoint|cloudformation:createstack|cloudformation:updatestack|sagemaker:createnotebookinstance|datapipeline:createpipeline)$/i))
+        )
+      )
     docs:
       desc: |
-        This check applies the privilege-escalation action catalog to inline policies embedded in IAM users, roles, and groups. Inline policies are easy to overlook because they do not appear in the managed-policy listing and have no attachment count, yet they grant exactly the same permissions. An escalation path hidden in an inline policy is therefore both as dangerous as one in a managed policy and less likely to be reviewed.
+        This check applies the same privilege-escalation catalog as `iam-policy-no-privilege-escalation` to inline policies embedded in IAM users, roles, and groups: both the single actions that let a principal rewrite its own permissions, and `iam:PassRole` granted together with an action that launches compute under the passed role. Inline policies are easy to overlook because they do not appear in the managed-policy listing and have no attachment count, yet they grant exactly the same permissions. An escalation path hidden in an inline policy is therefore both as dangerous as one in a managed policy and less likely to be reviewed.
 
         No Terraform variant ships because inline policies reach Terraform through several different resources and through nested blocks, so an IaC variant would cover only part of the surface. The companion check `iam-policy-no-privilege-escalation` carries the Terraform HCL variant for managed policies.
       audit: |
@@ -89386,7 +89404,10 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_role")
     mql: |
       terraform.resources("aws_iam_role").where(arguments["assume_role_policy"] != empty).all(
-        arguments["assume_role_policy"][0]["Statement"].where(_["Principal"]["Service"] == /^(cloudtrail|config|vpc-flow-logs|events|sns|ses|s3|logs|firehose|backup|apigateway|delivery\.logs)\.amazonaws\.com$/i).all(
+        arguments["assume_role_policy"][0]["Statement"].where(_["Principal"]["Service"] == /^(cloudtrail|config|vpc-flow-logs|events|sns|ses|s3|logs|firehose|backup|apigateway|delivery\.logs)\.amazonaws\.com$/i).none(_["Condition"] == empty)
+      )
+      terraform.resources("aws_iam_role").where(arguments["assume_role_policy"] != empty).all(
+        arguments["assume_role_policy"][0]["Statement"].where(_["Principal"]["Service"] == /^(cloudtrail|config|vpc-flow-logs|events|sns|ses|s3|logs|firehose|backup|apigateway|delivery\.logs)\.amazonaws\.com$/i).where(_["Condition"] != empty).all(
           _["Condition"].values.any(_.keys.any(_ == /^aws:(SourceAccount|SourceArn|SourceOrgID|PrincipalOrgID)$/i))
         )
       )
