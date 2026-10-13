@@ -16,6 +16,11 @@ resource "aws_iam_role" "test_role" {
         Principal = {
           Service = "s3.amazonaws.com"
         }
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = "123456789012"
+          }
+        }
       },
     ]
   })
