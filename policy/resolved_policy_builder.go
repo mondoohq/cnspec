@@ -6,6 +6,7 @@ package policy
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -98,7 +99,7 @@ func buildResolvedPolicy(ctx context.Context, bundleMrn string, bundle *Bundle, 
 		Filters:                assetFilters,
 		GraphExecutionChecksum: resolvedPolicyExecutionChecksum,
 		FiltersChecksum:        assetFiltersChecksum,
-		Dependencies:           builder.sortedDependencies(),
+		Dependencies:           slices.Sorted(maps.Keys(builder.dependencies)),
 	}
 
 	// We will walk the graph from the non prunable nodes out. This means that if something is not connected
@@ -300,17 +301,6 @@ func isContentMrn(m string) bool {
 	}
 	id, _ := mrn.GetResource(m, MRN_RESOURCE_FRAMEWORK)
 	return id != ""
-}
-
-// sortedDependencies returns the MRNs of the resolved policy's dependencies,
-// sorted.
-func (b *resolvedPolicyBuilder) sortedDependencies() []string {
-	res := make([]string, 0, len(b.dependencies))
-	for m := range b.dependencies {
-		res = append(res, m)
-	}
-	slices.Sort(res)
-	return res
 }
 
 type riskDataQueryRef struct {
