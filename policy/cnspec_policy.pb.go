@@ -5591,7 +5591,7 @@ type ResolvedPolicy struct {
 	// resolved policy, sorted and deduplicated. The root and other scope MRNs
 	// (asset, space, organization, ...) are left out, since a resolved policy
 	// is shared across assets. Overrides from policies that were not admitted
-	// are not listed: see Policy.HasOverrides and Framework.HasOverrides.
+	// are not listed: see Policy.HasOverrides.
 	Dependencies  []string `protobuf:"bytes,22,rep,name=dependencies,proto3" json:"dependencies,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

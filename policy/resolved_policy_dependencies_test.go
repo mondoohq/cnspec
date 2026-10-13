@@ -159,7 +159,8 @@ func TestResolveV2_DependenciesSharedAcrossAssets(t *testing.T) {
 // A framework's control actions reach controls of the frameworks it depends
 // on. The builder ignores the action on a framework reference, so even a
 // framework referenced with "deactivate" is admitted and its control actions
-// apply. It is listed as a dependency, and HasOverrides flags it too.
+// apply. It is listed as a dependency, so a change to it invalidates every
+// resolved policy its actions reach.
 func TestResolveV2_DependenciesFrameworkOverrides(t *testing.T) {
 	ctx := context.Background()
 	b := parseBundle(t, `
@@ -223,16 +224,6 @@ framework_maps:
 	assert.Nil(t, findReportingJobByQrId(rp, controlMrn("control-a")))
 	assert.NotNil(t, findReportingJobByQrId(rp, controlMrn("control-b")))
 	assert.Contains(t, rp.Dependencies, frameworkMrn("custom-framework"))
-
-	for mrn, want := range map[string]bool{
-		frameworkMrn("custom-framework"): true,
-		frameworkMrn("base-framework"):   false,
-		frameworkMrn("parent-framework"): false,
-	} {
-		f, err := srv.DataLake.GetFramework(ctx, mrn)
-		require.NoError(t, err)
-		assert.Equal(t, want, f.HasOverrides(), mrn)
-	}
 }
 
 func TestResolveV2_DependenciesWithoutLeak(t *testing.T) {
