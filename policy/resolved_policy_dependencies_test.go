@@ -402,3 +402,28 @@ queries:
 		})
 	}
 }
+
+// The containers on an asset's path only hold assignments: their changes move
+// the resolved policy's structure key, so they are not dependencies.
+func TestResolveV2_DependenciesLeaveOutScopes(t *testing.T) {
+	ctx := context.Background()
+	b := parseBundle(t, rpDependenciesBundle)
+	spaceMrn := "//captain.api.mondoo.app/spaces/s1"
+	assetMrn := "//assets.api.mondoo.app/spaces/s1/assets/a1"
+
+	srv := initResolver(t, []*testAsset{
+		{asset: spaceMrn, policies: []string{policyMrn("admitted")}},
+		{asset: assetMrn, policies: []string{spaceMrn}},
+	}, []*policy.Bundle{b})
+
+	rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+		PolicyMrn:    assetMrn,
+		AssetFilters: []*policy.Mquery{{Mql: "true"}},
+	})
+	require.NoError(t, err)
+
+	// The space's policy runs through the space...
+	require.NotNil(t, findReportingJobByQrId(rp, policyMrn("admitted")))
+	// ...but only content is listed, not the space or the asset.
+	assert.Equal(t, []string{policyMrn("admitted")}, rp.Dependencies)
+}
