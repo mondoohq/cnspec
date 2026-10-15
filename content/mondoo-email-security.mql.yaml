@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-email-security
     name: Mondoo Email Security
-    version: 1.4.2
+    version: 1.4.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -667,12 +667,20 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-6
     mql: |
-      dns.spf.all(allQualifier == "-" || allQualifier == "~")
+      dns.spf.all(
+        allQualifier == "-" || allQualifier == "~" ||
+        (allQualifier == "" && mechanisms.where(_ == /^redirect=/i).length == 1 &&
+          mechanisms.where(_ == /^redirect=/i).all(
+            dns(fqdn: _.split("=").last).spf.length == 1 &&
+            dns(fqdn: _.split("=").last).spf.all(allQualifier == "-" || allQualifier == "~")))
+      )
     docs:
       desc: |
         This check verifies that the SPF record ends with an enforcing `all` mechanism.
 
         The final mechanism tells receivers what to do with mail from servers the record does not list. The check requires `-all`, which is a hard fail, or `~all`, which is a soft fail. It fails on `?all`, which is neutral, and on a record with no `all` mechanism at all.
+
+        A record without an `all` mechanism can instead hand evaluation to another domain with a `redirect=` modifier, for example `v=spf1 redirect=_spf.example.net`, which mail providers commonly publish so customers do not have to copy their sender list. Receivers then apply the target domain's record, so the check follows the redirect one level and requires the target's single SPF record to end with `-all` or `~all`. A `redirect=` next to an `all` mechanism is ignored, as receivers ignore it.
 
         **Why this matters**
 
@@ -686,7 +694,7 @@ queries:
       audit: |
         Run the `dig +short TXT <domain>` command and inspect the end of the record beginning with `v=spf1`.
 
-        If the SPF record ends with `-all` (hard fail) or `~all` (soft fail), the check passes. If it ends with any other mechanism or omits an `all` mechanism, the check fails.
+        If the SPF record ends with `-all` (hard fail) or `~all` (soft fail), the check passes. If the record has no `all` mechanism but a `redirect=<target>` modifier, run `dig +short TXT <target>` and apply the same test to the target's record. If neither record ends with `-all` or `~all`, the check fails.
       remediation:
         - id: console
           desc: |
