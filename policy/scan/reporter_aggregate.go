@@ -4,6 +4,8 @@
 package scan
 
 import (
+	"maps"
+	"slices"
 	"sync"
 
 	"github.com/hashicorp/go-multierror"
@@ -55,7 +57,7 @@ func (r *AggregateReporter) AddReport(asset *inventory.Asset, results *AssetRepo
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.assets[asset.Mrn] = asset
+	r.assets[asset.Mrn] = snapshotAsset(asset)
 	r.assetReports[asset.Mrn] = results.Report
 	r.resolvedPolicies[asset.Mrn] = results.ResolvedPolicy
 	if results.ExceptionDecisions != nil {
@@ -76,7 +78,7 @@ func (r *AggregateReporter) AddVulnReport(asset *inventory.Asset, vulnReport *gq
 	mvdVulnReport := gql.ConvertToMvdVulnReport(vulnReport)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.assets[asset.Mrn] = asset
+	r.assets[asset.Mrn] = snapshotAsset(asset)
 	r.assetVulnReports[asset.Mrn] = mvdVulnReport
 }
 
@@ -87,7 +89,7 @@ func (r *AggregateReporter) AddScanError(asset *inventory.Asset, err error) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.assets[asset.Mrn] = asset
+	r.assets[asset.Mrn] = snapshotAsset(asset)
 	r.assetErrors[asset.Mrn] = err
 }
 
@@ -101,6 +103,42 @@ func pullsFromRegistry(asset *inventory.Asset) bool {
 		}
 	}
 	return false
+}
+
+func snapshotAsset(asset *inventory.Asset) *inventory.Asset {
+	if asset == nil {
+		return nil
+	}
+	snapshot := &inventory.Asset{Id: asset.Id, Mrn: asset.Mrn, Name: asset.Name,
+		PlatformIds: slices.Clone(asset.PlatformIds), State: asset.State,
+		Labels: maps.Clone(asset.Labels), Annotations: maps.Clone(asset.Annotations),
+		Options: maps.Clone(asset.Options), IdDetector: slices.Clone(asset.IdDetector),
+		Category: asset.Category, ManagedBy: asset.ManagedBy, Url: asset.Url,
+		KindString: asset.KindString, Fqdn: asset.Fqdn, TraceId: asset.TraceId}
+	if asset.Platform != nil {
+		snapshot.Platform = asset.Platform.CloneVT()
+	}
+	if len(asset.Relationships) > 0 {
+		snapshot.Relationships = make([]*inventory.AssetRelationship, 0, len(asset.Relationships))
+		for _, relationship := range asset.Relationships {
+			if relationship == nil {
+				continue
+			}
+			snapshotRelationship := &inventory.AssetRelationship{
+				ResourceType: relationship.ResourceType,
+				ResourceId:   relationship.ResourceId,
+			}
+			if related := relationship.Asset; related != nil {
+				snapshotRelationship.Asset = &inventory.Asset{
+					Id:   related.Id,
+					Mrn:  related.Mrn,
+					Name: related.Name,
+				}
+			}
+			snapshot.Relationships = append(snapshot.Relationships, snapshotRelationship)
+		}
+	}
+	return snapshot
 }
 
 func (r *AggregateReporter) Reports() *ScanResult {
