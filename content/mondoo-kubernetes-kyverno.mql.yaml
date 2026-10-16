@@ -1,0 +1,129 @@
+# Copyright Mondoo, Inc. 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-kubernetes-kyverno
+    name: Mondoo Kubernetes Kyverno Integration
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: kubernetes
+    require:
+      - provider: k8s
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Track Kyverno policies, policy reports, and PolicyExceptions in Mondoo
+    docs:
+      desc: |
+        The Mondoo Kubernetes Kyverno Integration policy surfaces Kyverno policy results
+        and PolicyException hygiene through normal Mondoo policy checks. It reads Kyverno
+        policies, reports, and PolicyExceptions from the Kubernetes API through cnspec.
+        It does not run in the Kubernetes admission path.
+
+        The policy expects the Kubernetes provider Kyverno inventory resources from the
+        paired MQL provider change and is intended to be enabled from the Mondoo Operator
+        when Kyverno is installed in the scanned cluster. The scanner service account must
+        be able to list Kyverno `ClusterPolicy`, `Policy`, the `policies.kyverno.io`
+        CEL policy families (`ValidatingPolicy`, `ImageValidatingPolicy`, `MutatingPolicy`,
+        `GeneratingPolicy`, `DeletingPolicy`, and their namespaced variants),
+        `PolicyException`, Kubernetes `PolicyReport`, Kubernetes `ClusterPolicyReport`,
+        OpenReports `Report`, and OpenReports `ClusterReport` resources. Clusters without
+        Kyverno keep these checks filtered out by `k8s.kyverno.installed`.
+
+        Kyverno-to-Mondoo mapping is resolved from built-in mappings for official Kyverno
+        policies and from policy annotations for custom policy content. PolicyExceptions
+        remain Kyverno admission-controller state, but Mondoo records their computed
+        status, scope, expiry, owner, justification, and mapped Mondoo check identifiers
+        so they can be displayed next to normal Mondoo exceptions and policy results.
+    groups:
+      - title: Kyverno PolicyExceptions
+        filters: asset.platform == "k8s-cluster" && k8s.kyverno.installed == true
+        checks:
+          - uid: mondoo-kubernetes-kyverno-policyexceptions-not-expired
+          - uid: mondoo-kubernetes-kyverno-policyexceptions-not-orphaned
+          - uid: mondoo-kubernetes-kyverno-policyexceptions-mapped-to-mondoo
+          - uid: mondoo-kubernetes-kyverno-policyexceptions-not-broad
+          - uid: mondoo-kubernetes-kyverno-policyexceptions-documented
+      - title: Kyverno Policy Reports
+        filters: asset.platform == "k8s-cluster" && k8s.kyverno.installed == true
+        checks:
+          - uid: mondoo-kubernetes-kyverno-policyreports-no-mapped-failing-results
+          - uid: mondoo-kubernetes-kyverno-policyreports-no-unmapped-failing-results
+
+queries:
+  - uid: mondoo-kubernetes-kyverno-policyexceptions-not-expired
+    title: Kyverno PolicyExceptions are not expired
+    impact: 80
+    mql: k8s.kyverno.failExpiredPolicyExceptions == false || k8s.kyverno.policyExceptions.where(statusReasons.any(_ == /^expired:/)).length == 0
+    docs:
+      desc: |
+        Expired Kyverno PolicyExceptions indicate accepted risk that is no longer
+        within its approved time window. Expired exceptions should be removed,
+        renewed, or replaced with a narrower approved exception. This check is
+        strict by default and can be disabled through the Kyverno scanner option
+        `kyverno-fail-expired-policy-exceptions`.
+
+  - uid: mondoo-kubernetes-kyverno-policyexceptions-not-orphaned
+    title: Kyverno PolicyExceptions reference existing policies and rules
+    impact: 70
+    mql: k8s.kyverno.policyExceptions.where(statusReasons.any(_ == /^orphaned:/ || _ == /^invalid:/)).length == 0
+    docs:
+      desc: |
+        Orphaned PolicyExceptions no longer reference a known Kyverno policy or
+        rule. These exceptions are stale inventory and can hide drift between
+        exception approvals and active policy enforcement.
+
+  - uid: mondoo-kubernetes-kyverno-policyexceptions-mapped-to-mondoo
+    title: Kyverno PolicyExceptions are mapped to Mondoo checks
+    impact: 60
+    mql: k8s.kyverno.reportUnmappedPolicyExceptions == false || k8s.kyverno.policyExceptions.where(statusReasons.any(_ == /^unmapped:/)).length == 0
+    docs:
+      desc: |
+        PolicyExceptions that cannot be mapped to Mondoo checks cannot be shown
+        next to the corresponding Mondoo policy result. Add a Kyverno-to-Mondoo
+        mapping through built-in mappings or Kyverno policy annotations. This
+        check is enabled by default and can be disabled through the Kyverno scanner
+        option `kyverno-report-unmapped-policy-exceptions`.
+
+  - uid: mondoo-kubernetes-kyverno-policyexceptions-not-broad
+    title: Kyverno PolicyExceptions are narrowly scoped
+    impact: 50
+    mql: k8s.kyverno.policyExceptions.where(statusReasons.any(_ == /^broad:/)).length == 0
+    docs:
+      desc: |
+        Broad PolicyExceptions apply to many resources or rules and should be
+        narrowed to explicit policy rules, resource kinds, namespaces, and names.
+
+  - uid: mondoo-kubernetes-kyverno-policyexceptions-documented
+    title: Kyverno PolicyExceptions include ownership and justification
+    impact: 40
+    mql: k8s.kyverno.policyExceptions.all(owner != "" && justification != "")
+    docs:
+      desc: |
+        Each PolicyException should carry enough ownership and justification
+        metadata for an operator to understand who accepted the risk and why.
+
+  - uid: mondoo-kubernetes-kyverno-policyreports-no-mapped-failing-results
+    title: Kyverno policy reports have no mapped failing, warning, or error results
+    impact: 70
+    mql: k8s.kyverno.results.where(result == "fail" || result == "warn" || result == "error").where(mappedMondooCheckUids.length > 0 || mappedMondooCheckMrns.length > 0).length == 0
+    docs:
+      desc: |
+        Kyverno PolicyReports and OpenReports contain policy evaluation results.
+        Failing, warning, or errored results with known Mondoo mappings should be reviewed
+        in Mondoo alongside native Mondoo Kubernetes findings and mapped
+        PolicyExceptions.
+
+  - uid: mondoo-kubernetes-kyverno-policyreports-no-unmapped-failing-results
+    title: Kyverno policy reports have no unmapped failing, warning, or error results
+    impact: 60
+    mql: k8s.kyverno.reportUnmappedPolicyResults == false || k8s.kyverno.results.where(result == "fail" || result == "warn" || result == "error").where(mappedMondooCheckUids.length == 0 && mappedMondooCheckMrns.length == 0).length == 0
+    docs:
+      desc: |
+        Kyverno PolicyReports and OpenReports can contain failing, warning, or errored
+        results for policies that do not yet have a Mondoo check mapping. These
+        findings identify Kyverno coverage that is not represented by native
+        Mondoo checks yet. This check is enabled by default and can be disabled
+        through the Kyverno scanner option
+        `kyverno-report-unmapped-policy-results`.
