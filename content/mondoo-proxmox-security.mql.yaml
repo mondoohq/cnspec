@@ -1745,8 +1745,7 @@ queries:
       - title: Proxmox VE Certificate Management
         url: https://pve.proxmox.com/wiki/Certificate_Management
     mql: |
-      file("/etc/pve/local/pveproxy-ssl.pem").exists
-      command("openssl x509 -in /etc/pve/local/pveproxy-ssl.pem -noout -issuer").stdout.contains("Proxmox Virtual Environment") == false
+      file("/etc/pve/local/pveproxy-ssl.pem").exists && parse.certificates("/etc/pve/local/pveproxy-ssl.pem").list[0].issuer.dn.contains("Proxmox Virtual Environment") == false
     docs:
       desc: |
         This check verifies that the web interface presents a certificate issued by a trusted authority rather than by the cluster's own internal CA.
@@ -1900,12 +1899,13 @@ queries:
       - title: CWE-298 Improper Validation of Certificate Expiration
         url: https://cwe.mitre.org/data/definitions/298.html
     mql: |
-      command("openssl x509 -in /etc/pve/local/pve-ssl.pem -checkend 2592000 -noout >/dev/null 2>&1 && echo valid || echo expiring").stdout.trim == "valid"
+      file("/etc/pve/local/pveproxy-ssl.pem").exists && parse.certificates("/etc/pve/local/pveproxy-ssl.pem").list[0].notAfter > time.now + 30 * time.day ||
+        file("/etc/pve/local/pveproxy-ssl.pem").exists == false && parse.certificates("/etc/pve/local/pve-ssl.pem").list[0].notAfter > time.now + 30 * time.day
     docs:
       desc: |
-        This check verifies that the node TLS certificate has more than 30 days of validity remaining.
+        This check verifies that the TLS certificate the API and web interface present has more than 30 days of validity remaining.
 
-        The certificate the API and web interface present is `/etc/pve/local/pve-ssl.pem`, and its remaining life is tested with `openssl x509 -checkend 2592000`, which is 30 days expressed in seconds. The cluster-CA-issued node certificate is regenerated with `pvecm updatecerts --force` followed by a restart of pveproxy; an ACME certificate is renewed with `pvenode acme cert renew --force`.
+        The API proxy serves a custom or ACME certificate from `/etc/pve/local/pveproxy-ssl.pem` when that file exists, and otherwise the node certificate `/etc/pve/local/pve-ssl.pem` issued by the cluster CA. The check reads whichever of the two is served and requires its expiry date to be more than 30 days away. The cluster-CA-issued node certificate is regenerated with `pvecm updatecerts --force` followed by a restart of pveproxy; an ACME certificate is renewed with `pvenode acme cert renew --force`.
 
         **Why this matters**
 
@@ -1927,10 +1927,12 @@ queries:
 
         ### Audit via CLI
 
-        Run the command on a cluster node:
+        Run the commands on a cluster node. They test the custom certificate when one is installed and the node certificate otherwise, matching the certificate the API proxy serves:
 
         ```bash
-        openssl x509 -in /etc/pve/local/pve-ssl.pem -checkend 2592000 -noout && echo valid || echo expiring
+        cert=/etc/pve/local/pveproxy-ssl.pem
+        [ -f "$cert" ] || cert=/etc/pve/local/pve-ssl.pem
+        openssl x509 -in "$cert" -checkend 2592000 -noout && echo valid || echo expiring
         ```
 
         A passing result prints valid; a failing result prints expiring.
@@ -1939,20 +1941,25 @@ queries:
           desc: |
             **Using the CLI**
 
-            Regenerate the cluster-CA-issued node certificate, which is the
-            certificate this check inspects, and restart the API proxy:
+            If the node serves a custom certificate from
+            `/etc/pve/local/pveproxy-ssl.pem` that was ordered through ACME,
+            renew it. `--force` renews even when expiry is more than 30 days
+            away:
+
+            ```bash
+            pvenode acme cert renew --force
+            ```
+
+            A custom certificate from another authority is replaced by
+            uploading the renewed certificate under the node's System, then
+            Certificates panel.
+
+            If the node serves the cluster-CA-issued node certificate,
+            regenerate it and restart the API proxy:
 
             ```bash
             pvecm updatecerts --force
             systemctl restart pveproxy
-            ```
-
-            If the node also serves an ACME certificate that is close to
-            expiry, renew it as well. `--force` renews even when expiry is more
-            than 30 days away:
-
-            ```bash
-            pvenode acme cert renew --force
             ```
         - id: bash
           desc: |
@@ -1985,8 +1992,10 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to regenerate the node certificate when
-            it is within 30 days of expiry:
+            Use this Ansible playbook to renew the served certificate when it
+            is within 30 days of expiry. It renews an ACME certificate when a
+            custom certificate is installed and regenerates the node
+            certificate otherwise:
 
             ```yaml
             ---
@@ -1995,22 +2004,34 @@ queries:
               become: true
 
               tasks:
-                - name: Check whether pve-ssl.pem is within 30 days of expiry
-                  ansible.builtin.command: openssl x509 -in /etc/pve/local/pve-ssl.pem -checkend 2592000 -noout
+                - name: Check for a custom certificate
+                  ansible.builtin.stat:
+                    path: /etc/pve/local/pveproxy-ssl.pem
+                  register: custom_cert
+
+                - name: Check whether the served certificate is within 30 days of expiry
+                  ansible.builtin.command: >-
+                    openssl x509 -checkend 2592000 -noout -in
+                    {{ '/etc/pve/local/pveproxy-ssl.pem' if custom_cert.stat.exists else '/etc/pve/local/pve-ssl.pem' }}
                   register: cert_check
                   failed_when: false
                   changed_when: false
 
+                - name: Renew the ACME certificate
+                  ansible.builtin.command: pvenode acme cert renew --force
+                  when: custom_cert.stat.exists and cert_check.rc != 0
+                  changed_when: true
+
                 - name: Regenerate the node certificate via the cluster CA
                   ansible.builtin.command: pvecm updatecerts --force
-                  when: cert_check.rc != 0
+                  when: not custom_cert.stat.exists and cert_check.rc != 0
                   changed_when: true
 
                 - name: Restart pveproxy to pick up the new certificate
                   ansible.builtin.systemd:
                     name: pveproxy
                     state: restarted
-                  when: cert_check.rc != 0
+                  when: not custom_cert.stat.exists and cert_check.rc != 0
             ```
 
   # =================================================================
