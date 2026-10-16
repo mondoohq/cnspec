@@ -46,6 +46,7 @@ require (
 	github.com/tliron/glsp v0.2.2
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/zclconf/go-cty v1.19.0
+	go.yaml.in/yaml/v3 v3.0.5
 	go.mondoo.com/mondoo-go v0.0.0-20261009120721-91d592217e58
 	go.mondoo.com/mql v0.0.0-20261014230721-9c566c325bd2
 	go.mondoo.com/ranger-rpc v0.8.1
@@ -345,7 +346,6 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.1 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
-	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20261011100332-faecfb24eb49 // indirect
 	golang.org/x/mod v0.42.0 // indirect
