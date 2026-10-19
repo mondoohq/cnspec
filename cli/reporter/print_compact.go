@@ -293,7 +293,12 @@ func (r *defaultReporter) printAssetsByPlatform(assetsByPlatform map[string][]*i
 			if r.data.Reports[assetsByPlatform[platform][i].Mrn] != nil {
 				score := r.data.Reports[assetsByPlatform[platform][i].Mrn].Score
 				assetScoreRating = score.Rating()
-				assetScore = assetScoreRating.Text() + " (" + strconv.Itoa(100-int(score.Value)) + "):"
+				if assetScoreRating == policy.ScoreRating_unrated {
+					// an unrated score has no risk value; its Value of 0 is not a result
+					assetScore = assetScoreRating.Text() + ":"
+				} else {
+					assetScore = assetScoreRating.Text() + " (" + strconv.Itoa(100-int(score.Value)) + "):"
+				}
 			} else {
 				assetScoreRating = policy.ScoreRating_error
 				assetScore = string(policy.ScoreRatingTextError)
