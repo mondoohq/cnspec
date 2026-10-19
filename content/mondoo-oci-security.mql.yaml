@@ -496,8 +496,12 @@ queries:
   - uid: mondoo-oci-security-iam-no-overly-permissive-policies-oci
     filters: asset.platform == "oci-identity-policy"
     mql: |
+      # OCI's built-in Tenant Admin Policy grants exactly this to the Administrators group in
+      # every tenancy, and it cannot be deleted; that one grant is expected, as the
+      # description says. Any other subject holding it fails.
       oci.identity.policy.parsedStatements.none(
-        effect == "allow" && verb == "manage" && resourceType == "all-resources" && scopeType == "tenancy"
+        effect == "allow" && verb == "manage" && resourceType == "all-resources" && scopeType == "tenancy" && subjectType != "group" ||
+        effect == "allow" && verb == "manage" && resourceType == "all-resources" && scopeType == "tenancy" && subjectNames.map(downcase) != ["administrators"]
       )
   - uid: mondoo-oci-security-iam-no-overly-permissive-policies-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_identity_policy")
@@ -3666,7 +3670,8 @@ queries:
       # exposure.securityGroupAllowsIngress is true both when an attached network security
       # group admits any address and when no group is attached at all, which is OCI's
       # default-open posture. Counting attached groups misses the first case entirely.
-      oci.compute.instances.where(exposure.hasPublicIp == true).all(
+      # A terminated instance stays in the list for a while, with the settings it had.
+      oci.compute.instances.where(state != "TERMINATED" && state != "TERMINATING" && exposure.hasPublicIp == true).all(
         exposure.securityGroupAllowsIngress == false
       )
   - uid: mondoo-oci-security-public-vnic-has-nsg-terraform-hcl
@@ -3817,7 +3822,8 @@ queries:
   - uid: mondoo-oci-security-compute-imds-v2-only-oci
     filters: asset.platform == 'oci'
     mql: |
-      oci.compute.instances.all(
+      # A terminated instance stays in the list for a while, with the settings it had.
+      oci.compute.instances.where(state != "TERMINATED" && state != "TERMINATING").all(
         legacyImdsEndpointsDisabled == true
       )
   - uid: mondoo-oci-security-compute-imds-v2-only-terraform-hcl
@@ -3975,7 +3981,8 @@ queries:
   - uid: mondoo-oci-security-compute-metadata-no-secrets-oci
     filters: asset.platform == 'oci'
     mql: |
-      oci.compute.instances.all(
+      # A terminated instance stays in the list for a while, with the settings it had.
+      oci.compute.instances.where(state != "TERMINATED" && state != "TERMINATING").all(
         metadata.keys.none(
           _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
         ) &&
@@ -4071,7 +4078,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that every HTTPS and HTTP/2 listener on an OCI load balancer negotiates only TLS 1.2 or TLS 1.3, with TLS 1.0, TLS 1.1, and SSL 3.0 removed from the offered protocol set.
+        This check verifies that every TLS listener on an OCI load balancer (an `HTTP` or `HTTP2` listener with an SSL configuration; OCI has no separate HTTPS protocol) negotiates only TLS 1.2 or TLS 1.3, with TLS 1.0, TLS 1.1, and SSL 3.0 removed from the offered protocol set.
 
         A listener that terminates TLS carries an SSL configuration whose protocol list names the versions it will accept. Oracle's default configuration permits older protocol versions, so a listener created without an explicit list can still answer a client that asks for a deprecated one. The check requires that the list contain none of `TLSv1`, `TLSv1.1`, or `SSLv3`, leaving `TLSv1.2` and `TLSv1.3` as the only possible outcomes. Edit the list under Networking > Load balancers > Listeners in the Console, or with `oci lb listener update`.
 
@@ -4089,7 +4096,7 @@ queries:
 
         1. Open **Networking** → **Load Balancers** and select the load balancer to inspect.
         2. Select **Listeners** from the left-hand menu.
-        3. For each HTTPS or HTTP/2 listener, click the listener name and review **SSL Configuration** → **TLS Versions**.
+        3. For each listener with an SSL configuration, click the listener name and review **SSL Configuration** → **TLS Versions**.
 
         A passing listener shows only `TLSv1.2` and/or `TLSv1.3` in the TLS Versions list. A failing listener shows `TLSv1`, `TLSv1.1`, or `SSLv3` in the list.
 
@@ -4164,7 +4171,9 @@ queries:
   - uid: mondoo-oci-security-loadbalancer-tls-minimum-1-2-oci
     filters: asset.platform == "oci-loadbalancer"
     mql: |
-      oci.loadBalancer.loadBalancer.listeners.where(protocol.in(["HTTPS", "HTTP2"])).all(
+      # OCI has no HTTPS listener protocol: a TLS listener is an HTTP or HTTP2 listener
+      # with an SSL configuration, whose protocols are then listed.
+      oci.loadBalancer.loadBalancer.listeners.where(sslProtocols != empty).all(
         sslProtocols.containsNone(["TLSv1", "TLSv1.1", "SSLv3"])
       )
   - uid: mondoo-oci-security-loadbalancer-tls-minimum-1-2-terraform-hcl
@@ -4187,7 +4196,7 @@ queries:
     mql: |
       terraform.plan.resourceChanges
         .where(type == 'oci_load_balancer_listener')
-        .where(change.after['protocol'].in(['HTTPS', 'HTTP2']))
+        .where(change.after['protocol'].in(['HTTPS', 'HTTP2']) || change.after['ssl_configuration'] != empty)
         .all(
           change.after['ssl_configuration'] != null && change.after['ssl_configuration'].length > 0 &&
           change.after['ssl_configuration'].all(
@@ -4201,7 +4210,7 @@ queries:
     mql: |
       terraform.state.resources
         .where(type == 'oci_load_balancer_listener')
-        .where(values['protocol'].in(['HTTPS', 'HTTP2']))
+        .where(values['protocol'].in(['HTTPS', 'HTTP2']) || values['ssl_configuration'] != empty)
         .all(
           values['ssl_configuration'] != null && values['ssl_configuration'].length > 0 &&
           values['ssl_configuration'].all(
@@ -4246,7 +4255,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that every HTTPS and HTTP/2 listener on an OCI load balancer is bound to a modern Oracle-managed cipher suite rather than one that still offers RC4, 3DES, or non-AEAD CBC-mode algorithms.
+        This check verifies that every TLS listener on an OCI load balancer (an `HTTP` or `HTTP2` listener with an SSL configuration; OCI has no separate HTTPS protocol) is bound to a modern Oracle-managed cipher suite rather than one that still offers RC4, 3DES, or non-AEAD CBC-mode algorithms.
 
         A listener's SSL configuration names exactly one cipher suite. The check accepts `oci-modern-ssl-cipher-suite-v1`, `oci-default-ssl-cipher-suite-v1`, and the version-specific `oci-tls-1-2-*` and `oci-tls-1-3-*` suites. It rejects `oci-compatible-ssl-cipher-suite-v1`, which Oracle ships mainly for interoperability with old clients and which includes known-weak ciphers that make it unsuitable for production, along with any custom suite outside the approved names. Select the suite in the listener's SSL configuration under Networking > Load balancers > Listeners in the Console, or with `oci lb listener update`.
 
@@ -4264,7 +4273,7 @@ queries:
 
         1. Open **Networking** → **Load Balancers** and select the load balancer.
         2. Select **SSL Cipher Suites** from the left-hand menu.
-        3. For each HTTPS or HTTP/2 listener, verify that the assigned cipher suite is one of: `oci-modern-ssl-cipher-suite-v1`, `oci-default-ssl-cipher-suite-v1`, or a suite matching the pattern `oci-tls-1-2-*` or `oci-tls-1-3-*`.
+        3. For each listener with an SSL configuration, verify that the assigned cipher suite is one of: `oci-modern-ssl-cipher-suite-v1`, `oci-default-ssl-cipher-suite-v1`, or a suite matching the pattern `oci-tls-1-2-*` or `oci-tls-1-3-*`.
 
         A passing listener shows a modern Oracle-managed cipher suite name. A failing listener shows `oci-compatible-ssl-cipher-suite-v1` or a custom suite name that includes weak ciphers.
 
@@ -4329,8 +4338,12 @@ queries:
   - uid: mondoo-oci-security-loadbalancer-no-weak-cipher-suites-oci
     filters: asset.platform == "oci-loadbalancer"
     mql: |
-      oci.loadBalancer.loadBalancer.listeners.where(protocol.in(["HTTPS", "HTTP2"])).all(
-        sslCipherSuite.name.downcase == /^oci-modern-ssl-cipher-suite-v1$|^oci-tls-1-2-[a-z0-9-]+$|^oci-tls-1-3-[a-z0-9-]+$|^oci-default-ssl-cipher-suite-v1$/
+      # OCI has no HTTPS listener protocol: a TLS listener is an HTTP or HTTP2 listener
+      # with an SSL configuration, whose protocols are then listed. sslCipherSuite
+      # resolves only the load balancer's own suites and is null for Oracle's predefined
+      # ones, so the suite's name is read from sslCipherSuiteName.
+      oci.loadBalancer.loadBalancer.listeners.where(sslProtocols != empty).all(
+        sslCipherSuiteName.downcase == /^oci-modern-ssl-cipher-suite-v1$|^oci-tls-1-2-[a-z0-9-]+$|^oci-tls-1-3-[a-z0-9-]+$|^oci-default-ssl-cipher-suite-v1$/
       )
   - uid: mondoo-oci-security-loadbalancer-no-weak-cipher-suites-terraform-hcl
     filters: |
@@ -4351,7 +4364,7 @@ queries:
     mql: |
       terraform.plan.resourceChanges
         .where(type == 'oci_load_balancer_listener')
-        .where(change.after['protocol'].in(['HTTPS', 'HTTP2']))
+        .where(change.after['protocol'].in(['HTTPS', 'HTTP2']) || change.after['ssl_configuration'] != empty)
         .all(
           change.after['ssl_configuration'] != null && change.after['ssl_configuration'].length > 0 &&
           change.after['ssl_configuration'].all(
@@ -4365,7 +4378,7 @@ queries:
     mql: |
       terraform.state.resources
         .where(type == 'oci_load_balancer_listener')
-        .where(values['protocol'].in(['HTTPS', 'HTTP2']))
+        .where(values['protocol'].in(['HTTPS', 'HTTP2']) || values['ssl_configuration'] != empty)
         .all(
           values['ssl_configuration'] != null && values['ssl_configuration'].length > 0 &&
           values['ssl_configuration'].all(
@@ -4379,7 +4392,7 @@ queries:
     impact: 70
     filters: |
       asset.platform == "oci-loadbalancer" &&
-      oci.loadBalancer.loadBalancer.listeners.any(protocol == "HTTP")
+      oci.loadBalancer.loadBalancer.listeners.any(protocol == "HTTP" && sslProtocols == empty)
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
@@ -4396,12 +4409,14 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
-      oci.loadBalancer.loadBalancer.listeners.any(protocol.in(["HTTPS", "HTTP2"]))
+      # OCI has no HTTPS listener protocol: a TLS listener is an HTTP or HTTP2 listener
+      # with an SSL configuration, whose protocols are then listed.
+      oci.loadBalancer.loadBalancer.listeners.any(sslProtocols != empty)
     docs:
       desc: |
-        This check verifies that any OCI load balancer publishing an HTTP listener also publishes at least one HTTPS or HTTP/2 listener, so the service has an encrypted path clients can be moved onto.
+        This check verifies that any OCI load balancer publishing a plain HTTP listener also publishes at least one TLS listener, so the service has an encrypted path clients can be moved onto. OCI has no separate HTTPS listener protocol: a TLS listener is an `HTTP` or `HTTP2` listener with an SSL configuration.
 
-        A load balancer answering only on plain HTTP gives the application no transport security to offer. Credentials, session cookies, and form submissions cross every network between the client and the load balancer in cleartext. Add a TLS listener under Networking > Load balancers > Listeners in the Console with protocol `HTTPS` or `HTTP2` and an SSL configuration that references a certificate, or run `oci lb listener create` with the same values. The check is satisfied once one such listener exists. It does not require the HTTP listener to be removed, since serving a redirect is a legitimate reason to keep it.
+        A load balancer answering only on plain HTTP gives the application no transport security to offer. Credentials, session cookies, and form submissions cross every network between the client and the load balancer in cleartext. Add a TLS listener under Networking > Load balancers > Listeners in the Console with protocol `HTTP` or `HTTP2` and an SSL configuration that references a certificate, or run `oci lb listener create` with the same values. The check is satisfied once one such listener exists. It does not require the HTTP listener to be removed, since serving a redirect is a legitimate reason to keep it.
 
         **Why this matters**
 
@@ -4417,10 +4432,10 @@ queries:
 
         1. Open **Networking** → **Load Balancers** and select each load balancer.
         2. Select **Listeners** from the left-hand menu.
-        3. Check whether the listener list includes at least one listener with **Protocol: HTTP**.
-        4. If an HTTP listener is present, verify that the same load balancer also has at least one listener with **Protocol: HTTPS** or **Protocol: HTTP2**.
+        3. Check whether the listener list includes at least one listener with **Protocol: HTTP** and no SSL configuration.
+        4. If such a plain HTTP listener is present, verify that the same load balancer also has at least one listener with an SSL configuration.
 
-        A passing load balancer either has no HTTP listener, or has an HTTP listener accompanied by at least one HTTPS or HTTP/2 listener. A failing load balancer has an HTTP listener with no HTTPS or HTTP/2 listener on the same load balancer.
+        A passing load balancer either has no plain HTTP listener, or has one accompanied by at least one TLS listener. A failing load balancer has a plain HTTP listener and no listener with an SSL configuration.
 
         ### Audit via CLI
 
@@ -4429,17 +4444,17 @@ queries:
         ```bash
         oci lb load-balancer get \
           --load-balancer-id <lb-ocid> \
-          --query 'data.listeners.*.{name:name,protocol:protocol}'
+          --query 'data.listeners.*.{name:name,protocol:protocol,ssl:"ssl-configuration"}'
         ```
 
-        A passing load balancer returns a list that, if it contains a listener with `protocol: HTTP`, also contains at least one listener with `protocol: HTTPS` or `protocol: HTTP2`. A failing load balancer returns a list with `HTTP` but no `HTTPS` or `HTTP2` entry.
+        A passing load balancer returns a list that, if it contains a listener whose `ssl` is null, also contains at least one listener with an `ssl` configuration. A failing load balancer returns only listeners whose `ssl` is null.
       remediation:
         - id: console
           desc: |
-            Add an HTTPS listener to the load balancer:
+            Add a TLS listener to the load balancer:
 
             1. Open **Networking** → **Load Balancers** → select the LB → **Listeners**.
-            2. Select **Create Listener** → **Protocol: HTTPS** → **Port: 443**.
+            2. Select **Create Listener** → **Protocol: HTTP** → **Port: 443**, and turn on **Use SSL**.
             3. Attach an SSL certificate (BYO certificate or Oracle Certificate Authority).
             4. Select a modern SSL configuration (TLS 1.2+, `oci-modern-ssl-cipher-suite-v1`).
             5. Route to the same backend set as the HTTP listener, or add an application-layer redirect to HTTPS.
@@ -5392,7 +5407,8 @@ queries:
   - uid: mondoo-oci-security-adb-mtls-or-restricted-oci
     filters: asset.platform == 'oci'
     mql: |
-      oci.database.autonomousDatabases.all(
+      # A terminated database stays in the list for a while, with the settings it had.
+      oci.database.autonomousDatabases.where(state != "TERMINATED" && state != "TERMINATING").all(
         isMtlsConnectionRequired == true ||
         privateEndpointIp != null ||
         whitelistedIps.length > 0 ||
@@ -5543,10 +5559,13 @@ queries:
   - uid: mondoo-oci-security-adb-no-public-management-urls-oci
     filters: asset.platform == 'oci'
     mql: |
-      # publicConnectionUrls carries the copies of the management interfaces served on the
-      # database's public endpoint, so it is populated only when one exists. connectionUrls
-      # is also populated for an NSG-allowed private endpoint, which is not what this asks.
-      oci.database.autonomousDatabases.all(publicConnectionUrls == null)
+      # publicManagementUrls carries the copies of the management interfaces served on the
+      # database's public endpoint, so it is set only when one exists; managementUrls is
+      # also set for an NSG-allowed private endpoint, which is not what this asks. The
+      # deprecated publicConnectionUrls reads as an empty map rather than null when there
+      # are none, so comparing it with null failed every database.
+      # A terminated database stays in the list for a while, with the settings it had.
+      oci.database.autonomousDatabases.where(state != "TERMINATED" && state != "TERMINATING").all(publicManagementUrls == empty)
   - uid: mondoo-oci-security-adb-no-public-management-urls-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_database_autonomous_database')
@@ -5589,7 +5608,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-6
     mql: |
-      oci.database.dbSystems.all(
+      oci.database.dbSystems.where(state != "TERMINATED" && state != "TERMINATING").all(
         subnet.prohibitPublicIpOnVnic == true
       )
     docs:
@@ -5703,7 +5722,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-6
     mql: |
-      oci.database.dbSystems.all(
+      oci.database.dbSystems.where(state != "TERMINATED" && state != "TERMINATING").all(
         subnet.routeTable.routes.none(
           destination == "0.0.0.0/0" && internetGateway != null
         )
@@ -6376,7 +6395,8 @@ queries:
   - uid: mondoo-oci-security-container-instances-approved-registry-oci
     filters: asset.platform == 'oci'
     mql: |
-      oci.containerInstances.instances.all(
+      # A deleted container instance stays in the list for a while, with the settings it had.
+      oci.containerInstances.instances.where(state != "DELETED" && state != "DELETING").all(
         containers.all(imageUrl == /^[a-z0-9-]+\.ocir\.io\//)
       )
   - uid: mondoo-oci-security-container-instances-approved-registry-terraform-hcl
@@ -10932,7 +10952,7 @@ queries:
   - uid: mondoo-oci-security-block-volume-customer-managed-encryption-oci
     filters: asset.platform == 'oci'
     mql: |
-      oci.compute.blockVolumes.all(kmsKey != null)
+      oci.compute.blockVolumes.where(state != "TERMINATED" && state != "TERMINATING").all(kmsKey != null)
   - uid: mondoo-oci-security-block-volume-customer-managed-encryption-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_core_volume')
@@ -11096,7 +11116,7 @@ queries:
   - uid: mondoo-oci-security-boot-volume-customer-managed-encryption-oci
     filters: asset.platform == 'oci'
     mql: |
-      oci.compute.bootVolumes.all(kmsKey != null)
+      oci.compute.bootVolumes.where(state != "TERMINATED" && state != "TERMINATING").all(kmsKey != null)
   - uid: mondoo-oci-security-boot-volume-customer-managed-encryption-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_core_boot_volume')
@@ -11418,7 +11438,7 @@ queries:
   - uid: mondoo-oci-security-dbsystem-customer-managed-encryption-oci
     filters: asset.platform == 'oci'
     mql: |
-      oci.database.dbSystems.all(kmsKey != null)
+      oci.database.dbSystems.where(state != "TERMINATED" && state != "TERMINATING").all(kmsKey != null)
   - uid: mondoo-oci-security-dbsystem-customer-managed-encryption-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_database_db_system')
@@ -11553,7 +11573,7 @@ queries:
   - uid: mondoo-oci-security-adb-customer-managed-encryption-oci
     filters: asset.platform == 'oci'
     mql: |
-      oci.database.autonomousDatabases.all(kmsKey != null)
+      oci.database.autonomousDatabases.where(state != "TERMINATED" && state != "TERMINATING").all(kmsKey != null)
   - uid: mondoo-oci-security-adb-customer-managed-encryption-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_database_autonomous_database')
@@ -11922,7 +11942,8 @@ queries:
   - uid: mondoo-oci-security-compute-vnic-source-dest-check-oci
     filters: asset.platform == 'oci'
     mql: |
-      oci.compute.instances.all(
+      # A terminated instance stays in the list for a while, with the settings it had.
+      oci.compute.instances.where(state != "TERMINATED" && state != "TERMINATING").all(
         vnics.all(skipSourceDestCheck == false)
       )
   - uid: mondoo-oci-security-compute-vnic-source-dest-check-terraform-hcl
@@ -11969,7 +11990,8 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-2-6
     filters: asset.platform == "oci"
     mql: |
-      oci.compute.instances.all(
+      # A terminated instance stays in the list for a while, with the settings it had.
+      oci.compute.instances.where(state != "TERMINATED" && state != "TERMINATING").all(
         exposure.internetReachable == false
       )
     docs:
@@ -12054,7 +12076,8 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-2-6
     filters: asset.platform == "oci"
     mql: |
-      oci.database.autonomousDatabases.all(
+      # A terminated database stays in the list for a while, with the settings it had.
+      oci.database.autonomousDatabases.where(state != "TERMINATED" && state != "TERMINATING").all(
         internetReachable == false
       )
     docs:
@@ -12218,7 +12241,8 @@ queries:
   - uid: mondoo-oci-security-adb-standby-acl-not-open-oci
     filters: asset.platform == "oci"
     mql: |
-      oci.database.autonomousDatabases.all(
+      # A terminated database stays in the list for a while, with the settings it had.
+      oci.database.autonomousDatabases.where(state != "TERMINATED" && state != "TERMINATING").all(
         standbyWhitelistedIps.none(_ == "0.0.0.0/0" || _ == "0.0.0.0" || _ == "::/0")
       )
   - uid: mondoo-oci-security-adb-standby-acl-not-open-terraform-hcl
@@ -12362,7 +12386,8 @@ queries:
   - uid: mondoo-oci-security-apigateway-gateway-public-restricted-by-nsg-oci
     filters: asset.platform == 'oci'
     mql: |
-      oci.apigateway.gateways.all(
+      # A deleted gateway stays in the list for a while, with the settings it had.
+      oci.apigateway.gateways.where(state != "DELETED" && state != "DELETING").all(
         endpointType != "PUBLIC" ||
         networkSecurityGroups.length > 0
       )
@@ -13072,7 +13097,8 @@ queries:
       # The certificate settings are forward-proxy only and read null on an inbound-inspection
       # profile, so asserting them everywhere would compare null to true on profiles the
       # setting does not exist for.
-      oci.networkFirewall.policies.all(
+      # A deleted one stays in the list for a while, with the settings it had.
+      oci.networkFirewall.policies.where(state != "DELETED" && state != "DELETING").all(
         decryptionProfiles.all(
           isUnsupportedVersionBlocked == true &&
           isUnsupportedCipherBlocked == true
@@ -13251,7 +13277,8 @@ queries:
     mql: |
       # An absent or empty sourceAddress key matches every source, so both cases have to
       # count as unscoped; != empty covers null and the empty list together.
-      oci.networkFirewall.policies.all(
+      # A deleted one stays in the list for a while, with the settings it had.
+      oci.networkFirewall.policies.where(state != "DELETED" && state != "DELETING").all(
         securityRules.where(action == "ALLOW").all(
           condition["sourceAddress"] != empty
         )
@@ -13392,7 +13419,8 @@ queries:
   - uid: mondoo-oci-security-bastion-client-cidr-not-open-oci
     filters: asset.platform == 'oci'
     mql: |
-      oci.bastion.bastions.all(
+      # A deleted one stays in the list for a while, with the settings it had.
+      oci.bastion.bastions.where(state != "DELETED" && state != "DELETING").all(
         clientCidrBlockAllowList.none(_ == "0.0.0.0/0" || _ == "::/0")
       )
   - uid: mondoo-oci-security-bastion-client-cidr-not-open-terraform-hcl
@@ -13525,7 +13553,8 @@ queries:
     mql: |
       # maxSessionTtlInSeconds is null when the bastion reports no limit, which is not a
       # bounded lifetime, so presence is asserted before the comparison.
-      oci.bastion.bastions.all(
+      # A deleted one stays in the list for a while, with the settings it had.
+      oci.bastion.bastions.where(state != "DELETED" && state != "DELETING").all(
         maxSessionTtlInSeconds != empty && maxSessionTtlInSeconds <= 3600
       )
   - uid: mondoo-oci-security-bastion-session-ttl-limited-terraform-hcl
