@@ -103,7 +103,7 @@ PROVIDER_MAP = {
     # every later 1.x, so `upstream/pins.py` asks whether the constraint
     # resolves the newest release rather than whether it is spelled the way
     # that file would spell it, and proposes 2.x only once 2.x has one.
-    "alicloud": ("aliyun/alicloud", "~> 1.288"),
+    "alicloud": ("aliyun/alicloud", "~> 2.0"),
     "clickhouse": ("ClickHouse/clickhouse", "~> 3.0"),
     "cloudflare": ("cloudflare/cloudflare", "~> 5.0"),
     "databricks": ("databricks/databricks", "~> 1.0"),
