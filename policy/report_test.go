@@ -126,3 +126,23 @@ func TestScoreDistributionAddScoreDist(t *testing.T) {
 	require.Equal(t, uint32(2), c.GetError())
 	require.Equal(t, uint32(3), c.GetUnrated())
 }
+
+func TestReportCollectionGetWorstScore(t *testing.T) {
+	t.Run("unrated assets are ignored", func(t *testing.T) {
+		rc := &policy.ReportCollection{Reports: map[string]*policy.Report{
+			"unscored": {Score: &policy.Score{Type: policy.ScoreType_Unscored, ScoreCompletion: 100}},
+			"unknown":  {Score: &policy.Score{Type: policy.ScoreType_Unknown}},
+			"nil":      {},
+		}}
+		require.Equal(t, uint32(100), rc.GetWorstScore())
+	})
+
+	t.Run("worst rated asset wins", func(t *testing.T) {
+		rc := &policy.ReportCollection{Reports: map[string]*policy.Report{
+			"unscored": {Score: &policy.Score{Type: policy.ScoreType_Unscored, ScoreCompletion: 100}},
+			"good":     {Score: &policy.Score{Type: policy.ScoreType_Result, Value: 90, ScoreCompletion: 100}},
+			"bad":      {Score: &policy.Score{Type: policy.ScoreType_Result, Value: 40, ScoreCompletion: 100}},
+		}}
+		require.Equal(t, uint32(40), rc.GetWorstScore())
+	})
+}

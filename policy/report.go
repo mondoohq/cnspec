@@ -161,6 +161,11 @@ func (r *ReportCollection) GetWorstScore() uint32 {
 		if r == nil || r.Score == nil {
 			continue
 		}
+		// An unrated asset has no score to compare. Its Value is 0, which
+		// would otherwise read as the worst possible score (risk 100).
+		if r.Score.Rating() == ScoreRating_unrated {
+			continue
+		}
 
 		if r.Score.Value < worstScore {
 			worstScore = r.Score.Value
