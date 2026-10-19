@@ -14628,11 +14628,25 @@ queries:
       aws.s3.bucket.acl.none(
         permission == "FULL_CONTROL" && grantee['URI'] == "http://acs.amazonaws.com/groups/global/AllUsers"
       )
+  # aws_s3_bucket_acl takes either a canned `acl` or an `access_control_policy`
+  # of explicit grants, so both are read. Read access to objects comes from
+  # READ or FULL_CONTROL (READ_ACP only exposes the ACL itself). AWS treats a
+  # grant to AuthenticatedUsers (any AWS account) as public, like AllUsers, and
+  # the `authenticated-read` canned ACL grants that group READ.
   - uid: mondoo-aws-security-s3-bucket-public-read-prohibited-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket_acl")
     mql: |
       terraform.resources("aws_s3_bucket_acl").all(
-        arguments['acl'].downcase != /public-read/
+        (arguments['acl'] == null || arguments['acl'].downcase != /^(public-read|public-read-write|authenticated-read)$/) &&
+        blocks.where(type == "access_control_policy").all(
+          blocks.where(type == "grant").none(
+            (arguments['permission'] == "READ" || arguments['permission'] == "FULL_CONTROL") &&
+            blocks.where(type == "grantee").any(
+              arguments['uri'] == "http://acs.amazonaws.com/groups/global/AllUsers" ||
+              arguments['uri'] == "http://acs.amazonaws.com/groups/global/AuthenticatedUsers"
+            )
+          )
+        )
       )
   - uid: mondoo-aws-security-s3-bucket-public-read-prohibited-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_s3_bucket_acl")
