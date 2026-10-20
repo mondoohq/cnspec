@@ -10004,7 +10004,27 @@ queries:
             }
             ```
 
-            Remove any HTTP listeners from the configuration. This check requires every listener in Terraform code to use HTTPS, so handle HTTP-to-HTTPS redirects outside the load balancer or accept HTTPS-only ingress.
+            An HTTP listener passes only when its default action redirects to HTTPS:
+
+            ```hcl
+            resource "aws_lb_listener" "http" {
+              load_balancer_arn = aws_lb.secure_alb.arn
+              port              = "80"
+              protocol          = "HTTP"
+
+              default_action {
+                type = "redirect"
+
+                redirect {
+                  port        = "443"
+                  protocol    = "HTTPS"
+                  status_code = "HTTP_301"
+                }
+              }
+            }
+            ```
+
+            Remove or convert any HTTP listener that forwards traffic to targets.
         - id: cloudformation
           desc: |
             To ensure Application Load Balancers are configured with HTTPS listeners in CloudFormation:
@@ -10050,7 +10070,12 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lb_listener")
     mql: |
       terraform.resources("aws_lb_listener").all(
-        arguments.protocol == "HTTPS"
+        arguments.protocol == "HTTPS" ||
+        arguments.protocol == "TLS" ||
+        blocks.where(type == "default_action").any(
+          arguments["type"] == "redirect" &&
+          blocks.where(type == "redirect").any(arguments["protocol"] == "HTTPS")
+        )
       )
   - uid: mondoo-aws-security-elb-ssl-listener-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_lb_listener")
