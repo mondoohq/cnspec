@@ -97,6 +97,16 @@ func sarifLinterRules() []Rule {
 		Name:        "Filter uses deprecated MQL symbol",
 		Description: "A filter on a query, policy group, query pack or pack group references a resource or field annotated with @maturity('deprecated')",
 	})
+	rules = append(rules, Rule{
+		ID:          QueryStandaloneWhereRuleID,
+		Name:        "Query filters a list by a condition that ignores its element",
+		Description: "A query's MQL filters a resource list with a condition that never references the list element, so the filter keeps or drops the whole list",
+	})
+	rules = append(rules, Rule{
+		ID:          FilterStandaloneWhereRuleID,
+		Name:        "Filter filters a list by a condition that ignores its element",
+		Description: "A filter on a query, policy group, query pack or pack group filters a resource list with a condition that never references the list element",
+	})
 
 	return rules
 }
