@@ -455,6 +455,17 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 	now := s.NowProvider()
 	conf := s.NewCompilerConfig()
 
+	// ChecksumAssetFilters recompiles the filters in place, so keep the CodeIds
+	// the caller sent for the cache-miss event
+	events := ResolverEventsFromContext(ctx)
+	var sentCodeIds map[*Mquery]string
+	if events != nil {
+		sentCodeIds = make(map[*Mquery]string, len(assetFilters))
+		for i := range assetFilters {
+			sentCodeIds[assetFilters[i]] = assetFilters[i].CodeId
+		}
+	}
+
 	// phase 1: resolve asset filters and see if we can find a cached policy
 	// trying first with all asset filters
 	allFiltersChecksum, err := ChecksumAssetFilters(assetFilters, conf)
@@ -494,7 +505,23 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 	if err != nil {
 		return nil, err
 	}
+
+	reportMiss := func(storedFiltersChecksum string) {
+		if events == nil || len(exceptionGroups) != 0 {
+			return
+		}
+		events.ResolvedPolicyCacheMiss(ctx, &ResolvedPolicyCacheMiss{
+			PolicyMrn:             bundleMrn,
+			LookupFiltersChecksum: allFiltersChecksum,
+			StoredFiltersChecksum: storedFiltersChecksum,
+			AssetFilters:          len(assetFilters),
+			MatchingFilters:       len(matchingFilters),
+			DroppedFilters:        droppedAssetFilters(assetFilters, matchingFilters, sentCodeIds, policyObj.ComputedFilters),
+		})
+	}
+
 	if len(matchingFilters) == 0 {
+		reportMiss("")
 		return nil, NewAssetMatchError(bundleMrn, "policies", "no-matching-policy", assetFilters, policyObj.ComputedFilters)
 	}
 
@@ -502,6 +529,7 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 	if err != nil {
 		return nil, err
 	}
+	reportMiss(resolvedPolicy.FiltersChecksum)
 
 	if len(exceptionGroups) == 0 {
 		err = s.DataLake.SetResolvedPolicy(ctx, bundleMrn, resolvedPolicy, V2Code, false)
