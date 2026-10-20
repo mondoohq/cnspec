@@ -3456,15 +3456,46 @@ queries:
   - uid: mondoo-aws-security-mfa-enabled-for-iam-console-access-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_user_login_profile")
     mql: |
-      mfaDenyPolicies = terraform.resources.where(nameLabel == "aws_iam_policy").where(arguments["policy"].where(_["Statement"] != null) != empty).where(
-        arguments["policy"].first["Statement"].where(_["Effect"] == "Deny").where(
+      # A policy that denies requests made without MFA only protects the users it
+      # applies to, so each user with a console password (a login profile) must be
+      # covered by one: inline on the user, attached to the user, or attached
+      # inline or managed to a group the user belongs to. The deny statement is
+      # read from jsonencode, heredoc and aws_iam_policy_document policies.
+      mfaDocs = terraform.datasources.where(nameLabel == "aws_iam_policy_document").where(
+        blocks.where(type == "statement" && arguments["effect"] == "Deny").any(
+          blocks.where(type == "condition" && arguments["test"] == /^Bool(IfExists)?$/ && arguments["variable"] == /^aws:MultiFactorAuthPresent$/i && arguments["values"].any(_ == "false" || _ == false)) != empty
+        )
+      )
+      mfaPolicies = terraform.resources.where(nameLabel == "aws_iam_policy" || nameLabel == "aws_iam_user_policy" || nameLabel == "aws_iam_group_policy").where(holder:
+        holder.arguments["policy"].first["Statement"] != null && holder.arguments["policy"].first["Statement"].where(_["Effect"] == "Deny").where(
           _["Condition"]["Bool"]["aws:MultiFactorAuthPresent"] == "false" ||
           _["Condition"]["Bool"]["aws:MultiFactorAuthPresent"] == false ||
           _["Condition"]["BoolIfExists"]["aws:MultiFactorAuthPresent"] == "false" ||
           _["Condition"]["BoolIfExists"]["aws:MultiFactorAuthPresent"] == false
-        ) != empty
+        ) != empty ||
+        holder.arguments["policy"] == /^\s*\{/ && holder.arguments["policy"].json["Statement"].where(_["Effect"] == "Deny").where(
+          _["Condition"]["Bool"]["aws:MultiFactorAuthPresent"] == "false" ||
+          _["Condition"]["Bool"]["aws:MultiFactorAuthPresent"] == false ||
+          _["Condition"]["BoolIfExists"]["aws:MultiFactorAuthPresent"] == "false" ||
+          _["Condition"]["BoolIfExists"]["aws:MultiFactorAuthPresent"] == false
+        ) != empty ||
+        mfaDocs.any(doc: holder.arguments["policy"] == "data.aws_iam_policy_document." + doc.labels[1] + ".json")
       )
-      mfaDenyPolicies.length > 0
+      terraform.resources("aws_iam_user_login_profile").all(profile:
+        mfaPolicies.any(p: p.nameLabel == "aws_iam_user_policy" && p.arguments["user"] == profile.arguments["user"]) ||
+        terraform.resources("aws_iam_user_policy_attachment").any(ua: ua.arguments["user"] == profile.arguments["user"] && mfaPolicies.any(p: ua.arguments["policy_arn"] == "aws_iam_policy." + p.labels[1] + ".arn")) ||
+        terraform.resources("aws_iam_policy_attachment").any(pa: pa.arguments["users"].contains(_ == profile.arguments["user"]) && mfaPolicies.any(p: pa.arguments["policy_arn"] == "aws_iam_policy." + p.labels[1] + ".arn")) ||
+        terraform.resources("aws_iam_user_group_membership").any(m:
+          m.arguments["user"] == profile.arguments["user"] && mfaPolicies.any(p: p.nameLabel == "aws_iam_group_policy" && m.arguments["groups"].contains(_ == p.arguments["group"])) ||
+          m.arguments["user"] == profile.arguments["user"] && terraform.resources("aws_iam_group_policy_attachment").any(ga: m.arguments["groups"].contains(_ == ga.arguments["group"]) && mfaPolicies.any(p: ga.arguments["policy_arn"] == "aws_iam_policy." + p.labels[1] + ".arn")) ||
+          m.arguments["user"] == profile.arguments["user"] && terraform.resources("aws_iam_policy_attachment").any(pa: pa.arguments["groups"].any(pg: m.arguments["groups"].contains(_ == pg)) && mfaPolicies.any(p: pa.arguments["policy_arn"] == "aws_iam_policy." + p.labels[1] + ".arn"))
+        ) ||
+        terraform.resources("aws_iam_group_membership").any(m:
+          m.arguments["users"].contains(_ == profile.arguments["user"]) && mfaPolicies.any(p: p.nameLabel == "aws_iam_group_policy" && p.arguments["group"] == m.arguments["group"]) ||
+          m.arguments["users"].contains(_ == profile.arguments["user"]) && terraform.resources("aws_iam_group_policy_attachment").any(ga: ga.arguments["group"] == m.arguments["group"] && mfaPolicies.any(p: ga.arguments["policy_arn"] == "aws_iam_policy." + p.labels[1] + ".arn")) ||
+          m.arguments["users"].contains(_ == profile.arguments["user"]) && terraform.resources("aws_iam_policy_attachment").any(pa: pa.arguments["groups"].contains(_ == m.arguments["group"]) && mfaPolicies.any(p: pa.arguments["policy_arn"] == "aws_iam_policy." + p.labels[1] + ".arn"))
+        )
+      )
   - uid: mondoo-aws-security-mfa-enabled-for-iam-console-access-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_user_login_profile")
     mql: |
@@ -11928,21 +11959,24 @@ queries:
           ipRanges.contains("0.0.0.0/0") || ipv6Ranges.contains("::/0")
           )
   - uid: mondoo-aws-security-secgroup-restricted-ssh-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule" || nameLabel == "aws_security_group_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
-        blocks.where(type == "ingress" && arguments.from_port <= 22 && arguments.to_port >= 22).none(
+        blocks.where(type == "ingress" && arguments.protocol == "-1" || type == "ingress" && arguments.from_port <= 22 && arguments.to_port >= 22).none(
           arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
         )
-      ) &&
+      )
       terraform.resources("aws_security_group").all(
         arguments["ingress"] == empty ||
-        arguments["ingress"].where(_["from_port"] <= 22 && _["to_port"] >= 22).none(
+        arguments["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 22 && _["to_port"] >= 22).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
-      ) &&
-      terraform.resources("aws_vpc_security_group_ingress_rule").where(arguments.from_port <= 22 && arguments.to_port >= 22).all(
+      )
+      terraform.resources("aws_vpc_security_group_ingress_rule").where(arguments.ip_protocol == "-1" || arguments.ip_protocol == "all" || arguments.from_port <= 22 && arguments.to_port >= 22).all(
         arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
+      )
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["protocol"] == "-1" || arguments["protocol"] == "all" || arguments["from_port"] <= 22 && arguments["to_port"] >= 22).none(
+        arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-ssh-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( type == "aws_security_group")
@@ -12344,20 +12378,20 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule" || nameLabel == "aws_security_group_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
-        blocks.where(type == "ingress" && arguments.from_port <= 3389 && arguments.to_port >= 3389).none(
+        blocks.where(type == "ingress" && arguments.protocol == "-1" || type == "ingress" && arguments.from_port <= 3389 && arguments.to_port >= 3389).none(
           arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
         )
-      ) &&
+      )
       terraform.resources("aws_security_group").all(
         arguments["ingress"] == empty ||
-        arguments["ingress"].where(_["from_port"] <= 3389 && _["to_port"] >= 3389).none(
+        arguments["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 3389 && _["to_port"] >= 3389).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
-      ) &&
-      terraform.resources("aws_vpc_security_group_ingress_rule").where(arguments.from_port <= 3389 && arguments.to_port >= 3389).all(
+      )
+      terraform.resources("aws_vpc_security_group_ingress_rule").where(arguments.ip_protocol == "-1" || arguments.ip_protocol == "all" || arguments.from_port <= 3389 && arguments.to_port >= 3389).all(
         arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
-      ) &&
-      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["from_port"] <= 3389 && arguments["to_port"] >= 3389).none(
+      )
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["protocol"] == "-1" || arguments["protocol"] == "all" || arguments["from_port"] <= 3389 && arguments["to_port"] >= 3389).none(
         arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-rdp-terraform-plan
@@ -12570,10 +12604,10 @@ queries:
         blocks.where(type == "ingress").where(arguments["protocol"] == "-1" || arguments["protocol"] == -1 || arguments["protocol"] == "all").none(
           arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
         )
-      ) &&
+      )
       terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["protocol"] == "-1" || arguments["protocol"] == -1 || arguments["protocol"] == "all").none(
         arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
-      ) &&
+      )
       terraform.resources("aws_vpc_security_group_ingress_rule").where(arguments["ip_protocol"] == "-1" || arguments["ip_protocol"] == -1 || arguments["ip_protocol"] == "all").none(
         arguments.cidr_ipv4 == "0.0.0.0/0" || arguments.cidr_ipv6 == "::/0"
       )
@@ -13961,10 +13995,19 @@ queries:
   - uid: mondoo-aws-security-iam-no-wildcards-policies-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_policy" || nameLabel == "aws_iam_user_policy" || nameLabel == "aws_iam_role_policy" || nameLabel == "aws_iam_group_policy")
     mql: |
-      terraform.resources("aws_iam_policy").where(arguments["policy"].first["Statement"] != null).all(arguments["policy"].first["Statement"].all(_["Effect"].downcase == "deny" || [_["Resource"]].flat.any(_.contains("*")) == false && [_["Action"]].flat.any(_.contains("*")) == false))
-      terraform.resources("aws_iam_role_policy").where(arguments["policy"].first["Statement"] != null).all(arguments["policy"].first["Statement"].all(_["Effect"].downcase == "deny" || [_["Resource"]].flat.any(_.contains("*")) == false && [_["Action"]].flat.any(_.contains("*")) == false))
-      terraform.resources("aws_iam_user_policy").where(arguments["policy"].first["Statement"] != null).all(arguments["policy"].first["Statement"].all(_["Effect"].downcase == "deny" || [_["Resource"]].flat.any(_.contains("*")) == false && [_["Action"]].flat.any(_.contains("*")) == false))
-      terraform.resources("aws_iam_group_policy").where(arguments["policy"].first["Statement"] != null).all(arguments["policy"].first["Statement"].all(_["Effect"].downcase == "deny" || [_["Resource"]].flat.any(_.contains("*")) == false && [_["Action"]].flat.any(_.contains("*")) == false))
+      # `policy` surfaces three ways. A `jsonencode({...})` becomes a one-element
+      # list holding the document, a heredoc becomes the JSON string itself, and a
+      # `data.aws_iam_policy_document` reference becomes the traversal string, in
+      # which case the statements are read from that data source.
+      policyResources = terraform.resources.where(nameLabel == "aws_iam_policy" || nameLabel == "aws_iam_role_policy" || nameLabel == "aws_iam_user_policy" || nameLabel == "aws_iam_group_policy")
+      policyResources.where(arguments["policy"].first["Statement"] != null).all(arguments["policy"].first["Statement"].all(_["Effect"].downcase == "deny" || [_["Resource"]].flat.any(_.contains("*")) == false && [_["Action"]].flat.any(_.contains("*")) == false))
+      policyResources.where(arguments["policy"] == /^\s*\{/).all(arguments["policy"].json["Statement"].all(_["Effect"].downcase == "deny" || [_["Resource"]].flat.any(_.contains("*")) == false && [_["Action"]].flat.any(_.contains("*")) == false))
+      policyDocRefs = policyResources.map(arguments["policy"]).join(",")
+      terraform.datasources.where(nameLabel == "aws_iam_policy_document" && policyDocRefs.contains("data.aws_iam_policy_document." + labels[1] + ".json")).all(
+        blocks.where(type == "statement" && arguments["effect"] != "Deny").all(
+          arguments["resources"].where(_.contains("*")) == empty && arguments["actions"].where(_.contains("*")) == empty
+        )
+      )
   - uid: mondoo-aws-security-iam-no-wildcards-policies-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_policy" || type == "aws_iam_user_policy" || type == "aws_iam_role_policy" || type == "aws_iam_group_policy")
     mql: |
@@ -15000,17 +15043,17 @@ queries:
       aws.cloudtrail.trail.isLogging == true
   - uid: mondoo-aws-security-cloud-trail-multi-region-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail")
-    mql: terraform.resources("aws_cloudtrail").any(arguments.is_multi_region_trail == true)
+    mql: terraform.resources("aws_cloudtrail").any(arguments.is_multi_region_trail == true && arguments.enable_logging != false)
   - uid: mondoo-aws-security-cloud-trail-multi-region-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudtrail")
-    mql: terraform.plan.resourceChanges.where(type == "aws_cloudtrail").any(change.after.is_multi_region_trail == true)
+    mql: terraform.plan.resourceChanges.where(type == "aws_cloudtrail").any(change.after.is_multi_region_trail == true && change.after.enable_logging != false)
   - uid: mondoo-aws-security-cloud-trail-multi-region-enabled-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudtrail")
-    mql: terraform.state.resources.where(type == "aws_cloudtrail").any(values.is_multi_region_trail == true)
+    mql: terraform.state.resources.where(type == "aws_cloudtrail").any(values.is_multi_region_trail == true && values.enable_logging != false)
   - uid: mondoo-aws-security-cloud-trail-multi-region-enabled-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::CloudTrail::Trail")
     mql: |
-      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").any(properties['IsMultiRegionTrail'] == true)
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").any(properties['IsMultiRegionTrail'] == true && properties['IsLogging'] != false)
   - uid: mondoo-aws-security-cloudfront-viewer-policy-https
     title: Ensure CloudFront distributions require HTTPS for viewer connections
     impact: 80
@@ -20255,25 +20298,29 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_secretsmanager_secret")
     mql: |
       terraform.resources("aws_secretsmanager_secret").all(
-        arguments.kms_key_id != empty
+        arguments.kms_key_id != empty &&
+        arguments.kms_key_id.contains("alias/aws/secretsmanager") == false
       )
   - uid: mondoo-aws-security-secretsmanager-cmk-encryption-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_secretsmanager_secret")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_secretsmanager_secret").all(
-        change.after.kms_key_id != empty
+        change.after.kms_key_id != empty &&
+        change.after.kms_key_id.contains("alias/aws/secretsmanager") == false
       )
   - uid: mondoo-aws-security-secretsmanager-cmk-encryption-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_secretsmanager_secret")
     mql: |
       terraform.state.resources.where(type == "aws_secretsmanager_secret").all(
-        values.kms_key_id != empty
+        values.kms_key_id != empty &&
+        values.kms_key_id.contains("alias/aws/secretsmanager") == false
       )
   - uid: mondoo-aws-security-secretsmanager-cmk-encryption-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SecretsManager::Secret")
     mql: |
       cloudformation.template.resources.where(type == "AWS::SecretsManager::Secret").all(
-      properties['KmsKeyId'] != empty
+      properties['KmsKeyId'] != empty &&
+      properties['KmsKeyId'].contains("alias/aws/secretsmanager") == false
       )
   - uid: mondoo-aws-security-iam-access-analyzer-enabled
     title: Ensure IAM Access Analyzer is enabled
@@ -22273,8 +22320,16 @@ queries:
   - uid: mondoo-aws-security-redshift-cluster-audit-logging-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_redshift_cluster")
     mql: |
-      terraform.resources("aws_redshift_cluster").all(
-        terraform.resources("aws_redshift_logging") != empty
+      # A cluster logs when an aws_redshift_logging resource names it, by
+      # reference or by its literal cluster_identifier, or when it carries an
+      # enabled inline logging block, which older provider versions accept.
+      terraform.resources("aws_redshift_cluster").all(cluster:
+        cluster.blocks.where(type == "logging").any(arguments["enable"] == true) ||
+        terraform.resources("aws_redshift_logging").any(logging:
+          logging.arguments["cluster_identifier"] == cluster.arguments["cluster_identifier"] ||
+          logging.arguments["cluster_identifier"] == "aws_redshift_cluster." + cluster.labels[1] + ".id" ||
+          logging.arguments["cluster_identifier"] == "aws_redshift_cluster." + cluster.labels[1] + ".cluster_identifier"
+        )
       )
   - uid: mondoo-aws-security-redshift-cluster-audit-logging-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_redshift_cluster")
@@ -51859,16 +51914,42 @@ queries:
   - uid: mondoo-aws-security-sqs-no-wildcard-policy-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_sqs_queue_policy")
     mql: |
+      # `policy` surfaces three ways. A `jsonencode({...})` becomes a one-element
+      # list holding the document, a heredoc becomes the JSON string itself, and a
+      # `data.aws_iam_policy_document` reference becomes the traversal string, in
+      # which case the statements are read from that data source. A wildcard
+      # principal is not reported when a condition pins it to fixed values of a
+      # key that identifies the caller, its source, or its network path.
       terraform.resources("aws_sqs_queue_policy").all(
-        arguments.policy.first != null &&
-        arguments.policy.first["Statement"].where(_["Effect"] == "Allow").none(
+        arguments.policy.first["Statement"] == null ||
+        arguments.policy.first["Statement"].where(_["Effect"] == "Allow").where(
+          _["Condition"] == empty || _["Condition"].where(key == /^(foranyvalue:)?(stringequals|stringequalsignorecase|stringlike|arnequals|arnlike)$/i).values.where(
+            _.where(key == /^(aws:(sourcearn|sourceaccount|sourceowner|sourcevpc|sourcevpce|principalorgid|principalorgpaths|principalaccount|principalarn))$/i && [value].flat.none(_.contains("*") || _.contains("${"))) != empty
+          ) == empty
+        ).none(
           _["Principal"] == "*" ||
           _["Principal"]["AWS"] == "*" ||
           _["Principal"]["AWS"] != null && _["Principal"]["AWS"].contains("*")
-        ) ||
-        arguments.policy.first == null &&
-        arguments.policy != /"Principal"\s*:\s*"\*"/ &&
-        arguments.policy != /"AWS"\s*:\s*\[?\s*"\*"/
+        )
+      )
+      terraform.resources("aws_sqs_queue_policy").where(arguments.policy == /^\s*\{/).all(
+        arguments.policy.json["Statement"].where(_["Effect"] == "Allow").where(
+          _["Condition"] == empty || _["Condition"].where(key == /^(foranyvalue:)?(stringequals|stringequalsignorecase|stringlike|arnequals|arnlike)$/i).values.where(
+            _.where(key == /^(aws:(sourcearn|sourceaccount|sourceowner|sourcevpc|sourcevpce|principalorgid|principalorgpaths|principalaccount|principalarn))$/i && [value].flat.none(_.contains("*") || _.contains("${"))) != empty
+          ) == empty
+        ).none(
+          _["Principal"] == "*" ||
+          _["Principal"]["AWS"] == "*" ||
+          _["Principal"]["AWS"] != null && _["Principal"]["AWS"].contains("*")
+        )
+      )
+      sqsDocRefs = terraform.resources("aws_sqs_queue_policy").map(arguments["policy"]).join(",")
+      terraform.datasources.where(nameLabel == "aws_iam_policy_document" && sqsDocRefs.contains("data.aws_iam_policy_document." + labels[1] + ".json")).all(
+        blocks.where(type == "statement" && arguments["effect"] != "Deny").where(
+          blocks.where(type == "condition" && arguments["test"] == /^(foranyvalue:)?(stringequals|stringequalsignorecase|stringlike|arnequals|arnlike)$/i && arguments["variable"] == /^(aws:(sourcearn|sourceaccount|sourceowner|sourcevpc|sourcevpce|principalorgid|principalorgpaths|principalaccount|principalarn))$/i && arguments["values"].none(_.contains("*") || _.contains("${"))) == empty
+        ).none(
+          blocks.where(type == "principals").any(arguments["type"] == "*" || arguments["type"] == "AWS" && arguments["identifiers"].contains("*"))
+        )
       )
   - uid: mondoo-aws-security-sqs-no-wildcard-policy-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_sqs_queue_policy")
@@ -58954,9 +59035,39 @@ queries:
   - uid: mondoo-aws-security-ecr-no-overly-permissive-policy-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ecr_repository_policy")
     mql: |
+      # `policy` surfaces three ways. A `jsonencode({...})` becomes a one-element
+      # list holding the document, a heredoc becomes the JSON string itself, and a
+      # `data.aws_iam_policy_document` reference becomes the traversal string, in
+      # which case the statements are read from that data source.
+      # A wildcard principal is not reported when a condition pins it to fixed
+      # values of a key that identifies the caller, its source, or its network
+      # path, such as aws:PrincipalOrgID.
       terraform.resources("aws_ecr_repository_policy").all(
-        arguments['policy'] != /\"Principal\"\s*:\s*\"\*\"/ &&
-        arguments['policy'] != /\"Principal\"\s*:\s*\{\s*\"AWS\"\s*:\s*\"\*\"\s*\}/
+        arguments.policy.first["Statement"] == null ||
+        arguments.policy.first["Statement"].where(_["Effect"] == "Allow").where(
+          _["Condition"] == empty || _["Condition"].where(key == /^(foranyvalue:)?(stringequals|stringequalsignorecase|stringlike|arnequals|arnlike)$/i).values.where(
+            _.where(key == /^(aws:(sourcearn|sourceaccount|sourceowner|sourcevpc|sourcevpce|principalorgid|principalorgpaths|principalaccount|principalarn))$/i && [value].flat.none(_.contains("*") || _.contains("${"))) != empty
+          ) == empty
+        ).none(
+          _["Principal"] == "*" || [_["Principal"]["AWS"]].flat.contains("*")
+        )
+      )
+      terraform.resources("aws_ecr_repository_policy").where(arguments.policy == /^\s*\{/).all(
+        arguments.policy.json["Statement"].where(_["Effect"] == "Allow").where(
+          _["Condition"] == empty || _["Condition"].where(key == /^(foranyvalue:)?(stringequals|stringequalsignorecase|stringlike|arnequals|arnlike)$/i).values.where(
+            _.where(key == /^(aws:(sourcearn|sourceaccount|sourceowner|sourcevpc|sourcevpce|principalorgid|principalorgpaths|principalaccount|principalarn))$/i && [value].flat.none(_.contains("*") || _.contains("${"))) != empty
+          ) == empty
+        ).none(
+          _["Principal"] == "*" || [_["Principal"]["AWS"]].flat.contains("*")
+        )
+      )
+      ecrDocRefs = terraform.resources("aws_ecr_repository_policy").map(arguments["policy"]).join(",")
+      terraform.datasources.where(nameLabel == "aws_iam_policy_document" && ecrDocRefs.contains("data.aws_iam_policy_document." + labels[1] + ".json")).all(
+        blocks.where(type == "statement" && arguments["effect"] != "Deny").where(
+          blocks.where(type == "condition" && arguments["test"] == /^(foranyvalue:)?(stringequals|stringequalsignorecase|stringlike|arnequals|arnlike)$/i && arguments["variable"] == /^(aws:(sourcearn|sourceaccount|sourceowner|sourcevpc|sourcevpce|principalorgid|principalorgpaths|principalaccount|principalarn))$/i && arguments["values"].none(_.contains("*") || _.contains("${"))) == empty
+        ).none(
+          blocks.where(type == "principals").any(arguments["type"] == "*" || arguments["type"] == "AWS" && arguments["identifiers"].contains("*"))
+        )
       )
   - uid: mondoo-aws-security-ecr-no-overly-permissive-policy-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ecr_repository_policy")
@@ -69167,9 +69278,38 @@ queries:
   - uid: mondoo-aws-security-s3-bucket-policy-no-public-principal-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket_policy")
     mql: |
-      terraform.resources("aws_s3_bucket_policy").where(arguments.policy.first["Statement"] != null).all(
-        arguments.policy.first["Statement"].where(_["Effect"] == "Allow").none(
-          _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
+      # `policy` surfaces three ways. A `jsonencode({...})` becomes a one-element
+      # list holding the document, a heredoc becomes the JSON string itself, and a
+      # `data.aws_iam_policy_document` reference becomes the traversal string, in
+      # which case the statements are read from that data source.
+      # A wildcard principal is not public when a condition pins it to fixed
+      # values of a key S3 accepts as limiting the grant: the principal, the
+      # source ARN, account, VPC or VPC endpoint, or the access point.
+      terraform.resources("aws_s3_bucket_policy").all(
+        arguments.policy.first["Statement"] == null ||
+        arguments.policy.first["Statement"].where(_["Effect"] == "Allow").where(
+          _["Condition"] == empty || _["Condition"].where(key == /^(foranyvalue:)?(stringequals|stringequalsignorecase|stringlike|arnequals|arnlike)$/i).values.where(
+            _.where(key == /^(aws:(sourcearn|sourceaccount|sourceowner|sourcevpc|sourcevpce|principalorgid|principalorgpaths|principalaccount|principalarn)|s3:dataaccesspointarn|s3:dataaccesspointaccount)$/i && [value].flat.none(_.contains("*") || _.contains("${"))) != empty
+          ) == empty
+        ).none(
+          _["Principal"] == "*" || [_["Principal"]["AWS"]].flat.contains("*")
+        )
+      )
+      terraform.resources("aws_s3_bucket_policy").where(arguments.policy == /^\s*\{/).all(
+        arguments.policy.json["Statement"].where(_["Effect"] == "Allow").where(
+          _["Condition"] == empty || _["Condition"].where(key == /^(foranyvalue:)?(stringequals|stringequalsignorecase|stringlike|arnequals|arnlike)$/i).values.where(
+            _.where(key == /^(aws:(sourcearn|sourceaccount|sourceowner|sourcevpc|sourcevpce|principalorgid|principalorgpaths|principalaccount|principalarn)|s3:dataaccesspointarn|s3:dataaccesspointaccount)$/i && [value].flat.none(_.contains("*") || _.contains("${"))) != empty
+          ) == empty
+        ).none(
+          _["Principal"] == "*" || [_["Principal"]["AWS"]].flat.contains("*")
+        )
+      )
+      s3DocRefs = terraform.resources("aws_s3_bucket_policy").map(arguments["policy"]).join(",")
+      terraform.datasources.where(nameLabel == "aws_iam_policy_document" && s3DocRefs.contains("data.aws_iam_policy_document." + labels[1] + ".json")).all(
+        blocks.where(type == "statement" && arguments["effect"] != "Deny").where(
+          blocks.where(type == "condition" && arguments["test"] == /^(foranyvalue:)?(stringequals|stringequalsignorecase|stringlike|arnequals|arnlike)$/i && arguments["variable"] == /^(aws:(sourcearn|sourceaccount|sourceowner|sourcevpc|sourcevpce|principalorgid|principalorgpaths|principalaccount|principalarn)|s3:dataaccesspointarn|s3:dataaccesspointaccount)$/i && arguments["values"].none(_.contains("*") || _.contains("${"))) == empty
+        ).none(
+          blocks.where(type == "principals").any(arguments["type"] == "*" || arguments["type"] == "AWS" && arguments["identifiers"].contains("*"))
         )
       )
   - uid: mondoo-aws-security-s3-bucket-policy-no-public-principal-terraform-plan
@@ -78336,8 +78476,12 @@ queries:
   - uid: mondoo-aws-security-secretsmanager-rotation-lambda-in-vpc-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lambda_function")
     mql: |
-      terraform.resources("aws_lambda_function").where(
-        arguments.function_name == /rotation|rotate/i
+      # A rotation Lambda is the function a secret's rotation names in
+      # rotation_lambda_arn, whatever the function is called.
+      terraform.resources("aws_lambda_function").where(fn:
+        terraform.resources.where(nameLabel == "aws_secretsmanager_secret_rotation" || nameLabel == "aws_secretsmanager_secret").any(
+          arguments["rotation_lambda_arn"] == "aws_lambda_function." + fn.labels[1] + ".arn"
+        )
       ).all(
         blocks.where(type == "vpc_config") != empty &&
         blocks.where(type == "vpc_config").all(arguments.subnet_ids != empty)

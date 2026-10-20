@@ -26,3 +26,9 @@ resource "aws_iam_policy" "require_mfa" {
 resource "aws_iam_user_login_profile" "example" {
   user = "example-user"
 }
+
+# The policy applies to the console user.
+resource "aws_iam_user_policy_attachment" "require_mfa" {
+  user       = "example-user"
+  policy_arn = aws_iam_policy.require_mfa.arn
+}
