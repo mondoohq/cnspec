@@ -3456,15 +3456,46 @@ queries:
   - uid: mondoo-aws-security-mfa-enabled-for-iam-console-access-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_user_login_profile")
     mql: |
-      mfaDenyPolicies = terraform.resources.where(nameLabel == "aws_iam_policy").where(arguments["policy"].where(_["Statement"] != null) != empty).where(
-        arguments["policy"].first["Statement"].where(_["Effect"] == "Deny").where(
+      # A policy that denies requests made without MFA only protects the users it
+      # applies to, so each user with a console password (a login profile) must be
+      # covered by one: inline on the user, attached to the user, or attached
+      # inline or managed to a group the user belongs to. The deny statement is
+      # read from jsonencode, heredoc and aws_iam_policy_document policies.
+      mfaDocs = terraform.datasources.where(nameLabel == "aws_iam_policy_document").where(
+        blocks.where(type == "statement" && arguments["effect"] == "Deny").any(
+          blocks.where(type == "condition" && arguments["test"] == /^Bool(IfExists)?$/ && arguments["variable"] == /^aws:MultiFactorAuthPresent$/i && arguments["values"].any(_ == "false" || _ == false)) != empty
+        )
+      )
+      mfaPolicies = terraform.resources.where(nameLabel == "aws_iam_policy" || nameLabel == "aws_iam_user_policy" || nameLabel == "aws_iam_group_policy").where(holder:
+        holder.arguments["policy"].first["Statement"] != null && holder.arguments["policy"].first["Statement"].where(_["Effect"] == "Deny").where(
           _["Condition"]["Bool"]["aws:MultiFactorAuthPresent"] == "false" ||
           _["Condition"]["Bool"]["aws:MultiFactorAuthPresent"] == false ||
           _["Condition"]["BoolIfExists"]["aws:MultiFactorAuthPresent"] == "false" ||
           _["Condition"]["BoolIfExists"]["aws:MultiFactorAuthPresent"] == false
-        ) != empty
+        ) != empty ||
+        holder.arguments["policy"] == /^\s*\{/ && holder.arguments["policy"].json["Statement"].where(_["Effect"] == "Deny").where(
+          _["Condition"]["Bool"]["aws:MultiFactorAuthPresent"] == "false" ||
+          _["Condition"]["Bool"]["aws:MultiFactorAuthPresent"] == false ||
+          _["Condition"]["BoolIfExists"]["aws:MultiFactorAuthPresent"] == "false" ||
+          _["Condition"]["BoolIfExists"]["aws:MultiFactorAuthPresent"] == false
+        ) != empty ||
+        mfaDocs.any(doc: holder.arguments["policy"] == "data.aws_iam_policy_document." + doc.labels[1] + ".json")
       )
-      mfaDenyPolicies.length > 0
+      terraform.resources("aws_iam_user_login_profile").all(profile:
+        mfaPolicies.any(p: p.nameLabel == "aws_iam_user_policy" && p.arguments["user"] == profile.arguments["user"]) ||
+        terraform.resources("aws_iam_user_policy_attachment").any(ua: ua.arguments["user"] == profile.arguments["user"] && mfaPolicies.any(p: ua.arguments["policy_arn"] == "aws_iam_policy." + p.labels[1] + ".arn")) ||
+        terraform.resources("aws_iam_policy_attachment").any(pa: pa.arguments["users"].contains(_ == profile.arguments["user"]) && mfaPolicies.any(p: pa.arguments["policy_arn"] == "aws_iam_policy." + p.labels[1] + ".arn")) ||
+        terraform.resources("aws_iam_user_group_membership").any(m:
+          m.arguments["user"] == profile.arguments["user"] && mfaPolicies.any(p: p.nameLabel == "aws_iam_group_policy" && m.arguments["groups"].contains(_ == p.arguments["group"])) ||
+          m.arguments["user"] == profile.arguments["user"] && terraform.resources("aws_iam_group_policy_attachment").any(ga: m.arguments["groups"].contains(_ == ga.arguments["group"]) && mfaPolicies.any(p: ga.arguments["policy_arn"] == "aws_iam_policy." + p.labels[1] + ".arn")) ||
+          m.arguments["user"] == profile.arguments["user"] && terraform.resources("aws_iam_policy_attachment").any(pa: pa.arguments["groups"].any(pg: m.arguments["groups"].contains(_ == pg)) && mfaPolicies.any(p: pa.arguments["policy_arn"] == "aws_iam_policy." + p.labels[1] + ".arn"))
+        ) ||
+        terraform.resources("aws_iam_group_membership").any(m:
+          m.arguments["users"].contains(_ == profile.arguments["user"]) && mfaPolicies.any(p: p.nameLabel == "aws_iam_group_policy" && p.arguments["group"] == m.arguments["group"]) ||
+          m.arguments["users"].contains(_ == profile.arguments["user"]) && terraform.resources("aws_iam_group_policy_attachment").any(ga: ga.arguments["group"] == m.arguments["group"] && mfaPolicies.any(p: ga.arguments["policy_arn"] == "aws_iam_policy." + p.labels[1] + ".arn")) ||
+          m.arguments["users"].contains(_ == profile.arguments["user"]) && terraform.resources("aws_iam_policy_attachment").any(pa: pa.arguments["groups"].contains(_ == m.arguments["group"]) && mfaPolicies.any(p: pa.arguments["policy_arn"] == "aws_iam_policy." + p.labels[1] + ".arn"))
+        )
+      )
   - uid: mondoo-aws-security-mfa-enabled-for-iam-console-access-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_user_login_profile")
     mql: |
