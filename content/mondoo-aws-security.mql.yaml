@@ -9845,9 +9845,9 @@ queries:
         SslPolicy.in(props.allowedTlsPoliciesAlb)
       )
   - uid: mondoo-aws-security-elb-security-policy-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lb_listener")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lb_listener" && arguments["protocol"] == /^(HTTPS|TLS)$/)
     mql: |
-      terraform.resources("aws_lb_listener").all(
+      terraform.resources("aws_lb_listener").where(arguments["protocol"] == "HTTPS" || arguments["protocol"] == "TLS").all(
         arguments.ssl_policy.in(props.allowedTlsPoliciesAlb)
       )
   - uid: mondoo-aws-security-elb-security-policy-enabled-terraform-plan
@@ -10008,7 +10008,27 @@ queries:
             }
             ```
 
-            Remove any HTTP listeners from the configuration. This check requires every listener in Terraform code to use HTTPS, so handle HTTP-to-HTTPS redirects outside the load balancer or accept HTTPS-only ingress.
+            An HTTP listener passes only when its default action redirects to HTTPS:
+
+            ```hcl
+            resource "aws_lb_listener" "http" {
+              load_balancer_arn = aws_lb.secure_alb.arn
+              port              = "80"
+              protocol          = "HTTP"
+
+              default_action {
+                type = "redirect"
+
+                redirect {
+                  port        = "443"
+                  protocol    = "HTTPS"
+                  status_code = "HTTP_301"
+                }
+              }
+            }
+            ```
+
+            Remove or convert any HTTP listener that forwards traffic to targets.
         - id: cloudformation
           desc: |
             To ensure Application Load Balancers are configured with HTTPS listeners in CloudFormation:
@@ -10054,7 +10074,12 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lb_listener")
     mql: |
       terraform.resources("aws_lb_listener").all(
-        arguments.protocol == "HTTPS"
+        arguments.protocol == "HTTPS" ||
+        arguments.protocol == "TLS" ||
+        blocks.where(type == "default_action").any(
+          arguments["type"] == "redirect" &&
+          blocks.where(type == "redirect").any(arguments["protocol"] == "HTTPS")
+        )
       )
   - uid: mondoo-aws-security-elb-ssl-listener-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_lb_listener")
@@ -13024,13 +13049,26 @@ queries:
         methodSettings['*/*']['LoggingLevel'] != "OFF"
       )
   - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_api_gateway_method_settings")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_api_gateway_method_settings" || nameLabel == "aws_api_gateway_stage")
     mql: |
-      terraform.resources("aws_api_gateway_method_settings").where(arguments["method_path"] == "*/*").all(
+      loggedStages = terraform.resources("aws_api_gateway_method_settings").where(
+        arguments["method_path"] == "*/*" &&
         blocks.where(type == "settings") != empty &&
         blocks.where(type == "settings").all(
           arguments["logging_level"] != empty && arguments["logging_level"] != "OFF"
         )
+      ).map(arguments["stage_name"]).join(",")
+      terraform.resources.where(
+        nameLabel == "aws_api_gateway_stage" ||
+        nameLabel == "aws_api_gateway_method_settings" && arguments["method_path"] == "*/*"
+      ).all(
+        nameLabel == "aws_api_gateway_method_settings" &&
+        blocks.where(type == "settings") != empty &&
+        blocks.where(type == "settings").all(
+          arguments["logging_level"] != empty && arguments["logging_level"] != "OFF"
+        ) ||
+        nameLabel == "aws_api_gateway_stage" && loggedStages.contains("aws_api_gateway_stage." + labels[1] + ".") ||
+        nameLabel == "aws_api_gateway_stage" && arguments["stage_name"].in(loggedStages.split(","))
       )
   - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_api_gateway_method_settings")
@@ -13288,7 +13326,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that Amazon API Gateway custom domain names negotiate TLS 1.2 at minimum, by requiring the domain's security policy to be `TLS_1_2`. The alternative policy permits TLS 1.0 and TLS 1.1, protocol versions that contain cryptographic weaknesses and have been withdrawn by the major standards bodies.
+        This check verifies that Amazon API Gateway custom domain names negotiate TLS 1.2 at minimum, by requiring the domain's security policy to be `TLS_1_2` or one of the `SecurityPolicy_TLS12_*` and `SecurityPolicy_TLS13_*` policies, all of which negotiate TLS 1.2 or TLS 1.3 only. The `TLS_1_0` policy permits TLS 1.0 and TLS 1.1, protocol versions that contain cryptographic weaknesses and have been withdrawn by the major standards bodies. A custom domain name created without a security policy gets `TLS_1_2`.
 
         The security policy is shown and changed under **Custom Domain Names** in the API Gateway console, or with `aws apigateway update-domain-name` and `op=replace,path=/securityPolicy,value=TLS_1_2`.
 
@@ -13319,7 +13357,7 @@ queries:
         aws apigateway get-domain-names --query "items[*].{DomainName:domainName, SecurityPolicy:securityPolicy}"
         ```
 
-        A passing custom domain returns `"securityPolicy": "TLS_1_2"`. A failing custom domain returns `"securityPolicy": "TLS_1_0"` or any value other than `TLS_1_2`.
+        A passing custom domain returns `"securityPolicy": "TLS_1_2"` or a policy whose name starts with `SecurityPolicy_TLS12_` or `SecurityPolicy_TLS13_`. A failing custom domain returns `"securityPolicy": "TLS_1_0"`.
       remediation:
         - id: console
           desc: |
@@ -13386,7 +13424,9 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_api_gateway_domain_name")
     mql: |
       terraform.resources("aws_api_gateway_domain_name").all(
-        arguments["security_policy"] == "TLS_1_2"
+        arguments["security_policy"] == null ||
+        arguments["security_policy"] == "TLS_1_2" ||
+        arguments["security_policy"] == /^SecurityPolicy_TLS1[23]_/
       )
   - uid: mondoo-aws-security-api-gw-tls-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_api_gateway_domain_name")
@@ -15155,7 +15195,7 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudfront_distribution")
     mql: |
       terraform.resources("aws_cloudfront_distribution").all(
-        blocks.where(type == "default_cache_behavior").all(
+        blocks.where(type == "default_cache_behavior" || type == "ordered_cache_behavior").all(
           arguments.viewer_protocol_policy == "redirect-to-https" || arguments.viewer_protocol_policy == "https-only"
         )
       )
@@ -18013,9 +18053,9 @@ queries:
     mql: |
       aws.elb.loadbalancer.attributes.where(Key == "routing.http.drop_invalid_header_fields.enabled").all(Value == true)
   - uid: mondoo-aws-security-elb-drop-invalid-headers-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lb" || nameLabel == "aws_alb")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /^aws_(lb|alb)$/ && arguments["load_balancer_type"] == null || nameLabel == /^aws_(lb|alb)$/ && arguments["load_balancer_type"] == "application")
     mql: |
-      terraform.resources.where(nameLabel == "aws_lb" || nameLabel == "aws_alb").all(arguments["drop_invalid_header_fields"] == true)
+      terraform.resources.where(nameLabel == /^aws_(lb|alb)$/ && arguments["load_balancer_type"] == null || nameLabel == /^aws_(lb|alb)$/ && arguments["load_balancer_type"] == "application").all(arguments["drop_invalid_header_fields"] == true)
   - uid: mondoo-aws-security-elb-drop-invalid-headers-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_lb")
     mql: |
@@ -22449,7 +22489,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that Amazon CloudFront distributions set a minimum protocol version matching `TLSv1.2`. TLS 1.0 and 1.1 carry known weaknesses and should not be negotiable on a production distribution.
+        This check verifies that Amazon CloudFront distributions set a minimum protocol version of TLS 1.2 or higher, a `TLSv1.2_*` or `TLSv1.3_*` security policy. TLS 1.0 and 1.1 carry known weaknesses and should not be negotiable on a production distribution. A distribution that uses the default CloudFront certificate always gets the `TLSv1` policy, whatever minimum it declares.
 
         The value appears as the minimum SSL/TLS protocol under settings on the **General** tab of a distribution, and is set to `TLSv1.2_2021` in the custom SSL certificate configuration.
 
@@ -22571,7 +22611,8 @@ queries:
     mql: |
       terraform.resources("aws_cloudfront_distribution").all(
         blocks.where(type == "viewer_certificate").all(
-          arguments.minimum_protocol_version == /TLSv1\.2/
+          arguments.cloudfront_default_certificate != true &&
+          arguments.minimum_protocol_version == /^TLSv1\.[23]_/
         )
       )
   - uid: mondoo-aws-security-cloudfront-minimum-tls-version-terraform-plan
@@ -35221,7 +35262,7 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_route53domains_registered_domain")
     mql: |
       terraform.resources("aws_route53domains_registered_domain").all(
-        arguments.transfer_lock == true
+        arguments.transfer_lock == null || arguments.transfer_lock == true
       )
   - uid: mondoo-aws-security-route53-domain-transfer-lock-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_route53domains_registered_domain")
@@ -63423,7 +63464,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that AWS Transfer Family servers do not use the deprecated `TransferSecurityPolicy-2018-11` security policy, which permits older, weaker cryptographic algorithms.
+        This check verifies that AWS Transfer Family servers do not use the deprecated `TransferSecurityPolicy-2018-11` security policy, which permits older, weaker cryptographic algorithms. `TransferSecurityPolicy-Restricted-2018-11` permits the same algorithms and fails too, as do the experimental post-quantum policies from 2023-04, which AWS has deprecated. A server created with Terraform or CloudFormation without a security policy gets `TransferSecurityPolicy-2018-11`.
 
         The policy is selected when editing a server, or set with `aws transfer update-server --server-id <server-id> --security-policy-name TransferSecurityPolicy-2024-01`.
 
@@ -63516,7 +63557,10 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_transfer_server")
     mql: |
       terraform.resources("aws_transfer_server").all(
-        arguments.security_policy_name == null || arguments.security_policy_name != "TransferSecurityPolicy-2018-11"
+        arguments.security_policy_name != null &&
+        arguments.security_policy_name != "TransferSecurityPolicy-2018-11" &&
+        arguments.security_policy_name != "TransferSecurityPolicy-Restricted-2018-11" &&
+        arguments.security_policy_name != /^TransferSecurityPolicy-PQ-SSH-(FIPS-)?Experimental-2023-04$/
       )
   - uid: mondoo-aws-security-transfer-security-policy-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_transfer_server")
@@ -76797,7 +76841,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that every `HTTPS` or `TLS` listener on an Application or Network Load Balancer uses a security policy requiring TLS 1.2 or higher, accepting the `ELBSecurityPolicy-TLS-1-2-*`, `ELBSecurityPolicy-TLS13-*`, and `ELBSecurityPolicy-FS-1-2-*` families while excluding `ELBSecurityPolicy-TLS-1-2-Ext-2018-06`. The legacy `ELBSecurityPolicy-2016-08` policy and any `ELBSecurityPolicy-TLS-1-0` or `ELBSecurityPolicy-TLS-1-1` policy negotiate down to deprecated TLS versions.
+        This check verifies that every `HTTPS` or `TLS` listener on an Application or Network Load Balancer uses a security policy requiring TLS 1.2 or higher, accepting the `ELBSecurityPolicy-TLS-1-2-*`, `ELBSecurityPolicy-TLS13-1-2-*`, `ELBSecurityPolicy-TLS13-1-3-*`, and `ELBSecurityPolicy-FS-1-2-*` families while excluding `ELBSecurityPolicy-TLS-1-2-Ext-2018-06`. The legacy `ELBSecurityPolicy-2016-08` policy, any `ELBSecurityPolicy-TLS-1-0` or `ELBSecurityPolicy-TLS-1-1` policy, and the `ELBSecurityPolicy-TLS13-1-0-*` and `ELBSecurityPolicy-TLS13-1-1-*` policies negotiate down to deprecated TLS versions.
 
         The policy is set on the **Listeners** tab in the EC2 console, or with `aws elbv2 modify-listener --ssl-policy ELBSecurityPolicy-TLS13-1-2-2021-06`.
 
@@ -76816,7 +76860,7 @@ queries:
         1. Open the **EC2** console and choose **Load Balancers** in the left navigation.
         2. Select each Application or Network Load Balancer and open the **Listeners** tab.
         3. For every HTTPS or TLS listener, check the **Security policy** column.
-        4. Confirm the policy name starts with `ELBSecurityPolicy-TLS-1-2-`, `ELBSecurityPolicy-TLS13-`, or `ELBSecurityPolicy-FS-1-2-`, and is not `ELBSecurityPolicy-TLS-1-2-Ext-2018-06`.
+        4. Confirm the policy name starts with `ELBSecurityPolicy-TLS-1-2-`, `ELBSecurityPolicy-TLS13-1-2-`, `ELBSecurityPolicy-TLS13-1-3-`, or `ELBSecurityPolicy-FS-1-2-`, and is not `ELBSecurityPolicy-TLS-1-2-Ext-2018-06`.
 
         A passing listener shows a current TLS 1.2-floor policy such as `ELBSecurityPolicy-TLS13-1-2-2021-06`. A failing listener shows `ELBSecurityPolicy-2016-08`, `ELBSecurityPolicy-TLS-1-0-2015-04`, or another policy that allows TLS 1.0 or 1.1.
 
@@ -76829,7 +76873,7 @@ queries:
           --query 'Listeners[?Protocol==`HTTPS` || Protocol==`TLS`].{ARN:ListenerArn,Protocol:Protocol,SslPolicy:SslPolicy}'
         ```
 
-        A passing listener returns an `SslPolicy` that starts with `ELBSecurityPolicy-TLS-1-2-` (excluding `ELBSecurityPolicy-TLS-1-2-Ext-2018-06`), `ELBSecurityPolicy-TLS13-`, or `ELBSecurityPolicy-FS-1-2-`. A failing listener returns any other policy name.
+        A passing listener returns an `SslPolicy` that starts with `ELBSecurityPolicy-TLS-1-2-` (excluding `ELBSecurityPolicy-TLS-1-2-Ext-2018-06`), `ELBSecurityPolicy-TLS13-1-2-`, `ELBSecurityPolicy-TLS13-1-3-`, or `ELBSecurityPolicy-FS-1-2-`. A failing listener returns any other policy name.
       remediation:
         - id: console
           desc: |
@@ -76896,18 +76940,18 @@ queries:
       aws.elb.loadbalancer.listeners.where(protocol == "HTTPS" || protocol == "TLS").all(
         sslPolicy == /^ELBSecurityPolicy-TLS-1-2-/ &&
         sslPolicy != /^ELBSecurityPolicy-TLS-1-2-Ext-2018-06/ ||
-        sslPolicy == /^ELBSecurityPolicy-TLS13-/ ||
+        sslPolicy == /^ELBSecurityPolicy-TLS13-1-[23]-/ ||
         sslPolicy == /^ELBSecurityPolicy-FS-1-2-/
       )
   - uid: mondoo-aws-security-elbv2-listener-tls-1-2-minimum-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lb_listener")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lb_listener" || nameLabel == "aws_alb_listener")
     mql: |
-      terraform.resources("aws_lb_listener").where(
+      terraform.resources.where(nameLabel == "aws_lb_listener" || nameLabel == "aws_alb_listener").where(
         arguments.protocol == "HTTPS" || arguments.protocol == "TLS"
       ).all(
         arguments.ssl_policy == /^ELBSecurityPolicy-TLS-1-2-/ &&
         arguments.ssl_policy != /^ELBSecurityPolicy-TLS-1-2-Ext-2018-06/ ||
-        arguments.ssl_policy == /^ELBSecurityPolicy-TLS13-/ ||
+        arguments.ssl_policy == /^ELBSecurityPolicy-TLS13-1-[23]-/ ||
         arguments.ssl_policy == /^ELBSecurityPolicy-FS-1-2-/
       )
   - uid: mondoo-aws-security-elbv2-listener-tls-1-2-minimum-terraform-plan
@@ -76918,7 +76962,7 @@ queries:
       ).all(
         change.after.ssl_policy == /^ELBSecurityPolicy-TLS-1-2-/ &&
         change.after.ssl_policy != /^ELBSecurityPolicy-TLS-1-2-Ext-2018-06/ ||
-        change.after.ssl_policy == /^ELBSecurityPolicy-TLS13-/ ||
+        change.after.ssl_policy == /^ELBSecurityPolicy-TLS13-1-[23]-/ ||
         change.after.ssl_policy == /^ELBSecurityPolicy-FS-1-2-/
       )
   - uid: mondoo-aws-security-elbv2-listener-tls-1-2-minimum-terraform-state
@@ -76929,7 +76973,7 @@ queries:
       ).all(
         values.ssl_policy == /^ELBSecurityPolicy-TLS-1-2-/ &&
         values.ssl_policy != /^ELBSecurityPolicy-TLS-1-2-Ext-2018-06/ ||
-        values.ssl_policy == /^ELBSecurityPolicy-TLS13-/ ||
+        values.ssl_policy == /^ELBSecurityPolicy-TLS13-1-[23]-/ ||
         values.ssl_policy == /^ELBSecurityPolicy-FS-1-2-/
       )
   - uid: mondoo-aws-security-elbv2-listener-tls-1-2-minimum-cloudformation
@@ -76940,7 +76984,7 @@ queries:
       ).all(
         properties['SslPolicy'] == /^ELBSecurityPolicy-TLS-1-2-/ &&
         properties['SslPolicy'] != /^ELBSecurityPolicy-TLS-1-2-Ext-2018-06/ ||
-        properties['SslPolicy'] == /^ELBSecurityPolicy-TLS13-/ ||
+        properties['SslPolicy'] == /^ELBSecurityPolicy-TLS13-1-[23]-/ ||
         properties['SslPolicy'] == /^ELBSecurityPolicy-FS-1-2-/
       )
   - uid: mondoo-aws-security-sqs-queue-policy-secure-transport
