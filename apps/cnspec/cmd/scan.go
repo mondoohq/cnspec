@@ -343,7 +343,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 
 	config.DisplayUsedConfig()
 
-	props := viper.GetStringMapString("props")
+	props := scanProps(cmd.Flags().Changed("props"))
 
 	// merge the config and the user-provided annotations with the latter having precedence
 	optAnnotations := opts.Annotations
