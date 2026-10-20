@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-kubernetes-security
     name: Mondoo Kubernetes Cluster and Workload Security
-    version: 3.0.0
+    version: 3.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -40,13 +40,15 @@ policies:
           asset.family.contains('linux')
           processes.where( executable == /kube-apiserver/ ).list != []
         checks:
-          - uid: mondoo-kubernetes-security-api-server-no-anonymous-auth
           - uid: mondoo-kubernetes-security-secure-admin-conf
           - uid: mondoo-kubernetes-security-secure-controller-manager_conf
           - uid: mondoo-kubernetes-security-secure-etcd-data-dir
           - uid: mondoo-kubernetes-security-secure-kube-apiserver-yml
           - uid: mondoo-kubernetes-security-secure-pki-directory
           - uid: mondoo-kubernetes-security-secure-scheduler_conf
+      - title: Kubernetes API Server Configuration
+        checks:
+          - uid: mondoo-kubernetes-security-api-server-no-anonymous-auth
           - uid: mondoo-kubernetes-security-api-server-authorization-mode
           - uid: mondoo-kubernetes-security-api-server-no-always-admit
           - uid: mondoo-kubernetes-security-api-server-admission-node-restriction
@@ -1603,10 +1605,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-3-1
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["anonymous-auth"] == "false"
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-no-anonymous-auth-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-no-anonymous-auth-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server rejects requests that carry no credentials.
@@ -1645,6 +1652,20 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/reference/access-authn-authz/authentication/#anonymous-requests
         title: Anonymous requests
+  - uid: mondoo-kubernetes-security-api-server-no-anonymous-auth-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["anonymous-auth"] == "false"
+      }
+  - uid: mondoo-kubernetes-security-api-server-no-anonymous-auth-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv == /\s--anonymous-auth=(false|False|FALSE|f|F|0)\s/
+        argv != /\s--anonymous-auth(=(true|True|TRUE|t|T|1))?\s/
+      }
   - uid: mondoo-kubernetes-security-pod-docker-socket
     title: Container should not mount the Docker socket
     impact: 100
@@ -12832,13 +12853,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-7-2-1
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-2-1
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["authorization-mode"] != null
-        flags["authorization-mode"].contains("Node")
-        flags["authorization-mode"].contains("RBAC")
-        flags["authorization-mode"].contains("AlwaysAllow") == false
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-authorization-mode-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-authorization-mode-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server authorizes requests with the Node and RBAC authorizers and never with AlwaysAllow.
@@ -12877,6 +12900,25 @@ queries:
         title: Kubernetes Authorization Overview
       - url: https://kubernetes.io/docs/reference/access-authn-authz/node/
         title: Using Node Authorization
+  - uid: mondoo-kubernetes-security-api-server-authorization-mode-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["authorization-mode"] != null
+        flags["authorization-mode"].contains("Node")
+        flags["authorization-mode"].contains("RBAC")
+        flags["authorization-mode"].contains("AlwaysAllow") == false
+      }
+  - uid: mondoo-kubernetes-security-api-server-authorization-mode-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv == /\s--authorization-mode[=\s]\S/
+        argv == /\s--authorization-mode[=\s]\S*Node/
+        argv == /\s--authorization-mode[=\s]\S*RBAC/
+        argv != /\s--authorization-mode[=\s]\S*AlwaysAllow/
+      }
   - uid: mondoo-kubernetes-security-api-server-no-always-admit
     title: Ensure the kube-apiserver does not enable the AlwaysAdmit admission plugin
     impact: 95
@@ -12895,11 +12937,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["enable-admission-plugins"] == null ||
-        flags["enable-admission-plugins"].contains("AlwaysAdmit") == false
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-no-always-admit-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-no-always-admit-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server does not load the AlwaysAdmit admission controller.
@@ -12930,6 +12976,20 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/#alwaysadmit
         title: Kubernetes - AlwaysAdmit Admission Controller
+  - uid: mondoo-kubernetes-security-api-server-no-always-admit-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["enable-admission-plugins"] == null ||
+        flags["enable-admission-plugins"].contains("AlwaysAdmit") == false
+      }
+  - uid: mondoo-kubernetes-security-api-server-no-always-admit-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv != /\s--enable-admission-plugins[=\s]\S*AlwaysAdmit/
+      }
   - uid: mondoo-kubernetes-security-api-server-admission-node-restriction
     title: Ensure the kube-apiserver enables the NodeRestriction admission plugin
     impact: 90
@@ -12948,11 +13008,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-7-2-1
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-2-1
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["enable-admission-plugins"] != null
-        flags["enable-admission-plugins"].contains("NodeRestriction")
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-admission-node-restriction-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-admission-node-restriction-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server loads the NodeRestriction admission controller.
@@ -12983,6 +13047,20 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/#noderestriction
         title: Kubernetes - NodeRestriction Admission Controller
+  - uid: mondoo-kubernetes-security-api-server-admission-node-restriction-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["enable-admission-plugins"] != null
+        flags["enable-admission-plugins"].contains("NodeRestriction")
+      }
+  - uid: mondoo-kubernetes-security-api-server-admission-node-restriction-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv == /\s--enable-admission-plugins[=\s]\S*NodeRestriction/
+      }
   - uid: mondoo-kubernetes-security-api-server-admission-pod-security
     title: Ensure the kube-apiserver enables the PodSecurity admission plugin
     impact: 90
@@ -13001,11 +13079,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["enable-admission-plugins"] != null
-        flags["enable-admission-plugins"].contains("PodSecurity")
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-admission-pod-security-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-admission-pod-security-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server loads the PodSecurity admission controller.
@@ -13048,6 +13130,20 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/concepts/security/pod-security-admission/
         title: Kubernetes - Pod Security Admission
+  - uid: mondoo-kubernetes-security-api-server-admission-pod-security-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["enable-admission-plugins"] != null
+        flags["enable-admission-plugins"].contains("PodSecurity")
+      }
+  - uid: mondoo-kubernetes-security-api-server-admission-pod-security-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv == /\s--enable-admission-plugins[=\s]\S*PodSecurity/
+      }
   - uid: mondoo-kubernetes-security-api-server-admission-event-rate-limit
     title: Ensure the kube-apiserver enables the EventRateLimit admission plugin
     impact: 60
@@ -13066,11 +13162,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-7-2-1
       compliance/soc2-2017: false
       compliance/vda-isa-5: vda-isa-5-4-2-1
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["enable-admission-plugins"] != null
-        flags["enable-admission-plugins"].contains("EventRateLimit")
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-admission-event-rate-limit-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-admission-event-rate-limit-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server loads the EventRateLimit admission controller.
@@ -13146,6 +13246,20 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/#eventratelimit
         title: Kubernetes - EventRateLimit Admission Controller
+  - uid: mondoo-kubernetes-security-api-server-admission-event-rate-limit-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["enable-admission-plugins"] != null
+        flags["enable-admission-plugins"].contains("EventRateLimit")
+      }
+  - uid: mondoo-kubernetes-security-api-server-admission-event-rate-limit-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv == /\s--enable-admission-plugins[=\s]\S*EventRateLimit/
+      }
   - uid: mondoo-kubernetes-security-api-server-audit-log-path
     title: Ensure the kube-apiserver writes audit logs to a file
     impact: 80
@@ -13164,11 +13278,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-10-2-1
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["audit-log-path"] != null
-        flags["audit-log-path"] != ""
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-audit-log-path-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-audit-log-path-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server writes an audit log.
@@ -13218,6 +13336,20 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
         title: Kubernetes - Auditing
+  - uid: mondoo-kubernetes-security-api-server-audit-log-path-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["audit-log-path"] != null
+        flags["audit-log-path"] != ""
+      }
+  - uid: mondoo-kubernetes-security-api-server-audit-log-path-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv == /\s--audit-log-path[=\s]\S/
+      }
   - uid: mondoo-kubernetes-security-api-server-audit-policy-file
     title: Ensure the kube-apiserver loads an audit policy file
     impact: 80
@@ -13236,11 +13368,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-10-2-1
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["audit-policy-file"] != null
-        flags["audit-policy-file"] != ""
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-audit-policy-file-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-audit-policy-file-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server loads an audit policy.
@@ -13299,6 +13435,20 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/#audit-policy
         title: Kubernetes - Audit policy
+  - uid: mondoo-kubernetes-security-api-server-audit-policy-file-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["audit-policy-file"] != null
+        flags["audit-policy-file"] != ""
+      }
+  - uid: mondoo-kubernetes-security-api-server-audit-policy-file-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv == /\s--audit-policy-file[=\s]\S/
+      }
   - uid: mondoo-kubernetes-security-api-server-audit-log-maxage
     title: Ensure the kube-apiserver retains audit logs for at least 30 days
     impact: 50
@@ -13317,11 +13467,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-10-2-1
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["audit-log-maxage"] != null
-        int(flags["audit-log-maxage"]) >= 30
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-audit-log-maxage-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-audit-log-maxage-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that audit logs are retained for at least 30 days.
@@ -13352,6 +13506,20 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/#log-backend
         title: Kubernetes - Audit log backend options
+  - uid: mondoo-kubernetes-security-api-server-audit-log-maxage-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["audit-log-maxage"] != null
+        int(flags["audit-log-maxage"]) >= 30
+      }
+  - uid: mondoo-kubernetes-security-api-server-audit-log-maxage-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv == /\s--audit-log-maxage[=\s]0*([3-9][0-9]|[1-9][0-9][0-9]+)\s/
+      }
   - uid: mondoo-kubernetes-security-api-server-encryption-provider-config
     title: Ensure the kube-apiserver encrypts secrets at rest in etcd
     impact: 100
@@ -13370,11 +13538,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-3-5-1
       compliance/soc2-2017: soc2-control-cc6-1-1
       compliance/vda-isa-5: vda-isa-5-5-1-1
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["encryption-provider-config"] != null
-        flags["encryption-provider-config"] != ""
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-encryption-provider-config-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-encryption-provider-config-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server encrypts Secrets before writing them to etcd.
@@ -13451,6 +13623,20 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/
         title: Kubernetes - Encrypting Confidential Data at Rest
+  - uid: mondoo-kubernetes-security-api-server-encryption-provider-config-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["encryption-provider-config"] != null
+        flags["encryption-provider-config"] != ""
+      }
+  - uid: mondoo-kubernetes-security-api-server-encryption-provider-config-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv == /\s--encryption-provider-config[=\s]\S/
+      }
   - uid: mondoo-kubernetes-security-api-server-tls-min-version
     title: Ensure the kube-apiserver enforces TLS 1.2 or higher
     impact: 80
@@ -13469,12 +13655,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["tls-min-version"] == null ||
-        flags["tls-min-version"] == "VersionTLS12" ||
-        flags["tls-min-version"] == "VersionTLS13"
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-tls-min-version-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-tls-min-version-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server does not negotiate TLS older than version 1.2.
@@ -13505,6 +13694,21 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/reference/command-line-tools-reference/kube-apiserver/
         title: kube-apiserver - Reference
+  - uid: mondoo-kubernetes-security-api-server-tls-min-version-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["tls-min-version"] == null ||
+        flags["tls-min-version"] == "VersionTLS12" ||
+        flags["tls-min-version"] == "VersionTLS13"
+      }
+  - uid: mondoo-kubernetes-security-api-server-tls-min-version-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv != /\s--tls-min-version[=\s]/ || argv == /\s--tls-min-version[=\s]VersionTLS1[23]\s/
+      }
   - uid: mondoo-kubernetes-security-api-server-strong-cipher-suites
     title: Ensure the kube-apiserver only negotiates strong TLS cipher suites
     impact: 70
@@ -13523,14 +13727,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["tls-cipher-suites"] != null
-        flags["tls-cipher-suites"].contains("TLS_RSA_WITH_3DES") == false
-        flags["tls-cipher-suites"].contains("TLS_RSA_WITH_RC4") == false
-        flags["tls-cipher-suites"].contains("TLS_ECDHE_RSA_WITH_RC4") == false
-        flags["tls-cipher-suites"].contains("TLS_ECDHE_ECDSA_WITH_RC4") == false
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-strong-cipher-suites-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-strong-cipher-suites-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server refuses obsolete TLS cipher suites.
@@ -13565,6 +13770,24 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/reference/command-line-tools-reference/kube-apiserver/
         title: kube-apiserver - Reference
+  - uid: mondoo-kubernetes-security-api-server-strong-cipher-suites-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["tls-cipher-suites"] != null
+        flags["tls-cipher-suites"].contains("TLS_RSA_WITH_3DES") == false
+        flags["tls-cipher-suites"].contains("TLS_RSA_WITH_RC4") == false
+        flags["tls-cipher-suites"].contains("TLS_ECDHE_RSA_WITH_RC4") == false
+        flags["tls-cipher-suites"].contains("TLS_ECDHE_ECDSA_WITH_RC4") == false
+      }
+  - uid: mondoo-kubernetes-security-api-server-strong-cipher-suites-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv == /\s--tls-cipher-suites[=\s]\S/
+        argv != /\s--tls-cipher-suites[=\s]\S*(TLS_RSA_WITH_3DES|TLS_RSA_WITH_RC4|TLS_ECDHE_RSA_WITH_RC4|TLS_ECDHE_ECDSA_WITH_RC4)/
+      }
   - uid: mondoo-kubernetes-security-api-server-client-ca-file
     title: Ensure the kube-apiserver verifies clients with a CA certificate
     impact: 90
@@ -13583,11 +13806,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-3-1
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["client-ca-file"] != null
-        flags["client-ca-file"] != ""
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-client-ca-file-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-client-ca-file-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server can authenticate clients by certificate.
@@ -13618,6 +13845,20 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/reference/access-authn-authz/authentication/#x509-client-certs
         title: Kubernetes - X.509 client certs
+  - uid: mondoo-kubernetes-security-api-server-client-ca-file-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["client-ca-file"] != null
+        flags["client-ca-file"] != ""
+      }
+  - uid: mondoo-kubernetes-security-api-server-client-ca-file-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv == /\s--client-ca-file[=\s]\S/
+      }
   - uid: mondoo-kubernetes-security-api-server-kubelet-client-cert
     title: Ensure the kube-apiserver uses a client certificate for kubelets
     impact: 80
@@ -13636,13 +13877,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-3-1
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["kubelet-client-certificate"] != null
-        flags["kubelet-client-certificate"] != ""
-        flags["kubelet-client-key"] != null
-        flags["kubelet-client-key"] != ""
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-kubelet-client-cert-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-kubelet-client-cert-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server presents a client certificate when it calls a kubelet.
@@ -13677,6 +13920,23 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/concepts/architecture/control-plane-node-communication/#apiserver-to-kubelet
         title: Control Plane to Node communication
+  - uid: mondoo-kubernetes-security-api-server-kubelet-client-cert-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["kubelet-client-certificate"] != null
+        flags["kubelet-client-certificate"] != ""
+        flags["kubelet-client-key"] != null
+        flags["kubelet-client-key"] != ""
+      }
+  - uid: mondoo-kubernetes-security-api-server-kubelet-client-cert-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv == /\s--kubelet-client-certificate[=\s]\S/
+        argv == /\s--kubelet-client-key[=\s]\S/
+      }
   - uid: mondoo-kubernetes-security-api-server-kubelet-https
     title: Ensure the kube-apiserver communicates with kubelets over HTTPS
     impact: 90
@@ -13695,10 +13955,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["kubelet-https"] == null || flags["kubelet-https"] == "true"
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-kubelet-https-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-kubelet-https-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server contacts kubelets over HTTPS.
@@ -13729,6 +13994,19 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/concepts/architecture/control-plane-node-communication/
         title: Control Plane Node communication
+  - uid: mondoo-kubernetes-security-api-server-kubelet-https-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["kubelet-https"] == null || flags["kubelet-https"] == "true"
+      }
+  - uid: mondoo-kubernetes-security-api-server-kubelet-https-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv != /\s--kubelet-https=(false|False|FALSE|f|F|0)\s/
+      }
   - uid: mondoo-kubernetes-security-api-server-kubelet-ca
     title: Ensure the kube-apiserver verifies kubelet certificates with a CA bundle
     impact: 70
@@ -13747,11 +14025,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-3-5-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-1
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["kubelet-certificate-authority"] != null
-        flags["kubelet-certificate-authority"] != ""
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-kubelet-ca-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-kubelet-ca-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server validates the certificate a kubelet presents.
@@ -13788,6 +14070,20 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/concepts/architecture/control-plane-node-communication/#apiserver-to-kubelet
         title: API server to kubelet
+  - uid: mondoo-kubernetes-security-api-server-kubelet-ca-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["kubelet-certificate-authority"] != null
+        flags["kubelet-certificate-authority"] != ""
+      }
+  - uid: mondoo-kubernetes-security-api-server-kubelet-ca-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv == /\s--kubelet-certificate-authority[=\s]\S/
+      }
   - uid: mondoo-kubernetes-security-api-server-etcd-cert-files
     title: Ensure the kube-apiserver uses TLS client certificates for etcd
     impact: 100
@@ -13806,12 +14102,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["etcd-cafile"] != null && flags["etcd-cafile"] != ""
-        flags["etcd-certfile"] != null && flags["etcd-certfile"] != ""
-        flags["etcd-keyfile"] != null && flags["etcd-keyfile"] != ""
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-etcd-cert-files-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-etcd-cert-files-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server authenticates to etcd with a client certificate over TLS.
@@ -13847,6 +14146,23 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/setup/best-practices/certificates/
         title: Kubernetes - PKI certificates and requirements
+  - uid: mondoo-kubernetes-security-api-server-etcd-cert-files-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["etcd-cafile"] != null && flags["etcd-cafile"] != ""
+        flags["etcd-certfile"] != null && flags["etcd-certfile"] != ""
+        flags["etcd-keyfile"] != null && flags["etcd-keyfile"] != ""
+      }
+  - uid: mondoo-kubernetes-security-api-server-etcd-cert-files-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv == /\s--etcd-cafile[=\s]\S/
+        argv == /\s--etcd-certfile[=\s]\S/
+        argv == /\s--etcd-keyfile[=\s]\S/
+      }
   - uid: mondoo-kubernetes-security-api-server-service-account-lookup
     title: Ensure the kube-apiserver validates ServiceAccount tokens against the API
     impact: 70
@@ -13865,10 +14181,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-7-2-1
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-2-1
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["service-account-lookup"] == null || flags["service-account-lookup"] == "true"
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-service-account-lookup-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-service-account-lookup-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server confirms a service account token still has a live object behind it.
@@ -13899,6 +14220,19 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/reference/access-authn-authz/service-accounts-admin/
         title: Managing Service Accounts
+  - uid: mondoo-kubernetes-security-api-server-service-account-lookup-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["service-account-lookup"] == null || flags["service-account-lookup"] == "true"
+      }
+  - uid: mondoo-kubernetes-security-api-server-service-account-lookup-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv != /\s--service-account-lookup=(false|False|FALSE|f|F|0)\s/
+      }
   - uid: mondoo-kubernetes-security-api-server-service-account-key-file
     title: Ensure the kube-apiserver loads a dedicated ServiceAccount signing key
     impact: 70
@@ -13917,11 +14251,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-3-1
       compliance/soc2-2017: soc2-control-cc6-1-9
       compliance/vda-isa-5: vda-isa-5-4-1-3
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["service-account-key-file"] != null
-        flags["service-account-key-file"] != ""
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-service-account-key-file-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-service-account-key-file-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server has a dedicated key for validating service account tokens.
@@ -13952,6 +14290,20 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/reference/access-authn-authz/service-accounts-admin/#service-account-signing-key
         title: ServiceAccount signing key
+  - uid: mondoo-kubernetes-security-api-server-service-account-key-file-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["service-account-key-file"] != null
+        flags["service-account-key-file"] != ""
+      }
+  - uid: mondoo-kubernetes-security-api-server-service-account-key-file-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv == /\s--service-account-key-file[=\s]\S/
+      }
   - uid: mondoo-kubernetes-security-api-server-profiling-disabled
     title: Ensure the kube-apiserver disables the profiling endpoint
     impact: 50
@@ -13970,10 +14322,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["profiling"] == "false"
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-profiling-disabled-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-profiling-disabled-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server does not serve Go profiling endpoints.
@@ -14004,6 +14361,20 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/reference/command-line-tools-reference/kube-apiserver/
         title: kube-apiserver - Reference
+  - uid: mondoo-kubernetes-security-api-server-profiling-disabled-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["profiling"] == "false"
+      }
+  - uid: mondoo-kubernetes-security-api-server-profiling-disabled-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv == /\s--profiling=(false|False|FALSE|f|F|0)\s/
+        argv != /\s--profiling(=(true|True|TRUE|t|T|1))?\s/
+      }
   - uid: mondoo-kubernetes-security-api-server-no-token-auth-file
     title: Ensure the kube-apiserver does not use a static token authentication file
     impact: 90
@@ -14022,10 +14393,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-3-1
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
-    mql: |
-      processes.where(executable == /kube-apiserver/).list {
-        flags["token-auth-file"] == null || flags["token-auth-file"] == ""
-      }
+    variants:
+      - uid: mondoo-kubernetes-security-api-server-no-token-auth-file-linux
+        tags:
+          mondoo.com/filter-title: Kubernetes Node
+          mondoo.com/filter-icon: linux
+      - uid: mondoo-kubernetes-security-api-server-no-token-auth-file-k8s-pod
+        tags:
+          mondoo.com/filter-title: Kubernetes Pod
+          mondoo.com/filter-icon: kubernetes
     docs:
       desc: |
         This check verifies that the API server does not authenticate users from a static token file.
@@ -14056,6 +14432,19 @@ queries:
     refs:
       - url: https://kubernetes.io/docs/reference/access-authn-authz/authentication/#static-token-file
         title: Kubernetes - Static token file
+  - uid: mondoo-kubernetes-security-api-server-no-token-auth-file-linux
+    filters: asset.family.contains('linux') && processes.where(executable == /kube-apiserver/).list != []
+    mql: |
+      processes.where(executable == /kube-apiserver/).list {
+        flags["token-auth-file"] == null || flags["token-auth-file"] == ""
+      }
+  - uid: mondoo-kubernetes-security-api-server-no-token-auth-file-k8s-pod
+    filters: asset.platform == "k8s-pod" && k8s.pod.containers.any(command.any(_ == /(^|\/)kube-apiserver$/))
+    mql: |
+      k8s.pod.containers.where(command.any(_ == /(^|\/)kube-apiserver$/)) {
+        argv = " " + command.join(" ") + " " + args.join(" ") + " "
+        argv != /\s--token-auth-file[=\s]\S/
+      }
   - uid: mondoo-kubernetes-security-serviceaccount-no-cluster-admin
     title: Service accounts should not be bound to cluster-admin
     impact: 100
