@@ -223,7 +223,7 @@ func ConvertToJSON(data *policy.ReportCollection, out iox.OutputHelper) error {
 		for qid := range resolved.ExecutionJob.Queries {
 			// policies and other stuff have no query mrn
 			for _, mrn := range queryMrns(qid2mrns[qid], reportingJobByQrId) {
-				if printScore(report.Scores[qid], mrn, out, pre2) {
+				if printScore(reportdoc.CheckRating(report.Scores, mrn, report.Scores[qid]), mrn, out, pre2) {
 					pre2 = ","
 				}
 			}
