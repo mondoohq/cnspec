@@ -29,4 +29,8 @@ type AssetJob struct {
 	Reporter         Reporter
 	runtime          *providers.Runtime
 	ProgressReporter progress.Progress
+
+	// BundleCompileCache reuses the compiled bundle across the assets of one
+	// scan. It is optional. When it is nil the bundle is compiled per asset.
+	BundleCompileCache *bundleCompileCache
 }

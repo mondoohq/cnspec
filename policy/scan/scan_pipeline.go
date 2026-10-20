@@ -156,6 +156,9 @@ type scanDispatcher struct {
 	spaceMrn        string
 	scannedAssets   *atomic.Int64
 	resourceTracker *scanstats.ResourceTracker
+
+	// bundleCache reuses the compiled bundle across the assets of one scan.
+	bundleCache *bundleCompileCache
 }
 
 func newScanDispatcher(
@@ -185,6 +188,7 @@ func newScanDispatcher(
 		spaceMrn:        spaceMrn,
 		scannedAssets:   scannedAssets,
 		resourceTracker: resourceTracker,
+		bundleCache:     newBundleCompileCache(),
 	}
 }
 
@@ -295,6 +299,8 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 		Reporter:         d.reporter,
 		ProgressReporter: p,
 		runtime:          runtime,
+
+		BundleCompileCache: d.bundleCache,
 	})
 
 	// Surface any recovered provider panics/crashes without treating the
