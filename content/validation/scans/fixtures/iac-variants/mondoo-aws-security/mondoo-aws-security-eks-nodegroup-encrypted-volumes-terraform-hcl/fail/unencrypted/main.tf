@@ -10,3 +10,20 @@ resource "aws_launch_template" "fail_example" {
     }
   }
 }
+
+resource "aws_eks_node_group" "fail_example" {
+  cluster_name  = "example"
+  node_role_arn = var.node_role_arn
+  subnet_ids    = var.subnet_ids
+
+  scaling_config {
+    desired_size = 1
+    max_size     = 1
+    min_size     = 1
+  }
+
+  launch_template {
+    id      = aws_launch_template.fail_example.id
+    version = aws_launch_template.fail_example.latest_version
+  }
+}
