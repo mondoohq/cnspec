@@ -22241,8 +22241,16 @@ queries:
   - uid: mondoo-aws-security-redshift-cluster-audit-logging-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_redshift_cluster")
     mql: |
-      terraform.resources("aws_redshift_cluster").all(
-        terraform.resources("aws_redshift_logging") != empty
+      # A cluster logs when an aws_redshift_logging resource names it, by
+      # reference or by its literal cluster_identifier, or when it carries an
+      # enabled inline logging block, which older provider versions accept.
+      terraform.resources("aws_redshift_cluster").all(cluster:
+        cluster.blocks.where(type == "logging").any(arguments["enable"] == true) ||
+        terraform.resources("aws_redshift_logging").any(logging:
+          logging.arguments["cluster_identifier"] == cluster.arguments["cluster_identifier"] ||
+          logging.arguments["cluster_identifier"] == "aws_redshift_cluster." + cluster.labels[1] + ".id" ||
+          logging.arguments["cluster_identifier"] == "aws_redshift_cluster." + cluster.labels[1] + ".cluster_identifier"
+        )
       )
   - uid: mondoo-aws-security-redshift-cluster-audit-logging-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_redshift_cluster")
