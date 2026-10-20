@@ -2025,6 +2025,51 @@ queries:
 	rpTester.doTest(t, rp)
 }
 
+// A variant is not listed in any group, so the impact of its check has to be
+// carried down to it. Without it the variant's own score rates every failure
+// as critical.
+func TestResolveV2_VariantCarriesCheckImpact(t *testing.T) {
+	ctx := context.Background()
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: policy1
+  groups:
+  - filters: "true"
+    checks:
+    - uid: check-medium
+queries:
+- uid: check-medium
+  impact: 60
+  variants:
+  - uid: check-medium-variant
+- uid: check-medium-variant
+  filters: "true"
+  mql: true == false
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy1")}},
+	}, []*policy.Bundle{b})
+
+	rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+		PolicyMrn:    policyMrn("policy1"),
+		AssetFilters: []*policy.Mquery{{Mql: "true"}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, rp)
+
+	rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
+	rpTester.CodeIdReportingJobForMrn(queryMrn("check-medium-variant")).Notifies(queryMrn("check-medium-variant")).
+		WithImpact(&policy.Impact{Value: &policy.ImpactValue{Value: 60}})
+	rpTester.ReportingJobByMrn(queryMrn("check-medium-variant")).Notifies(queryMrn("check-medium")).
+		WithImpact(&policy.Impact{Value: &policy.ImpactValue{Value: 60}})
+	rpTester.ReportingJobByMrn(queryMrn("check-medium")).Notifies("root").
+		WithImpact(&policy.Impact{Value: &policy.ImpactValue{Value: 60}})
+
+	rpTester.doTest(t, rp)
+}
+
 // TestResolveV2_BandedScoringUsesCheckImpact runs the full pipeline for a
 // policy scored with BANDED. Each failing check has to land in the band that
 // matches its own impact: a single failing MEDIUM check must not drag the

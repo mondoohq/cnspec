@@ -413,6 +413,7 @@ func addAssetResults(run *sarif.Run, r *policy.ReportCollection, ctx *sarifRunCo
 		if !ok {
 			continue
 		}
+		score = reportdoc.CheckRating(report.Scores, query.Mrn, score)
 
 		ruleID := reportdoc.QueryRuleID(query)
 		level := scoreToSarifLevel(score)
