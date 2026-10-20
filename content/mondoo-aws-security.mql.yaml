@@ -13920,10 +13920,19 @@ queries:
   - uid: mondoo-aws-security-iam-no-wildcards-policies-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_policy" || nameLabel == "aws_iam_user_policy" || nameLabel == "aws_iam_role_policy" || nameLabel == "aws_iam_group_policy")
     mql: |
-      terraform.resources("aws_iam_policy").where(arguments["policy"].first["Statement"] != null).all(arguments["policy"].first["Statement"].all(_["Effect"].downcase == "deny" || [_["Resource"]].flat.any(_.contains("*")) == false && [_["Action"]].flat.any(_.contains("*")) == false))
-      terraform.resources("aws_iam_role_policy").where(arguments["policy"].first["Statement"] != null).all(arguments["policy"].first["Statement"].all(_["Effect"].downcase == "deny" || [_["Resource"]].flat.any(_.contains("*")) == false && [_["Action"]].flat.any(_.contains("*")) == false))
-      terraform.resources("aws_iam_user_policy").where(arguments["policy"].first["Statement"] != null).all(arguments["policy"].first["Statement"].all(_["Effect"].downcase == "deny" || [_["Resource"]].flat.any(_.contains("*")) == false && [_["Action"]].flat.any(_.contains("*")) == false))
-      terraform.resources("aws_iam_group_policy").where(arguments["policy"].first["Statement"] != null).all(arguments["policy"].first["Statement"].all(_["Effect"].downcase == "deny" || [_["Resource"]].flat.any(_.contains("*")) == false && [_["Action"]].flat.any(_.contains("*")) == false))
+      # `policy` surfaces three ways. A `jsonencode({...})` becomes a one-element
+      # list holding the document, a heredoc becomes the JSON string itself, and a
+      # `data.aws_iam_policy_document` reference becomes the traversal string, in
+      # which case the statements are read from that data source.
+      policyResources = terraform.resources.where(nameLabel == "aws_iam_policy" || nameLabel == "aws_iam_role_policy" || nameLabel == "aws_iam_user_policy" || nameLabel == "aws_iam_group_policy")
+      policyResources.where(arguments["policy"].first["Statement"] != null).all(arguments["policy"].first["Statement"].all(_["Effect"].downcase == "deny" || [_["Resource"]].flat.any(_.contains("*")) == false && [_["Action"]].flat.any(_.contains("*")) == false))
+      policyResources.where(arguments["policy"] == /^\s*\{/).all(arguments["policy"].json["Statement"].all(_["Effect"].downcase == "deny" || [_["Resource"]].flat.any(_.contains("*")) == false && [_["Action"]].flat.any(_.contains("*")) == false))
+      policyDocRefs = policyResources.map(arguments["policy"]).join(",")
+      terraform.datasources.where(nameLabel == "aws_iam_policy_document" && policyDocRefs.contains("data.aws_iam_policy_document." + labels[1] + ".json")).all(
+        blocks.where(type == "statement" && arguments["effect"] != "Deny").all(
+          arguments["resources"].where(_.contains("*")) == empty && arguments["actions"].where(_.contains("*")) == empty
+        )
+      )
   - uid: mondoo-aws-security-iam-no-wildcards-policies-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_policy" || type == "aws_iam_user_policy" || type == "aws_iam_role_policy" || type == "aws_iam_group_policy")
     mql: |
