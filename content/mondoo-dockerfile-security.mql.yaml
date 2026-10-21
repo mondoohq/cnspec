@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-docker-security
     name: Mondoo Dockerfile Security
-    version: 1.3.2
+    version: 1.3.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -164,12 +164,13 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
-      docker.file.stages.all(run.all(commands.none(flags.contains("--allow-insecure-repositories"))))
+      docker.file.stages.all(run.all(commands.where(binary == /^(apt-get|apt)$/).none(flags.contains("--allow-insecure-repositories"))))
+      docker.file.stages.all(run.all(commands.where(binary == "sudo" && subcommand == /^(apt-get|apt)$/).none(flags.contains("--allow-insecure-repositories"))))
     docs:
       desc: |
         This check verifies that no `RUN` instruction disables APT's repository signature verification.
 
-        APT refuses to install from a repository whose release metadata is not signed by a key it trusts. The `--allow-insecure-repositories` option removes that refusal and downgrades it to a warning, so an index that is unsigned or that cannot be verified is accepted and the install that follows proceeds from it. The check requires that no `RUN` instruction in any build stage pass this option.
+        APT refuses to install from a repository whose release metadata is not signed by a key it trusts. The `--allow-insecure-repositories` option removes that refusal and downgrades it to a warning, so an index that is unsigned or that cannot be verified is accepted and the install that follows proceeds from it. The check requires that no `apt-get` or `apt` command in a `RUN` instruction of any build stage pass this option. The same text passed to another command, such as a pattern given to `grep`, does not change what APT accepts and is not flagged.
 
         **Why this matters**
 
@@ -294,12 +295,13 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
-      docker.file.stages.all(run.all(commands.none(flags.contains("--no-check-certificate"))))
+      docker.file.stages.all(run.all(commands.where(binary == "wget").none(flags.contains("--no-check-certificate"))))
+      docker.file.stages.all(run.all(commands.where(binary == "sudo" && subcommand == "wget").none(flags.contains("--no-check-certificate"))))
     docs:
       desc: |
         This check verifies that no `wget` invocation in a `RUN` instruction disables TLS certificate validation.
 
-        `wget` verifies the server certificate against the system trust store and refuses the transfer when verification fails. The `--no-check-certificate` option removes that refusal and accepts any certificate, whether expired, self-signed, or issued for a different host. The check requires that no `RUN` instruction in any build stage pass this option.
+        `wget` verifies the server certificate against the system trust store and refuses the transfer when verification fails. The `--no-check-certificate` option removes that refusal and accepts any certificate, whether expired, self-signed, or issued for a different host. The check requires that no `wget` command in a `RUN` instruction of any build stage pass this option. The same text passed to another command, such as a pattern given to `grep`, does not change how `wget` connects and is not flagged.
 
         **Why this matters**
 
@@ -317,7 +319,7 @@ queries:
         2. Search every `RUN` instruction for the insecure option: `grep -n -- '--no-check-certificate' Dockerfile`.
         3. Confirm no `RUN` instruction passes `--no-check-certificate` to `wget`.
 
-        If the option is absent, the check passes. If any `RUN` instruction uses it, the check fails.
+        If no `wget` command passes the option, the check passes. If any does, the check fails.
       remediation:
         - id: dockerfile
           desc: |
@@ -416,12 +418,13 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
-      docker.file.stages.all(run.all(commands.none(flags.contains("--nogpgcheck") || flags.contains("--no-gpg-checks"))))
+      docker.file.stages.all(run.all(commands.where(binary == /^(yum|dnf|dnf5|microdnf|tdnf|zypper)$/).none(flags.contains("--nogpgcheck") || flags.contains("--no-gpg-checks"))))
+      docker.file.stages.all(run.all(commands.where(binary == "sudo" && subcommand == /^(yum|dnf|dnf5|microdnf|tdnf|zypper)$/).none(flags.contains("--nogpgcheck") || flags.contains("--no-gpg-checks"))))
     docs:
       desc: |
         This check verifies that no `RUN` instruction disables GPG signature verification for RPM package installs.
 
-        YUM, DNF, and zypper verify each package against a signing key imported into the RPM keyring before installing it. The `--nogpgcheck` option for YUM and DNF, and `--no-gpg-checks` for zypper, skip that verification. The check requires that no `RUN` instruction in any build stage pass either option.
+        YUM, DNF, and zypper verify each package against a signing key imported into the RPM keyring before installing it. The `--nogpgcheck` option for YUM and DNF, and `--no-gpg-checks` for zypper, skip that verification. The check requires that no package manager command in a `RUN` instruction of any build stage pass either option. The same text passed to another command, such as a pattern given to `grep`, does not change how packages are installed and is not flagged.
 
         **Why this matters**
 
@@ -439,7 +442,7 @@ queries:
         2. Search every `RUN` instruction for the bypass options: `grep -nE -- '--nogpgcheck|--no-gpg-checks' Dockerfile`.
         3. Confirm no `RUN` instruction passes either option to YUM, DNF, or zypper.
 
-        If neither option is present, the check passes. If any `RUN` instruction uses one, the check fails.
+        If no YUM, DNF, or zypper command passes either option, the check passes. If any does, the check fails.
       remediation:
         - id: dockerfile
           desc: |
@@ -713,12 +716,12 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
-      docker.file.stages.all(from.tag != empty || from.digest != empty || from.image == "scratch")
+      docker.file.stages.all(from.tag != empty || from.digest != empty || from.image == "scratch" || from.image.downcase.in(file.stages.map(from.name.downcase)))
     docs:
       desc: |
         This check verifies that every `FROM` instruction in the Dockerfile names an explicit tag or digest.
 
-        An image reference with no tag is not an error. The registry client fills in `:latest` and resolves that, so a bare image name and the same name with the `latest` tag build identically while only one of them says so. The check requires each `FROM` instruction to carry a tag or a digest. The reserved `scratch` base is exempt, because it is an empty filesystem with nothing published to tag.
+        An image reference with no tag is not an error. The registry client fills in `:latest` and resolves that, so a bare image name and the same name with the `latest` tag build identically while only one of them says so. The check requires each `FROM` instruction to carry a tag or a digest. The reserved `scratch` base is exempt, because it is an empty filesystem with nothing published to tag. So is a `FROM` that names an earlier build stage of the same Dockerfile, written as `FROM <image> AS <name>`: Docker resolves that name to the stage, not to a registry image, and a stage takes no tag.
 
         **Why this matters**
 
@@ -734,7 +737,7 @@ queries:
 
         1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
         2. Locate every `FROM` instruction: `grep -nE '^FROM' Dockerfile`.
-        3. Confirm each image reference includes an explicit tag or digest.
+        3. Confirm each image reference includes an explicit tag or digest, unless it is `scratch` or the name of an earlier stage declared with `AS <name>`.
 
         If every `FROM` instruction specifies a tag or digest, the check passes. If any omits both, the check fails.
       remediation:
