@@ -695,6 +695,7 @@ policies:
           - uid: mondoo-aws-security-emr-encryption-at-rest
           - uid: mondoo-aws-security-emr-encryption-in-transit
           - uid: mondoo-aws-security-emr-logging-enabled
+          - uid: mondoo-aws-security-emr-security-configuration
           - uid: mondoo-aws-security-emr-local-disk-encryption
           - uid: mondoo-aws-security-emr-not-publicly-accessible
           - uid: mondoo-aws-security-emr-log-cmk-encryption
@@ -51616,6 +51617,191 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::EMR::Cluster").all(
       properties['LogUri'] != empty
+      )
+  - uid: mondoo-aws-security-emr-security-configuration
+    title: Ensure EMR clusters have a security configuration assigned
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-emr-security-configuration-aws
+        tags:
+          mondoo.com/filter-title: AWS EMR Cluster
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-emr-security-configuration-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-emr-security-configuration-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-emr-security-configuration-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-emr-security-configuration-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check verifies that Amazon EMR clusters have a security configuration assigned. An EMR security configuration is where a cluster's at-rest encryption, in-transit encryption, local disk encryption, and Kerberos or Lake Formation authentication are defined, and a cluster launched without one gets none of them.
+
+        The security configuration is chosen when the cluster is created and cannot be changed afterwards, so a cluster without one stays that way until it is replaced.
+
+        **Why this matters**
+
+        EMR clusters process large volumes of data pulled from S3, databases, and streams, and copy it onto the cluster's instance storage and EBS volumes as part of normal processing. Without a security configuration that data sits on local disks unencrypted and moves between nodes in plaintext.
+
+        The encryption checks elsewhere in this policy inspect the settings inside a security configuration. A cluster that never references one is not covered by them at all, so a missing assignment hides the cluster from every one of those checks.
+
+        Because the assignment is fixed at launch, catching it in infrastructure code before the cluster is created avoids rebuilding a running cluster later.
+      audit: |
+        ### Audit via Console
+
+        1. Open the AWS Management Console and navigate to **Amazon EMR**.
+        2. Select **Clusters** and open each cluster.
+        3. On the **Properties** tab, locate **Security configuration** under **Security and access**.
+
+        A passing cluster shows a named security configuration. A failing cluster shows none.
+
+        ### Audit via CLI
+
+        ```bash
+        aws emr describe-cluster --cluster-id <cluster-id> \
+          --query "Cluster.SecurityConfiguration"
+        ```
+
+        A passing cluster returns the name of a security configuration. A failing cluster returns `null`.
+      remediation:
+        - id: console
+          desc: |
+            To launch an EMR cluster with a security configuration using the AWS Console:
+
+            1. In the Amazon EMR console, select **Security configurations** and create one that enables at-rest, in-transit, and local disk encryption.
+            2. Create a new cluster and, under **Security configuration and EC2 key pair**, select the security configuration.
+            3. Move workloads to the new cluster and terminate the old one, since the security configuration of a running cluster cannot be changed.
+        - id: cli
+          desc: |
+            To launch an EMR cluster with a security configuration using the AWS CLI:
+
+            ```bash
+            aws emr create-security-configuration --name my-security-config \
+              --security-configuration file://security-config.json
+
+            aws emr run-job-flow \
+              --name my-cluster \
+              --release-label emr-7.1.0 \
+              --security-configuration my-security-config \
+              --instances InstanceGroups='[{"InstanceRole":"MASTER","InstanceType":"m5.xlarge","InstanceCount":1},{"InstanceRole":"CORE","InstanceType":"m5.xlarge","InstanceCount":2}]'
+            ```
+        - id: terraform
+          desc: |
+            To assign a security configuration to an EMR cluster in Terraform:
+
+            ```hcl
+            resource "aws_emr_security_configuration" "example" {
+              name = "example-security-config"
+
+              configuration = jsonencode({
+                EncryptionConfiguration = {
+                  EnableAtRestEncryption    = true
+                  EnableInTransitEncryption = true
+                  AtRestEncryptionConfiguration = {
+                    S3EncryptionConfiguration = {
+                      EncryptionMode = "SSE-KMS"
+                      AwsKmsKey      = aws_kms_key.emr.arn
+                    }
+                    LocalDiskEncryptionConfiguration = {
+                      EncryptionKeyProviderType = "AwsKms"
+                      AwsKmsKey                 = aws_kms_key.emr.arn
+                    }
+                  }
+                  InTransitEncryptionConfiguration = {
+                    TLSCertificateConfiguration = {
+                      CertificateProviderType = "PEM"
+                      S3Object                = "s3://my-bucket/certs.zip"
+                    }
+                  }
+                }
+              })
+            }
+
+            resource "aws_emr_cluster" "example" {
+              name          = "example-cluster"
+              release_label = "emr-7.1.0"
+              service_role  = aws_iam_role.emr_service.arn
+
+              security_configuration = aws_emr_security_configuration.example.name
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To assign a security configuration to an EMR cluster in CloudFormation:
+
+            ```yaml
+            Resources:
+              EMRCluster:
+                Type: AWS::EMR::Cluster
+                Properties:
+                  Name: example-cluster
+                  ReleaseLabel: emr-7.1.0
+                  Instances:
+                    MasterInstanceGroup:
+                      InstanceCount: 1
+                      InstanceType: m5.xlarge
+                    CoreInstanceGroup:
+                      InstanceCount: 2
+                      InstanceType: m5.xlarge
+                  JobFlowRole: EMR_EC2_DefaultRole
+                  ServiceRole: EMR_DefaultRole
+                  SecurityConfiguration: !Ref EMRSecurityConfiguration
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-security-configurations.html
+        title: Amazon EMR - Use security configurations to set up cluster security
+      - url: https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-specify-security-configuration.html
+        title: Amazon EMR - Specify a security configuration for a cluster
+  - uid: mondoo-aws-security-emr-security-configuration-aws
+    filters: asset.platform == "aws-emr-cluster"
+    mql: aws.emr.cluster.securityConfiguration != empty
+  - uid: mondoo-aws-security-emr-security-configuration-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_emr_cluster")
+    mql: |
+      terraform.resources("aws_emr_cluster").all(
+        arguments.security_configuration != empty
+      )
+  - uid: mondoo-aws-security-emr-security-configuration-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_emr_cluster")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_emr_cluster").all(
+        change.after.security_configuration != empty
+      )
+  - uid: mondoo-aws-security-emr-security-configuration-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_emr_cluster")
+    mql: |
+      terraform.state.resources.where(type == "aws_emr_cluster").all(
+        values.security_configuration != empty
+      )
+  - uid: mondoo-aws-security-emr-security-configuration-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EMR::Cluster")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EMR::Cluster").all(
+        properties['SecurityConfiguration'] != empty
       )
   - uid: mondoo-aws-security-dax-encryption-at-rest
     title: Ensure DynamoDB DAX clusters have encryption at rest
