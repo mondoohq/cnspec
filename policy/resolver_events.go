@@ -18,18 +18,19 @@ type ResolverEvents interface {
 
 // ResolvedPolicyCacheMiss describes one resolved-policy cache miss.
 //
-// The cache is looked up by the checksum of all asset filters the caller sent
-// but stored under the checksum of the filters that matched the policy. When
-// the two differ, the stored row is never found and the miss repeats on every
-// resolve. DroppedFilters names the filters that make them differ.
+// The cache is looked up and stored by the checksum of all asset filters the
+// caller sent, while the policy is resolved with only the filters that match
+// it. DroppedFilters names the filters the caller sent that the policy does
+// not match.
 type ResolvedPolicyCacheMiss struct {
 	// PolicyMrn is the policy that was resolved; the asset MRN on the scan path.
 	PolicyMrn string
 	// LookupFiltersChecksum is the cache key that missed: the checksum of all
 	// asset filters the caller sent.
 	LookupFiltersChecksum string
-	// StoredFiltersChecksum is the key the resolved policy is stored under: the
-	// checksum of the matching filters. Empty when no filter matched.
+	// StoredFiltersChecksum is the key the resolved policy is stored under. It
+	// equals LookupFiltersChecksum; a difference means a stored row can never
+	// be found again. Empty when no filter matched and nothing was stored.
 	StoredFiltersChecksum string
 	// AssetFilters is the number of filters the caller sent.
 	AssetFilters int

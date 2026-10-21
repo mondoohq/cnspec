@@ -74,7 +74,7 @@ policies:
 		assert.Empty(t, miss.DroppedFilters)
 	})
 
-	t.Run("miss that stores under a different key reports the dropped filter", func(t *testing.T) {
+	t.Run("miss with a filter the policy does not match, then hit", func(t *testing.T) {
 		srv := initResolver(t, []*testAsset{
 			{asset: "asset1", policies: []string{policyMrn("policy1")}},
 		}, []*policy.Bundle{b})
@@ -92,11 +92,11 @@ policies:
 			require.NoError(t, err)
 		}
 
-		// the row is stored under the matching key, which the lookup never asks
-		// for, so every resolve misses
-		require.Len(t, rec.misses, 2)
-		miss := rec.misses[1]
-		assert.NotEqual(t, miss.LookupFiltersChecksum, miss.StoredFiltersChecksum)
+		// the row is stored under the key of all filters sent, not just the
+		// matching ones, so the second resolve finds it
+		require.Len(t, rec.misses, 1, "the second resolve must hit the cache")
+		miss := rec.misses[0]
+		assert.Equal(t, miss.LookupFiltersChecksum, miss.StoredFiltersChecksum)
 		assert.Equal(t, 2, miss.AssetFilters)
 		assert.Equal(t, 1, miss.MatchingFilters)
 		require.Len(t, miss.DroppedFilters, 1)

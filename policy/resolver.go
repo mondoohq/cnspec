@@ -529,6 +529,12 @@ func (s *LocalServices) tryResolve(ctx context.Context, bundleMrn string, assetF
 	if err != nil {
 		return nil, err
 	}
+	// The policy is resolved with the matching filters only, but it must be
+	// stored under the key the lookup above uses. Keyed by the matching filters,
+	// a caller that sends a filter the policy does not match (e.g. one whose
+	// CodeId the policy carries from an older compiler) would never find the
+	// stored row and would resolve again on every call.
+	resolvedPolicy.FiltersChecksum = allFiltersChecksum
 	reportMiss(resolvedPolicy.FiltersChecksum)
 
 	if len(exceptionGroups) == 0 {
