@@ -51,6 +51,13 @@ type Opts struct {
 	// enforces findingsUploadTimeout: if the supplied client has no timeout, a
 	// shallow copy is used for the PUT so the caller's client is left untouched.
 	HTTPClient *http.Client
+
+	// ScoreAssetMrns are assets UploadFindings hands to scoring after the
+	// upload, even when there are no documents to upload. Processing an upload
+	// rescores only the assets whose documents it stored or changed, so a caller
+	// that stored an asset's data outside its findings (an SBOM through
+	// Sbom.BulkUploadSbom, which signals nothing) names the asset here.
+	ScoreAssetMrns []string
 }
 
 // UploadFindings uploads FEX/VEX documents to Mondoo Platform as third-party
@@ -61,7 +68,7 @@ type Opts struct {
 // tool (e.g. "xgrep"). Returns ErrNoCredentials when no config is found (check
 // with IsNoCredentials).
 func UploadFindings(ctx context.Context, opts Opts, docs []*fex.FindingDocument, source string) error {
-	if len(docs) == 0 {
+	if len(docs) == 0 && len(opts.ScoreAssetMrns) == 0 {
 		log.Debug().Msg("no findings to upload")
 		return nil
 	}
@@ -79,6 +86,11 @@ func UploadFindings(ctx context.Context, opts Opts, docs []*fex.FindingDocument,
 	resolver, err := policy.NewPolicyResolverClient(creds.ApiEndpoint, resolverHTTPClient(opts.HTTPClient), plugin)
 	if err != nil {
 		return fmt.Errorf("create policy resolver client: %w", err)
+	}
+
+	if len(docs) == 0 {
+		scoreAssets(ctx, resolver, opts.ScoreAssetMrns, source)
+		return nil
 	}
 
 	data, err := protojson.Marshal(&fex.FindingsUploadRequest{
@@ -103,7 +115,29 @@ func UploadFindings(ctx context.Context, opts Opts, docs []*fex.FindingDocument,
 	}
 
 	log.Info().Int("findings", len(docs)).Str("source", source).Msg("uploaded findings to Mondoo Platform")
+	scoreAssets(ctx, resolver, opts.ScoreAssetMrns, source)
 	return nil
+}
+
+// scoreAssets hands each asset to scoring: ReportUploadCompleted scoped to the
+// asset, under the third-party session id for source (upload kind, source,
+// Mondoo enrichment), which the platform turns into the asset's scan-finished
+// event without an upload behind it. Best-effort, like the importers' own
+// per-asset completion: a failure is logged and the rest are still tried.
+func scoreAssets(ctx context.Context, resolver uploadResolver, assetMrns []string, source string) {
+	sessionID := policy.UploadURLKind_UPLOAD_URL_KIND_THIRD_PARTY_FINDINGS.String() + "-" + source + "-true"
+	for _, assetMrn := range assetMrns {
+		err := upstream.RetryRPC(ctx, "request asset scoring", func() error {
+			_, err := resolver.ReportUploadCompleted(ctx, &policy.ReportUploadCompletedReq{
+				UploadSessionId: sessionID,
+				ScopeMrn:        assetMrn,
+			})
+			return err
+		})
+		if err != nil {
+			log.Warn().Err(err).Str("asset", assetMrn).Msg("could not request asset scoring from Mondoo Platform")
+		}
+	}
 }
 
 // resolverHTTPClient returns the client used for the resolver RPCs: the

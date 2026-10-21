@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/fex"
+	"go.mondoo.com/ranger-rpc/codes"
+	"go.mondoo.com/ranger-rpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
@@ -26,6 +28,9 @@ type fakeResolver struct {
 	getCalls         int
 	completedSession string
 	completedScope   string
+	// completed records every completion call, in order; completeErr fails them.
+	completed   []*policy.ReportUploadCompletedReq
+	completeErr error
 }
 
 func (f *fakeResolver) GetUploadURL(_ context.Context, in *policy.GetUploadURLReq) (*policy.GetUploadURLResp, error) {
@@ -46,7 +51,51 @@ func (f *fakeResolver) GetUploadURL(_ context.Context, in *policy.GetUploadURLRe
 func (f *fakeResolver) ReportUploadCompleted(_ context.Context, in *policy.ReportUploadCompletedReq) (*policy.Empty, error) {
 	f.completedSession = in.UploadSessionId
 	f.completedScope = in.ScopeMrn
+	f.completed = append(f.completed, in)
+	if f.completeErr != nil {
+		return nil, f.completeErr
+	}
 	return &policy.Empty{}, nil
+}
+
+func TestScoreAssets(t *testing.T) {
+	const assetA = "//assets.api.mondoo.app/spaces/test/assets/a"
+	const assetB = "//assets.api.mondoo.app/spaces/test/assets/b"
+
+	t.Run("each asset is scored under the third-party session id", func(t *testing.T) {
+		resolver := &fakeResolver{}
+		scoreAssets(context.Background(), resolver, []string{assetA, assetB}, "VEX_SOURCE_XGREP")
+
+		require.Len(t, resolver.completed, 2)
+		for i, want := range []string{assetA, assetB} {
+			// The session id the platform parses as "third-party upload of this
+			// source, with Mondoo enrichment": no upload record behind it.
+			assert.Equal(t, "UPLOAD_URL_KIND_THIRD_PARTY_FINDINGS-VEX_SOURCE_XGREP-true", resolver.completed[i].UploadSessionId)
+			assert.Equal(t, want, resolver.completed[i].ScopeMrn)
+		}
+		assert.Zero(t, resolver.getCalls, "scoring requests no upload URL")
+	})
+
+	t.Run("no assets makes no call", func(t *testing.T) {
+		resolver := &fakeResolver{}
+		scoreAssets(context.Background(), resolver, nil, "VEX_SOURCE_XGREP")
+		assert.Empty(t, resolver.completed)
+	})
+
+	t.Run("a failure does not stop the other assets", func(t *testing.T) {
+		// A refusal is a PermissionDenied status, which is not retried.
+		resolver := &fakeResolver{completeErr: status.Error(codes.PermissionDenied, "permission denied")}
+		scoreAssets(context.Background(), resolver, []string{assetA, assetB}, "VEX_SOURCE_XGREP")
+		require.Len(t, resolver.completed, 2)
+		assert.Equal(t, assetB, resolver.completed[1].ScopeMrn)
+	})
+}
+
+func TestUploadFindingsWithNothingToDo(t *testing.T) {
+	// No documents and no assets to score: nothing happens, not even a
+	// credential lookup, so a credential-less caller is not turned into an error.
+	t.Setenv("MONDOO_CONFIG_PATH", t.TempDir()+"/missing.yml")
+	require.NoError(t, UploadFindings(context.Background(), Opts{}, nil, "VEX_SOURCE_XGREP"))
 }
 
 func TestDoUpload(t *testing.T) {
