@@ -386,6 +386,12 @@ func addAssetErrors(run *sarif.Run, r *policy.ReportCollection, ctx *sarifRunCon
 		WithPartialFingerPrints(map[string]interface{}{
 			sarifFingerprintKey: sarifFingerprint(sarifAssetErrorRuleID, ctx.assetMrn),
 		})
+	// The classification, in the spelling of the JSON output's errorDetails,
+	// so a consumer can tell a refused credential from input that does not
+	// parse without matching the message.
+	if d := r.ErrorDetails[ctx.assetMrn]; d != nil {
+		result.Properties = sarif.Properties{"errorDetail": toErrorDetailJSON(d)}
+	}
 	run.AddResult(result)
 }
 
@@ -547,6 +553,13 @@ func checkResultProperties(query *policy.Mquery, score *policy.Score, ctx *sarif
 	}
 	if titles := ctx.policyTitles[query.Mrn]; len(titles) > 0 {
 		props["policies"] = titles
+	}
+	if score != nil && len(score.ErrorDetails) != 0 {
+		details := make([]errorDetailJSON, len(score.ErrorDetails))
+		for i, d := range score.ErrorDetails {
+			details[i] = toErrorDetailJSON(d)
+		}
+		props["errorDetails"] = details
 	}
 	return props
 }
