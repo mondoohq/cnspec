@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -204,15 +203,18 @@ func TestClaimLaneStateDisablesOnce(t *testing.T) {
 	assert.False(t, off.active(), "never enabled")
 }
 
-// filteredCounter is a MultiProgress that only counts Filtered calls.
+// filteredCounter is a MultiProgress that records Filtered and AddTask calls.
 type filteredCounter struct {
 	progress.NoopMultiProgress
 	filtered int
+	added    []string
 }
+
+func (f *filteredCounter) AddTask(index string, _ *inventory.Asset) { f.added = append(f.added, index) }
 
 func (f *filteredCounter) Filtered(n int) { f.filtered += n }
 
-func TestScanParametersClaimAssetsEnabled(t *testing.T) {
+func TestClaimAssetsEnabledGetterAndLaneState(t *testing.T) {
 	var nilParams *policy.ScanParameters
 	assert.False(t, nilParams.GetClaimAssetsEnabled(), "a nil response (failed call, incognito) must read as off")
 	assert.False(t, (&policy.ScanParameters{}).GetClaimAssetsEnabled(), "a server that says nothing means off")
@@ -250,11 +252,8 @@ func TestClaimLaneEnvOverride(t *testing.T) {
 		})
 	}
 
-	t.Run("distributeJob reads the variable", func(t *testing.T) {
-		t.Setenv(claimAssetsEnvVar, "force")
-		assert.True(t, newClaimLaneState(off, services, os.Getenv(claimAssetsEnvVar)).active())
-		t.Setenv(claimAssetsEnvVar, "0")
-		assert.False(t, newClaimLaneState(on, services, os.Getenv(claimAssetsEnvVar)).active())
+	t.Run("env variable name", func(t *testing.T) {
+		assert.Equal(t, "MONDOO_CLAIM_ASSETS", claimAssetsEnvVar)
 	})
 }
 
@@ -362,4 +361,74 @@ func TestClaimPrePassSkipsClaimedAndDisablesOnError(t *testing.T) {
 		require.NotPanics(t, func() { sc.claimSubtreeChildren(context.Background(), node) })
 		assert.NotNil(t, kids[0].Asset)
 	})
+}
+
+func TestClaimPrePassIsIdempotentPerNode(t *testing.T) {
+	r := &claimResolver{claimed: func(_, i int) bool { return i == 0 }}
+	sc := &scanContext{
+		claimLane:     newClaimLaneState(&policy.ScanParameters{ClaimAssetsEnabled: true}, claimServices(r), ""),
+		services:      claimServices(r),
+		spaceMrn:      "//space",
+		multiprogress: &filteredCounter{},
+	}
+	node := &discovery.TrackedAsset{Children: []*discovery.TrackedAsset{claimChild("a"), claimChild("b")}}
+
+	sc.claimSubtreeChildren(context.Background(), node)
+	sc.claimSubtreeChildren(context.Background(), node)
+	assert.Len(t, r.reqs, 1, "the second call on the same node makes no RPC")
+
+	other := &discovery.TrackedAsset{Children: []*discovery.TrackedAsset{claimChild("c")}}
+	sc.claimSubtreeChildren(context.Background(), other)
+	assert.Len(t, r.reqs, 2, "a different node is still processed")
+}
+
+// A claimed root child must not be registered as a pending progress task:
+// distributeJob runs the pre-pass before its AddTask loop and the loop skips
+// nil-asset children. This drives the same sequence the loop runs.
+func TestClaimedRootChildIsNotRegisteredAsTask(t *testing.T) {
+	r := &claimResolver{claimed: func(_, i int) bool { return i == 0 }}
+	mp := &filteredCounter{}
+	sc := &scanContext{
+		claimLane:     newClaimLaneState(&policy.ScanParameters{ClaimAssetsEnabled: true}, claimServices(r), ""),
+		services:      claimServices(r),
+		spaceMrn:      "//space",
+		multiprogress: mp,
+	}
+	claimedKid, keptKid := claimChild("claimed"), claimChild("kept")
+	claimedKid.Asset.PlatformIds = []string{"pid-claimed"}
+	keptKid.Asset.PlatformIds = []string{"pid-kept"}
+	root := &discovery.TrackedAsset{Asset: &inventory.Asset{PlatformIds: []string{"pid-root"}}, Children: []*discovery.TrackedAsset{claimedKid, keptKid}}
+
+	sc.registerRootTasks(context.Background(), root)
+
+	assert.Equal(t, []string{"pid-root", "pid-kept"}, mp.added, "claimed child is never a pending task")
+	assert.Equal(t, 1, mp.filtered)
+}
+
+func TestClaimPrePassCancelledContextKeepsLane(t *testing.T) {
+	var buf bytes.Buffer
+	prev := log.Logger
+	log.Logger = zerolog.New(&buf)
+	t.Cleanup(func() { log.Logger = prev })
+
+	r := &claimResolver{claimed: func(int, int) bool { return true }}
+	mp := &filteredCounter{}
+	sc := &scanContext{
+		claimLane:     newClaimLaneState(&policy.ScanParameters{ClaimAssetsEnabled: true}, claimServices(r), ""),
+		services:      claimServices(r),
+		spaceMrn:      "//space",
+		multiprogress: mp,
+	}
+	node := &discovery.TrackedAsset{Children: []*discovery.TrackedAsset{claimChild("a")}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	// The fake ignores ctx, so make it fail the way a cancelled call does.
+	r.err = ctx.Err()
+	sc.claimSubtreeChildren(ctx, node)
+
+	assert.True(t, sc.claimLane.active(), "cancellation must not disable the lane")
+	assert.Empty(t, buf.String(), "nothing logged")
+	assert.NotNil(t, node.Children[0].Asset, "nothing skipped")
+	assert.Zero(t, mp.filtered)
 }
