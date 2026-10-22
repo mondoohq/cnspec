@@ -649,14 +649,28 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	scanGroups.Wait() // wait for the progress bar to finish
 
 	if scannedAssets.Load() == 0 {
-		if scanCtx.platformIdsExclude != nil {
-			log.Info().Msg("all discovered assets already reported, nothing to scan")
-			return reporter.Reports(), nil
+		if err := scanCtx.errNothingScanned(); err != nil {
+			return nil, err
 		}
-		return nil, errors.New("could not find an asset that we can connect to")
 	}
 
 	return reporter.Reports(), nil
+}
+
+// errNothingScanned is called when a run scanned no asset. It returns nil when
+// that is a normal outcome (every discovered asset was already reported, or
+// the claim lane materialized all of them server-side) and an error otherwise.
+func (sc *scanContext) errNothingScanned() error {
+	if sc.platformIdsExclude != nil {
+		log.Info().Msg("all discovered assets already reported, nothing to scan")
+		return nil
+	}
+	if sc.claimedCount > 0 {
+		log.Info().Int("claimed", sc.claimedCount).
+			Msg("all discovered assets were claimed from earlier scans, nothing to scan")
+		return nil
+	}
+	return errors.New("could not find an asset that we can connect to")
 }
 
 // scanContext holds the shared state needed while recursively walking the
@@ -682,12 +696,18 @@ type scanContext struct {
 	services  *policy.Services
 	spaceMrn  string
 
-	// claimedSubtrees is the set of nodes whose children claimSubtreeChildren
-	// has already processed, so a second call on the same node is free. It
-	// is read and written without a lock: distributeJob iterates roots
-	// sequentially and scanSubtree recurses sequentially, so access is
-	// strictly sequential.
+	// claimedSubtrees is the set of roots registerRootTasks has already run
+	// the claim lane over, so scanSubtree's own pre-pass on the same root is
+	// free. Only roots are ever visited twice, so only roots are inserted;
+	// branch nodes are not retained for the whole run. It is read and written
+	// without a lock: distributeJob iterates roots sequentially and
+	// scanSubtree recurses sequentially, so access is strictly sequential.
 	claimedSubtrees map[*discovery.TrackedAsset]struct{}
+
+	// claimedCount is how many children the claim lane skipped this run. A
+	// run that scanned nothing but claimed something is a success. Sequential
+	// access, like claimedSubtrees.
+	claimedCount int
 }
 
 // registerRootTasks registers a root and its already-discovered children in the
@@ -700,6 +720,10 @@ type scanContext struct {
 // set makes that second call free.
 func (sc *scanContext) registerRootTasks(ctx context.Context, root *discovery.TrackedAsset) {
 	sc.claimSubtreeChildren(ctx, root)
+	if sc.claimedSubtrees == nil {
+		sc.claimedSubtrees = map[*discovery.TrackedAsset]struct{}{}
+	}
+	sc.claimedSubtrees[root] = struct{}{}
 
 	if len(root.Asset.PlatformIds) > 0 {
 		sc.multiprogress.AddTask(root.Asset.PlatformIds[0], root.Asset)
@@ -716,7 +740,8 @@ func (sc *scanContext) registerRootTasks(ctx context.Context, root *discovery.Tr
 
 // skipUnconnectedAsset resolves a child that was never connected, because the
 // claim lane found its claim records and materialized it server-side. It marks
-// the progress task filtered and drops the asset, and does nothing else:
+// the progress task filtered, counts the claim and drops the asset, and does
+// nothing else:
 //
 //   - It must not call explorer.CloseAsset. CloseAsset rejects any asset whose
 //     state is not Connected, and this one never was, so the call would only
@@ -728,6 +753,7 @@ func (sc *scanContext) registerRootTasks(ctx context.Context, root *discovery.Tr
 // skipAsset is the counterpart for assets that were connected.
 func (sc *scanContext) skipUnconnectedAsset(child *discovery.TrackedAsset) {
 	sc.multiprogress.Filtered(1)
+	sc.claimedCount++
 	child.Asset = nil
 }
 
@@ -739,9 +765,9 @@ func (sc *scanContext) skipUnconnectedAsset(child *discovery.TrackedAsset) {
 // the run's own cancellation, where the lane is left as it is (the run is
 // ending, and a warning on Ctrl-C would be noise).
 //
-// It is idempotent per node: a second call on the same node returns at once,
-// without an RPC. distributeJob calls it for each root before registering the
-// root's children as progress tasks, and scanSubtree calls it again.
+// It is idempotent for roots: registerRootTasks runs it for each root before
+// registering the root's children as progress tasks and records the root, so
+// scanSubtree's call on the same root returns at once, without an RPC.
 func (sc *scanContext) claimSubtreeChildren(ctx context.Context, node *discovery.TrackedAsset) {
 	if !sc.claimLane.active() {
 		return
@@ -749,10 +775,6 @@ func (sc *scanContext) claimSubtreeChildren(ctx context.Context, node *discovery
 	if _, done := sc.claimedSubtrees[node]; done {
 		return
 	}
-	if sc.claimedSubtrees == nil {
-		sc.claimedSubtrees = map[*discovery.TrackedAsset]struct{}{}
-	}
-	sc.claimedSubtrees[node] = struct{}{}
 
 	claimed, err := claimAssetsBatch(ctx, sc.services, sc.spaceMrn, node.Children)
 	if err != nil {

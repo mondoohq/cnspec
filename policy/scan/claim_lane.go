@@ -5,6 +5,8 @@ package scan
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"sync/atomic"
 
 	"github.com/rs/zerolog/log"
@@ -48,7 +50,7 @@ func claimAssetsBatch(
 		chunk := candidates[start:min(start+claimBatchSize, len(candidates))]
 		list := make([]*inventory.Asset, len(chunk))
 		for i, child := range chunk {
-			list[i] = child.Asset
+			list[i] = claimProjection(child)
 		}
 
 		resp, err := services.ClaimAssets(ctx, &policy.ClaimAssetsReq{SpaceMrn: spaceMrn, List: list})
@@ -66,7 +68,83 @@ func claimAssetsBatch(
 			claimed[chunk[v.Index]] = struct{}{}
 		}
 	}
+
+	if len(candidates) > 0 {
+		log.Info().Int("asked", len(candidates)).Int("claimed", len(claimed)).
+			Str("space", spaceMrn).Msg("claim lane verdicts")
+		for child := range claimed {
+			ev := log.Debug().Str("name", child.Asset.Name)
+			if len(child.Asset.PlatformIds) > 0 {
+				ev = ev.Str("platformId", child.Asset.PlatformIds[0])
+			}
+			ev.Msg("asset claimed, not scanning")
+		}
+	}
 	return claimed, nil
+}
+
+// claimProjection builds the asset sent to ClaimAssets: a minimal projection of
+// a pre-Connect child. It carries only Id, Name, PlatformIds, Claims, Labels,
+// Annotations, ManagedBy, TraceId and Category. It never carries Connections
+// (they hold credentials and the claim endpoint has no use for them) or
+// anything else the asset holds.
+//
+// A child that was never connected has not been through mql's prepareAsset,
+// which would have stamped it with its root's bookkeeping. The server's GC of
+// claimed assets needs that bookkeeping, so the projection inherits it from the
+// subtree root, which is connected and prepared already: ManagedBy and TraceId
+// when the child has none, the root's mondoo labels (AddMondooLabels, the same
+// call prepareAsset makes) merged under the child's own labels, and the root's
+// annotations for keys the child does not set. This mirrors prepareAsset
+// (mondoohq/mql discovery/discovery.go) for exactly these fields, and so can
+// drift from it: if prepareAsset starts propagating more, this must follow.
+// It deliberately differs in one way: the child's own values win over the
+// root's, where prepareAsset lets the root overwrite.
+func claimProjection(child *discovery.TrackedAsset) *inventory.Asset {
+	a := child.Asset
+	p := &inventory.Asset{
+		Id:          a.Id,
+		Name:        a.Name,
+		PlatformIds: slices.Clone(a.PlatformIds),
+		Claims:      slices.Clone(a.Claims),
+		Labels:      maps.Clone(a.Labels),
+		Annotations: maps.Clone(a.Annotations),
+		ManagedBy:   a.ManagedBy,
+		TraceId:     a.TraceId,
+		Category:    a.Category,
+	}
+
+	root := subtreeRoot(child)
+	if root == nil || root.Asset == nil {
+		return p
+	}
+	if p.ManagedBy == "" {
+		p.ManagedBy = root.Asset.ManagedBy
+	}
+	if p.TraceId == "" {
+		p.TraceId = root.Asset.TraceId
+	}
+	p.AddMondooLabels(root.Asset)
+	for k, v := range root.Asset.Annotations {
+		if _, ok := p.Annotations[k]; ok {
+			continue
+		}
+		if p.Annotations == nil {
+			p.Annotations = map[string]string{}
+		}
+		p.Annotations[k] = v
+	}
+	return p
+}
+
+// subtreeRoot returns the topmost tracked ancestor of child, or nil when the
+// child has no parent.
+func subtreeRoot(child *discovery.TrackedAsset) *discovery.TrackedAsset {
+	var root *discovery.TrackedAsset
+	for p := child.Parent; p != nil; p = p.Parent {
+		root = p
+	}
+	return root
 }
 
 // claimAssetsEnvVar overrides the server's claim_assets_enabled for one run:
