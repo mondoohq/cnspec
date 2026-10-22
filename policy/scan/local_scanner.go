@@ -624,6 +624,9 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	batcher := newSyncBatcher(dispatcher, services, spaceMrn, s.recording, multiprogress, s.activityTrigger)
 
 	scanCtx := &scanContext{
+		claimLane:          newClaimLaneState(scanParams, services, os.Getenv(claimAssetsEnvVar)),
+		services:           services,
+		spaceMrn:           spaceMrn,
 		explorer:           explorer,
 		reporter:           reporter,
 		multiprogress:      multiprogress,
@@ -637,17 +640,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	// NewAssetExplorer; scanSubtree will connect children one branch at a
 	// time so only one parent's children data is in memory at once.
 	for _, root := range explorer.Connected() {
-		// Register the root and its already-discovered children in the
-		// progress bar so the TODO list knows how much work is pending
-		// and doesn't close prematurely.
-		if len(root.Asset.PlatformIds) > 0 {
-			multiprogress.AddTask(root.Asset.PlatformIds[0], root.Asset)
-		}
-		for _, child := range root.Children {
-			if len(child.Asset.PlatformIds) > 0 {
-				multiprogress.AddTask(child.Asset.PlatformIds[0], child.Asset)
-			}
-		}
+		scanCtx.registerRootTasks(ctx, root)
 
 		if err := scanCtx.scanSubtree(ctx, root); err != nil {
 			return nil, err
@@ -658,14 +651,28 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	scanGroups.Wait() // wait for the progress bar to finish
 
 	if scannedAssets.Load() == 0 {
-		if scanCtx.platformIdsExclude != nil {
-			log.Info().Msg("all discovered assets already reported, nothing to scan")
-			return reporter.Reports(), nil
+		if err := scanCtx.errNothingScanned(); err != nil {
+			return nil, err
 		}
-		return nil, errors.New("could not find an asset that we can connect to")
 	}
 
 	return reporter.Reports(), nil
+}
+
+// errNothingScanned is called when a run scanned no asset. It returns nil when
+// that is a normal outcome (every discovered asset was already reported, or
+// the claim lane materialized all of them server-side) and an error otherwise.
+func (sc *scanContext) errNothingScanned() error {
+	if sc.platformIdsExclude != nil {
+		log.Info().Msg("all discovered assets already reported, nothing to scan")
+		return nil
+	}
+	if sc.claimedCount > 0 {
+		log.Info().Int("claimed", sc.claimedCount).
+			Msg("all discovered assets were claimed from earlier scans, nothing to scan")
+		return nil
+	}
+	return errors.New("could not find an asset that we can connect to")
 }
 
 // scanContext holds the shared state needed while recursively walking the
@@ -683,6 +690,107 @@ type scanContext struct {
 	// Pipeline stages.
 	batcher    *syncBatcher
 	dispatcher *scanDispatcher
+
+	// claimLane is the per-run state of the pre-Connect claim lane
+	// (ADR-285). services and spaceMrn are what it calls ClaimAssets with;
+	// the lane is only ever active when services is non-nil.
+	claimLane *claimLaneState
+	services  *policy.Services
+	spaceMrn  string
+
+	// claimedSubtrees is the set of roots registerRootTasks has already run
+	// the claim lane over, so scanSubtree's own pre-pass on the same root is
+	// free. Only roots are ever visited twice, so only roots are inserted;
+	// branch nodes are not retained for the whole run. It is read and written
+	// without a lock: distributeJob iterates roots sequentially and
+	// scanSubtree recurses sequentially, so access is strictly sequential.
+	claimedSubtrees map[*discovery.TrackedAsset]struct{}
+
+	// claimedCount is how many children the claim lane skipped this run. A
+	// run that scanned nothing but claimed something is a success. Sequential
+	// access, like claimedSubtrees.
+	claimedCount int
+}
+
+// registerRootTasks registers a root and its already-discovered children in the
+// progress bar so the TODO list knows how much work is pending and doesn't
+// close prematurely.
+//
+// The claim lane runs over the root's children first, so a claimed child is
+// never registered as a pending task: it would sit in the TODO list until
+// Close. scanSubtree calls the pre-pass again for the same root; the visited
+// set makes that second call free.
+func (sc *scanContext) registerRootTasks(ctx context.Context, root *discovery.TrackedAsset) {
+	sc.claimSubtreeChildren(ctx, root)
+	if sc.claimedSubtrees == nil {
+		sc.claimedSubtrees = map[*discovery.TrackedAsset]struct{}{}
+	}
+	sc.claimedSubtrees[root] = struct{}{}
+
+	if len(root.Asset.PlatformIds) > 0 {
+		sc.multiprogress.AddTask(root.Asset.PlatformIds[0], root.Asset)
+	}
+	for _, child := range root.Children {
+		if child.Asset == nil {
+			continue // claimed by the claim lane, already resolved as filtered
+		}
+		if len(child.Asset.PlatformIds) > 0 {
+			sc.multiprogress.AddTask(child.Asset.PlatformIds[0], child.Asset)
+		}
+	}
+}
+
+// skipUnconnectedAsset resolves a child that was never connected, because the
+// claim lane found its claim records and materialized it server-side. It marks
+// the progress task filtered, counts the claim and drops the asset, and does
+// nothing else:
+//
+//   - It must not call explorer.CloseAsset. CloseAsset rejects any asset whose
+//     state is not Connected, and this one never was, so the call would only
+//     log an error.
+//   - It must not release connSem. The slot is acquired just before Connect,
+//     and a claimed child is skipped before that point, so there is no slot to
+//     give back; receiving here would steal one from a connected asset.
+//
+// skipAsset is the counterpart for assets that were connected.
+func (sc *scanContext) skipUnconnectedAsset(child *discovery.TrackedAsset) {
+	sc.multiprogress.Filtered(1)
+	sc.claimedCount++
+	child.Asset = nil
+}
+
+// claimSubtreeChildren is the lane's pre-pass, run once per subtree before its
+// children are connected. It asks the server which claim-bearing children it
+// can materialize and skips those (their Asset becomes nil, which the children
+// loop passes over). On any error it disables the lane for the rest of the run
+// and skips nothing: every child is scanned as usual, except when the error is
+// the run's own cancellation, where the lane is left as it is (the run is
+// ending, and a warning on Ctrl-C would be noise).
+//
+// It is idempotent for roots: registerRootTasks runs it for each root before
+// registering the root's children as progress tasks and records the root, so
+// scanSubtree's call on the same root returns at once, without an RPC.
+func (sc *scanContext) claimSubtreeChildren(ctx context.Context, node *discovery.TrackedAsset) {
+	if !sc.claimLane.active() {
+		return
+	}
+	if _, done := sc.claimedSubtrees[node]; done {
+		return
+	}
+
+	claimed, err := claimAssetsBatch(ctx, sc.services, sc.spaceMrn, node.Children)
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		sc.claimLane.disable("ClaimAssets failed", err)
+		return
+	}
+	for _, child := range node.Children {
+		if _, ok := claimed[child]; ok {
+			sc.skipUnconnectedAsset(child)
+		}
+	}
 }
 
 func (sc *scanContext) skipAsset(asset *discovery.TrackedAsset) {
@@ -737,12 +845,22 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 		sc.multiprogress.Discovered(len(node.Children))
 	}
 
+	// Claim lane pre-pass (ADR-285): once per subtree, before any child is
+	// connected.
+	sc.claimSubtreeChildren(ctx, node)
+
 	for _, child := range node.Children {
 		select {
 		case <-ctx.Done():
 			sc.multiprogress.Close()
 			return ctx.Err()
 		default:
+		}
+
+		// Claimed by the claim lane: already materialized server-side, never
+		// connected, nothing left to do.
+		if child.Asset == nil {
+			continue
 		}
 
 		// Acquire a connection slot before connecting. This limits the
