@@ -1,6 +1,6 @@
 module go.mondoo.com/cnspec
 
-go 1.26.8
+go 1.26.10
 
 // replace go.mondoo.com/mql => ../mql
 
@@ -47,7 +47,7 @@ require (
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/zclconf/go-cty v1.19.0
 	go.mondoo.com/mondoo-go v0.0.0-20261009120721-91d592217e58
-	go.mondoo.com/mql v0.0.0-20261020060735-da35a32371b8
+	go.mondoo.com/mql v0.0.0-20261022212734-f6ca22de5b38
 	go.mondoo.com/ranger-rpc v0.8.1
 	gocloud.dev v0.47.0
 	golang.org/x/sync v0.24.0

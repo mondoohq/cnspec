@@ -51,6 +51,17 @@ type Opts struct {
 	// enforces findingsUploadTimeout: if the supplied client has no timeout, a
 	// shallow copy is used for the PUT so the caller's client is left untouched.
 	HTTPClient *http.Client
+
+	// CompleteKinds lists the finding kinds the upload is complete for. The
+	// platform then closes findings by absence only for those kinds, so a
+	// producer that sends its FEX and VEX findings as separate uploads under
+	// one source does not have each upload close the other's findings. Empty
+	// means every kind.
+	CompleteKinds []fex.FindingKind
+	// Delta marks an upload that is not complete for any kind, e.g. one capped
+	// below the scan's full result: it carries no import start time, so the
+	// platform closes nothing by absence.
+	Delta bool
 }
 
 // UploadFindings uploads FEX/VEX documents to Mondoo Platform as third-party
@@ -81,14 +92,7 @@ func UploadFindings(ctx context.Context, opts Opts, docs []*fex.FindingDocument,
 		return fmt.Errorf("create policy resolver client: %w", err)
 	}
 
-	data, err := protojson.Marshal(&fex.FindingsUploadRequest{
-		Findings:         docs,
-		Source:           source,
-		MondooEnrichment: true,
-		SpaceMrn:         spaceMrn,
-		CreateAssets:     true,
-		ImportStartedAt:  timestamppb.Now(),
-	})
+	data, err := protojson.Marshal(findingsUploadRequest(opts, docs, source, spaceMrn))
 	if err != nil {
 		return fmt.Errorf("marshal findings: %w", err)
 	}
@@ -104,6 +108,24 @@ func UploadFindings(ctx context.Context, opts Opts, docs []*fex.FindingDocument,
 
 	log.Info().Int("findings", len(docs)).Str("source", source).Msg("uploaded findings to Mondoo Platform")
 	return nil
+}
+
+// findingsUploadRequest builds the uploaded file. A full pull (not opts.Delta)
+// carries the import start time the platform closes stale findings against,
+// for opts.CompleteKinds.
+func findingsUploadRequest(opts Opts, docs []*fex.FindingDocument, source, spaceMrn string) *fex.FindingsUploadRequest {
+	req := &fex.FindingsUploadRequest{
+		Findings:         docs,
+		Source:           source,
+		MondooEnrichment: true,
+		SpaceMrn:         spaceMrn,
+		CreateAssets:     true,
+		CompleteKinds:    opts.CompleteKinds,
+	}
+	if !opts.Delta {
+		req.ImportStartedAt = timestamppb.Now()
+	}
+	return req
 }
 
 // resolverHTTPClient returns the client used for the resolver RPCs: the
