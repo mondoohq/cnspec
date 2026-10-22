@@ -69,6 +69,28 @@ func claimAssetsBatch(
 	return claimed, nil
 }
 
+// claimAssetsEnvVar overrides the server's claim_assets_enabled for one run:
+// "1" or "force" turns the lane on regardless of the server, "0" turns it off
+// regardless. Anything else defers to the server. It is read once per run, in
+// distributeJob.
+const claimAssetsEnvVar = "MONDOO_CLAIM_ASSETS"
+
+// newClaimLaneState decides whether the lane is on for a run: the server's
+// ScanParameters bit, overridden by the env value. The lane needs services to
+// call ClaimAssets, so a run without them (incognito, no credentials) is never
+// enabled, even when forced. Computing that here is what lets claimAssetsBatch
+// rely on a non-nil services.
+func newClaimLaneState(params *policy.ScanParameters, services *policy.Services, env string) *claimLaneState {
+	enabled := params.GetClaimAssetsEnabled()
+	switch env {
+	case "1", "force":
+		enabled = true
+	case "0":
+		enabled = false
+	}
+	return &claimLaneState{enabled: enabled && services != nil}
+}
+
 // claimLaneState is the per-run state of the claim lane. enabled is set once
 // at wiring time; disable is one-way for the rest of the run.
 type claimLaneState struct {

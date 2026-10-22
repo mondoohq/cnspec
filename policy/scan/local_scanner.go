@@ -622,6 +622,9 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	batcher := newSyncBatcher(dispatcher, services, spaceMrn, s.recording, multiprogress, s.activityTrigger)
 
 	scanCtx := &scanContext{
+		claimLane:          newClaimLaneState(scanParams, services, os.Getenv(claimAssetsEnvVar)),
+		services:           services,
+		spaceMrn:           spaceMrn,
 		explorer:           explorer,
 		reporter:           reporter,
 		multiprogress:      multiprogress,
@@ -681,6 +684,51 @@ type scanContext struct {
 	// Pipeline stages.
 	batcher    *syncBatcher
 	dispatcher *scanDispatcher
+
+	// claimLane is the per-run state of the pre-Connect claim lane.
+	// services and spaceMrn are what it calls ClaimAssets with;
+	// the lane is only ever active when services is non-nil.
+	claimLane *claimLaneState
+	services  *policy.Services
+	spaceMrn  string
+}
+
+// skipUnconnectedAsset resolves a child that was never connected, because the
+// claim lane found its claim records and materialized it server-side. It marks
+// the progress task filtered and drops the asset, and does nothing else:
+//
+//   - It must not call explorer.CloseAsset. CloseAsset rejects any asset whose
+//     state is not Connected, and this one never was, so the call would only
+//     log an error.
+//   - It must not release connSem. The slot is acquired just before Connect,
+//     and a claimed child is skipped before that point, so there is no slot to
+//     give back; receiving here would steal one from a connected asset.
+//
+// skipAsset is the counterpart for assets that were connected.
+func (sc *scanContext) skipUnconnectedAsset(child *discovery.TrackedAsset) {
+	sc.multiprogress.Filtered(1)
+	child.Asset = nil
+}
+
+// claimSubtreeChildren is the lane's pre-pass, run once per subtree before its
+// children are connected. It asks the server which claim-bearing children it
+// can materialize and skips those (their Asset becomes nil, which the children
+// loop passes over). On any error it disables the lane for the rest of the run
+// and skips nothing: every child is scanned as usual.
+func (sc *scanContext) claimSubtreeChildren(ctx context.Context, node *discovery.TrackedAsset) {
+	if !sc.claimLane.active() {
+		return
+	}
+	claimed, err := claimAssetsBatch(ctx, sc.services, sc.spaceMrn, node.Children)
+	if err != nil {
+		sc.claimLane.disable("ClaimAssets failed", err)
+		return
+	}
+	for _, child := range node.Children {
+		if _, ok := claimed[child]; ok {
+			sc.skipUnconnectedAsset(child)
+		}
+	}
 }
 
 func (sc *scanContext) skipAsset(asset *discovery.TrackedAsset) {
@@ -735,12 +783,22 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 		sc.multiprogress.Discovered(len(node.Children))
 	}
 
+	// Claim lane pre-pass: once per subtree, before any child is
+	// connected.
+	sc.claimSubtreeChildren(ctx, node)
+
 	for _, child := range node.Children {
 		select {
 		case <-ctx.Done():
 			sc.multiprogress.Close()
 			return ctx.Err()
 		default:
+		}
+
+		// Claimed by the claim lane: already materialized server-side, never
+		// connected, nothing left to do.
+		if child.Asset == nil {
+			continue
 		}
 
 		// Acquire a connection slot before connecting. This limits the

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.mondoo.com/cnspec/cli/progress"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/discovery"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
@@ -200,4 +202,164 @@ func TestClaimLaneStateDisablesOnce(t *testing.T) {
 
 	off := &claimLaneState{}
 	assert.False(t, off.active(), "never enabled")
+}
+
+// filteredCounter is a MultiProgress that only counts Filtered calls.
+type filteredCounter struct {
+	progress.NoopMultiProgress
+	filtered int
+}
+
+func (f *filteredCounter) Filtered(n int) { f.filtered += n }
+
+func TestScanParametersClaimAssetsEnabled(t *testing.T) {
+	var nilParams *policy.ScanParameters
+	assert.False(t, nilParams.GetClaimAssetsEnabled(), "a nil response (failed call, incognito) must read as off")
+	assert.False(t, (&policy.ScanParameters{}).GetClaimAssetsEnabled(), "a server that says nothing means off")
+	assert.True(t, (&policy.ScanParameters{ClaimAssetsEnabled: true}).GetClaimAssetsEnabled())
+
+	r := &claimResolver{}
+	services := claimServices(r)
+	assert.False(t, newClaimLaneState(nil, services, "").active(), "no parameters: off")
+	assert.False(t, newClaimLaneState(&policy.ScanParameters{}, services, "").active(), "bit unset: off")
+	assert.True(t, newClaimLaneState(&policy.ScanParameters{ClaimAssetsEnabled: true}, services, "").active(), "bit set: on")
+}
+
+func TestClaimLaneEnvOverride(t *testing.T) {
+	services := claimServices(&claimResolver{})
+	on := &policy.ScanParameters{ClaimAssetsEnabled: true}
+	off := &policy.ScanParameters{}
+
+	tests := []struct {
+		name   string
+		env    string
+		params *policy.ScanParameters
+		want   bool
+	}{
+		{"force-on with the bit off", "force", off, true},
+		{"1 with the bit off", "1", off, true},
+		{"force-on with no parameters", "1", nil, true},
+		{"force-off with the bit on", "0", on, false},
+		{"unset follows the bit: on", "", on, true},
+		{"unset follows the bit: off", "", off, false},
+		{"unrecognized value follows the bit", "yes", on, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, newClaimLaneState(tc.params, services, tc.env).active())
+		})
+	}
+
+	t.Run("distributeJob reads the variable", func(t *testing.T) {
+		t.Setenv(claimAssetsEnvVar, "force")
+		assert.True(t, newClaimLaneState(off, services, os.Getenv(claimAssetsEnvVar)).active())
+		t.Setenv(claimAssetsEnvVar, "0")
+		assert.False(t, newClaimLaneState(on, services, os.Getenv(claimAssetsEnvVar)).active())
+	})
+}
+
+func TestClaimLaneIncognitoOff(t *testing.T) {
+	// Incognito runs have no services. Even forced on, the lane never
+	// becomes active, so the pre-pass can never reach a nil services.
+	for _, env := range []string{"", "1", "force"} {
+		lane := newClaimLaneState(&policy.ScanParameters{ClaimAssetsEnabled: true}, nil, env)
+		assert.False(t, lane.active(), "env %q", env)
+
+		sc := &scanContext{claimLane: lane, multiprogress: &filteredCounter{}}
+		child := claimChild("a")
+		require.NotPanics(t, func() {
+			sc.claimSubtreeChildren(context.Background(), &discovery.TrackedAsset{
+				Children: []*discovery.TrackedAsset{child},
+			})
+		})
+		assert.NotNil(t, child.Asset, "nothing skipped")
+	}
+}
+
+func TestSkipUnconnectedAsset(t *testing.T) {
+	mp := &filteredCounter{}
+	// explorer is nil on purpose: skipUnconnectedAsset calling CloseAsset
+	// would panic here (and CloseAsset errors on an unconnected asset).
+	sc := &scanContext{multiprogress: mp, connSem: make(chan struct{}, 1)}
+
+	// A slot held by another asset must not be released by the skip. This
+	// runs first so a stray receive fails the assert instead of blocking.
+	sc.connSem <- struct{}{}
+	child := claimChild("claimed")
+	require.NotPanics(t, func() { sc.skipUnconnectedAsset(child) })
+	assert.Equal(t, 1, mp.filtered)
+	assert.Nil(t, child.Asset)
+	require.Len(t, sc.connSem, 1, "skipUnconnectedAsset must not release connSem")
+	<-sc.connSem
+
+	// Nor did it take one.
+	sc.skipUnconnectedAsset(claimChild("another"))
+	assert.Equal(t, 2, mp.filtered)
+	select {
+	case sc.connSem <- struct{}{}:
+	default:
+		t.Fatal("connSem slot was not free after skipUnconnectedAsset")
+	}
+}
+
+func TestClaimPrePassSkipsClaimedAndDisablesOnError(t *testing.T) {
+	newNode := func() (*discovery.TrackedAsset, []*discovery.TrackedAsset) {
+		kids := []*discovery.TrackedAsset{claimChild("a"), claimChild("b"), claimlessChild("c")}
+		return &discovery.TrackedAsset{Children: kids}, kids
+	}
+
+	t.Run("claimed children are skipped", func(t *testing.T) {
+		r := &claimResolver{claimed: func(_, i int) bool { return i == 0 }}
+		mp := &filteredCounter{}
+		sc := &scanContext{
+			claimLane:     newClaimLaneState(&policy.ScanParameters{ClaimAssetsEnabled: true}, claimServices(r), ""),
+			services:      claimServices(r),
+			spaceMrn:      "//space",
+			multiprogress: mp,
+			connSem:       make(chan struct{}, 1),
+		}
+		node, kids := newNode()
+
+		sc.claimSubtreeChildren(context.Background(), node)
+
+		assert.Nil(t, kids[0].Asset, "claimed child skipped")
+		assert.NotNil(t, kids[1].Asset, "scan verdict child kept")
+		assert.NotNil(t, kids[2].Asset, "claimless child kept")
+		assert.Equal(t, 1, mp.filtered)
+		require.Len(t, r.reqs, 1)
+		assert.Equal(t, "//space", r.reqs[0].SpaceMrn)
+		assert.True(t, sc.claimLane.active())
+	})
+
+	t.Run("an error skips nothing and disables the lane", func(t *testing.T) {
+		r := &claimResolver{err: errors.New("boom")}
+		mp := &filteredCounter{}
+		sc := &scanContext{
+			claimLane:     newClaimLaneState(&policy.ScanParameters{ClaimAssetsEnabled: true}, claimServices(r), ""),
+			services:      claimServices(r),
+			spaceMrn:      "//space",
+			multiprogress: mp,
+			connSem:       make(chan struct{}, 1),
+		}
+		node, kids := newNode()
+
+		sc.claimSubtreeChildren(context.Background(), node)
+		for _, k := range kids {
+			assert.NotNil(t, k.Asset, "nothing skipped on error")
+		}
+		assert.Zero(t, mp.filtered)
+		assert.False(t, sc.claimLane.active())
+		require.Len(t, r.reqs, 1)
+
+		node2, _ := newNode()
+		sc.claimSubtreeChildren(context.Background(), node2)
+		assert.Len(t, r.reqs, 1, "a disabled lane makes no further RPC")
+	})
+
+	t.Run("a nil lane is inert", func(t *testing.T) {
+		sc := &scanContext{multiprogress: &filteredCounter{}}
+		node, kids := newNode()
+		require.NotPanics(t, func() { sc.claimSubtreeChildren(context.Background(), node) })
+		assert.NotNil(t, kids[0].Asset)
+	})
 }
