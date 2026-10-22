@@ -1195,7 +1195,10 @@ type ClaimAssetVerdict_Action int32
 
 const (
 	// Default and fail-open: scan the asset as usual.
-	ClaimAssetVerdict_SCAN    ClaimAssetVerdict_Action = 0
+	ClaimAssetVerdict_SCAN ClaimAssetVerdict_Action = 0
+	// The server has materialized the asset from claim records. The client
+	// never connects it, so anything it would have discovered is not
+	// discovered: servers must only claim leaf assets.
 	ClaimAssetVerdict_CLAIMED ClaimAssetVerdict_Action = 1
 )
 
@@ -10068,9 +10071,14 @@ func (x *SynchronizeAssetsResp) GetDetails() map[string]*SynchronizeAssetsRespAs
 }
 
 type ClaimAssetsReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SpaceMrn      string                 `protobuf:"bytes,1,opt,name=space_mrn,json=spaceMrn,proto3" json:"space_mrn,omitempty"`
-	List          []*inventory.Asset     `protobuf:"bytes,2,rep,name=list,proto3" json:"list,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The space the scan reports into; claims are matched within it.
+	SpaceMrn string `protobuf:"bytes,1,opt,name=space_mrn,json=spaceMrn,proto3" json:"space_mrn,omitempty"`
+	// The discovered assets to ask about. Each entry is a minimal projection of
+	// the pre-connect asset (id, name, platform ids, claims, labels, annotations,
+	// managed_by, trace_id, category): it never carries connections or
+	// credentials. Verdict indices refer to positions in this list.
+	List          []*inventory.Asset `protobuf:"bytes,2,rep,name=list,proto3" json:"list,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
