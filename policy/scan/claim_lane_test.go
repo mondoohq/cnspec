@@ -20,6 +20,7 @@ import (
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/discovery"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/providers-sdk/v1/vault"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
 )
@@ -363,7 +364,7 @@ func TestClaimPrePassSkipsClaimedAndDisablesOnError(t *testing.T) {
 	})
 }
 
-func TestClaimPrePassIsIdempotentPerNode(t *testing.T) {
+func TestClaimPrePassIsIdempotentForRoots(t *testing.T) {
 	r := &claimResolver{claimed: func(_, i int) bool { return i == 0 }}
 	sc := &scanContext{
 		claimLane:     newClaimLaneState(&policy.ScanParameters{ClaimAssetsEnabled: true}, claimServices(r), ""),
@@ -371,15 +372,19 @@ func TestClaimPrePassIsIdempotentPerNode(t *testing.T) {
 		spaceMrn:      "//space",
 		multiprogress: &filteredCounter{},
 	}
-	node := &discovery.TrackedAsset{Children: []*discovery.TrackedAsset{claimChild("a"), claimChild("b")}}
+	root := &discovery.TrackedAsset{Asset: &inventory.Asset{}, Children: []*discovery.TrackedAsset{claimChild("a"), claimChild("b")}}
 
-	sc.claimSubtreeChildren(context.Background(), node)
-	sc.claimSubtreeChildren(context.Background(), node)
-	assert.Len(t, r.reqs, 1, "the second call on the same node makes no RPC")
+	// distributeJob's path: registerRootTasks, then scanSubtree's own call.
+	sc.registerRootTasks(context.Background(), root)
+	sc.claimSubtreeChildren(context.Background(), root)
+	assert.Len(t, r.reqs, 1, "scanSubtree's pre-pass on a registered root makes no RPC")
 
-	other := &discovery.TrackedAsset{Children: []*discovery.TrackedAsset{claimChild("c")}}
-	sc.claimSubtreeChildren(context.Background(), other)
-	assert.Len(t, r.reqs, 2, "a different node is still processed")
+	// A branch node reached by recursion is processed but not retained.
+	branch := &discovery.TrackedAsset{Asset: &inventory.Asset{}, Children: []*discovery.TrackedAsset{claimChild("c")}}
+	sc.claimSubtreeChildren(context.Background(), branch)
+	assert.Len(t, r.reqs, 2)
+	assert.Len(t, sc.claimedSubtrees, 1, "only the root is in the visited set")
+	assert.Contains(t, sc.claimedSubtrees, root)
 }
 
 // A claimed root child must not be registered as a pending progress task:
@@ -431,4 +436,137 @@ func TestClaimPrePassCancelledContextKeepsLane(t *testing.T) {
 	assert.Empty(t, buf.String(), "nothing logged")
 	assert.NotNil(t, node.Children[0].Asset, "nothing skipped")
 	assert.Zero(t, mp.filtered)
+}
+
+func TestClaimProjectionIsMinimalAndInheritsFromRoot(t *testing.T) {
+	root := &discovery.TrackedAsset{Asset: &inventory.Asset{
+		Name:      "registry",
+		ManagedBy: "mondoo-test-root",
+		TraceId:   "trace-root",
+		Labels: map[string]string{
+			"mondoo.com/exec-environment": "ci",
+			"team":                        "not-a-mondoo-label",
+		},
+		Annotations: map[string]string{"owner": "root", "shared": "root"},
+	}}
+	child := &discovery.TrackedAsset{Parent: root, Asset: &inventory.Asset{
+		Id:          "id-1",
+		Name:        "image",
+		PlatformIds: []string{"pid-1", "pid-2"},
+		Claims:      []*inventory.AssetClaim{{}},
+		Labels:      map[string]string{"own": "label"},
+		Annotations: map[string]string{"shared": "child"},
+		Category:    inventory.AssetCategory_CATEGORY_CICD,
+		Connections: []*inventory.Config{{Type: "container-registry", Credentials: []*vault.Credential{{User: "u"}}}},
+		Options:     map[string]string{"opt": "x"},
+		Url:         "https://example.com",
+		Platform:    &inventory.Platform{Name: "ubuntu"},
+	}}
+	// A grandchild still reaches the root by walking Parent.
+	grandchild := &discovery.TrackedAsset{Parent: child, Asset: &inventory.Asset{Name: "layer", Claims: []*inventory.AssetClaim{{}}}}
+
+	r := &claimResolver{}
+	_, err := claimAssetsBatch(context.Background(), claimServices(r), "//space", []*discovery.TrackedAsset{child, grandchild})
+	require.NoError(t, err)
+	require.Len(t, r.reqs, 1)
+	got := r.reqs[0].List[0]
+
+	assert.Nil(t, got.Connections, "connections (and their credentials) are never sent")
+	assert.Nil(t, got.Options)
+	assert.Nil(t, got.Platform)
+	assert.Empty(t, got.Url)
+	assert.NotNil(t, child.Asset.Connections, "the original asset is untouched")
+
+	assert.Equal(t, "id-1", got.Id)
+	assert.Equal(t, "image", got.Name)
+	assert.Equal(t, []string{"pid-1", "pid-2"}, got.PlatformIds)
+	assert.Len(t, got.Claims, 1)
+	assert.Equal(t, inventory.AssetCategory_CATEGORY_CICD, got.Category)
+
+	assert.Equal(t, "mondoo-test-root", got.ManagedBy, "inherited from the root")
+	assert.Equal(t, "trace-root", got.TraceId)
+	assert.Equal(t, map[string]string{"own": "label", "mondoo.com/exec-environment": "ci"}, got.Labels,
+		"own labels plus the root's mondoo labels only")
+	assert.Equal(t, map[string]string{"owner": "root", "shared": "child"}, got.Annotations,
+		"root annotations fill in, the child's own win")
+	assert.Equal(t, map[string]string{"own": "label"}, child.Asset.Labels, "the original labels are not mutated")
+
+	g := r.reqs[0].List[1]
+	assert.Equal(t, "mondoo-test-root", g.ManagedBy, "walks Parent up to the root")
+
+	t.Run("own values win and a parentless child inherits nothing", func(t *testing.T) {
+		own := &discovery.TrackedAsset{Parent: root, Asset: &inventory.Asset{Name: "x", ManagedBy: "mine", TraceId: "t", Claims: []*inventory.AssetClaim{{}}}}
+		orphan := claimChild("orphan")
+		r := &claimResolver{}
+		_, err := claimAssetsBatch(context.Background(), claimServices(r), "//space", []*discovery.TrackedAsset{own, orphan})
+		require.NoError(t, err)
+		assert.Equal(t, "mine", r.reqs[0].List[0].ManagedBy)
+		assert.Equal(t, "t", r.reqs[0].List[0].TraceId)
+		assert.Empty(t, r.reqs[0].List[1].ManagedBy)
+	})
+}
+
+func TestClaimAssetsBatchLogsVerdicts(t *testing.T) {
+	var buf bytes.Buffer
+	prev := log.Logger
+	log.Logger = zerolog.New(&buf)
+	t.Cleanup(func() { log.Logger = prev })
+
+	kid := claimChild("claimed-one")
+	kid.Asset.PlatformIds = []string{"pid-x"}
+	r := &claimResolver{claimed: func(_, i int) bool { return i == 0 }}
+	_, err := claimAssetsBatch(context.Background(), claimServices(r), "//space/s1",
+		[]*discovery.TrackedAsset{kid, claimChild("kept"), claimlessChild("no-claims")})
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.Contains(t, out, `"level":"info"`)
+	assert.Contains(t, out, `"asked":2`)
+	assert.Contains(t, out, `"claimed":1`)
+	assert.Contains(t, out, `"space":"//space/s1"`)
+	assert.Contains(t, out, `"level":"debug"`)
+	assert.Contains(t, out, `"name":"claimed-one"`)
+	assert.Contains(t, out, `"platformId":"pid-x"`)
+
+	buf.Reset()
+	_, err = claimAssetsBatch(context.Background(), claimServices(r), "//space/s1", []*discovery.TrackedAsset{claimlessChild("a")})
+	require.NoError(t, err)
+	assert.Empty(t, buf.String(), "nothing asked, nothing logged")
+}
+
+// An all-claimed subtree: every child is claimed, so the loop never touches
+// the explorer (a zero explorer would reject Connect), and the claim count
+// is what keeps the run from failing as "nothing to connect to".
+func TestScanSubtreeAllClaimed(t *testing.T) {
+	r := &claimResolver{claimed: func(int, int) bool { return true }}
+	mp := &filteredCounter{}
+	connSem := make(chan struct{}, 2)
+	dispatcher := &scanDispatcher{}
+	sc := &scanContext{
+		explorer:      &discovery.AssetExplorer{},
+		reporter:      NewAggregateReporter(),
+		multiprogress: mp,
+		connSem:       connSem,
+		batcher:       newSyncBatcher(dispatcher, nil, "", nil, mp, 0),
+		dispatcher:    dispatcher,
+		claimLane:     newClaimLaneState(&policy.ScanParameters{ClaimAssetsEnabled: true}, claimServices(r), ""),
+		services:      claimServices(r),
+		spaceMrn:      "//space",
+	}
+	// No platform IDs on the node: it is filtered, not dispatched.
+	root := &discovery.TrackedAsset{Asset: &inventory.Asset{Name: "registry"}}
+	root.Children = []*discovery.TrackedAsset{claimChild("a"), claimChild("b"), claimChild("c")}
+
+	require.NoError(t, sc.scanSubtree(context.Background(), root))
+
+	assert.Equal(t, 3, sc.claimedCount)
+	assert.Empty(t, connSem, "no connection slot was taken")
+	assert.Nil(t, root.Children, "subtree cleanup still runs")
+	assert.NoError(t, sc.errNothingScanned(), "an all-claimed run is a success")
+}
+
+func TestErrNothingScanned(t *testing.T) {
+	assert.Error(t, (&scanContext{}).errNothingScanned(), "nothing scanned, nothing claimed")
+	assert.NoError(t, (&scanContext{claimedCount: 1}).errNothingScanned())
+	assert.NoError(t, (&scanContext{platformIdsExclude: map[string]struct{}{"x": {}}}).errNothingScanned())
 }
