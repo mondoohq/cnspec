@@ -87,6 +87,10 @@ func newClaimLaneState(params *policy.ScanParameters, services *policy.Services,
 		enabled = true
 	case "0":
 		enabled = false
+	case "":
+	default:
+		log.Debug().Str("env", claimAssetsEnvVar).Str("value", env).
+			Msg("unrecognized value, expected 1, force or 0; using the server setting")
 	}
 	return &claimLaneState{enabled: enabled && services != nil}
 }
