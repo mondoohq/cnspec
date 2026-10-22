@@ -448,6 +448,7 @@ type PolicyResolver interface {
 	PurgeAssets(context.Context, *PurgeAssetsRequest) (*PurgeAssetsConfirmation, error)
 	RefreshAssetScores(context.Context, *RefreshAssetScoresRequest) (*RefreshAssetScoresResponse, error)
 	GetScanParameters(context.Context, *GetScanParametersReq) (*ScanParameters, error)
+	ClaimAssets(context.Context, *ClaimAssetsReq) (*ClaimAssetsResp, error)
 }
 
 // client implementation
@@ -586,6 +587,11 @@ func (c *PolicyResolverClient) GetScanParameters(ctx context.Context, in *GetSca
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetScanParameters"}, ""), in, out)
 	return out, err
 }
+func (c *PolicyResolverClient) ClaimAssets(ctx context.Context, in *ClaimAssetsReq) (*ClaimAssetsResp, error) {
+	out := new(ClaimAssetsResp)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/ClaimAssets"}, ""), in, out)
+	return out, err
+}
 
 // server implementation
 
@@ -631,6 +637,7 @@ func NewPolicyResolverServer(handler PolicyResolver, opts ...PolicyResolverServe
 			"PurgeAssets":                srv.PurgeAssets,
 			"RefreshAssetScores":         srv.RefreshAssetScores,
 			"GetScanParameters":          srv.GetScanParameters,
+			"ClaimAssets":                srv.ClaimAssets,
 		},
 	}
 	return ranger.NewRPCServer(&service)
@@ -1168,4 +1175,28 @@ func (p *PolicyResolverServer) GetScanParameters(ctx context.Context, reqBytes *
 		return nil, err
 	}
 	return p.handler.GetScanParameters(ctx, &req)
+}
+func (p *PolicyResolverServer) ClaimAssets(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req ClaimAssetsReq
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.ClaimAssets(ctx, &req)
 }

@@ -45,8 +45,8 @@ require (
 	github.com/tliron/glsp v0.2.2
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/zclconf/go-cty v1.19.0
-	go.mondoo.com/mondoo-go v0.0.0-20261023120626-03f45d1e2ece
-	go.mondoo.com/mql v0.0.0-20261024173047-83cc7347d76d
+	go.mondoo.com/mondoo-go v0.0.0-20261026001246-49a68d583dde
+	go.mondoo.com/mql v0.0.0-20261026224524-0e7d92941810
 	go.mondoo.com/ranger-rpc v0.8.1
 	gocloud.dev v0.47.0
 	golang.org/x/sync v0.24.0
@@ -106,7 +106,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.7 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.341.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect v1.44.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect v1.44.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.66.6 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.47.6 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.22 // indirect
@@ -286,7 +286,7 @@ require (
 	github.com/pjbgf/sha1cd v0.7.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/pkg/sftp v1.13.11 // indirect
+	github.com/pkg/sftp v1.13.12 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_golang v1.25.0 // indirect
 	github.com/prometheus/client_model v0.6.3 // indirect
@@ -370,7 +370,7 @@ require (
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad // indirect
 	k8s.io/kubelet v0.37.1 // indirect
-	modernc.org/libc v1.79.0 // indirect
+	modernc.org/libc v1.79.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 	modernc.org/sqlite v1.61.0 // indirect
