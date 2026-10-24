@@ -23,6 +23,24 @@ policies:
 
         Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
     groups:
+      # This first group's filter is deterministic on purpose. The detail group
+      # below selects on `tls.params != empty`, which opens a TLS connection to
+      # decide whether it applies — and when that connection cannot be made the
+      # expression errors rather than returning empty. A filter that errors is not
+      # a filter that is false: the resolver drops the checks behind it from the
+      # resolved policy, so a host that was unreachable on the scanned port came
+      # back with zero checks and a clean score — the worst possible answer from a
+      # CA-compromise policy. `asset.platform == 'host'` cannot fail, so this check
+      # always runs and reports an endpoint that negotiates no TLS as the finding
+      # it is. The compromise check keeps its connection filter, so a host that
+      # legitimately serves no TLS gets this one row rather than an errored
+      # certificate check. (See mondoo-tls-security.mql.yaml for the same pattern
+      # and the partial case it leaves open.)
+      - title: TLS/SSL endpoint
+        filters: |
+          asset.platform == 'host'
+        checks:
+          - uid: mondoo-tls-ca-compromise-endpoint-negotiates-tls
       - title: Compromised issuing certificate authorities
         filters: |
           asset.platform == 'host' && tls.params != empty
@@ -30,6 +48,17 @@ policies:
           - uid: mondoo-tls-ca-compromise-no-emudhra-g3-intermediates
     scoring_system: highest impact
 queries:
+  # Deterministic reachability check: it always runs (its group filters only on
+  # asset.platform == 'host'), so an unreachable or non-TLS endpoint is reported
+  # here instead of being dropped with the connection-filtered compromise check
+  # and scoring a false clean.
+  - uid: mondoo-tls-ca-compromise-endpoint-negotiates-tls
+    title: Ensure the host negotiates a TLS connection
+    impact: 70
+    mql: tls.params != empty
+    docs:
+      desc: |
+        This check confirms the scanned endpoint completes a TLS handshake. It exists so an unreachable or non-TLS endpoint is reported rather than silently dropped. The compromised-authority check's filter opens a TLS connection to decide whether it applies, and a filter that errors removes its check from the resolved policy — which would score an endpoint that answered nothing as clean. This check's group filters only on the platform, so it cannot be dropped that way and always runs.
   # The eight eMudhra intermediates disclosed on 2026-10-17, by Subject Key
   # Identifier. Each was issued twice, by its eMudhra root (emSign Root TLS CA - G3
   # or emSign Root CS CA - G3) and as a cross-sign by Sectigo's AAA Certificate
