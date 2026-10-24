@@ -24,7 +24,7 @@ func vexEvents(t *testing.T, version ocsf.Version) map[string]map[string]any {
 		reportfixture.VexTarget, reportfixture.VexRows(), version, EncodingJSON, &buf))
 
 	out := map[string]map[string]any{}
-	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(buf.String()), "\n") {
 		var event map[string]any
 		require.NoError(t, json.Unmarshal([]byte(line), &event))
 		title := event["finding_info"].(map[string]any)["title"].(string)

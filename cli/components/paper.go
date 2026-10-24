@@ -74,7 +74,7 @@ type Paper struct {
 func (p *Paper) Render(width int, height int) string {
 	b := strings.Builder{}
 
-	for i := 0; i < height; i++ {
+	for i := range height {
 		var firstChar rune
 		switch i {
 		case 0:

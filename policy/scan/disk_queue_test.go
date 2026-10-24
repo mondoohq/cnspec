@@ -56,11 +56,11 @@ func TestDiskQueueClient_EnqueueDequeue(t *testing.T) {
 			},
 		},
 	}
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		client.Channel() <- *testJob
 	}
 
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		<-completionChannel
 	}
 

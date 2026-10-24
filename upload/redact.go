@@ -51,8 +51,7 @@ func RedactError(err error) string {
 	}
 
 	var msg string
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) {
+	if urlErr, ok := errors.AsType[*url.Error](err); ok {
 		// Keep the operation and the underlying cause, drop the URL entirely.
 		msg = fmt.Sprintf("%s: %v", urlErr.Op, urlErr.Err)
 	} else {

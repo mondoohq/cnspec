@@ -260,7 +260,7 @@ func clean(s string) string {
 
 func splitLines(s string) []string {
 	var out []string
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		if l := strings.TrimSpace(line); l != "" {
 			out = append(out, l)
 		}

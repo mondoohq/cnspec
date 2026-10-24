@@ -511,7 +511,7 @@ func convertValueToTokens(value any) (hclwrite.Tokens, error) {
 		return elem, nil
 	case hcl.Traversal:
 		return hclwrite.TokensForTraversal(elem), nil
-	case map[string]interface{}:
+	case map[string]any:
 		// Handle maps that might contain hcl.Traversal values
 		keys := sortx.Keys(elem)
 		objects := []hclwrite.ObjectAttrTokens{}
@@ -852,7 +852,7 @@ type HclVariable struct {
 	// Optional. Description of the variable.
 	description string
 	// Optional. Default value for the variable.
-	defaultValue interface{}
+	defaultValue any
 	// Optional. Whether the variable is sensitive.
 	sensitive bool
 }
@@ -921,7 +921,7 @@ func HclVariableWithDescription(description string) HclVariableModifier {
 }
 
 // HclVariableWithDefault sets the default value of the variable.
-func HclVariableWithDefault(defaultValue interface{}) HclVariableModifier {
+func HclVariableWithDefault(defaultValue any) HclVariableModifier {
 	return func(v *HclVariable) {
 		v.defaultValue = defaultValue
 	}

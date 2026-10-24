@@ -61,13 +61,13 @@ func SearchPolicy(
 	}
 
 	if assignedOnly != nil {
-		input.AssignedOnly = mondoogql.NewBooleanPtr(mondoogql.Boolean(*assignedOnly))
+		input.AssignedOnly = new(mondoogql.Boolean(*assignedOnly))
 	}
 	if includePublic != nil {
-		input.IncludePublic = mondoogql.NewBooleanPtr(mondoogql.Boolean(*includePublic))
+		input.IncludePublic = new(mondoogql.Boolean(*includePublic))
 	}
 	if includePrivate != nil {
-		input.IncludePrivate = mondoogql.NewBooleanPtr(mondoogql.Boolean(*includePrivate))
+		input.IncludePrivate = new(mondoogql.Boolean(*includePrivate))
 	}
 
 	for {
@@ -86,10 +86,8 @@ func SearchPolicy(
 
 		for _, edge := range q.Content.Edges {
 			policies = append(policies, &UpstreamPolicy{
-				Policy: policy.Policy{
-					Mrn:  edge.Node.Policy.Mrn,
-					Name: edge.Node.Policy.Name,
-				},
+				Mrn:        edge.Node.Policy.Mrn,
+				Name:       edge.Node.Policy.Name,
 				TrustLevel: edge.Node.Policy.TrustLevel,
 				Action:     edge.Node.Policy.Action,
 				Assigned:   edge.Node.Policy.Assigned,

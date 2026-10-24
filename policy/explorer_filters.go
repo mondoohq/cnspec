@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -148,9 +149,7 @@ func (s *Filters) AddFilters(child *Filters) {
 		return
 	}
 
-	for k, v := range child.Items {
-		s.Items[k] = v
-	}
+	maps.Copy(s.Items, child.Items)
 }
 
 var ErrQueryNotFound = errors.New("query not found")

@@ -194,9 +194,7 @@ func newScanDispatcher(
 // availability. The asset's connSem slot is released after the scan
 // completes and the asset is closed.
 func (d *scanDispatcher) Submit(ctx context.Context, tracked *discovery.TrackedAsset) {
-	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
+	d.wg.Go(func() {
 		defer func() { <-d.connSem }()
 		defer d.reportPanic(tracked)
 
@@ -223,7 +221,7 @@ func (d *scanDispatcher) Submit(ctx context.Context, tracked *discovery.TrackedA
 		}
 
 		d.scanSingleAsset(ctx, tracked)
-	}()
+	})
 }
 
 // Wait blocks until all submitted scans have completed.

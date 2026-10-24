@@ -5,6 +5,7 @@ package bundle
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 
 	"go.mondoo.com/mql/llx"
@@ -188,10 +189,8 @@ func standaloneResourceFilters(code *llx.CodeV2) []string {
 // in as a dependency argument of the call that owns the nested block, so the
 // chunks of this block are enough.
 func blockReadsRef(block *llx.Block, ref uint64) bool {
-	for _, ep := range block.Entrypoints {
-		if ep == ref {
-			return true
-		}
+	if slices.Contains(block.Entrypoints, ref) {
+		return true
 	}
 	for _, chunk := range block.Chunks {
 		if chunk.Function == nil {

@@ -125,7 +125,7 @@ func TestReportCriticalErrors_CapsCount(t *testing.T) {
 	})
 
 	errs := make([]error, 0, scanwarnings.Max+10)
-	for i := 0; i < scanwarnings.Max+10; i++ {
+	for i := range scanwarnings.Max + 10 {
 		errs = append(errs, fmt.Errorf("distinct crash #%d", i))
 	}
 

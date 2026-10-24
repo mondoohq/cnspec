@@ -302,7 +302,7 @@ func TestOcsfRequiredAttributes(t *testing.T) {
 	}
 
 	seen := map[float64]bool{}
-	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(buf.String()), "\n") {
 		var event map[string]any
 		require.NoError(t, json.Unmarshal([]byte(line), &event))
 
@@ -597,7 +597,7 @@ func TestOcsfEnumZeroSurvivesJSON(t *testing.T) {
 	// WriteJSON emits newline-delimited events; the compliance finding is the one
 	// carrying a compliance object.
 	var compliance map[string]any
-	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(buf.String()), "\n") {
 		var doc map[string]any
 		require.NoError(t, json.Unmarshal([]byte(line), &doc))
 		if c, ok := doc["compliance"].(map[string]any); ok {
@@ -669,7 +669,7 @@ func TestVulnReportLogName(t *testing.T) {
 	require.NoError(t, ConvertVulnReport("X1", report, ocsf.DefaultVersion, &buf))
 
 	var event map[string]any
-	line := strings.Split(strings.TrimSpace(buf.String()), "\n")[0]
+	line, _, _ := strings.Cut(strings.TrimSpace(buf.String()), "\n")
 	require.NoError(t, json.Unmarshal([]byte(line), &event))
 
 	metadata := event["metadata"].(map[string]any)

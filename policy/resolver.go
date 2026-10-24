@@ -432,7 +432,7 @@ func checksumStrings(strings ...string) string {
 
 func (s *LocalServices) resolve(ctx context.Context, policyMrn string, assetFilters []*Mquery) (*ResolvedPolicy, error) {
 	logCtx := logger.FromContext(ctx)
-	for i := 0; i < maxResolveRetry; i++ {
+	for i := range maxResolveRetry {
 		resolvedPolicy, err := s.tryResolve(ctx, policyMrn, assetFilters)
 		if err != nil {
 			if !errors.Is(err, ErrRetryResolution) {

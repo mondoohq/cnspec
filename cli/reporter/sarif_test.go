@@ -153,7 +153,7 @@ func TestSarifDeterministicRuleIDs(t *testing.T) {
 	raw := reportfixture.UbuntuScanJSON()
 
 	var first string
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		yr := &policy.ReportCollection{}
 		require.NoError(t, json.Unmarshal(raw, yr))
 

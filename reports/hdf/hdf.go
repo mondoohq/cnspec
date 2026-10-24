@@ -487,8 +487,8 @@ func hdfStartTime(report *policy.Report) string {
 // profile never reaches the summary. Grouping keeps the two kinds distinguishable.
 func hdfAssetProfile(r *policy.ReportCollection, ctx *hdfAssetContext, bundle *policy.PolicyBundleMap, queries map[string]*policy.Mquery) *hdfProfile {
 	profile := hdfNewProfile(hdfProfileName(ctx.asset, ctx.assetMrn))
-	profile.Title = strPtr("cnspec policy scan of " + hdfAssetLabel(ctx.asset, ctx.assetMrn))
-	profile.Summary = strPtr(hdfAssetSummary(ctx.asset))
+	profile.Title = new("cnspec policy scan of " + hdfAssetLabel(ctx.asset, ctx.assetMrn))
+	profile.Summary = new(hdfAssetSummary(ctx.asset))
 	profile.Supports = hdfSupports(ctx.asset.Platform)
 
 	// controlIDs maps a check MRN to the control it produced, so the policy groups
@@ -530,7 +530,7 @@ func hdfAssetProfile(r *policy.ReportCollection, ctx *hdfAssetContext, bundle *p
 		profile.Controls = append(profile.Controls, vulnControls...)
 		profile.Groups = append(profile.Groups, &hdfGroup{
 			ID:       hdfVulnGroupID,
-			Title:    strPtr("Vulnerabilities"),
+			Title:    new("Vulnerabilities"),
 			Controls: ids,
 		})
 	}
@@ -551,10 +551,10 @@ func hdfCheckControl(ctx *hdfAssetContext, resolved *policy.ResolvedPolicy, repo
 	}
 
 	if query.Title != "" {
-		control.Title = strPtr(query.Title)
+		control.Title = new(query.Title)
 	}
 	if desc := strings.TrimSpace(reportdoc.QueryDescription(query)); desc != "" {
-		control.Desc = strPtr(desc)
+		control.Desc = new(desc)
 	}
 	if audit := reportdoc.QueryAudit(query); audit != "" {
 		control.Descriptions = append(control.Descriptions, hdfDescription{Label: "check", Data: audit})
@@ -807,8 +807,8 @@ func hdfSkipMessage(score *policy.Score) string {
 func hdfAssetErrorControl(ctx *hdfAssetContext, errMsg string) *hdfControl {
 	return &hdfControl{
 		ID:           hdfAssetErrorID,
-		Title:        strPtr("Asset scan error"),
-		Desc:         strPtr("cnspec could not complete the scan of this asset. No policy results are available for it."),
+		Title:        new("Asset scan error"),
+		Desc:         new("cnspec could not complete the scan of this asset. No policy results are available for it."),
 		Impact:       1,
 		Descriptions: []hdfDescription{},
 		Refs:         []hdfRef{},
@@ -867,7 +867,7 @@ func hdfPolicyGroups(bundle *policy.PolicyBundleMap, controlIDs map[string]strin
 
 		group := &hdfGroup{ID: mrn, Controls: ids}
 		if p.Name != "" {
-			group.Title = strPtr(p.Name)
+			group.Title = new(p.Name)
 		}
 		res = append(res, group)
 	}
@@ -988,7 +988,7 @@ func hdfAdvisoryControl(ctx *hdfAssetContext, advisory *mvd.Advisory, pkgs []*mv
 
 	control := &hdfControl{
 		ID:             id,
-		Title:          strPtr(title),
+		Title:          new(title),
 		Descriptions:   []hdfDescription{},
 		Refs:           refs,
 		Tags:           tags,
@@ -996,7 +996,7 @@ func hdfAdvisoryControl(ctx *hdfAssetContext, advisory *mvd.Advisory, pkgs []*mv
 		Results:        make([]hdfResult, 0, len(pkgs)),
 	}
 	if desc != "" {
-		control.Desc = strPtr(desc)
+		control.Desc = new(desc)
 	}
 
 	// An advisory without its own score falls back to the worst score of the
@@ -1091,8 +1091,8 @@ func hdfPassthroughFor(r *policy.ReportCollection, ctx *hdfAssetContext) *hdfPas
 func hdfNewProfile(name string) *hdfProfile {
 	return &hdfProfile{
 		Name:       name,
-		Version:    strPtr(cnspec.GetVersion()),
-		Maintainer: strPtr("Mondoo, Inc"),
+		Version:    new(cnspec.GetVersion()),
+		Maintainer: new("Mondoo, Inc"),
 		Supports:   []map[string]string{},
 		Attributes: []any{},
 		Depends:    []any{},
@@ -1170,12 +1170,6 @@ func hdfProfileChecksum(resolved *policy.ResolvedPolicy, key string, controls []
 		parts = append(parts, control.ID)
 	}
 	return hdfSha256(parts...)
-}
-
-// strPtr is the pointer OHDF's optional string fields are declared as: the schema
-// distinguishes a field that is absent from one that is present and empty.
-func strPtr(s string) *string {
-	return &s
 }
 
 func hdfSha256(parts ...string) string {

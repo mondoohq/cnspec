@@ -217,7 +217,7 @@ func TestRunService_KeepsScanningAfterAFailedScan(t *testing.T) {
 // first scan is delayed, but never by more than a minute. A delay that could
 // exceed the scan interval would stall the first report indefinitely.
 func TestFleetStartDelay_StaysWithinAMinute(t *testing.T) {
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		d := FleetStartDelay()
 		require.GreaterOrEqual(t, d, time.Duration(0))
 		require.Less(t, d, time.Minute)

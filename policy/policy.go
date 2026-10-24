@@ -6,6 +6,7 @@ package policy
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -102,9 +103,7 @@ func gatherLocalAssetFilters(ctx context.Context, policy *Policy, lookupQueryByM
 	for _, group := range groups {
 		filters.AddFilters(group.Filters)
 
-		for k, m := range group.Filters.GetItems() {
-			filters.Items[k] = m
-		}
+		maps.Copy(filters.Items, group.Filters.GetItems())
 
 		for _, check := range group.Checks {
 			base, _ := lookupQueryByMrn(ctx, check.Mrn) //nolint: errcheck
@@ -161,9 +160,7 @@ func (p *Policy) ComputeAssetFilters(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	for k, m := range localFilters.GetItems() {
-		filters[k] = m
-	}
+	maps.Copy(filters, localFilters.GetItems())
 
 	for i := range p.Groups {
 		group := p.Groups[i]

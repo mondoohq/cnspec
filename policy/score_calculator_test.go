@@ -486,7 +486,7 @@ func TestImpact(t *testing.T) {
 }
 
 func addMultipleScores(impact uint32, failed int, passed int, calculator ScoreCalculator) {
-	for i := 0; i < failed; i++ {
+	for range failed {
 		calculator.Add(&Score{
 			Value:           100 - impact,
 			ScoreCompletion: 100,
@@ -500,7 +500,7 @@ func addMultipleScores(impact uint32, failed int, passed int, calculator ScoreCa
 			},
 		})
 	}
-	for i := 0; i < passed; i++ {
+	for range passed {
 		calculator.Add(&Score{
 			Value:           100,
 			ScoreCompletion: 100,

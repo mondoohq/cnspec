@@ -47,7 +47,7 @@ func parseFrontmatter(data []byte) map[string]string {
 		return nil
 	}
 	result := map[string]string{}
-	for _, line := range strings.Split(string(m[1]), "\n") {
+	for line := range strings.SplitSeq(string(m[1]), "\n") {
 		key, val, ok := strings.Cut(line, ":")
 		if !ok {
 			continue

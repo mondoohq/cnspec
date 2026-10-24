@@ -77,7 +77,7 @@ func scanOwaspFile(t *testing.T, path string) (map[string]*owaspCheck, bool) {
 	checks := map[string]*owaspCheck{}
 	var cur string
 	participates := false
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		if m := reOwaspBaseUID.FindStringSubmatch(line); m != nil {
 			cur = m[1]
 			if _, ok := checks[cur]; !ok {
@@ -108,7 +108,6 @@ func TestOwaspTop10Mapping(t *testing.T) {
 	globalCatCount := map[string]int{}
 
 	for _, f := range files {
-		f := f
 		t.Run(filepath.Base(f), func(t *testing.T) {
 			checks, participates := scanOwaspFile(t, f)
 
@@ -206,7 +205,7 @@ func TestOwaspLlmTop10Mapping(t *testing.T) {
 		var cur string
 		hasApp := map[string]bool{}
 		llmVal := map[string]string{}
-		for _, line := range strings.Split(string(data), "\n") {
+		for line := range strings.SplitSeq(string(data), "\n") {
 			if m := reOwaspBaseUID.FindStringSubmatch(line); m != nil {
 				cur = m[1]
 				continue

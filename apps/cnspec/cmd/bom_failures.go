@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	cr "go.mondoo.com/mql/cli/reporter"
 )
@@ -82,9 +83,10 @@ func bomFailuresError(kind string, failures []bomFailure, generated int) error {
 		return nil
 	}
 
-	msg := fmt.Sprintf("could not generate the %s for %d of %d asset(s)", kind, len(failures), len(failures)+generated)
+	var msg strings.Builder
+	fmt.Fprintf(&msg, "could not generate the %s for %d of %d asset(s)", kind, len(failures), len(failures)+generated)
 	for _, f := range failures {
-		msg += fmt.Sprintf("\n  - asset %q: %s", f.Asset, f.Reason)
+		fmt.Fprintf(&msg, "\n  - asset %q: %s", f.Asset, f.Reason)
 	}
-	return fmt.Errorf("%w: %s", errBomGenerationFailed, msg)
+	return fmt.Errorf("%w: %s", errBomGenerationFailed, msg.String())
 }

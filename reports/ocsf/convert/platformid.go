@@ -40,11 +40,10 @@ func awsARN(asset *inventory.Asset) (parsedARN, bool) {
 // platformIDSegment returns the segment that follows a marker in a platform id,
 // e.g. the project of //platformid.api.mondoo.app/runtime/gcp/projects/my-project.
 func platformIDSegment(id, marker string) (string, bool) {
-	idx := strings.Index(id, marker)
-	if idx < 0 {
+	_, rest, ok := strings.Cut(id, marker)
+	if !ok {
 		return "", false
 	}
-	rest := id[idx+len(marker):]
 	if end := strings.Index(rest, "/"); end >= 0 {
 		rest = rest[:end]
 	}

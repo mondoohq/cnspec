@@ -25,7 +25,6 @@ import (
 	"go.mondoo.com/mql/providers-sdk/v1/upstream"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/gql"
 	"gopkg.in/yaml.v3"
-	"k8s.io/utils/ptr"
 )
 
 const (
@@ -118,7 +117,7 @@ var policyListCmd = &cobra.Command{
 
 			assignedOnly := !viper.GetBool("all")
 			policies, err = cnspec_upstream.SearchPolicy(
-				context.Background(), mondooClient, opts.GetParentMrn(), ptr.To(assignedOnly), ptr.To(true), ptr.To(true))
+				context.Background(), mondooClient, opts.GetParentMrn(), new(assignedOnly), new(true), new(true))
 			if err != nil {
 				return err
 			}

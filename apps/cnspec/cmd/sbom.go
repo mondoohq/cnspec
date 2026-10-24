@@ -38,7 +38,7 @@ func init() {
 // list a format the command rejects or omit one it accepts.
 func sbomFormatList() string {
 	var b strings.Builder
-	for _, f := range strings.Split(sbom.AllFormats(), ", ") {
+	for f := range strings.SplitSeq(sbom.AllFormats(), ", ") {
 		b.WriteString("- " + f)
 		if f == sbom.FormatList {
 			b.WriteString(" (default)")

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/cnspec/policy/checksum"
@@ -374,17 +375,18 @@ func applyChecksums(ctx context.Context, tx *sql.Tx, updateSQL string, entries [
 	for start := 0; start < len(entries); start += applyStageChunk {
 		end := min(start+applyStageChunk, len(entries))
 		chunk := entries[start:end]
-		query := `INSERT INTO _checksum_stage (rid, checksum) VALUES `
+		var query strings.Builder
+		query.WriteString(`INSERT INTO _checksum_stage (rid, checksum) VALUES `)
 		args := make([]any, 0, len(chunk)*2)
 		for i, e := range chunk {
 			if i > 0 {
-				query += ","
+				query.WriteString(",")
 			}
-			query += "(?, ?)"
+			query.WriteString("(?, ?)")
 			// SQLite INTEGER is int64; store the uint64 bit pattern.
 			args = append(args, e.rid, int64(e.checksum))
 		}
-		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+		if _, err := tx.ExecContext(ctx, query.String(), args...); err != nil {
 			return fmt.Errorf("failed to stage checksums: %w", err)
 		}
 	}
