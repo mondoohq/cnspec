@@ -91,16 +91,16 @@ func (h *MQLHandler) initialize(context *glsp.Context, params *protocol.Initiali
 
 	capabilities := protocol.ServerCapabilities{
 		TextDocumentSync: &protocol.TextDocumentSyncOptions{
-			OpenClose: ptr.To(true),
-			Change:    ptr.To(protocol.TextDocumentSyncKindFull),        // Use full sync - simpler and more reliable
-			Save:      &protocol.SaveOptions{IncludeText: ptr.To(true)}, // Include text in save events too
+			OpenClose: new(true),
+			Change:    ptr.To(protocol.TextDocumentSyncKindFull),     // Use full sync - simpler and more reliable
+			Save:      &protocol.SaveOptions{IncludeText: new(true)}, // Include text in save events too
 		},
 		CompletionProvider: &protocol.CompletionOptions{
 			TriggerCharacters: []string{".", " "},
-			ResolveProvider:   ptr.To(true),
+			ResolveProvider:   new(true),
 		},
 		// Add hover support for displaying type information and documentation
-		HoverProvider: ptr.To(true),
+		HoverProvider: new(true),
 		// Add diagnostics support for validation
 		// Diagnostics are automatically published when documents change
 		// Add code action support for quick fixes
@@ -109,7 +109,7 @@ func (h *MQLHandler) initialize(context *glsp.Context, params *protocol.Initiali
 				protocol.CodeActionKindQuickFix,
 				protocol.CodeActionKindSource,
 			},
-			ResolveProvider: ptr.To(false),
+			ResolveProvider: new(false),
 		},
 	}
 
@@ -119,7 +119,7 @@ func (h *MQLHandler) initialize(context *glsp.Context, params *protocol.Initiali
 		Capabilities: capabilities,
 		ServerInfo: &protocol.InitializeResultServerInfo{
 			Name:    lsName,
-			Version: ptr.To(lsVersion),
+			Version: new(lsVersion),
 		},
 	}, nil
 }
@@ -252,11 +252,11 @@ func (h *MQLHandler) completion(context *glsp.Context, params *protocol.Completi
 
 			item := protocol.CompletionItem{
 				Label:         suggestion.Field,
-				Kind:          ptr.To(kind),
-				Detail:        ptr.To(suggestion.Title),
+				Kind:          new(kind),
+				Detail:        new(suggestion.Title),
 				Documentation: suggestion.Desc,
-				InsertText:    ptr.To(suggestion.Field),
-				FilterText:    ptr.To(suggestion.Field), // Help VS Code filter correctly
+				InsertText:    new(suggestion.Field),
+				FilterText:    new(suggestion.Field), // Help VS Code filter correctly
 				// Add TextEdit for YAML context - use YAML document coordinates, not virtual
 				// Only replace the last token after the last dot
 				TextEdit: &protocol.TextEdit{
@@ -338,11 +338,11 @@ func (h *MQLHandler) completion(context *glsp.Context, params *protocol.Completi
 
 		item := protocol.CompletionItem{
 			Label:         suggestion.Field,
-			Kind:          ptr.To(kind),
-			Detail:        ptr.To(suggestion.Title),
+			Kind:          new(kind),
+			Detail:        new(suggestion.Title),
 			Documentation: suggestion.Desc,
-			InsertText:    ptr.To(suggestion.Field),
-			FilterText:    ptr.To(suggestion.Field), // Help VS Code filter correctly
+			InsertText:    new(suggestion.Field),
+			FilterText:    new(suggestion.Field), // Help VS Code filter correctly
 		}
 		allItems = append(allItems, item)
 	}
@@ -365,8 +365,8 @@ func (h *MQLHandler) getCompletions(query string) []protocol.CompletionItem {
 			items = append(items, protocol.CompletionItem{
 				Label:      resource,
 				Kind:       ptr.To(protocol.CompletionItemKindClass),
-				Detail:     ptr.To("MQL Resource"),
-				InsertText: ptr.To(resource),
+				Detail:     new("MQL Resource"),
+				InsertText: new(resource),
 			})
 		}
 		return items
@@ -389,10 +389,10 @@ func (h *MQLHandler) getCompletions(query string) []protocol.CompletionItem {
 					}
 					items = append(items, protocol.CompletionItem{
 						Label:         suggestion.Field,
-						Kind:          ptr.To(kind),
-						Detail:        ptr.To(suggestion.Title),
+						Kind:          new(kind),
+						Detail:        new(suggestion.Title),
 						Documentation: suggestion.Desc,
-						InsertText:    ptr.To(suggestion.Field),
+						InsertText:    new(suggestion.Field),
 					})
 				}
 			}
@@ -602,7 +602,7 @@ func (h *MQLHandler) didChange(context *glsp.Context, params *protocol.DidChange
 		case protocol.TextDocumentContentChangeEventWhole:
 			h.documents[params.TextDocument.URI] = v.Text
 			updatedContent = v.Text
-		case map[string]interface{}:
+		case map[string]any:
 			if text, ok := v["text"].(string); ok {
 				h.documents[params.TextDocument.URI] = text
 				updatedContent = text
@@ -730,7 +730,7 @@ func (h *MQLHandler) validateYAMLMQLNode(mqlNode *MQLNode, diagnostics *[]protoc
 				End:   protocol.Position{Line: endLine, Character: 0},
 			},
 			Severity: ptr.To(protocol.DiagnosticSeverityError),
-			Source:   ptr.To("mql-compiler"),
+			Source:   new("mql-compiler"),
 			Message:  compileErr.Error(),
 		}
 		*diagnostics = append(*diagnostics, diagnostic)
@@ -756,7 +756,7 @@ func (h *MQLHandler) validateMQL(mqlContent string, diagnostics *[]protocol.Diag
 				End:   protocol.Position{Line: lastLine, Character: lastLineLength},
 			},
 			Severity: ptr.To(protocol.DiagnosticSeverityError),
-			Source:   ptr.To("mql-compiler"),
+			Source:   new("mql-compiler"),
 			Message:  compileErr.Error(),
 		}
 
@@ -1007,9 +1007,8 @@ func (h *MQLHandler) inferTypeFromChain(mainBlock *llx.Block, code *llx.CodeV2) 
 		prevTypeLabel := prevType.Label()
 
 		// If the previous type is an array, try to infer the element type
-		if strings.HasPrefix(prevTypeLabel, "[]") {
+		if elementType, ok := strings.CutPrefix(prevTypeLabel, "[]"); ok {
 			// Extract the element type from the array type
-			elementType := strings.TrimPrefix(prevTypeLabel, "[]")
 			if elementType != "block" && elementType != "" {
 				return "[]" + elementType
 			}

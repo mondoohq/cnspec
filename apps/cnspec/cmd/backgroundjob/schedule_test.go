@@ -110,7 +110,7 @@ func TestServiceConfig_NextScanStaysWithinTheSplay(t *testing.T) {
 	cfg := &ServiceConfig{Timer: 24 * time.Hour, Splay: 2 * time.Hour, StartTime: &start}
 	slot := time.Date(2026, 10, 9, 4, 0, 0, 0, time.Local)
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		due := cfg.nextScan(now)
 		require.False(t, due.Before(slot), "scan at %v is before 04:00", due)
 		require.True(t, due.Before(slot.Add(2*time.Hour)), "scan at %v is after 06:00", due)

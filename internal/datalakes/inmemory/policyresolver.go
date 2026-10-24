@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/hashicorp/go-multierror"
@@ -336,9 +337,7 @@ func (db *Db) refreshAssetFilters(ctx context.Context, policyw *wrapPolicy) erro
 			continue
 		}
 
-		for k, v := range dep.ComputedFilters.Items {
-			policyObj.ComputedFilters.Items[k] = v
-		}
+		maps.Copy(policyObj.ComputedFilters.Items, dep.ComputedFilters.Items)
 	}
 
 	ok := db.cache.Set(dbIDPolicy+policyObj.Mrn, *policyw, 2)

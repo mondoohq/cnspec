@@ -132,7 +132,7 @@ func newAssetRun(r *policy.ReportCollection, ctx *sarifRunContext) *sarif.Run {
 		WithFullName("cnspec " + cnspec.GetVersion()).
 		WithShortDescription(sarif.NewMultiformatMessageString(
 			"cnspec is an open source, cloud-native security and policy scanner"))
-	run.Tool.Driver.Organization = strPtr("Mondoo")
+	run.Tool.Driver.Organization = new("Mondoo")
 	// cnspec reports 1-based line and column numbers on source locations.
 	run.ColumnKind = "utf16CodeUnits"
 
@@ -383,7 +383,7 @@ func addAssetErrors(run *sarif.Run, r *policy.ReportCollection, ctx *sarifRunCon
 		WithLocations([]*sarif.Location{
 			sarif.NewLocation().WithLogicalLocations([]*sarif.LogicalLocation{ctx.logicalLoc}),
 		}).
-		WithPartialFingerPrints(map[string]interface{}{
+		WithPartialFingerPrints(map[string]any{
 			sarifFingerprintKey: sarifFingerprint(sarifAssetErrorRuleID, ctx.assetMrn),
 		})
 	// The classification, in the spelling of the JSON output's errorDetails,
@@ -473,7 +473,7 @@ func addAssetResults(run *sarif.Run, r *policy.ReportCollection, ctx *sarifRunCo
 				WithLocations([]*sarif.Location{
 					sarif.NewLocation().WithLogicalLocations([]*sarif.LogicalLocation{ctx.logicalLoc}),
 				}).
-				WithPartialFingerPrints(map[string]interface{}{
+				WithPartialFingerPrints(map[string]any{
 					sarifFingerprintKey: sarifFingerprint(ruleID, ctx.assetMrn),
 				})
 			result.Properties = props
@@ -492,7 +492,7 @@ func addAssetResults(run *sarif.Run, r *policy.ReportCollection, ctx *sarifRunCo
 				WithKind(kind).
 				WithMessage(sarif.NewTextMessage(text).WithMarkdown(markdown)).
 				WithLocations([]*sarif.Location{loc}).
-				WithPartialFingerPrints(map[string]interface{}{
+				WithPartialFingerPrints(map[string]any{
 					sarifFingerprintKey: sarifLocationFingerprint(ruleID, locations[i]),
 				})
 			result.Properties = props
@@ -799,7 +799,7 @@ func vulnResult(ruleID string, advisory *mvd.Advisory, pkg *mvd.Package, ctx *sa
 		WithLocations([]*sarif.Location{
 			sarif.NewLocation().WithLogicalLocations(logicalLocs),
 		}).
-		WithPartialFingerPrints(map[string]interface{}{
+		WithPartialFingerPrints(map[string]any{
 			sarifFingerprintKey: sarifFingerprint(ruleID, ctx.assetMrn, reportdoc.VulnPackageKey(pkg)),
 		}).
 		WithRank(float32(score))
@@ -1008,10 +1008,6 @@ func markdownReferences(query *policy.Mquery) string {
 		items = append(items, "["+title+"]("+ref.Url+")")
 	}
 	return markdownList(items)
-}
-
-func strPtr(s string) *string {
-	return &s
 }
 
 func writeSarif(report *sarif.Report, out iox.OutputHelper) error {

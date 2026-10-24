@@ -232,10 +232,7 @@ func (ge *GraphExecutor) Debug(ctx context.Context, name string) {
 			label = fmt.Sprintf("%squery_id\n%s", label, nodeData.queryID)
 		case DatapointNodeType:
 			shape = "invtriangle"
-			maxLen := 6
-			if len(k) < 6 {
-				maxLen = len(k)
-			}
+			maxLen := min(len(k), 6)
 			label = fmt.Sprintf("%schecksum\n%s...", label, k[:maxLen])
 		case ReportingQueryNodeType:
 			shape = "ellipse"

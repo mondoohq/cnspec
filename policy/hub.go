@@ -5,6 +5,7 @@ package policy
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path"
 	"time"
@@ -542,9 +543,7 @@ func (s *LocalServices) computePolicyBundle(ctx context.Context, bundleMap *Poli
 				}
 			}
 
-			for k, v := range nuPolicy.ComputedFilters.Items {
-				mpolicyObj.ComputedFilters.Items[k] = v
-			}
+			maps.Copy(mpolicyObj.ComputedFilters.Items, nuPolicy.ComputedFilters.Items)
 		}
 	}
 

@@ -206,7 +206,7 @@ func ruleTags(rule *gosarif.ReportingDescriptor) []string {
 	if !ok {
 		return nil
 	}
-	list, ok := raw.([]interface{})
+	list, ok := raw.([]any)
 	if !ok {
 		return nil
 	}

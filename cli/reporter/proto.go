@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"maps"
 	"strings"
 
 	"go.mondoo.com/cnspec/policy"
@@ -249,9 +250,7 @@ func (r *Report) ToCnqueryReport() *cr.Report {
 		}
 	}
 
-	for id, err := range r.Errors {
-		report.Errors[id] = err
-	}
+	maps.Copy(report.Errors, r.Errors)
 
 	return report
 }

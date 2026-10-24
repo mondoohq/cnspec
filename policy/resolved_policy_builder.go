@@ -532,11 +532,8 @@ func (b *resolvedPolicyBuilder) addEdge(from, to string, impact *Impact) {
 	if _, ok := b.reportsToEdges[from]; !ok {
 		b.reportsToEdges[from] = make([]string, 0, 1)
 	}
-	for _, e := range b.reportsToEdges[from] {
-		// If the edge already exists, don't add it
-		if e == to {
-			return
-		}
+	if slices.Contains(b.reportsToEdges[from], to) {
+		return
 	}
 	b.reportsToEdges[from] = append(b.reportsToEdges[from], to)
 

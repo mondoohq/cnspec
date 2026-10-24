@@ -54,7 +54,7 @@ func TestReportingQueryNode_DeterministicErrorMessage(t *testing.T) {
 	// entries a nondeterministic order flips the message with probability 5/6
 	// per attempt, so 50 identical runs make regression practically certain
 	// to fail loudly.
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		s := build().score()
 		require.NotNil(t, s)
 		assert.Equal(t, reference.Message, s.Message, "score message must not depend on map iteration order")

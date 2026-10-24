@@ -122,8 +122,7 @@ func parse(data []byte) ([]testsuite, error) {
 	}
 	// A genuine syntax error won't be fixed by trying a different root element —
 	// surface it instead of falling through to a misleading structural message.
-	var syntaxErr *xml.SyntaxError
-	if errors.As(err, &syntaxErr) {
+	if _, ok := errors.AsType[*xml.SyntaxError](err); ok {
 		return nil, fmt.Errorf("parse JUnit XML: %w", err)
 	}
 	var single testsuite

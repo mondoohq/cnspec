@@ -90,7 +90,7 @@ func GenerateAwsHCL(integration awsIntegration) (string, error) {
 		tfgen.HclResourceWithAttributes(tfgen.Attributes{
 			"name": integration.Name,
 			"credentials": tfgen.Attributes{
-				"key": map[string]interface{}{
+				"key": map[string]any{
 					"access_key": tfgen.CreateVariableReference("aws_access_key"),
 					"secret_key": tfgen.CreateVariableReference("aws_secret_key"),
 				},

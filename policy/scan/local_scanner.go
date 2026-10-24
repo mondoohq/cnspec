@@ -556,15 +556,13 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 
 	// start the progress bar
 	scanGroups := sync.WaitGroup{}
-	scanGroups.Add(1)
-	go func() {
-		defer scanGroups.Done()
+	scanGroups.Go(func() {
 		defer health.ReportPanic("cnspec", cnspec.Version, cnspec.Build)
 
 		if err := multiprogress.Open(); err != nil {
 			log.Error().Err(err).Msg("failed to open progress bar")
 		}
-	}()
+	})
 	// Make sure the progress bar is closed when we exit early. Calling this multiple times
 	// is safe
 	defer multiprogress.Close()

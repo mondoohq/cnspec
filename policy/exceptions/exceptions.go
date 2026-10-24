@@ -257,7 +257,7 @@ func cleanPaths(raw []string) ([]string, []string) {
 			continue
 		}
 		escapes := false
-		for _, seg := range strings.Split(p, "/") {
+		for seg := range strings.SplitSeq(p, "/") {
 			if seg == ".." {
 				escapes = true
 			}

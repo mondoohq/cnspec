@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"regexp"
 	"sort"
 	"strings"
@@ -1163,15 +1164,9 @@ func (c *bundleCache) clone() *bundleCache {
 		overrideRefs: c.overrideRefs,
 		strictClaims: c.strictClaims,
 	}
-	for k, v := range c.lookupQuery {
-		res.lookupQuery[k] = v
-	}
-	for k, v := range c.lookupProps {
-		res.lookupProps[k] = v
-	}
-	for k, v := range c.uid2mrn {
-		res.uid2mrn[k] = v
-	}
+	maps.Copy(res.lookupQuery, c.lookupQuery)
+	maps.Copy(res.lookupProps, c.lookupProps)
+	maps.Copy(res.uid2mrn, c.uid2mrn)
 	return res
 }
 

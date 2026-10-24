@@ -10,7 +10,6 @@ import (
 
 	"go.mondoo.com/cnspec/policy"
 	mondoogql "go.mondoo.com/mondoo-go"
-	"k8s.io/utils/ptr"
 
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/gql"
 )
@@ -33,7 +32,7 @@ func ListFrameworks(ctx context.Context, c *gql.MondooClient, scopeMrn string, s
 	err := c.Query(ctx, &q, map[string]any{
 		"input": mondoogql.ComplianceFrameworksInput{
 			ScopeMrn: mondoogql.String(scopeMrn),
-			States:   ptr.To(states),
+			States:   new(states),
 		},
 	})
 	if err != nil {
@@ -43,12 +42,10 @@ func ListFrameworks(ctx context.Context, c *gql.MondooClient, scopeMrn string, s
 	frameworks := make([]*UpstreamFramework, len(q.Frameworks))
 	for i, f := range q.Frameworks {
 		frameworks[i] = &UpstreamFramework{
-			Framework: policy.Framework{
-				Mrn:     f.Mrn,
-				Name:    f.Name,
-				Version: f.Version,
-			},
-			State: f.State,
+			Mrn:     f.Mrn,
+			Name:    f.Name,
+			Version: f.Version,
+			State:   f.State,
 		}
 	}
 

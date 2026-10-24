@@ -49,7 +49,7 @@ func TestCsvConverterNeutralizesFormulas(t *testing.T) {
 	// The payload must survive but be neutralized with a leading single quote,
 	// and no CSV field may begin with the raw formula.
 	assert.Contains(t, out, `'=HYPERLINK`)
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		assert.False(t, strings.HasPrefix(line, "="), "line begins with a formula: %q", line)
 	}
 }

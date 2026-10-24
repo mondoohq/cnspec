@@ -1075,10 +1075,8 @@ func TestYAMLCompletionTextEdits(t *testing.T) {
 
 			// Create completion request
 			params := protocol.CompletionParams{
-				TextDocumentPositionParams: protocol.TextDocumentPositionParams{
-					TextDocument: protocol.TextDocumentIdentifier{URI: uri},
-					Position:     protocol.Position{Line: tt.cursorLine, Character: tt.cursorChar},
-				},
+				TextDocument: protocol.TextDocumentIdentifier{URI: uri},
+				Position:     protocol.Position{Line: tt.cursorLine, Character: tt.cursorChar},
 			}
 
 			// Call completion handler

@@ -31,7 +31,7 @@ func TestPackageImportsNoCnspecPackage(t *testing.T) {
 	require.NoError(t, err, "go list failed")
 
 	var offenders []string
-	for _, dep := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for dep := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		dep = strings.TrimSpace(dep)
 		// The package itself is go.mondoo.com/cnspec/reports/ocsf; everything else
 		// under go.mondoo.com/cnspec is an edge that must not exist.

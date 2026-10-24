@@ -332,10 +332,7 @@ func (h *MQLHandler) mapYAMLToVirtualWithSource(yamlPos protocol.Position, node 
 	if !node.IsBlock {
 		// Inline scalar: single line
 		// node.StartCol points to where the content starts
-		relativeChar := yamlChar - node.StartCol
-		if relativeChar < 0 {
-			relativeChar = 0
-		}
+		relativeChar := max(yamlChar-node.StartCol, 0)
 		return protocol.Position{
 			Line:      0,
 			Character: uint32(relativeChar),
@@ -344,10 +341,7 @@ func (h *MQLHandler) mapYAMLToVirtualWithSource(yamlPos protocol.Position, node 
 
 	// Block scalar: multi-line
 	// Calculate relative line (skip the "mql: |" line)
-	relativeLine := yamlLine - node.StartLine - 1
-	if relativeLine < 0 {
-		relativeLine = 0
-	}
+	relativeLine := max(yamlLine-node.StartLine-1, 0)
 
 	// For block scalars, we need to find the actual indentation from source
 	var baseIndent int
@@ -368,10 +362,7 @@ func (h *MQLHandler) mapYAMLToVirtualWithSource(yamlPos protocol.Position, node 
 		baseIndent = node.StartCol
 	}
 
-	relativeChar := yamlChar - baseIndent
-	if relativeChar < 0 {
-		relativeChar = 0
-	}
+	relativeChar := max(yamlChar-baseIndent, 0)
 
 	return protocol.Position{
 		Line:      uint32(relativeLine),
@@ -423,7 +414,7 @@ func (h *MQLHandler) extractPartialMQLForCompletion(node *MQLNode, virtualPos pr
 
 	// Get all lines up to cursor
 	var result []string
-	for i := 0; i < line; i++ {
+	for i := range line {
 		result = append(result, lines[i])
 	}
 

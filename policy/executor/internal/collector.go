@@ -124,9 +124,7 @@ func (c *BufferedCollector) consumeRisk(score *policy.Score, risks map[string]bo
 }
 
 func (c *BufferedCollector) run() {
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
+	c.wg.Go(func() {
 		defer health.ReportPanic("cnspec", cnspec.Version, cnspec.Build)
 
 		done := false
@@ -183,7 +181,7 @@ func (c *BufferedCollector) run() {
 			}
 			timer.Stop()
 		}
-	}()
+	})
 }
 
 func listScoredRisks(risksIdx map[string]bool) []*policy.ScoredRiskFactor {
