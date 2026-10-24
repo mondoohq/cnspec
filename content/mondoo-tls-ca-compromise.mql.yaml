@@ -1,0 +1,196 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-tls-ca-compromise
+    name: Mondoo TLS Certificate Authority Compromise
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: host
+      mondoo.com/icon: policy
+    require:
+      - provider: network
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Detect TLS certificates issued by certificate authorities whose signing keys are publicly known to be compromised
+    docs:
+      desc: |
+        The Mondoo TLS Certificate Authority Compromise policy finds servers whose certificate chain runs through an issuing certificate authority whose private key is no longer secret. Anyone holding that key can issue a certificate for any hostname that every client still trusting the authority accepts, so a certificate from it no longer proves who a client is talking to.
+
+        Browsers block such an authority within days of the disclosure, but servers keep presenting certificates from it until each one is replaced, and clients with their own trust store, embedded devices, and outdated operating systems keep accepting them for much longer. Each check in this policy covers one disclosed compromise and identifies the affected authorities by their key identifiers, so it matches every certificate the compromised key signed whatever name the certificate carries.
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Compromised issuing certificate authorities
+        filters: |
+          asset.platform == 'host' && tls.params != empty
+        checks:
+          - uid: mondoo-tls-ca-compromise-no-emudhra-g3-intermediates
+    scoring_system: highest impact
+queries:
+  # The eight eMudhra intermediates disclosed on 2026-10-17, by Subject Key
+  # Identifier. Each was issued twice, by its eMudhra root (emSign Root TLS CA - G3
+  # or emSign Root CS CA - G3) and as a cross-sign by Sectigo's AAA Certificate
+  # Services, and both copies carry the same key, so one identifier covers both:
+  #   e2:1e:2f:...:25:14  EM DV TLS CA - G3B
+  #   9b:d8:65:...:ae:0a  EM OV TLS CA - G3B
+  #   3e:dc:20:...:47:06  EM EV TLS CA - G3B
+  #   ae:7e:10:...:0a:f3  EM DV TLS CA - G3C
+  #   34:ea:ea:...:1b:6c  EM OV TLS CA - G3C
+  #   a6:25:5e:...:eb:5f  EM EV TLS CA - G3C
+  #   79:fa:e8:...:de:e6  EM OV CS CA - G3B
+  #   ee:6f:73:...:66:b7  EM OV CS CA - G3C
+  # Source: the impacted-intermediates list referenced below, last checked
+  # 2026-10-24. All sixteen certificates parse with the listed SHA-256 and key
+  # identifier, the eight Sectigo cross-signs verify against the AAA Certificate
+  # Services root that Sectigo publishes, and every P-384 key has a private
+  # scalar below 256, which is the defect the disclosure describes.
+  #
+  # The query matches the authority key identifier of every certificate the
+  # server sends, so a leaf issued by one of these keys is found even when the
+  # server omits the intermediate, and it matches the subject key identifier so
+  # the intermediate itself is found when the server sends it.
+  - uid: mondoo-tls-ca-compromise-no-emudhra-g3-intermediates
+    title: Ensure no certificate was issued by a compromised eMudhra G3 intermediate
+    impact: 95
+    mql: |
+      tls.certificates.none(
+        authorityKeyID.in([
+          "e2:1e:2f:e7:1c:19:39:0e:55:4b:62:c1:20:24:57:35:24:8a:25:14",
+          "9b:d8:65:51:af:e7:e7:2c:37:ad:08:ee:69:19:d9:bf:37:84:ae:0a",
+          "3e:dc:20:d9:89:46:98:87:7b:87:3f:d8:81:47:b2:5c:15:d8:47:06",
+          "ae:7e:10:5c:3c:29:96:c1:a8:47:27:05:59:f1:e0:3d:d4:e5:0a:f3",
+          "34:ea:ea:0c:eb:c9:0a:da:f9:d0:c5:e2:ed:9b:78:c9:87:9e:1b:6c",
+          "a6:25:5e:80:a9:4d:b7:f3:96:7c:1b:c7:91:df:92:bc:ee:4b:eb:5f",
+          "79:fa:e8:ec:cf:db:0d:75:8d:a4:58:d6:9f:b6:ed:dc:7c:49:de:e6",
+          "ee:6f:73:29:8d:6f:bf:a7:b3:1b:c3:95:34:f6:15:56:44:78:66:b7"
+        ]) ||
+        subjectKeyID.in([
+          "e2:1e:2f:e7:1c:19:39:0e:55:4b:62:c1:20:24:57:35:24:8a:25:14",
+          "9b:d8:65:51:af:e7:e7:2c:37:ad:08:ee:69:19:d9:bf:37:84:ae:0a",
+          "3e:dc:20:d9:89:46:98:87:7b:87:3f:d8:81:47:b2:5c:15:d8:47:06",
+          "ae:7e:10:5c:3c:29:96:c1:a8:47:27:05:59:f1:e0:3d:d4:e5:0a:f3",
+          "34:ea:ea:0c:eb:c9:0a:da:f9:d0:c5:e2:ed:9b:78:c9:87:9e:1b:6c",
+          "a6:25:5e:80:a9:4d:b7:f3:96:7c:1b:c7:91:df:92:bc:ee:4b:eb:5f",
+          "79:fa:e8:ec:cf:db:0d:75:8d:a4:58:d6:9f:b6:ed:dc:7c:49:de:e6",
+          "ee:6f:73:29:8d:6f:bf:a7:b3:1b:c3:95:34:f6:15:56:44:78:66:b7"
+        ])
+      )
+    docs:
+      desc: |
+        This check verifies that the server's certificate was not issued by one of the eight eMudhra intermediate certificate authorities whose private keys were disclosed as recoverable in October 2026.
+
+        The affected authorities are EM DV TLS CA, EM OV TLS CA, and EM EV TLS CA in their G3B and G3C generations, plus the code signing authorities EM OV CS CA - G3B and EM OV CS CA - G3C. Each chains to emSign Root TLS CA - G3 or emSign Root CS CA - G3, and each was also cross-signed by Sectigo's AAA Certificate Services root. The check compares every certificate the server presents against the key identifiers of these authorities, so it finds a leaf certificate they issued even when the server does not send the intermediate.
+
+        **Why this matters**
+
+        The eight authorities were generated with P-384 private keys whose value is smaller than 256. Anyone can recover such a key from the public certificate by trying every candidate, which takes less than a second. With the key, an attacker signs a certificate for any hostname and presents it from a position on the network path: a hostile Wi-Fi network, a hijacked DNS record, or a compromised router. A client that still trusts the authority accepts the forgery, and the connection looks identical to a genuine one.
+
+        The intermediates were revoked on October 18 and 19, 2026, and Chrome, Firefox, Apple, and Microsoft block them. A certificate from one of them therefore already fails in current browsers, while API clients, mobile apps with pinned or bundled trust stores, Java and other runtimes with their own trust store, and devices that no longer receive updates may still accept both your certificate and an attacker's. Replacing the certificate fixes the first problem. Removing the eMudhra authorities from the trust stores you control fixes the second.
+      audit: |
+        ### Audit via openssl
+
+        1. Print the issuer and authority key identifier of every certificate the server sends:
+
+            ```bash
+            openssl s_client -connect example.com:443 -servername example.com -showcerts </dev/null 2>/dev/null \
+              | awk '/BEGIN CERT/,/END CERT/' \
+              | csplit -s -z -f cert- - '/BEGIN CERT/' '{*}'
+            for c in cert-*; do
+              openssl x509 -in "$c" -noout -issuer -ext authorityKeyIdentifier,subjectKeyIdentifier
+            done
+            ```
+
+        2. Compare the output against the affected authorities. The check fails when an issuer is `EM DV TLS CA - G3B`, `EM OV TLS CA - G3B`, `EM EV TLS CA - G3B`, `EM DV TLS CA - G3C`, `EM OV TLS CA - G3C`, `EM EV TLS CA - G3C`, `EM OV CS CA - G3B`, or `EM OV CS CA - G3C`, or when a key identifier matches one of theirs. It passes when no certificate names or matches them.
+      remediation:
+        - id: apache
+          desc: |
+            **Using Apache**
+
+            1. Generate a new private key and certificate signing request. A new key is required because the certificate is being replaced, not renewed:
+
+                ```bash
+                openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+                  -keyout /etc/ssl/private/example.com.key \
+                  -out    /etc/ssl/example.com.csr \
+                  -subj   "/CN=example.com"
+                ```
+
+            2. Request the certificate from a certificate authority other than eMudhra, or obtain one from Let's Encrypt:
+
+                ```bash
+                certbot --apache -d example.com
+                ```
+
+            3. Point Apache at the new certificate and full chain, then reload:
+
+                ```apache
+                SSLCertificateFile      /etc/ssl/certs/example.com.fullchain.pem
+                SSLCertificateKeyFile   /etc/ssl/private/example.com.key
+                ```
+
+                ```bash
+                apachectl configtest
+                systemctl reload apache2
+                ```
+        - id: nginx
+          desc: |
+            **Using NGINX**
+
+            1. Generate a new private key and certificate signing request:
+
+                ```bash
+                openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+                  -keyout /etc/ssl/private/example.com.key \
+                  -out    /etc/ssl/example.com.csr \
+                  -subj   "/CN=example.com"
+                ```
+
+            2. Request the certificate from a certificate authority other than eMudhra, or obtain one from Let's Encrypt:
+
+                ```bash
+                certbot --nginx -d example.com
+                ```
+
+            3. Point NGINX at the new certificate and full chain, then reload:
+
+                ```nginx
+                ssl_certificate     /etc/ssl/certs/example.com.fullchain.pem;
+                ssl_certificate_key /etc/ssl/private/example.com.key;
+                ```
+
+                ```bash
+                nginx -t
+                systemctl reload nginx
+                ```
+        - id: haproxy
+          desc: |
+            **Using HAProxy**
+
+            1. Obtain a replacement certificate from a certificate authority other than eMudhra, issued over a new private key.
+
+            2. Concatenate the certificate, the intermediate chain, and the private key into the PEM file HAProxy loads:
+
+                ```bash
+                cat example.com.crt intermediate.crt example.com.key > /etc/haproxy/certs/example.com.pem
+                chmod 600 /etc/haproxy/certs/example.com.pem
+                ```
+
+            3. Reference the file on the TLS bind line, then validate and reload:
+
+                ```haproxy
+                frontend https
+                  bind :443 ssl crt /etc/haproxy/certs/example.com.pem
+                ```
+
+                ```bash
+                haproxy -c -f /etc/haproxy/haproxy.cfg
+                systemctl reload haproxy
+                ```
+    refs:
+      - url: https://emudhra.we-have-a-problem.com/
+        title: eMudhra compromised intermediate certificate authorities
+      - url: https://emudhra.we-have-a-problem.com/impacted-intermediates.json
+        title: List of the affected intermediate certificates with fingerprints and key identifiers
