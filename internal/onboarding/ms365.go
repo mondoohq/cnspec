@@ -5,9 +5,9 @@ package onboarding
 
 import (
 	"strings"
+	"uuid"
 
 	"github.com/cockroachdb/errors"
-	"github.com/google/uuid"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/rs/zerolog/log"
 

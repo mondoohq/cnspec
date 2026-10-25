@@ -8,9 +8,9 @@ import (
 	"io"
 	"strings"
 	"time"
+	"uuid"
 
 	cyclonedx "github.com/CycloneDX/cyclonedx-go"
-	"github.com/google/uuid"
 )
 
 type CycloneDXFormatter struct {
@@ -29,7 +29,7 @@ func (f *CycloneDXFormatter) Render(w io.Writer, bom *AiBom) error {
 
 func (f *CycloneDXFormatter) convert(bom *AiBom) (*cyclonedx.BOM, error) {
 	cdx := cyclonedx.NewBOM()
-	cdx.SerialNumber = uuid.New().URN()
+	cdx.SerialNumber = "urn:uuid:" + uuid.New().String()
 	cdx.Metadata = &cyclonedx.Metadata{
 		Timestamp: time.Now().Format(time.RFC3339),
 		Tools: &cyclonedx.ToolsChoice{

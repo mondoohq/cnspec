@@ -5,9 +5,9 @@ package onboarding
 
 import (
 	"fmt"
+	"uuid"
 
 	"github.com/cockroachdb/errors"
-	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 
 	"go.mondoo.com/cnspec/internal/tfgen"

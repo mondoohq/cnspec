@@ -18,7 +18,6 @@ require (
 	github.com/glebarez/go-sqlite v1.23.0
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/google/go-cmdtest v0.4.0
-	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/hashicorp/go-version v1.9.0
 	github.com/hashicorp/hc-install v0.10.0
@@ -190,6 +189,7 @@ require (
 	github.com/google/go-containerregistry v0.22.1 // indirect
 	github.com/google/renameio v1.0.1 // indirect
 	github.com/google/s2a-go v0.1.11 // indirect
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/google/wire v0.7.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.24 // indirect
 	github.com/googleapis/gax-go/v2 v2.27.0 // indirect

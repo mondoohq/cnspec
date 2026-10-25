@@ -13,9 +13,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"uuid"
 
 	"github.com/cockroachdb/errors"
-	"github.com/google/uuid"
 	"github.com/mattn/go-isatty"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
@@ -592,16 +592,8 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	// Memory is process-wide while scanstats Collectors are per-asset, so the
 	// tracker is created once per run and shared by every asset. run_id lets
 	// the resulting per-asset records be grouped back into one process.
-	//
-	// uuid.NewRandom (unlike uuid.New) can fail rather than panic if the
-	// entropy source is unavailable; telemetry must never fail a scan, so a
-	// failure here just leaves RunID empty, which Record already omits.
-	runID := ""
-	if u, err := uuid.NewRandom(); err == nil {
-		runID = u.String()
-	}
 	resourceTracker := scanstats.NewResourceTracker(scanstats.ResourceTrackerConfig{
-		RunID:          runID,
+		RunID:          uuid.New().String(),
 		Parallelism:    parallelism,
 		MaxConnections: maxConn,
 	})
