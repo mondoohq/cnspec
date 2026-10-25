@@ -7,7 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
-	"math/rand"
+	"math/rand/v2"
 	"sort"
 	"time"
 
@@ -439,7 +439,7 @@ func (s *LocalServices) resolve(ctx context.Context, policyMrn string, assetFilt
 				return nil, err
 			}
 			if i+1 < maxResolveRetry {
-				jitter := time.Duration(rand.Int63n(int64(maxResolveRetryBackoffjitter)))
+				jitter := rand.N(maxResolveRetryBackoffjitter)
 				sleepTime := maxResolveRetryBackoff + jitter
 				logCtx.Error().Int("try", i+1).Dur("sleepTime", sleepTime).Msg("retrying policy resolution")
 				time.Sleep(sleepTime)
