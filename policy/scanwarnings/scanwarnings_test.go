@@ -39,7 +39,7 @@ func TestDedupeAndCap(t *testing.T) {
 
 	t.Run("count is capped", func(t *testing.T) {
 		errs := make([]error, 0, Max+10)
-		for i := 0; i < Max+10; i++ {
+		for i := range Max + 10 {
 			errs = append(errs, fmt.Errorf("distinct crash #%d", i))
 		}
 		out := DedupeAndCap(errs)

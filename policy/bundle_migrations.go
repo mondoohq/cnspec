@@ -3,7 +3,10 @@
 
 package policy
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // StageSummary summarizes the effects of a migration stage
 // used for validation purposes
@@ -150,7 +153,7 @@ func LintCrossMigrationStage(
 	consumedByLaterStages := make(map[string]bool)
 	producedByLaterStages := make(map[string]bool)
 
-	for i := 0; i < len(stages); i++ {
+	for i := range stages {
 		stage := stages[i]
 		for uid := range stage.Consumes {
 			consumedByLaterStages[uid] = true
@@ -161,9 +164,7 @@ func LintCrossMigrationStage(
 	}
 
 	// Walk stages backwards
-	for i := len(stages) - 1; i >= 0; i-- {
-		stage := stages[i]
-
+	for i, stage := range slices.Backward(stages) {
 		// Track what UIDs are consumed/produced by stages AFTER this one
 		laterConsumes := make(map[string]bool)
 		laterProduces := make(map[string]bool)

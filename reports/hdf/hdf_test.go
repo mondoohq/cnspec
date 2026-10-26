@@ -285,7 +285,7 @@ func TestHDFReportTimestamps(t *testing.T) {
 		}{
 			{"no report", nil, nil},
 			{"unset", &policy.Report{}, nil},
-			{"seconds", &policy.Report{Created: seconds, Modified: seconds + 42}, hdfTestPtr(42.0)},
+			{"seconds", &policy.Report{Created: seconds, Modified: seconds + 42}, new(42.0)},
 			{"milliseconds", &policy.Report{Created: milliseconds, Modified: milliseconds + 42000}, nil},
 			{"modified before created", &policy.Report{Created: seconds, Modified: seconds - 1}, nil},
 			{"modified equals created", &policy.Report{Created: seconds, Modified: seconds}, nil},
@@ -306,8 +306,6 @@ func TestHDFReportTimestamps(t *testing.T) {
 		}
 	})
 }
-
-func hdfTestPtr[T any](v T) *T { return &v }
 
 // TestHDFSeverityLabel pins the bands Heimdall and the SAF CLI bucket findings by.
 func TestHDFSeverityLabel(t *testing.T) {
@@ -535,7 +533,7 @@ func TestHDFDeterministic(t *testing.T) {
 
 	r := reportfixture.Sample()
 	first := toHDFBytes(t, r)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		assert.Equal(t, string(first), string(toHDFBytes(t, r)))
 	}
 }

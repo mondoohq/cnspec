@@ -118,8 +118,7 @@ func (t *YacIt) createStruct(typ reflect.Type) {
 	var res strings.Builder
 	res.WriteString("type " + name + " struct {\n")
 	nuFields := make([]reflect.StructField, 0)
-	for i := 0; i < typ.NumField(); i++ {
-		cur := typ.Field(i)
+	for cur := range typ.Fields() {
 
 		// TODO: limited to ascii right now, no utf8 runes
 		if unicode.IsLower(rune(cur.Name[0])) {
@@ -243,7 +242,7 @@ func (x *%s) addFileContext(node *yaml.Node) {
 }
 
 func isProtoEnum(typ reflect.Type) bool {
-	return typ.Implements(reflect.TypeOf((*ProtoEnum)(nil)).Elem())
+	return typ.Implements(reflect.TypeFor[ProtoEnum]())
 }
 
 var protoEnumTemplate = template.Must(template.New("protoEnum").Parse(`
@@ -312,7 +311,7 @@ type YamlUnmarshaler interface {
 }
 
 func hasYamlUnmarshaler(typ reflect.Type) bool {
-	return reflect.PointerTo(typ).Implements(reflect.TypeOf((*YamlUnmarshaler)(nil)).Elem())
+	return reflect.PointerTo(typ).Implements(reflect.TypeFor[YamlUnmarshaler]())
 }
 
 func shouldGenerateTypeForEnum(typ reflect.Type) bool {

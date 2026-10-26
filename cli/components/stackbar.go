@@ -159,12 +159,13 @@ type LabelFunc func(idx int, total float64, datapoints []float64, labels []strin
 
 func StackBarChartPercentageLabelFunc(idx int, total float64, datapoints []float64, labels []string) string {
 	// add percentages for label
-	datapointLabel := " ("
+	var datapointLabel strings.Builder
+	datapointLabel.WriteString(" (")
 	for i := range datapoints {
-		datapointLabel += fmt.Sprintf(" %s:%3.0f%%", labels[i], datapoints[i]/total*100)
+		fmt.Fprintf(&datapointLabel, " %s:%3.0f%%", labels[i], datapoints[i]/total*100)
 	}
-	datapointLabel += " )"
-	return datapointLabel
+	datapointLabel.WriteString(" )")
+	return datapointLabel.String()
 }
 
 func StackBarChartNoopLabelFunc(idx int, total float64, datapoints []float64, labels []string) string {
@@ -209,10 +210,7 @@ func (m StackBarChart) Render(data StackBarData) string {
 			first := true
 			for _, line := range lines {
 				ll := ansi.PrintableRuneWidth(line)
-				indent := maxLen - ll
-				if indent < 0 {
-					indent = 0
-				}
+				indent := max(maxLen-ll, 0)
 				b.WriteString(line + " ")
 				b.WriteString(strings.Repeat(" ", indent))
 				b.WriteString(bar)

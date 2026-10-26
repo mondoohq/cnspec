@@ -286,7 +286,7 @@ func TestWriteTimeChecksumFailureNeverFailsScan(t *testing.T) {
 	// Nesting deeper than llx/checksum's canon bound errors the hash while
 	// remaining perfectly writable as a blob.
 	deep := llx.StringPrimitive("leaf")
-	for i := 0; i < 70; i++ {
+	for range 70 {
 		inner, err := deep.MarshalVT()
 		require.NoError(t, err)
 		deep = &llx.Primitive{Type: string(types.Dict), Value: inner}

@@ -109,3 +109,24 @@ func RiskFromSeverityLabel(label string) int32 {
 		return 0
 	}
 }
+
+// CheckRating is the score to rate the result of the check checkMrn by.
+//
+// Reports key a check's raw result by the code id it executed, and that score
+// is 0 or 100: the check's impact is applied one level up, on the score kept
+// under the check's MRN. A failing result rated from the code id's score would
+// read as critical whatever the check's impact. CheckRating returns score with
+// the value of the check's own score when that is a failing result, and score
+// unchanged otherwise, so the outcome is still the one the code id reported.
+func CheckRating(scores map[string]*policy.Score, checkMrn string, score *policy.Score) *policy.Score {
+	if score == nil || score.Type != policy.ScoreType_Result || score.Value == 100 {
+		return score
+	}
+	checkScore, ok := scores[checkMrn]
+	if !ok || checkScore == nil || checkScore.Type != policy.ScoreType_Result || checkScore.Value >= 100 {
+		return score
+	}
+	rated := score.CloneVT()
+	rated.Value = checkScore.Value
+	return rated
+}

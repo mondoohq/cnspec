@@ -159,6 +159,8 @@ make test/content/lint                                     # everything
 
 Deprecated-symbol reporting splits by site: `query-deprecated-symbol` covers `mql:` only, and `filter-deprecated-symbol` fires separately for every `filters:` block at its own line.
 
+`query-standalone-where` and `filter-standalone-where` name the check whose `where`, `all`, `any`, `none`, `one` or `contains` on a resource list uses a condition that never reads the list element, such as `terraform.resources("a").all(terraform.resources("b") != empty)`. The condition has the same value for every element, so the check passes or fails without looking at any of them.
+
 ### Bundle smoke scans (`scans/bundles_test.go`)
 
 One sample project per policy that should score 100, and one that should score 0, under `scans/fixtures/bundles/`. These run end to end against the whole bundle, so they catch a new check that fires on a clean project. Untagged, so they run in the ordinary `go test ./...`.

@@ -236,9 +236,7 @@ func (t *ResourceTracker) Start(interval time.Duration) {
 	}
 	t.Observe()
 
-	t.wg.Add(1)
-	go func() {
-		defer t.wg.Done()
+	t.wg.Go(func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -249,7 +247,7 @@ func (t *ResourceTracker) Start(interval time.Duration) {
 				t.Observe()
 			}
 		}
-	}()
+	})
 }
 
 // Stop ends sampling and waits for the sampling goroutine to exit, so that

@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -680,10 +681,9 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			}
 		}
 		sort.Ints(times)
-		for i := len(times) - 1; i >= 0; i-- {
+		for _, unixTime := range slices.Backward(times) {
 			r.beginAssetSection()
 
-			unixTime := times[i]
 			deadline := time.Unix(int64(unixTime), 0)
 			diff := timediff.TimeDiff(deadline)
 			r.out("Remediation deadline: " + deadline.Format("2006/01/02") + " (" + diff + ")\n")

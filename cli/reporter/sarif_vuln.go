@@ -66,7 +66,7 @@ func newVulnRun(target string) *sarif.Run {
 		WithFullName("cnspec " + cnspec.GetVersion()).
 		WithShortDescription(sarif.NewMultiformatMessageString(
 			"cnspec is an open source, cloud-native security and policy scanner"))
-	run.Tool.Driver.Organization = strPtr("Mondoo")
+	run.Tool.Driver.Organization = new("Mondoo")
 	run.ColumnKind = "utf16CodeUnits"
 
 	run.AutomationDetails = sarif.NewRunAutomationDetails().
@@ -217,7 +217,7 @@ func vexResult(target string, row fex.VulnRow) *sarif.Result {
 		WithLocations([]*sarif.Location{
 			sarif.NewLocation().WithLogicalLocations(logicalLocs),
 		}).
-		WithPartialFingerPrints(map[string]interface{}{
+		WithPartialFingerPrints(map[string]any{
 			sarifFingerprintKey: sarifFingerprint(ruleID, target, reportdoc.VexPackageKey(row)),
 		}).
 		WithRank(float32(risk))

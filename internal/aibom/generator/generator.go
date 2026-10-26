@@ -494,7 +494,7 @@ func detectLambdaAIAccess(fn AWSLambdaFunction) *aibom.ComputeAIAccess {
 
 	services := map[string]bool{}
 	for _, action := range aiActions {
-		svc := strings.SplitN(action, ":", 2)[0]
+		svc, _, _ := strings.Cut(action, ":")
 		services[svc] = true
 	}
 

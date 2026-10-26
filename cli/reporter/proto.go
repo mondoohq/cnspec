@@ -7,9 +7,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"maps"
 	"strings"
 
 	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/cnspec/reports/reportdoc"
 	cr "go.mondoo.com/mql/cli/reporter"
 	"go.mondoo.com/mql/utils/iox"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -193,7 +195,7 @@ func ConvertToProto(data *policy.ReportCollection) (*Report, error) {
 		for qid := range resolved.GetExecutionJob().GetQueries() {
 			// policies and other stuff have no query mrn
 			for _, qmrn := range queryMrns(qid2mrns[qid], reportingJobByQrId) {
-				score := gatherScoreValue(report.Scores[qid])
+				score := gatherScoreValue(reportdoc.CheckRating(report.Scores, qmrn, report.Scores[qid]))
 				if score != nil {
 					protoReport.Scores[mrn].Values[qmrn] = score
 				}
@@ -248,9 +250,7 @@ func (r *Report) ToCnqueryReport() *cr.Report {
 		}
 	}
 
-	for id, err := range r.Errors {
-		report.Errors[id] = err
-	}
+	maps.Copy(report.Errors, r.Errors)
 
 	return report
 }

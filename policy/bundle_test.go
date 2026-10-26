@@ -602,7 +602,7 @@ framework_maps:
 		for _, tc := range testCases {
 			checksums := []string{}
 
-			for i := 0; i < 10; i++ {
+			for range 10 {
 				bundle := parseBundle(t, bundleStr)
 				tc.modify(bundle)
 

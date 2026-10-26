@@ -129,9 +129,9 @@ PROVIDER_MAP = {
 
 # tflint provider plugins (only for providers that have rulesets)
 TFLINT_PLUGIN_MAP = {
-    "aws": ("github.com/terraform-linters/tflint-ruleset-aws", "0.49.0"),
-    "azurerm": ("github.com/terraform-linters/tflint-ruleset-azurerm", "0.32.0"),
-    "google": ("github.com/terraform-linters/tflint-ruleset-google", "0.40.0"),
+    "aws": ("github.com/terraform-linters/tflint-ruleset-aws", "0.50.0"),
+    "azurerm": ("github.com/terraform-linters/tflint-ruleset-azurerm", "0.33.0"),
+    "google": ("github.com/terraform-linters/tflint-ruleset-google", "0.41.0"),
 }
 
 # Ruleset rules that do not apply to documentation snippets, keyed by plugin.

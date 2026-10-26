@@ -764,7 +764,7 @@ func oneLine(s string) string {
 func wrap(s string, width int) []string {
 	var lines []string
 	line := ""
-	for _, word := range strings.Fields(s) {
+	for word := range strings.FieldsSeq(s) {
 		if line != "" && len(line)+1+len(word) > width {
 			lines = append(lines, line)
 			line = ""

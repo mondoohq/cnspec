@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -25,11 +26,26 @@ func init() {
 	rootCmd.AddCommand(sbomCmd)
 	sbomCmd.Flags().String("asset-name", "", "User-override for the asset name")
 	sbomCmd.Flags().StringToString("annotation", nil, "Add an annotation to the asset in the form KEY=VALUE") // user-added, editable
-	sbomCmd.Flags().StringP("output", "o", "list", "Set output format: "+sbom.AllFormats())
+	sbomCmd.Flags().StringP("output", "o", sbom.FormatList, "Set output format: "+sbom.AllFormats())
 	sbomCmd.Flags().String("output-target", "", "Set output target to which the SBOM report will be written")
 	sbomCmd.Flags().Bool("with-evidence", false, "Include evidence for each component")
 	sbomCmd.Flags().Bool("with-cpes", false, "Generate CPEs for each component")
 	addInventoryFlags(sbomCmd, "Set the path to the inventory file. With several assets, --output-target gets one file per asset")
+}
+
+// sbomFormatList renders the output formats for the help text, one per line,
+// from the same registry --output is validated against, so the help cannot
+// list a format the command rejects or omit one it accepts.
+func sbomFormatList() string {
+	var b strings.Builder
+	for f := range strings.SplitSeq(sbom.AllFormats(), ", ") {
+		b.WriteString("- " + f)
+		if f == sbom.FormatList {
+			b.WriteString(" (default)")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 var sbomCmd = &cobra.Command{
@@ -39,13 +55,7 @@ var sbomCmd = &cobra.Command{
 is a representation of the asset's software components and their dependencies.
 
 The following formats are supported:
-- list (default)
-- cnquery-json
-- cyclonedx-json
-- cyclonedx-xml
-- spdx-json
-- spdx-tag-value
-
+` + sbomFormatList() + `
 To generate SBOMs for the assets of an inventory file, with the credentials
 it defines, use --inventory-file instead of a provider subcommand:
 

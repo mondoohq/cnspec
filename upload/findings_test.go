@@ -101,6 +101,27 @@ func TestDoUpload(t *testing.T) {
 	assert.Equal(t, req.SpaceMrn, resolver.completedScope)
 }
 
+func TestFindingsUploadRequest(t *testing.T) {
+	docs := []*fex.FindingDocument{{}}
+
+	full := findingsUploadRequest(Opts{}, docs, "src", "//space")
+	assert.NotNil(t, full.ImportStartedAt, "a full pull carries the close cursor")
+	assert.Empty(t, full.CompleteKinds, "no kinds listed: the platform closes every kind")
+
+	kinds := []fex.FindingKind{fex.FindingKind_FINDING_KIND_FINDING}
+	one := findingsUploadRequest(Opts{CompleteKinds: kinds}, docs, "src", "//space")
+	assert.NotNil(t, one.ImportStartedAt)
+	assert.Equal(t, kinds, one.CompleteKinds)
+
+	delta := findingsUploadRequest(Opts{Delta: true, CompleteKinds: kinds}, docs, "src", "//space")
+	assert.Nil(t, delta.ImportStartedAt, "a delta closes nothing")
+
+	// The field reaches the wire under the name the platform reads.
+	data, err := protojson.Marshal(one)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"completeKinds":["FINDING_KIND_FINDING"]`)
+}
+
 func TestResolverHTTPClient(t *testing.T) {
 	// nil falls back to a non-nil default client.
 	assert.NotNil(t, resolverHTTPClient(nil))

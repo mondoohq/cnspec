@@ -43,6 +43,7 @@ TARGETS = {
     "ai": [CONTENT_DIR / "mondoo-ai-security.mql.yaml"],
     "edr": [CONTENT_DIR / "mondoo-edr-policy.mql.yaml"],
     "freebsd": [CONTENT_DIR / "mondoo-freebsd-security.mql.yaml"],
+    "solaris": [CONTENT_DIR / "mondoo-solaris-security.mql.yaml"],
     "mariadb": [CONTENT_DIR / "mondoo-mariadb-security.mql.yaml"],
     "mysql": [CONTENT_DIR / "mondoo-mysql-security.mql.yaml"],
     "postgresql": [CONTENT_DIR / "mondoo-postgresql-security.mql.yaml"],

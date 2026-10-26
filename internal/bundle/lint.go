@@ -160,6 +160,7 @@ func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []
 		}
 
 		aggregatedEntries = append(aggregatedEntries, lintDeprecatedSymbols(schema, compilerConfig, filename, policyBundle)...)
+		aggregatedEntries = append(aggregatedEntries, lintStandaloneWhere(compilerConfig, filename, policyBundle)...)
 	}
 
 	aggregatedEntries = append(aggregatedEntries, lintParsedBundle(schema, filename, policyBundle, opts)...)

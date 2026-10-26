@@ -76,17 +76,14 @@ func ClassifyFailure(err error) FailureKind {
 		return FailureContextCanceled
 	}
 
-	var dnsErr *net.DNSError
-	if errors.As(err, &dnsErr) {
+	if _, ok := errors.AsType[*net.DNSError](err); ok {
 		return FailureDNS
 	}
 
-	var certErr *tls.CertificateVerificationError
-	if errors.As(err, &certErr) {
+	if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
 		return FailureTLS
 	}
-	var recordErr tls.RecordHeaderError
-	if errors.As(err, &recordErr) {
+	if _, ok := errors.AsType[tls.RecordHeaderError](err); ok {
 		return FailureTLS
 	}
 

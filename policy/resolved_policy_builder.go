@@ -532,11 +532,8 @@ func (b *resolvedPolicyBuilder) addEdge(from, to string, impact *Impact) {
 	if _, ok := b.reportsToEdges[from]; !ok {
 		b.reportsToEdges[from] = make([]string, 0, 1)
 	}
-	for _, e := range b.reportsToEdges[from] {
-		// If the edge already exists, don't add it
-		if e == to {
-			return
-		}
+	if slices.Contains(b.reportsToEdges[from], to) {
+		return
 	}
 	b.reportsToEdges[from] = append(b.reportsToEdges[from], to)
 
@@ -1009,6 +1006,15 @@ func (b *resolvedPolicyBuilder) addQuery(query *Mquery) (string, bool) {
 			if !ok {
 				log.Warn().Str("mrn", v.Mrn).Msg("variant not found in bundle")
 				continue
+			}
+			// A variant is not listed in any group, so gatherGlobalInfoFromPolicy
+			// never records an impact for it, and its own score would rate a
+			// failing variant as critical whatever its check says. Carry the
+			// check's impact value down, as on the check -> policy edge. Scoring
+			// and weight stay on the variant -> check edge, where they are
+			// already applied.
+			if impact.GetValue() != nil && b.impactOverrides[q.Mrn].GetValue() == nil {
+				b.impactOverrides[q.Mrn] = &Impact{Value: &ImpactValue{Value: impact.Value.Value}}
 			}
 			if codeId, added := b.addQuery(q); added {
 				// The first matching variant is selected

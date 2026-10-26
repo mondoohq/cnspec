@@ -34,10 +34,8 @@ func TestNextAvailableFilename(t *testing.T) {
 	// Use a channel to collect errors from goroutines
 	errChan := make(chan error, 1010) // Buffer should be the number of goroutines
 
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
 			filename, err := q.nextAvailableFilename()
 			if err != nil {
 				errChan <- fmt.Errorf("failed to generate filename: %s", err)
@@ -56,18 +54,16 @@ func TestNextAvailableFilename(t *testing.T) {
 			if err := os.WriteFile(filePath, []byte("test"), 0o644); err != nil {
 				errChan <- fmt.Errorf("failed to write test file: %s", err)
 			}
-		}()
+		})
 	}
 
 	// Test that filenames do not collide in a tight loop
-	for i := 0; i < 1000; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 1000 {
+		wg.Go(func() {
 			filename, err := q.nextAvailableFilename()
 			require.NoError(t, err)
 			timestamps.Store(filename, struct{}{})
-		}()
+		})
 	}
 
 	// Test if the function properly handles existing files with incremented names
@@ -76,7 +72,7 @@ func TestNextAvailableFilename(t *testing.T) {
 
 	// Manually create files that would conflict to ensure our function increments properly
 	baseFilename := strings.TrimSuffix(filename, jobFileExt)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		conflictFilename := baseFilename + "_" + strconv.Itoa(i) + jobFileExt
 		filePath := filepath.Join(testDir, conflictFilename)
 		err := os.WriteFile(filePath, []byte("test"), 0o644)
@@ -218,7 +214,7 @@ func TestQueueMaxSize(t *testing.T) {
 	defer queue.Close()
 
 	// Enqueue items up to the maximum size
-	for i := 0; i < maxSize; i++ {
+	for i := range maxSize {
 		err := queue.Enqueue(&testObj{Name: fmt.Sprintf("test%d", i)})
 		require.NoError(t, err)
 	}
@@ -252,7 +248,7 @@ func TestEnqueueDequeueMore(t *testing.T) {
 	defer q.Close()
 
 	// Enqueue 1000 jobs
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		err := q.Enqueue(&testObj{ID: i})
 		require.NoError(t, err)
 	}
@@ -264,7 +260,7 @@ func TestEnqueueDequeueMore(t *testing.T) {
 	require.Equal(t, jobCount, 1000)
 
 	// Dequeue and check each job
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		obj, err := q.Dequeue()
 		require.NoError(t, err)
 
@@ -315,7 +311,7 @@ func TestConcurrentEnqueueDequeue(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < (numJobs / 2); i++ {
+		for i := range numJobs / 2 {
 			err := q.Enqueue(&testObj{ID: i})
 			require.NoError(t, err)
 		}
@@ -331,10 +327,8 @@ func TestConcurrentEnqueueDequeue(t *testing.T) {
 	// Concurrently dequeue jobs
 	dequeuedJobs := make(map[int]bool)
 	var mu sync.Mutex
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < numJobs; i++ {
+	wg.Go(func() {
+		for range numJobs {
 			obj, err := q.DequeueBlock()
 			require.NoError(t, err)
 
@@ -348,7 +342,7 @@ func TestConcurrentEnqueueDequeue(t *testing.T) {
 			dequeuedJobs[job.ID] = true
 			mu.Unlock()
 		}
-	}()
+	})
 
 	wg.Wait()
 

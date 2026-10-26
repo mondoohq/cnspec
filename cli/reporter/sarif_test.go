@@ -153,7 +153,7 @@ func TestSarifDeterministicRuleIDs(t *testing.T) {
 	raw := reportfixture.UbuntuScanJSON()
 
 	var first string
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		yr := &policy.ReportCollection{}
 		require.NoError(t, json.Unmarshal(raw, yr))
 
@@ -203,6 +203,40 @@ func TestSarifWithAssetErrors(t *testing.T) {
 	assert.Contains(t, sarifReport, "asset-error")
 	assert.Contains(t, sarifReport, "connection refused")
 	assert.Contains(t, sarifReport, "test-server")
+}
+
+func TestSarifAssetErrorCarriesItsKind(t *testing.T) {
+	yr := &policy.ReportCollection{
+		Assets: map[string]*inventory.Asset{
+			"asset1": {Name: "broken"},
+			"asset2": {Name: "unreachable"},
+		},
+		Bundle: &policy.Bundle{},
+		Errors: map[string]string{
+			"asset1": "could not parse hcl file: main.tf:2,15-16: Missing newline after argument",
+			"asset2": "connection refused",
+		},
+		ErrorDetails: map[string]*llx.ErrorDetail{
+			"asset1": {Kind: llx.ErrorKind_ERROR_KIND_MALFORMED_DATA},
+		},
+	}
+
+	buf := bytes.Buffer{}
+	writer := iox.IOWriter{Writer: &buf}
+	require.NoError(t, ConvertToSarif(yr, &writer))
+
+	report, err := sarif.FromBytes(buf.Bytes())
+	require.NoError(t, err)
+	kinds := map[string]any{}
+	for _, run := range report.Runs {
+		for _, res := range run.Results {
+			require.Equal(t, "asset-error", *res.RuleID)
+			kinds[run.Properties["asset"].(string)] = res.Properties["errorDetail"]
+		}
+	}
+	assert.Equal(t, map[string]any{"kind": "malformed_data"}, kinds["broken"])
+	// An unclassified asset error makes no claim.
+	assert.Nil(t, kinds["unreachable"])
 }
 
 func TestSarifWithNilCollectorJob(t *testing.T) {
@@ -735,4 +769,22 @@ func TestSarifScoreLevels(t *testing.T) {
 			assert.Equal(t, tt.expected, scoreToSarifLevel(tt.score))
 		})
 	}
+}
+
+func TestSarifCheckResultCarriesErrorDetails(t *testing.T) {
+	ctx := &sarifRunContext{assetMrn: "asset1", asset: &inventory.Asset{Name: "account"}}
+	score := &policy.Score{
+		Type: policy.ScoreType_Error,
+		ErrorDetails: []*llx.ErrorDetail{{
+			Kind:        llx.ErrorKind_ERROR_KIND_FORBIDDEN,
+			Permissions: []string{"s3:GetBucketPolicy"},
+		}},
+	}
+
+	props := checkResultProperties(&policy.Mquery{Mrn: "q1"}, score, ctx)
+	assert.Equal(t, []errorDetailJSON{{Kind: "forbidden", Permissions: []string{"s3:GetBucketPolicy"}}},
+		props["errorDetails"])
+
+	props = checkResultProperties(&policy.Mquery{Mrn: "q1"}, &policy.Score{Type: policy.ScoreType_Result, Value: 100}, ctx)
+	assert.NotContains(t, props, "errorDetails")
 }

@@ -51,6 +51,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **Linux Operational** - `mondoo-linux-operational-policy.mql.yaml` - Linux operational best practices
 - **Linux SNMP** - `mondoo-linux-snmp-policy.mql.yaml` - SNMP security configuration for Linux systems
 - **FreeBSD** - `mondoo-freebsd-security.mql.yaml` - FreeBSD security hardening and configuration
+- **Oracle Solaris** - `mondoo-solaris-security.mql.yaml` - Oracle Solaris 11.4 security hardening and configuration
 - **macOS** - `mondoo-macos-security.mql.yaml` - macOS security baseline and configuration management
 - **Windows Server** - `mondoo-windows-security.mql.yaml` - Windows security hardening and compliance validation
 - **Windows Workstation** - `mondoo-windows-workstation-security.mql.yaml` - Security baseline for Windows desktop and workstation environments
@@ -113,6 +114,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **DNS** - `mondoo-dns-security.mql.yaml` - DNS security and configuration checks
 - **HTTP** - `mondoo-http-security.mql.yaml` - Web service security and header validation
 - **TLS** - `mondoo-tls-security.mql.yaml` - SSL/TLS configuration and certificate validation
+- **TLS CA Compromise** - `mondoo-tls-ca-compromise.mql.yaml` - Detect TLS certificates issued by certificate authorities whose signing keys are publicly known to be compromised
 - **Email** - `mondoo-email-security.mql.yaml` - Email security configuration assessment
 - **NextDNS** - `mondoo-nextdns-security.mql.yaml` - Secure NextDNS profiles by enforcing threat protection, filtering integrity, and query logging
 

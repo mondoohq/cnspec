@@ -9,7 +9,7 @@ Organizations deploying AI models across multiple clouds lack a unified inventor
 
 The [CycloneDX](https://cyclonedx.org/) standard (ECMA-424) defines a full-stack Bill of Materials format with distinct BOM types: [SBOM](https://cyclonedx.org/capabilities/sbom/), [ML-BOM](https://cyclonedx.org/capabilities/mlbom/), [CBOM](https://cyclonedx.org/capabilities/cbom/), [HBOM](https://cyclonedx.org/capabilities/hbom/), and others. The [ML-BOM capability](https://cyclonedx.org/capabilities/mlbom/) (introduced in CycloneDX 1.5) provides machine-readable representation of AI/ML model transparency information including model parameters, datasets, performance metrics, fairness assessments, and ethical considerations — aligned with the [CycloneDX Machine Learning Model Card](https://cyclonedx.org/docs/1.6/json/#components_items_modelCard) schema.
 
-cnspec already generates software SBOMs via `cnspec sbom` in CycloneDX, SPDX, and custom JSON formats. The CycloneDX Go library we depend on (`github.com/CycloneDX/cyclonedx-go` v0.11.0) already includes full ML-BOM support:
+cnspec already generates software SBOMs via `cnspec sbom` in CycloneDX (JSON and XML), SPDX 2.3 (JSON and tag-value), SPDX 3.0.1 (JSON-LD), and custom JSON formats. The CycloneDX Go library we depend on (`github.com/CycloneDX/cyclonedx-go` v0.12.0) already includes full ML-BOM support:
 
 - [`ComponentTypeMachineLearningModel`](https://cyclonedx.org/docs/1.6/json/#components_items_type) and [`ComponentTypeData`](https://cyclonedx.org/docs/1.6/json/#components_items_type) component types
 - [`MLModelCard`](https://cyclonedx.org/docs/1.6/json/#components_items_modelCard) with `MLModelParameters`, `MLQuantitativeAnalysis`, `MLModelCardConsiderations`
@@ -253,3 +253,7 @@ The `cnspec aibom` command uses MQL resources from the OS provider and cloud pro
 - [CycloneDX 1.6 JSON Schema — data](https://cyclonedx.org/docs/1.6/json/#components_items_data)
 - [CycloneDX Specification (ECMA-424)](https://ecma-international.org/publications-and-standards/standards/ecma-424/)
 - [cyclonedx-go library](https://github.com/CycloneDX/cyclonedx-go)
+
+## Changelog
+
+- **2026-10-23:** Brought the description of `cnspec sbom` up to date: the formats are listed with their versions and serializations, now including SPDX 3.0.1 (mondoohq/mql#12100, mondoohq/mql#12101), and the cited cyclonedx-go version is v0.12.0, the version `go.mod` pins. The decision is unchanged.

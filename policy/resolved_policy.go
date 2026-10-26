@@ -4,6 +4,8 @@
 package policy
 
 import (
+	"slices"
+
 	"github.com/cockroachdb/errors"
 	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/types"
@@ -122,10 +124,5 @@ func (x *ResolvedPolicy) EnumerateQueryResources() map[string][]string {
 // HasFeature checks if the resolved policy indicates if certain features
 // should be supported on the execution and collection of it
 func (r *ResolvedPolicy) HasFeature(feature ServerFeature) bool {
-	for _, f := range r.Features {
-		if f == feature {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(r.Features, feature)
 }

@@ -252,7 +252,7 @@ func TestStreamingReads(t *testing.T) {
 
 	// Create test data with more entries
 	testScores := make([]*policy.Score, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		testScores[i] = &policy.Score{
 			QrId:      "score-" + string(rune('0'+i)),
 			RiskScore: uint32(50 + i*5),
@@ -264,7 +264,7 @@ func TestStreamingReads(t *testing.T) {
 	}
 
 	testData := make([]*llx.Result, 5)
-	for i := 0; i < len(testData); i++ {
+	for i := range testData {
 		codeId := "data-" + string(rune('0'+i))
 		testData[i] = &llx.Result{
 			CodeId: codeId,
@@ -320,7 +320,7 @@ func TestStreamingReads(t *testing.T) {
 		assert.Len(t, streamedData, 5)
 
 		// Verify data integrity
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			key := "data-" + string(rune('0'+i))
 			result, exists := streamedData[key]
 			require.True(t, exists)

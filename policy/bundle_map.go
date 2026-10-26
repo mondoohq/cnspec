@@ -5,6 +5,7 @@ package policy
 
 import (
 	"context"
+	"maps"
 	"strings"
 
 	"github.com/cockroachdb/errors"
@@ -363,8 +364,6 @@ func (bundle *PolicyBundleMap) Add(policy *Policy, queries map[string]*Mquery) *
 	}
 
 	bundle.Policies[id] = policy
-	for k, v := range queries {
-		bundle.Queries[k] = v
-	}
+	maps.Copy(bundle.Queries, queries)
 	return bundle
 }
