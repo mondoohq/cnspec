@@ -51,6 +51,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **Linux Operational** - `mondoo-linux-operational-policy.mql.yaml` - Linux operational best practices
 - **Linux SNMP** - `mondoo-linux-snmp-policy.mql.yaml` - SNMP security configuration for Linux systems
 - **FreeBSD** - `mondoo-freebsd-security.mql.yaml` - FreeBSD security hardening and configuration
+- **Oracle Solaris** - `mondoo-solaris-security.mql.yaml` - Oracle Solaris 11.4 security hardening and configuration
 - **macOS** - `mondoo-macos-security.mql.yaml` - macOS security baseline and configuration management
 - **Windows Server** - `mondoo-windows-security.mql.yaml` - Windows security hardening and compliance validation
 - **Windows Workstation** - `mondoo-windows-workstation-security.mql.yaml` - Security baseline for Windows desktop and workstation environments
