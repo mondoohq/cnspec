@@ -5,7 +5,7 @@ package backgroundjob
 
 import (
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -84,7 +84,7 @@ func (cfg *ServiceConfig) firstScan(now time.Time) time.Time {
 func (cfg *ServiceConfig) nextScan(now time.Time) time.Time {
 	var splay time.Duration
 	if cfg.Splay > 0 {
-		splay = time.Duration(rand.Int63n(int64(cfg.Splay)))
+		splay = rand.N(cfg.Splay)
 	}
 	if cfg.StartTime != nil {
 		return cfg.StartTime.next(now, cfg.Timer).Add(splay)

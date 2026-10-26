@@ -4,7 +4,7 @@
 package backgroundjob
 
 import (
-	"math/rand"
+	"math/rand/v2"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -38,7 +38,7 @@ type ServiceConfig struct {
 // first scan: a random part of a minute, so a fleet that reboots together
 // does not arrive at the platform together.
 func FleetStartDelay() time.Duration {
-	return time.Duration(rand.Int63n(int64(time.Minute)))
+	return rand.N(time.Minute)
 }
 
 // Setup is the slow half of startup: reading the config file, building the

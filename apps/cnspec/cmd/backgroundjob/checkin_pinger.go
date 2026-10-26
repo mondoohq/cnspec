@@ -5,7 +5,7 @@ package backgroundjob
 
 import (
 	"context"
-	"math/rand"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -47,7 +47,7 @@ func (c *checkinPinger) Start() {
 		runCheckIn()
 	}()
 
-	jitter := time.Duration(rand.Int63n(int64(c.interval)))
+	jitter := rand.N(c.interval)
 	ticker := time.NewTicker(c.interval + jitter)
 	go func() {
 		defer c.wg.Done()
