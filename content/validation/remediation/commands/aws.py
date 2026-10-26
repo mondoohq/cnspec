@@ -291,8 +291,15 @@ AWS_CLI_CUSTOM_SUBCOMMANDS = {
 # Service-scoped subcommands the AWS CLI synthesizes on top of the botocore
 # model. They are real CLI surface but have no service-2.json operation, so the
 # generated database never contains them. Each maps to the flags the CLI
-# exposes for that customization.
+# exposes for that customization, on top of the global flags every command
+# accepts.
 AWS_CLI_CUSTOM_SERVICE_SUBCOMMANDS = {
+    "ecr": {
+        # `get-login-password` calls GetAuthorizationToken and prints the
+        # decoded registry password for `docker login --password-stdin`. It
+        # takes only the global flags.
+        "get-login-password": [],
+    },
     "emr": {
         # `modify-cluster-attributes` wraps SetVisibleToAllUsers /
         # SetTerminationProtection / etc.; it replaces the removed
@@ -403,7 +410,7 @@ def validate_aws_command(
 
     custom_subcommands = AWS_CLI_CUSTOM_SERVICE_SUBCOMMANDS.get(service, {})
     if subcommand in custom_subcommands:
-        valid_flags = set(custom_subcommands[subcommand])
+        valid_flags = set(custom_subcommands[subcommand]) | set(AWS_GLOBAL_FLAGS)
         for flag in flags:
             if flag not in valid_flags:
                 errors.append(f"unknown flag '{flag}' for '{service} {subcommand}'")
