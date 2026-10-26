@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-windows-security
     name: Mondoo Microsoft Windows Security
-    version: 2.6.0
+    version: 2.6.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -145,7 +145,7 @@ policies:
           - uid: mondoo-windows-security-secure-boot-enabled
 queries:
   - uid: mondoo-windows-security-2.2.19-l1-ensure-debug-programs-is-empty
-    title: Ensure 'Debug programs' is not set
+    title: Ensure 'Debug programs' is set to 'Administrators' or no one
     impact: 100
     tags:
       compliance/bsi-sys-1-5: false
@@ -163,15 +163,15 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-3-1
       compliance/vda-isa-5: vda-isa-5-4-2-1
     mql: |
-      secpol.privilegerights['SeDebugPrivilege'] == empty
+      secpol.privilegerights['SeDebugPrivilege'] == empty || secpol.privilegerights['SeDebugPrivilege'].containsOnly(['S-1-5-32-544'])
     docs:
       refs:
         - url: https://learn.microsoft.com/en-us/windows/security/threat-protection/security-policy-settings/user-rights-assignment
           title: Windows User Rights Assignment
       desc: |
-        This check verifies that no account holds the Debug programs privilege.
+        This check verifies that the Debug programs privilege is held by no one other than the local Administrators group.
 
-        `SeDebugPrivilege` allows a process to attach to any other process on the system, including processes owned by other users and by the operating system itself. The check reads the privilege rights assignment, which must be empty.
+        `SeDebugPrivilege` allows a process to attach to any other process on the system, including processes owned by other users and by the operating system itself. The check reads the privilege rights assignment, which must either be empty or contain only the Administrators group (`S-1-5-32-544`), as the CIS Microsoft Windows benchmarks recommend.
 
         **Why this matters**
 
@@ -183,7 +183,7 @@ queries:
 
         Developers do not need it. Debugging a process you own works without it; the privilege is required only for attaching to processes owned by others, which is a system-level operation.
 
-        Administrators can grant it to themselves when a genuine need arises, and that grant is recorded by the authorization policy change auditing this policy also configures. Leaving it permanently assigned is what should not happen.
+        Restricting it to Administrators keeps it out of reach of standard users, service accounts, and any other group an attacker could join without first gaining administrative rights. Assigning it to no one is stricter still and also passes: administrators can grant it to themselves when a genuine need arises, and that grant is recorded by the authorization policy change auditing this policy also configures.
       audit: |
         ### Audit via Local Security Policy
 
@@ -191,7 +191,7 @@ queries:
         2. Navigate to **Local Policies** > **User Rights Assignment**.
         3. Locate **Debug programs** and review the assigned accounts.
 
-        The system passes when **Debug programs** lists no accounts. It fails if any user or group is assigned.
+        The system passes when **Debug programs** lists only **Administrators** or no accounts at all. It fails if any other user or group is assigned.
 
         ### Audit via the command line
 
@@ -204,7 +204,7 @@ queries:
 
         3. Open the exported file and review the `SeDebugPrivilege` entry.
 
-        The system passes when `SeDebugPrivilege` has no accounts assigned. It fails if any account is listed.
+        The system passes when `SeDebugPrivilege` is set to `*S-1-5-32-544` (Administrators) only, or has no accounts assigned. It fails if any other account is listed.
       remediation:
         - id: grouppolicy
           desc: |
@@ -217,7 +217,7 @@ queries:
             3. Navigate to:
                 `Computer Configuration > Policies > Windows Settings > Security Settings > Local Policies > User Rights Assignment`
             4. In the right pane, find and double-click **Debug programs**.
-            5. Select **Define these policy settings** and remove all users and groups so that the list is empty. A setting left undefined keeps the Windows default, which grants this right to Administrators.
+            5. Select **Define these policy settings** and make sure the list contains only **Administrators**. Removing every user and group so that the list is empty is stricter and also passes.
             6. Click **OK** to save your changes.
             7. Close the Group Policy Management Editor.
             8. Run `gpupdate /force` on the target computers or wait for the next policy refresh cycle for the changes to take effect.
@@ -230,7 +230,7 @@ queries:
             ```powershell
             $Temp = [System.Environment]::GetEnvironmentVariable('TEMP','Machine')
             secedit /export /cfg $Temp\secpol-export.cfg
-            (gc $Temp\secpol-export.cfg) -replace("SeDebugPrivilege = \S+", "SeDebugPrivilege = ") | Out-File $Temp\secpol-import.cfg -Encoding Unicode
+            (gc $Temp\secpol-export.cfg) -replace("SeDebugPrivilege = \S+", "SeDebugPrivilege = *S-1-5-32-544") | Out-File $Temp\secpol-import.cfg -Encoding Unicode
             secedit /import /db $Temp\secpol-db.sdb /cfg $Temp\secpol-import.cfg
             secedit /configure /db $Temp\secpol-db.sdb
             gpupdate /force
@@ -242,20 +242,20 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use `secedit` to remove the Debug programs privilege assignment.
+            Use `secedit` to restrict the Debug programs privilege to Administrators.
 
             ```yaml
-            - name: Ensure 'Debug programs' is not set
+            - name: Ensure 'Debug programs' is set to 'Administrators'
               hosts: windows
               tasks:
                 - name: Export current security policy
                   ansible.windows.win_command:
                     cmd: secedit /export /cfg C:\Windows\Temp\secpol-export.cfg
 
-                - name: Remove SeDebugPrivilege assignment
+                - name: Restrict SeDebugPrivilege to Administrators
                   ansible.windows.win_powershell:
                     script: |
-                      (Get-Content C:\Windows\Temp\secpol-export.cfg) -replace 'SeDebugPrivilege = \S+', 'SeDebugPrivilege = ' | Out-File C:\Windows\Temp\secpol-import.cfg -Encoding Unicode
+                      (Get-Content C:\Windows\Temp\secpol-export.cfg) -replace 'SeDebugPrivilege = \S+', 'SeDebugPrivilege = *S-1-5-32-544' | Out-File C:\Windows\Temp\secpol-import.cfg -Encoding Unicode
 
                 - name: Import updated security policy
                   ansible.windows.win_command:
@@ -280,12 +280,13 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to remove every account from the Debug programs user right. The `:clear` action strips all accounts currently holding the privilege:
+            Use this Chef Infra recipe code to restrict the Debug programs user right to Administrators. The `:set` action replaces all accounts currently holding the privilege with the given list:
 
             ```ruby
             windows_user_privilege 'Debug programs' do
               privilege 'SeDebugPrivilege'
-              action :clear
+              users ['BUILTIN\\Administrators']
+              action :set
             end
             ```
   - uid: mondoo-windows-security-additional-LSA-protection
@@ -3680,7 +3681,7 @@ queries:
             end
             ```
   - uid: mondoo-windows-security-audit-sensitive-privilege-use-is-set-to-success-and-failure
-    title: Ensure 'Audit Sensitive Privilege Use' is set to 'Success and Failure'
+    title: Ensure 'Audit Sensitive Privilege Use' is set to include 'Success'
     impact: 30
     tags:
       compliance/bsi-sys-1-5: false
@@ -3701,13 +3702,12 @@ queries:
       asset.platform == "windows"
     mql: |
       windows.auditPolicy.subcategory(name: "Sensitive Privilege Use").success
-      windows.auditPolicy.subcategory(name: "Sensitive Privilege Use").failure
     docs:
       refs:
         - url: https://learn.microsoft.com/en-us/windows/security/threat-protection/auditing/basic-security-audit-policies
           title: Windows Security Audit Policies
       desc: |-
-        This check verifies that the **Sensitive Privilege Use** audit subcategory is set to **Success and Failure**.
+        This check verifies that the **Sensitive Privilege Use** audit subcategory audits successful events, configured as **Success** or **Success and Failure**. The CIS Microsoft Windows benchmarks recommend **Success and Failure**, and the CIS Microsoft Intune for Windows benchmark recommends **Success**; both pass.
 
         The subcategory records the use of sensitive privileges, which include acting as part of the operating system, backing up and restoring files, creating a token object, debugging programs, loading and unloading device drivers, managing auditing and the security log, taking ownership of objects, and impersonating a client after authentication. The check reads the effective audit policy for the subcategory.
 
@@ -3729,7 +3729,7 @@ queries:
         2. Navigate to **Computer Configuration** > **Windows Settings** > **Security Settings** > **Advanced Audit Policy Configuration** > **Audit Policies**.
         3. Locate the **Sensitive Privilege Use** subcategory and review its configured value.
 
-        The system passes when **Sensitive Privilege Use** is configured to **Success and Failure**. It fails if it is set differently or left unconfigured.
+        The system passes when **Sensitive Privilege Use** is configured to **Success** or **Success and Failure**. It fails if it is set to **Failure** only, **No Auditing**, or left unconfigured.
 
         ### Audit via the command line
 
@@ -3740,13 +3740,13 @@ queries:
            auditpol /get /subcategory:{0CCE9228-69AE-11D9-BED3-505054503030}
            ```
 
-        The system passes when the reported setting includes **Success and Failure**. It fails if it does not.
+        The system passes when the reported setting is **Success** or **Success and Failure**. It fails if it does not include **Success**.
       remediation:
         - id: grouppolicy
           desc: |
             **Using Group Policy**
 
-            To establish the recommended configuration via GP, set the following UI path to `Success and Failure`:
+            To establish the recommended configuration via GP, set the following UI path to `Success and Failure` (or at least `Success`):
 
             ```text
             Computer Configuration\\Policies\\Windows Settings\\Security Settings\\Advanced Audit Policy Configuration\\Audit Policies\\Privilege Use\\Audit Sensitive Privilege Use
