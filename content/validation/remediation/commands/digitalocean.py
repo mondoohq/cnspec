@@ -33,12 +33,24 @@ _DOCTL_SECTION_HEADER = re.compile(r"^[A-Z][^:\n]*:\s*$")
 # Subcommand line: "  <name>   <description>" — two-space indent, then a
 # lowercase identifier, then whitespace before the description. Cobra pads
 # names to the longest one plus a single space, so the longest subcommand in
-# a group has exactly one space before its description.
-_DOCTL_SUBCOMMAND_LINE = re.compile(r"^  ([a-z][a-z0-9-]*)\s+\S")
+# a group has exactly one space before its description. A command with no
+# short description leaves only the padding, so the name need only end at
+# whitespace or the end of the line.
+_DOCTL_SUBCOMMAND_LINE = re.compile(r"^  ([a-z][a-z0-9-]*)(?:\s|$)")
 
 # Flag line: "      --flag-name <type>   <description>" or
 # "  -X, --flag-name <type>   <description>". We only capture the long form.
 _DOCTL_FLAG_LINE = re.compile(r"^\s+(?:-\w,\s+)?(--[a-z][a-z0-9-]*)")
+
+# doctl 2.x replaces Cobra's template with its own layout: section titles in
+# capitals with no trailing colon ("COMMANDS", "OPTIONS", "GLOBAL FLAGS", or a
+# group title such as "MANAGE DIGITALOCEAN RESOURCES"). Flag rows sit at a
+# two-space indent and their description follows on lines indented six, so
+# only the two-space form is a flag.
+_DOCTL_CAPS_HEADER = re.compile(r"^[A-Z][A-Z0-9 ]*$")
+_DOCTL_CAPS_FLAG_SECTIONS = {"FLAGS", "GLOBAL FLAGS", "REQUIRED", "OPTIONS", "OUTPUT"}
+_DOCTL_CAPS_SKIP_SECTIONS = {"USAGE", "ALIASES", "EXAMPLES"}
+_DOCTL_CAPS_FLAG_LINE = re.compile(r"^  (?:-\w, )?(--[a-z][a-z0-9-]*)")
 
 # Deepest command path the walk will follow; the real tree is four levels
 # deep. A backstop for help text the parser misreads as a subcommand list:
@@ -59,19 +71,26 @@ def _parse_doctl_help(text: str) -> tuple[list[str], list[str]]:
 
     Handles both the top-level layout (category headers like "Manage
     DigitalOcean Resources:") and group/leaf layouts ("Available Commands:"
-    / "Flags:" / "Global Flags:").
+    / "Flags:" / "Global Flags:"), as well as the doctl 2.x capitalised
+    layout.
     """
     subcommands: list[str] = []
     flags: list[str] = []
     in_flags = False
     in_cmds = False
+    caps = re.search(r"^USAGE$", text, re.MULTILINE) is not None
 
     for line in text.split("\n"):
-        if line.startswith("Flags:") or line.startswith("Global Flags:"):
+        if caps:
+            if _DOCTL_CAPS_HEADER.match(line):
+                in_flags = line in _DOCTL_CAPS_FLAG_SECTIONS
+                in_cmds = not in_flags and line not in _DOCTL_CAPS_SKIP_SECTIONS
+                continue
+        elif line.startswith("Flags:") or line.startswith("Global Flags:"):
             in_flags = True
             in_cmds = False
             continue
-        if _DOCTL_SECTION_HEADER.match(line):
+        elif _DOCTL_SECTION_HEADER.match(line):
             in_flags = False
             # Example invocations are indented like subcommand lines but
             # start with "doctl"; don't mine the Examples/Usage sections.
@@ -81,7 +100,7 @@ def _parse_doctl_help(text: str) -> tuple[list[str], list[str]]:
             continue
 
         if in_flags:
-            m = _DOCTL_FLAG_LINE.match(line)
+            m = (_DOCTL_CAPS_FLAG_LINE if caps else _DOCTL_FLAG_LINE).match(line)
             if m:
                 flags.append(m.group(1))
         elif in_cmds:
