@@ -176,6 +176,7 @@ policies:
         filters: |
           asset.family.contains('linux')
           asset.family.contains('redhat') || asset.family.contains('suse') || asset.platform == 'amazonlinux'
+          asset.platform != /^(sles|opensuse-leap|opensuse)$/ || asset.version != /^(1[0-5]|42)(\.|$)/
         checks:
           - uid: mondoo-linux-security-selinux-enforcing
           - uid: mondoo-linux-security-selinux-config-enforcing
@@ -354,6 +355,8 @@ queries:
                       - aide-common
                     state: present
                     install_recommends: false
+                    update_cache: true
+                    cache_valid_time: 3600
                   when: ansible_facts['os_family'] == 'Debian'
             ```
         - id: chef
@@ -369,6 +372,9 @@ queries:
                 command 'echo "postfix postfix/main_mailer_type select Local only" | debconf-set-selections'
                 not_if 'debconf-show postfix 2>/dev/null | grep -q "main_mailer_type: Local only"'
               end
+
+              # A host that has never refreshed its package index cannot find aide
+              apt_update 'refresh the package index'
 
               # aide only recommends aide-common, which carries the configuration and aideinit
               package %w(aide aide-common) do
@@ -536,7 +542,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            Use this Bash script to configure a daily AIDE check. It will auto-detect the package manager, install AIDE if not already installed, initialize the database, and set up a cron job for daily checks at 5AM.
+            Use this Bash script to configure a daily AIDE check. It will auto-detect the package manager, install AIDE if not already installed, initialize the database, and set up a cron job for daily checks at 5AM. On hosts without cron, such as the Debian cloud image, it schedules the check with a systemd timer named `aidecheck.timer` instead.
 
             ```bash
             #!/bin/bash
@@ -552,8 +558,11 @@ queries:
                 dnf install -y aide
               elif command -v apt-get >/dev/null 2>&1; then
                 echo "Detected apt-based system. Installing aide..."
+                # aide-common carries the configuration and aideinit; the mail client it needs
+                # pulls in Postfix on Ubuntu, so keep Postfix to local delivery only.
+                echo "postfix postfix/main_mailer_type select Local only" | debconf-set-selections
                 apt-get update
-                apt-get install -y aide
+                DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends aide aide-common
               elif command -v zypper >/dev/null 2>&1; then
                 echo "Detected zypper-based system. Installing aide..."
                 zypper install -y aide
@@ -577,7 +586,7 @@ queries:
               fi
             fi
 
-            # Add cron job for daily check at 5AM if not already present
+            # Schedule a daily check at 5AM if not already present
             AIDE_BIN="$(command -v aide || true)"
             if [ -z "$AIDE_BIN" ]; then
               echo "ERROR: aide not found" >&2
@@ -585,17 +594,44 @@ queries:
             fi
             if [ -f /etc/aide/aide.conf ]; then
               # Debian and Ubuntu need the configuration file passed explicitly.
-              CRON_LINE="0 5 * * * $AIDE_BIN --config /etc/aide/aide.conf --check"
+              AIDE_CHECK="$AIDE_BIN --config /etc/aide/aide.conf --check"
             else
-              CRON_LINE="0 5 * * * $AIDE_BIN --check"
+              AIDE_CHECK="$AIDE_BIN --check"
             fi
-            # `grep -v` exits 1 when it selects nothing, which is what happens when root has
-            # no crontab at all. Without the `|| true` that status aborts the subshell under
-            # `set -e`, so `crontab -` reads empty input and clears the crontab instead of
-            # adding the entry.
-            { crontab -l 2>/dev/null | grep -v -F -e "aide --check" -e "aide.conf --check" || true; echo "$CRON_LINE"; } | crontab -
 
-            echo "AIDE daily check scheduled at 5AM via cron."
+            if command -v crontab >/dev/null 2>&1; then
+              # `grep -v` exits 1 when it selects nothing, which is what happens when root has
+              # no crontab at all. Without the `|| true` that status aborts the subshell under
+              # `set -e`, so `crontab -` reads empty input and clears the crontab instead of
+              # adding the entry.
+              { crontab -l 2>/dev/null | grep -v -F -e "aide --check" -e "aide.conf --check" || true; echo "0 5 * * * $AIDE_CHECK"; } | crontab -
+              echo "AIDE daily check scheduled at 5AM via cron."
+            else
+              # Minimal images such as the Debian cloud image ship without cron.
+              cat > /etc/systemd/system/aidecheck.service <<EOF
+            [Unit]
+            Description=Aide Check
+
+            [Service]
+            Type=simple
+            ExecStart=$AIDE_CHECK
+            EOF
+              cat > /etc/systemd/system/aidecheck.timer <<EOF
+            [Unit]
+            Description=Aide check every day at 5AM
+
+            [Timer]
+            OnCalendar=*-*-* 05:00:00
+            Unit=aidecheck.service
+
+            [Install]
+            WantedBy=timers.target
+            EOF
+              chmod 0644 /etc/systemd/system/aidecheck.service /etc/systemd/system/aidecheck.timer
+              systemctl daemon-reload
+              systemctl enable --now aidecheck.timer
+              echo "AIDE daily check scheduled at 5AM via aidecheck.timer."
+            fi
             ```
         - id: ansible
           desc: |
@@ -620,6 +656,28 @@ queries:
                   ansible.builtin.package:
                     name: aide
                     state: present
+                  when: ansible_facts['os_family'] != 'Debian'
+
+                # aide-common depends on a mail client, which pulls in Postfix on Ubuntu; keep it local-only
+                - name: Preseed Postfix to accept local mail only
+                  ansible.builtin.debconf:
+                    name: postfix
+                    question: postfix/main_mailer_type
+                    value: Local only
+                    vtype: select
+                  when: ansible_facts['os_family'] == 'Debian'
+
+                # aide only recommends aide-common, which carries the configuration and aideinit
+                - name: Ensure AIDE is installed without recommended packages on Debian and Ubuntu
+                  ansible.builtin.apt:
+                    name:
+                      - aide
+                      - aide-common
+                    state: present
+                    install_recommends: false
+                    update_cache: true
+                    cache_valid_time: 3600
+                  when: ansible_facts['os_family'] == 'Debian'
 
                 - name: Initialize the AIDE database on Debian and Ubuntu
                   ansible.builtin.command:
@@ -695,8 +753,25 @@ queries:
             Use this Chef Infra recipe code to install AIDE, initialize its database, and run the check from a systemd timer named `aidecheck.timer`. The database and check commands differ by distribution, because Debian and Ubuntu use `aideinit` and need the configuration file passed explicitly, and the database and binary paths differ:
 
             ```ruby
-            package 'aide' do
-              action :install
+            if platform_family?('debian')
+              # aide-common depends on a mail client, which pulls in Postfix on Ubuntu; keep it local-only
+              execute 'preseed postfix local only' do
+                command 'echo "postfix postfix/main_mailer_type select Local only" | debconf-set-selections'
+                not_if 'debconf-show postfix 2>/dev/null | grep -q "main_mailer_type: Local only"'
+              end
+
+              # A host that has never refreshed its package index cannot find aide
+              apt_update 'refresh the package index'
+
+              # aide only recommends aide-common, which carries the configuration and aideinit
+              package %w(aide aide-common) do
+                options '--no-install-recommends'
+                action :install
+              end
+            else
+              package 'aide' do
+                action :install
+              end
             end
 
             aide_init, aide_db, aide_check =
@@ -2559,6 +2634,13 @@ queries:
             #!/bin/bash
             set -e
 
+            # zypper exits 104 and apt-get exits 100 when asked to remove a package that is
+            # not installed, so stop here when there is nothing to remove.
+            if ! rpm -q prelink >/dev/null 2>&1 && ! dpkg -s prelink 2>/dev/null | grep -q '^Status: install ok installed'; then
+              echo "prelink is not installed."
+              exit 0
+            fi
+
             if command -v prelink >/dev/null 2>&1; then
               echo "Restoring prelinked binaries to their original state..."
               prelink -ua
@@ -2755,7 +2837,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to remove the X Windows System packages. The `xserver*` pattern relies on the fnmatch wildcard support that the apt module documents for its `name` parameter. On RPM-based systems the playbook removes every installed package whose name starts with `xorg-x11` except the font packages, which the check does not flag:
+            Use this Ansible playbook to remove the X Windows System packages. On Debian and Ubuntu it removes every installed package whose name starts with `xserver`. On RPM-based systems the playbook removes every installed package whose name starts with `xorg-x11` except the font packages, which the check does not flag:
 
             ```yaml
             ---
@@ -2764,25 +2846,45 @@ queries:
               become: true
 
               tasks:
-                - name: Gather the list of installed packages
-                  ansible.builtin.package_facts:
-                    manager: auto
+                # package_facts reads the RPM database through the rpm Python bindings of the
+                # interpreter Ansible runs, which SLES 15 installs only for its default Python 3.6,
+                # so ask rpm directly on RPM-based systems.
+                - name: List the installed xorg-x11 packages
+                  ansible.builtin.command:
+                    argv:
+                      - rpm
+                      - --query
+                      - --all
+                      - --queryformat
+                      - "%{NAME}\n"
+                      - xorg-x11*
+                  register: xorg_rpms
+                  changed_when: false
                   when: ansible_os_family in ["RedHat", "Suse"]
 
                 - name: Remove X Window System packages on RHEL/Fedora/Amazon Linux and SLES/openSUSE
                   ansible.builtin.package:
-                    name: "{{ ansible_facts.packages.keys() | select('match', '^xorg-x11') | reject('match', '^xorg-x11-fonts') | list }}"
+                    name: "{{ xorg_rpms.stdout_lines | reject('match', '^xorg-x11-fonts') | list }}"
                     state: absent
                   when:
                     - ansible_os_family in ["RedHat", "Suse"]
-                    - ansible_facts.packages.keys() | select('match', '^xorg-x11') | reject('match', '^xorg-x11-fonts') | list | length > 0
+                    - xorg_rpms.stdout_lines | reject('match', '^xorg-x11-fonts') | list | length > 0
 
+                - name: Gather the list of installed packages on Debian/Ubuntu
+                  ansible.builtin.package_facts:
+                    manager: apt
+                  when: ansible_os_family == "Debian"
+
+                # The apt module fails on a name pattern that matches no package it knows, so pass
+                # it the installed packages instead of xserver*.
                 - name: Remove X Window System packages on Debian/Ubuntu
                   ansible.builtin.apt:
-                    name: xserver*
+                    name: "{{ ansible_facts.packages.keys() | select('match', '^xserver') | list }}"
                     state: absent
                     purge: yes
-                  when: ansible_os_family == "Debian"
+                  when:
+                    - ansible_os_family == "Debian"
+                    - ansible_facts.packages.keys() | select('match', '^xserver') | list | length > 0
             ```
         - id: chef
           desc: |
@@ -2880,9 +2982,14 @@ queries:
             set -e
 
             echo "Stopping, disabling, and masking Avahi daemon..."
-            systemctl stop avahi-daemon.socket avahi-daemon.service
-            systemctl disable avahi-daemon.socket avahi-daemon.service
-            systemctl mask avahi-daemon.socket avahi-daemon.service
+            for unit in avahi-daemon.socket avahi-daemon.service; do
+              # Skip units that are not installed or already masked. systemctl exits 5 on a unit it cannot load.
+              if systemctl cat "$unit" >/dev/null 2>&1; then
+                systemctl stop "$unit"
+                systemctl disable "$unit"
+                systemctl mask "$unit"
+              fi
+            done
             ```
         - id: ansible
           desc: |
@@ -2897,15 +3004,24 @@ queries:
               become: true
 
               tasks:
-                - name: Ensure the Avahi daemon and its activation socket are stopped and disabled
+                - name: Read the state of the Avahi units
                   ansible.builtin.systemd:
                     name: "{{ item }}"
-                    state: stopped
-                    enabled: no
-                    masked: true
                   loop:
                     - avahi-daemon.socket
                     - avahi-daemon.service
+                  register: avahi_units
+
+                - name: Ensure the Avahi daemon and its activation socket are stopped and disabled
+                  ansible.builtin.systemd:
+                    name: "{{ item.item }}"
+                    state: stopped
+                    enabled: no
+                    masked: true
+                  loop: "{{ avahi_units.results }}"
+                  loop_control:
+                    label: "{{ item.item }}"
+                  when: item.status.LoadState != 'not-found'
             ```
         - id: chef
           desc: |
@@ -2999,9 +3115,14 @@ queries:
             set -e
 
             echo "Stopping, disabling, and masking CUPS service..."
-            systemctl stop cups.socket cups.path cups.service
-            systemctl disable cups.socket cups.path cups.service
-            systemctl mask cups.socket cups.path cups.service
+            for unit in cups.socket cups.path cups.service; do
+              # Skip units that are not installed or already masked. systemctl exits 5 on a unit it cannot load.
+              if systemctl cat "$unit" >/dev/null 2>&1; then
+                systemctl stop "$unit"
+                systemctl disable "$unit"
+                systemctl mask "$unit"
+              fi
+            done
             ```
         - id: ansible
           desc: |
@@ -3016,16 +3137,25 @@ queries:
               become: true
 
               tasks:
-                - name: Ensure CUPS units are stopped and disabled
+                - name: Read the state of the CUPS units
                   ansible.builtin.systemd:
                     name: "{{ item }}"
-                    state: stopped
-                    enabled: no
-                    masked: true
                   loop:
                     - cups.socket
                     - cups.path
                     - cups.service
+                  register: cups_units
+
+                - name: Ensure CUPS units are stopped and disabled
+                  ansible.builtin.systemd:
+                    name: "{{ item.item }}"
+                    state: stopped
+                    enabled: no
+                    masked: true
+                  loop: "{{ cups_units.results }}"
+                  loop_control:
+                    label: "{{ item.item }}"
+                  when: item.status.LoadState != 'not-found'
             ```
         - id: chef
           desc: |
@@ -3116,10 +3246,13 @@ queries:
             #!/bin/bash
             set -e
 
-            echo "Stopping, disabling, and masking DHCP server..."
-            systemctl stop dhcpd
-            systemctl disable dhcpd
-            systemctl mask dhcpd
+            # Skip the unit when it is not installed or already masked. systemctl exits 5 on a unit it cannot load.
+            if systemctl cat dhcpd.service >/dev/null 2>&1; then
+              echo "Stopping, disabling, and masking DHCP server..."
+              systemctl stop dhcpd.service
+              systemctl disable dhcpd.service
+              systemctl mask dhcpd.service
+            fi
             ```
         - id: ansible
           desc: |
@@ -3134,12 +3267,18 @@ queries:
               become: true
 
               tasks:
+                - name: Read the state of the DHCP server unit
+                  ansible.builtin.systemd:
+                    name: dhcpd
+                  register: dhcpd_unit
+
                 - name: Ensure DHCP server (dhcpd) is stopped and disabled
                   ansible.builtin.systemd:
                     name: dhcpd
                     state: stopped
                     enabled: no
                     masked: true
+                  when: dhcpd_unit.status.LoadState != 'not-found'
             ```
         - id: chef
           desc: |
@@ -3223,10 +3362,13 @@ queries:
             #!/bin/bash
             set -e
 
-            echo "Stopping, disabling, and masking the slapd service..."
-            systemctl stop slapd
-            systemctl disable slapd
-            systemctl mask slapd
+            # Skip the unit when it is not installed or already masked. systemctl exits 5 on a unit it cannot load.
+            if systemctl cat slapd.service >/dev/null 2>&1; then
+              echo "Stopping, disabling, and masking the slapd service..."
+              systemctl stop slapd.service
+              systemctl disable slapd.service
+              systemctl mask slapd.service
+            fi
             ```
         - id: ansible
           desc: |
@@ -3241,12 +3383,18 @@ queries:
               become: true
 
               tasks:
+                - name: Read the state of the slapd unit
+                  ansible.builtin.systemd:
+                    name: slapd
+                  register: slapd_unit
+
                 - name: Ensure LDAP server (slapd) is stopped, disabled, and masked
                   ansible.builtin.systemd:
                     name: slapd
                     state: stopped
                     enabled: no
                     masked: yes
+                  when: slapd_unit.status.LoadState != 'not-found'
             ```
         - id: chef
           desc: |
@@ -4333,10 +4481,13 @@ queries:
             #!/bin/bash
             set -e
 
-            echo "Stopping, disabling, and masking the snmpd service..."
-            systemctl stop snmpd
-            systemctl disable snmpd
-            systemctl mask snmpd
+            # Skip the unit when it is not installed or already masked. systemctl exits 5 on a unit it cannot load.
+            if systemctl cat snmpd.service >/dev/null 2>&1; then
+              echo "Stopping, disabling, and masking the snmpd service..."
+              systemctl stop snmpd.service
+              systemctl disable snmpd.service
+              systemctl mask snmpd.service
+            fi
             ```
         - id: ansible
           desc: |
@@ -4351,12 +4502,18 @@ queries:
               become: true
 
               tasks:
+                - name: Read the state of the snmpd unit
+                  ansible.builtin.systemd:
+                    name: snmpd
+                  register: snmpd_unit
+
                 - name: Ensure SNMP server (snmpd) is stopped and disabled
                   ansible.builtin.systemd:
                     name: snmpd
                     state: stopped
-                    masked: true
                     enabled: no
+                    masked: true
+                  when: snmpd_unit.status.LoadState != 'not-found'
             ```
         - id: chef
           desc: |
@@ -4835,12 +4992,13 @@ queries:
             set -e
 
             echo "Stopping and disabling rsh server services..."
-            systemctl stop rsh.socket
-            systemctl stop rlogin.socket
-            systemctl stop rexec.socket
-            systemctl disable rsh.socket
-            systemctl disable rlogin.socket
-            systemctl disable rexec.socket
+            for unit in rsh.socket rlogin.socket rexec.socket; do
+              # Skip units that are not installed. systemctl exits 5 on a unit it cannot load.
+              if systemctl cat "$unit" >/dev/null 2>&1; then
+                systemctl stop "$unit"
+                systemctl disable "$unit"
+              fi
+            done
             ```
         - id: ansible
           desc: |
@@ -4855,15 +5013,24 @@ queries:
               become: true
 
               tasks:
-                - name: Ensure rsh-related services are stopped and disabled
+                - name: Read the state of the rsh-related sockets
                   ansible.builtin.systemd:
                     name: "{{ item }}"
-                    state: stopped
-                    enabled: no
                   loop:
                     - rsh.socket
                     - rlogin.socket
                     - rexec.socket
+                  register: rsh_units
+
+                - name: Ensure rsh-related services are stopped and disabled
+                  ansible.builtin.systemd:
+                    name: "{{ item.item }}"
+                    state: stopped
+                    enabled: no
+                  loop: "{{ rsh_units.results }}"
+                  loop_control:
+                    label: "{{ item.item }}"
+                  when: item.status.LoadState != 'not-found'
             ```
         - id: chef
           desc: |
@@ -4948,9 +5115,12 @@ queries:
             #!/bin/bash
             set -e
 
-            echo "Stopping and disabling telnet service..."
-            systemctl stop telnet.socket
-            systemctl disable telnet.socket
+            # Skip the unit when it is not installed. systemctl exits 5 on a unit it cannot load.
+            if systemctl cat telnet.socket >/dev/null 2>&1; then
+              echo "Stopping and disabling telnet service..."
+              systemctl stop telnet.socket
+              systemctl disable telnet.socket
+            fi
             ```
         - id: ansible
           desc: |
@@ -4965,11 +5135,17 @@ queries:
               become: true
 
               tasks:
+                - name: Read the state of the Telnet socket
+                  ansible.builtin.systemd:
+                    name: telnet.socket
+                  register: telnet_unit
+
                 - name: Ensure Telnet server is stopped and disabled
                   ansible.builtin.systemd:
                     name: telnet.socket
                     state: stopped
                     enabled: no
+                  when: telnet_unit.status.LoadState != 'not-found'
             ```
         - id: chef
           desc: |
@@ -5052,9 +5228,12 @@ queries:
             #!/bin/bash
             set -e
 
-            echo "Stopping and disabling TFTP service..."
-            systemctl stop tftp.socket
-            systemctl disable tftp.socket
+            # Skip the unit when it is not installed. systemctl exits 5 on a unit it cannot load.
+            if systemctl cat tftp.socket >/dev/null 2>&1; then
+              echo "Stopping and disabling TFTP service..."
+              systemctl stop tftp.socket
+              systemctl disable tftp.socket
+            fi
             ```
         - id: ansible
           desc: |
@@ -5069,11 +5248,17 @@ queries:
               become: true
 
               tasks:
+                - name: Read the state of the TFTP socket
+                  ansible.builtin.systemd:
+                    name: tftp.socket
+                  register: tftp_unit
+
                 - name: Ensure TFTP server is stopped and disabled
                   ansible.builtin.systemd:
                     name: tftp.socket
                     state: stopped
                     enabled: no
+                  when: tftp_unit.status.LoadState != 'not-found'
             ```
         - id: chef
           desc: |
@@ -7029,7 +7214,10 @@ queries:
 
                 **Debian/Ubuntu and derivatives**
 
+                Refresh the package index first. A host that has never run `apt-get update`, such as a fresh cloud image, cannot find either package:
+
                 ```bash
+                apt-get update
                 apt-get install auditd audispd-plugins
                 ```
 
@@ -7058,6 +7246,7 @@ queries:
             if command -v dnf &> /dev/null; then
               dnf install -y audit audit-libs
             elif command -v apt-get &> /dev/null; then
+              apt-get update
               apt-get install -y auditd audispd-plugins
             elif command -v zypper &> /dev/null; then
               zypper install -y audit
@@ -7091,11 +7280,13 @@ queries:
                   when: ansible_facts['os_family'] == "RedHat"
 
                 - name: Install auditd on Debian/Ubuntu
-                  ansible.builtin.package:
+                  ansible.builtin.apt:
                     name:
                       - auditd
                       - audispd-plugins
                     state: present
+                    update_cache: true
+                    cache_valid_time: 3600
                   when: ansible_facts['os_family'] == "Debian"
 
                 - name: Install auditd on SLES/openSUSE
@@ -7124,6 +7315,9 @@ queries:
                              else
                                %w(audit audit-libs)
                              end
+
+            # A host that has never refreshed its package index cannot find the packages
+            apt_update 'refresh the package index' if platform_family?('debian')
 
             package audit_packages do
               action :install
@@ -7593,7 +7787,8 @@ queries:
                     path: /etc/audit/auditd.conf
                     regexp: '^max_log_file ='
                     line: 'max_log_file = {{ max_log_file_mb }}'
-                    create: yes
+                    # A stub file written before the audit package is installed keeps auditd from starting
+                    create: false
                     state: present
                   register: auditd_logsize_changed
 
@@ -7783,7 +7978,8 @@ queries:
                     path: /etc/audit/auditd.conf
                     regexp: '^max_log_file_action ='
                     line: 'max_log_file_action = keep_logs'
-                    create: yes
+                    # A stub file written before the audit package is installed keeps auditd from starting
+                    create: false
                     state: present
                   register: auditd_logfile_action_changed
 
@@ -7989,7 +8185,8 @@ queries:
                     path: /etc/audit/auditd.conf
                     regexp: '^{{ item.key }} ='
                     line: '{{ item.key }} = {{ item.value }}'
-                    create: yes
+                    # A stub file written before the audit package is installed keeps auditd from starting
+                    create: false
                     state: present
                   loop:
                     - { key: space_left_action, value: email }
@@ -8184,11 +8381,13 @@ queries:
               sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
             fi
 
-            echo "Loading audit rules"
-            augenrules --load > /dev/null
-
+            # Once -e 2 is loaded the kernel rejects every rule change until reboot, and
+            # augenrules --load exits non-zero on audit 3.x. The rules file loads at boot.
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
               echo "Reboot required to load rules because auditd is in immutable mode"
+            else
+              echo "Loading audit rules"
+              augenrules --load > /dev/null
             fi
             ```
         - id: ansible
@@ -8405,11 +8604,13 @@ queries:
               sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
             fi
 
-            echo "Loading audit rules"
-            augenrules --load > /dev/null
-
+            # Once -e 2 is loaded the kernel rejects every rule change until reboot, and
+            # augenrules --load exits non-zero on audit 3.x. The rules file loads at boot.
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
               echo "Reboot required to load rules because auditd is in immutable mode"
+            else
+              echo "Loading audit rules"
+              augenrules --load > /dev/null
             fi
             ```
         - id: ansible
@@ -8673,11 +8874,13 @@ queries:
               sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
             fi
 
-            echo "Loading audit rules"
-            augenrules --load > /dev/null
-
+            # Once -e 2 is loaded the kernel rejects every rule change until reboot, and
+            # augenrules --load exits non-zero on audit 3.x. The rules file loads at boot.
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
               echo "Reboot required to load rules because auditd is in immutable mode"
+            else
+              echo "Loading audit rules"
+              augenrules --load > /dev/null
             fi
             ```
         - id: ansible
@@ -8910,11 +9113,13 @@ queries:
               sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
             fi
 
-            echo "Loading audit rules"
-            augenrules --load > /dev/null
-
+            # Once -e 2 is loaded the kernel rejects every rule change until reboot, and
+            # augenrules --load exits non-zero on audit 3.x. The rules file loads at boot.
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
               echo "Reboot required to load rules because auditd is in immutable mode"
+            else
+              echo "Loading audit rules"
+              augenrules --load > /dev/null
             fi
             ```
         - id: ansible
@@ -9175,11 +9380,13 @@ queries:
               sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
             fi
 
-            echo "Loading audit rules"
-            augenrules --load > /dev/null
-
+            # Once -e 2 is loaded the kernel rejects every rule change until reboot, and
+            # augenrules --load exits non-zero on audit 3.x. The rules file loads at boot.
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
               echo "Reboot required to load rules because auditd is in immutable mode"
+            else
+              echo "Loading audit rules"
+              augenrules --load > /dev/null
             fi
             ```
         - id: ansible
@@ -9414,11 +9621,13 @@ queries:
               sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
             fi
 
-            echo "Loading audit rules"
-            augenrules --load > /dev/null
-
+            # Once -e 2 is loaded the kernel rejects every rule change until reboot, and
+            # augenrules --load exits non-zero on audit 3.x. The rules file loads at boot.
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
               echo "Reboot required to load rules because auditd is in immutable mode"
+            else
+              echo "Loading audit rules"
+              augenrules --load > /dev/null
             fi
             ```
         - id: ansible
@@ -9825,11 +10034,13 @@ queries:
               sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
             fi
 
-            echo "Loading audit rules"
-            augenrules --load > /dev/null
-
+            # Once -e 2 is loaded the kernel rejects every rule change until reboot, and
+            # augenrules --load exits non-zero on audit 3.x. The rules file loads at boot.
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
               echo "Reboot required to load rules because auditd is in immutable mode"
+            else
+              echo "Loading audit rules"
+              augenrules --load > /dev/null
             fi
             ```
         - id: ansible
@@ -10182,11 +10393,13 @@ queries:
               sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
             fi
 
-            echo "Loading audit rules"
-            augenrules --load > /dev/null
-
+            # Once -e 2 is loaded the kernel rejects every rule change until reboot, and
+            # augenrules --load exits non-zero on audit 3.x. The rules file loads at boot.
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
               echo "Reboot required to load rules because auditd is in immutable mode"
+            else
+              echo "Loading audit rules"
+              augenrules --load > /dev/null
             fi
             ```
         - id: ansible
@@ -10429,11 +10642,13 @@ queries:
               sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
             fi
 
-            echo "Loading audit rules"
-            augenrules --load > /dev/null
-
+            # Once -e 2 is loaded the kernel rejects every rule change until reboot, and
+            # augenrules --load exits non-zero on audit 3.x. The rules file loads at boot.
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
               echo "Reboot required to load rules because auditd is in immutable mode"
+            else
+              echo "Loading audit rules"
+              augenrules --load > /dev/null
             fi
             ```
         - id: ansible
@@ -10651,12 +10866,13 @@ queries:
               sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
             fi
 
-            echo "Loading audit rules..."
-            augenrules --load > /dev/null
-
-            # Notify if a reboot is required due to immutable audit configuration
+            # Once -e 2 is loaded the kernel rejects every rule change until reboot, and
+            # augenrules --load exits non-zero on audit 3.x. The rules file loads at boot.
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
-              echo "Reboot required to load rules"
+              echo "Reboot required to load rules because auditd is in immutable mode"
+            else
+              echo "Loading audit rules..."
+              augenrules --load > /dev/null
             fi
             ```
         - id: ansible
@@ -10919,12 +11135,13 @@ queries:
               sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
             fi
 
-            echo "Loading audit rules..."
-            augenrules --load > /dev/null
-
-            # Notify if a reboot is required due to immutable audit configuration
+            # Once -e 2 is loaded the kernel rejects every rule change until reboot, and
+            # augenrules --load exits non-zero on audit 3.x. The rules file loads at boot.
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
-              echo "Reboot required to load rules"
+              echo "Reboot required to load rules because auditd is in immutable mode"
+            else
+              echo "Loading audit rules..."
+              augenrules --load > /dev/null
             fi
             ```
         - id: ansible
@@ -11182,11 +11399,13 @@ queries:
               sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
             fi
 
-            echo "Loading audit rules"
-            augenrules --load > /dev/null
-
+            # Once -e 2 is loaded the kernel rejects every rule change until reboot, and
+            # augenrules --load exits non-zero on audit 3.x. The rules file loads at boot.
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
               echo "Reboot required to load rules"
+            else
+              echo "Loading audit rules"
+              augenrules --load > /dev/null
             fi
             ```
         - id: ansible
@@ -11400,11 +11619,13 @@ queries:
               sed -i '/^-a task,never/d' /etc/audit/rules.d/audit.rules
             fi
 
-            echo "Loading audit rules"
-            augenrules --load > /dev/null
-
+            # Once -e 2 is loaded the kernel rejects every rule change until reboot, and
+            # augenrules --load exits non-zero on audit 3.x. The rules file loads at boot.
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
               echo "Reboot required to load rules"
+            else
+              echo "Loading audit rules"
+              augenrules --load > /dev/null
             fi
             ```
         - id: ansible
@@ -11578,11 +11799,13 @@ queries:
             echo "Setting audit configuration to immutable mode..."
             echo "-e 2" > /etc/audit/rules.d/50-immutable.rules
 
-            echo "Loading audit rules"
-            augenrules --load > /dev/null
-
+            # augenrules --load exits non-zero on audit 3.x once -e 2 is already loaded.
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
-              echo "Reboot required to load rules"
+              echo "The audit configuration is already immutable. Reboot to load any rule changes"
+            else
+              echo "Loading audit rules"
+              augenrules --load > /dev/null
+              echo "The audit configuration is now immutable. Rule changes take effect only after a reboot"
             fi
             ```
         - id: ansible
@@ -12024,7 +12247,10 @@ queries:
 
             ### Debian/Ubuntu and derivatives
 
+            Debian 12 and later log to the systemd journal only and do not install `rsyslog` by default. Refresh the package index first, since a host that has never run `apt-get update`, such as a fresh cloud image, cannot find the package:
+
             ```bash
+            apt-get update
             apt-get install rsyslog
             systemctl --now enable rsyslog
             ```
@@ -12051,6 +12277,7 @@ queries:
             elif command -v yum &> /dev/null; then
               yum install -y rsyslog
             elif command -v apt-get &> /dev/null; then
+              apt-get update
               apt-get install -y rsyslog
             elif command -v zypper &> /dev/null; then
               zypper install -y rsyslog
@@ -12074,6 +12301,12 @@ queries:
               hosts: all
               become: yes
               tasks:
+                - name: Refresh the package index on Debian and Ubuntu
+                  ansible.builtin.apt:
+                    update_cache: true
+                    cache_valid_time: 3600
+                  when: ansible_facts['os_family'] == 'Debian'
+
                 - name: Install rsyslog
                   ansible.builtin.package:
                     name: rsyslog
@@ -12092,6 +12325,9 @@ queries:
             Use this Chef Infra recipe code to install rsyslog and start it at boot:
 
             ```ruby
+            # A host that has never refreshed its package index cannot find rsyslog
+            apt_update 'refresh the package index' if platform_family?('debian')
+
             package 'rsyslog' do
               action :install
             end
@@ -13567,7 +13803,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
+            **Warning: avoid locking yourself out.** Before you reload SSH, keep your current session open. Validate the configuration with `sshd -t`, reload the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
             To set the SSH protocol to version 2, edit the `/etc/ssh/sshd_config` file and add or modify the following line:
 
@@ -13587,12 +13823,12 @@ queries:
             sshd -t
             ```
 
-            Restart the SSH service to apply the changes:
+            Reload the SSH service to apply the changes:
 
             Debian/Ubuntu distros:
 
             ```bash
-            systemctl restart ssh
+            systemctl reload ssh
             ```
 
             OR
@@ -13600,13 +13836,13 @@ queries:
             All other Linux distros:
 
             ```bash
-            systemctl restart sshd
+            systemctl reload sshd
             ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            The `Protocol` directive applies only to OpenSSH versions earlier than 7.6, which is why this check is version-gated. OpenSSH 7.6 removed protocol 1 support and the directive itself, so on newer servers no `Protocol` line is needed. If you run this script against a newer server, `sshd -t` rejects the unknown keyword and the script aborts before restarting the service. To set the SSH Protocol to 2 on an in-scope server, you can run the following bash script:
+            The `Protocol` directive applies only to OpenSSH versions earlier than 7.6, which is why this check is version-gated. OpenSSH 7.6 removed protocol 1 support and the directive itself, so on newer servers no `Protocol` line is needed. If you run this script against a newer server, `sshd -t` rejects the unknown keyword and the script aborts before reloading the service. To set the SSH Protocol to 2 on an in-scope server, you can run the following bash script:
 
             ```bash
             #!/bin/bash
@@ -13620,24 +13856,26 @@ queries:
               echo "Protocol 2" >> /etc/ssh/sshd_config
             fi
 
-            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            # Validate the new configuration before reloading. A syntax error here can lock you out of SSH.
             sshd -t
 
-            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            # Reload the SSH service so it reads the new configuration. A reload keeps open sessions, and systemd
+            # refuses a restart once several changes restart it within seconds, which would leave sshd stopped.
+            # The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
             if systemctl list-unit-files | grep -q '^ssh\.service'; then
-              systemctl restart ssh
+              systemctl reload-or-restart ssh
             else
-              systemctl restart sshd
+              systemctl reload-or-restart sshd
             fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The playbook checks the configuration twice before it reloads the service:
 
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
-            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service reloads only if that check passes.
 
             To set the SSH protocol to version 2, use the following Ansible playbook:
 
@@ -13656,7 +13894,7 @@ queries:
                     validate: /usr/sbin/sshd -t -f %s
                   register: ssh_config_change
 
-                - name: Validate the SSH server configuration before restarting
+                - name: Validate the SSH server configuration before reloading
                   ansible.builtin.command: sshd -t
                   changed_when: false
                   when: ssh_config_change.changed
@@ -13665,20 +13903,20 @@ queries:
                   ansible.builtin.service_facts:
                   when: ssh_config_change.changed
 
-                - name: Restart the SSH service
+                - name: Reload the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
-                    state: restarted
+                    state: reloaded
                   when: ssh_config_change.changed
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The recipe checks the configuration twice before it reloads the service:
 
-            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
-            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the reload only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the reload is due, and skips the reload if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to pin the SSH protocol to version 2:
 
@@ -13705,7 +13943,7 @@ queries:
                 end)
                 verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
-                notifies :restart, "service[#{ssh_service}]", :delayed
+                notifies :reload, "service[#{ssh_service}]", :delayed
               end
             end
             ```
@@ -13762,7 +14000,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
+            **Warning: avoid locking yourself out.** Before you reload SSH, keep your current session open. Validate the configuration with `sshd -t`, reload the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
             To set the SSH LogLevel to an appropriate value, edit the `/etc/ssh/sshd_config` file and add or modify the following line:
 
@@ -13791,12 +14029,12 @@ queries:
             sshd -t
             ```
 
-            Restart the SSH service to apply the changes:
+            Reload the SSH service to apply the changes:
 
             Debian/Ubuntu distros:
 
             ```bash
-            systemctl restart ssh
+            systemctl reload ssh
             ```
 
             OR
@@ -13804,7 +14042,7 @@ queries:
             All other Linux distros:
 
             ```bash
-            systemctl restart sshd
+            systemctl reload sshd
             ```
         - id: bash
           desc: |
@@ -13840,24 +14078,26 @@ queries:
               echo "LogLevel VERBOSE" >> "$SSHD_CONFIG"
             fi
 
-            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            # Validate the new configuration before reloading. A syntax error here can lock you out of SSH.
             sshd -t
 
-            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            # Reload the SSH service so it reads the new configuration. A reload keeps open sessions, and systemd
+            # refuses a restart once several changes restart it within seconds, which would leave sshd stopped.
+            # The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
             if systemctl list-unit-files | grep -q '^ssh\.service'; then
-              systemctl restart ssh
+              systemctl reload-or-restart ssh
             else
-              systemctl restart sshd
+              systemctl reload-or-restart sshd
             fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The playbook checks the configuration twice before it reloads the service:
 
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
-            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service reloads only if that check passes.
 
             To set the SSH LogLevel to an appropriate value, use the following Ansible playbook:
 
@@ -13898,7 +14138,7 @@ queries:
                     validate: /usr/sbin/sshd -t -f %s
                   register: ssh_config_change
 
-                - name: Validate the SSH server configuration before restarting
+                - name: Validate the SSH server configuration before reloading
                   ansible.builtin.command: sshd -t
                   changed_when: false
                   when: ssh_config_change.changed
@@ -13907,20 +14147,20 @@ queries:
                   ansible.builtin.service_facts:
                   when: ssh_config_change.changed
 
-                - name: Restart the SSH service
+                - name: Reload the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
-                    state: restarted
+                    state: reloaded
                   when: ssh_config_change.changed
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The recipe checks the configuration twice before it reloads the service:
 
-            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
-            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the reload only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the reload is due, and skips the reload if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to raise the SSH log level so that failed logins and key fingerprints are recorded:
 
@@ -13969,7 +14209,7 @@ queries:
                 end)
                 verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
-                notifies :restart, "service[#{ssh_service}]", :delayed
+                notifies :reload, "service[#{ssh_service}]", :delayed
               end
             end
             ```
@@ -14026,7 +14266,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
+            **Warning: avoid locking yourself out.** Before you reload SSH, keep your current session open. Validate the configuration with `sshd -t`, reload the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
             To disable SSH X11 forwarding, edit the `/etc/ssh/sshd_config` file and add or modify the following line:
 
@@ -14049,12 +14289,12 @@ queries:
             sshd -t
             ```
 
-            Restart the SSH service to apply the changes:
+            Reload the SSH service to apply the changes:
 
             Debian/Ubuntu distros:
 
             ```bash
-            systemctl restart ssh
+            systemctl reload ssh
             ```
 
             OR
@@ -14062,7 +14302,7 @@ queries:
             All other Linux distros:
 
             ```bash
-            systemctl restart sshd
+            systemctl reload sshd
             ```
         - id: bash
           desc: |
@@ -14098,24 +14338,26 @@ queries:
               echo "X11Forwarding no" >> "$SSHD_CONFIG"
             fi
 
-            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            # Validate the new configuration before reloading. A syntax error here can lock you out of SSH.
             sshd -t
 
-            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            # Reload the SSH service so it reads the new configuration. A reload keeps open sessions, and systemd
+            # refuses a restart once several changes restart it within seconds, which would leave sshd stopped.
+            # The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
             if systemctl list-unit-files | grep -q '^ssh\.service'; then
-              systemctl restart ssh
+              systemctl reload-or-restart ssh
             else
-              systemctl restart sshd
+              systemctl reload-or-restart sshd
             fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The playbook checks the configuration twice before it reloads the service:
 
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
-            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service reloads only if that check passes.
 
             To disable SSH X11 forwarding, use the following Ansible playbook:
 
@@ -14156,7 +14398,7 @@ queries:
                     validate: /usr/sbin/sshd -t -f %s
                   register: ssh_config_change
 
-                - name: Validate the SSH server configuration before restarting
+                - name: Validate the SSH server configuration before reloading
                   ansible.builtin.command: sshd -t
                   changed_when: false
                   when: ssh_config_change.changed
@@ -14165,20 +14407,20 @@ queries:
                   ansible.builtin.service_facts:
                   when: ssh_config_change.changed
 
-                - name: Restart the SSH service
+                - name: Reload the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
-                    state: restarted
+                    state: reloaded
                   when: ssh_config_change.changed
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The recipe checks the configuration twice before it reloads the service:
 
-            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
-            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the reload only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the reload is due, and skips the reload if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to disable X11 forwarding:
 
@@ -14227,7 +14469,7 @@ queries:
                 end)
                 verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
-                notifies :restart, "service[#{ssh_service}]", :delayed
+                notifies :reload, "service[#{ssh_service}]", :delayed
               end
             end
             ```
@@ -14284,7 +14526,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
+            **Warning: avoid locking yourself out.** Before you reload SSH, keep your current session open. Validate the configuration with `sshd -t`, reload the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
             To set the SSH MaxAuthTries to 4 or less, edit the `/etc/ssh/sshd_config` file and add or modify the following line:
 
@@ -14307,12 +14549,12 @@ queries:
             sshd -t
             ```
 
-            Restart the SSH service to apply the changes:
+            Reload the SSH service to apply the changes:
 
             Debian/Ubuntu distros:
 
             ```bash
-            systemctl restart ssh
+            systemctl reload ssh
             ```
 
             OR
@@ -14320,7 +14562,7 @@ queries:
             All other Linux distros:
 
             ```bash
-            systemctl restart sshd
+            systemctl reload sshd
             ```
         - id: bash
           desc: |
@@ -14356,24 +14598,26 @@ queries:
               echo "MaxAuthTries 4" >> "$SSHD_CONFIG"
             fi
 
-            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            # Validate the new configuration before reloading. A syntax error here can lock you out of SSH.
             sshd -t
 
-            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            # Reload the SSH service so it reads the new configuration. A reload keeps open sessions, and systemd
+            # refuses a restart once several changes restart it within seconds, which would leave sshd stopped.
+            # The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
             if systemctl list-unit-files | grep -q '^ssh\.service'; then
-              systemctl restart ssh
+              systemctl reload-or-restart ssh
             else
-              systemctl restart sshd
+              systemctl reload-or-restart sshd
             fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The playbook checks the configuration twice before it reloads the service:
 
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
-            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service reloads only if that check passes.
 
             To set the SSH MaxAuthTries to 4 or less, use the following Ansible playbook:
 
@@ -14414,7 +14658,7 @@ queries:
                     validate: /usr/sbin/sshd -t -f %s
                   register: ssh_config_change
 
-                - name: Validate the SSH server configuration before restarting
+                - name: Validate the SSH server configuration before reloading
                   ansible.builtin.command: sshd -t
                   changed_when: false
                   when: ssh_config_change.changed
@@ -14423,20 +14667,20 @@ queries:
                   ansible.builtin.service_facts:
                   when: ssh_config_change.changed
 
-                - name: Restart the SSH service
+                - name: Reload the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
-                    state: restarted
+                    state: reloaded
                   when: ssh_config_change.changed
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The recipe checks the configuration twice before it reloads the service:
 
-            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
-            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the reload only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the reload is due, and skips the reload if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to cap the number of authentication attempts per connection:
 
@@ -14485,7 +14729,7 @@ queries:
                 end)
                 verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
-                notifies :restart, "service[#{ssh_service}]", :delayed
+                notifies :reload, "service[#{ssh_service}]", :delayed
               end
             end
             ```
@@ -14542,7 +14786,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
+            **Warning: avoid locking yourself out.** Before you reload SSH, keep your current session open. Validate the configuration with `sshd -t`, reload the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
             To enable SSH IgnoreRhosts, edit the `/etc/ssh/sshd_config` file and add or modify the following line:
 
@@ -14565,12 +14809,12 @@ queries:
             sshd -t
             ```
 
-            Restart the SSH service to apply the changes:
+            Reload the SSH service to apply the changes:
 
             Debian/Ubuntu distros:
 
             ```bash
-            systemctl restart ssh
+            systemctl reload ssh
             ```
 
             OR
@@ -14578,7 +14822,7 @@ queries:
             All other Linux distros:
 
             ```bash
-            systemctl restart sshd
+            systemctl reload sshd
             ```
         - id: bash
           desc: |
@@ -14614,24 +14858,26 @@ queries:
               echo "IgnoreRhosts yes" >> "$SSHD_CONFIG"
             fi
 
-            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            # Validate the new configuration before reloading. A syntax error here can lock you out of SSH.
             sshd -t
 
-            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            # Reload the SSH service so it reads the new configuration. A reload keeps open sessions, and systemd
+            # refuses a restart once several changes restart it within seconds, which would leave sshd stopped.
+            # The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
             if systemctl list-unit-files | grep -q '^ssh\.service'; then
-              systemctl restart ssh
+              systemctl reload-or-restart ssh
             else
-              systemctl restart sshd
+              systemctl reload-or-restart sshd
             fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The playbook checks the configuration twice before it reloads the service:
 
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
-            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service reloads only if that check passes.
 
             To enable SSH IgnoreRhosts, use the following Ansible playbook:
 
@@ -14672,7 +14918,7 @@ queries:
                     validate: /usr/sbin/sshd -t -f %s
                   register: ssh_config_change
 
-                - name: Validate the SSH server configuration before restarting
+                - name: Validate the SSH server configuration before reloading
                   ansible.builtin.command: sshd -t
                   changed_when: false
                   when: ssh_config_change.changed
@@ -14681,20 +14927,20 @@ queries:
                   ansible.builtin.service_facts:
                   when: ssh_config_change.changed
 
-                - name: Restart the SSH service
+                - name: Reload the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
-                    state: restarted
+                    state: reloaded
                   when: ssh_config_change.changed
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The recipe checks the configuration twice before it reloads the service:
 
-            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
-            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the reload only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the reload is due, and skips the reload if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to make sshd ignore `.rhosts` and `.shosts` files:
 
@@ -14743,7 +14989,7 @@ queries:
                 end)
                 verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
-                notifies :restart, "service[#{ssh_service}]", :delayed
+                notifies :reload, "service[#{ssh_service}]", :delayed
               end
             end
             ```
@@ -14800,7 +15046,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
+            **Warning: avoid locking yourself out.** Before you reload SSH, keep your current session open. Validate the configuration with `sshd -t`, reload the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
             To disable SSH HostbasedAuthentication, edit the `/etc/ssh/sshd_config` file and add or modify the following line:
 
@@ -14823,12 +15069,12 @@ queries:
             sshd -t
             ```
 
-            Restart the SSH service to apply the changes:
+            Reload the SSH service to apply the changes:
 
             Debian/Ubuntu distros:
 
             ```bash
-            systemctl restart ssh
+            systemctl reload ssh
             ```
 
             OR
@@ -14836,7 +15082,7 @@ queries:
             All other Linux distros:
 
             ```bash
-            systemctl restart sshd
+            systemctl reload sshd
             ```
         - id: bash
           desc: |
@@ -14872,24 +15118,26 @@ queries:
               echo "HostbasedAuthentication no" >> "$SSHD_CONFIG"
             fi
 
-            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            # Validate the new configuration before reloading. A syntax error here can lock you out of SSH.
             sshd -t
 
-            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            # Reload the SSH service so it reads the new configuration. A reload keeps open sessions, and systemd
+            # refuses a restart once several changes restart it within seconds, which would leave sshd stopped.
+            # The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
             if systemctl list-unit-files | grep -q '^ssh\.service'; then
-              systemctl restart ssh
+              systemctl reload-or-restart ssh
             else
-              systemctl restart sshd
+              systemctl reload-or-restart sshd
             fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The playbook checks the configuration twice before it reloads the service:
 
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
-            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service reloads only if that check passes.
 
             To disable SSH HostbasedAuthentication, use the following Ansible playbook:
 
@@ -14930,7 +15178,7 @@ queries:
                     validate: /usr/sbin/sshd -t -f %s
                   register: ssh_config_change
 
-                - name: Validate the SSH server configuration before restarting
+                - name: Validate the SSH server configuration before reloading
                   ansible.builtin.command: sshd -t
                   changed_when: false
                   when: ssh_config_change.changed
@@ -14939,20 +15187,20 @@ queries:
                   ansible.builtin.service_facts:
                   when: ssh_config_change.changed
 
-                - name: Restart the SSH service
+                - name: Reload the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
-                    state: restarted
+                    state: reloaded
                   when: ssh_config_change.changed
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The recipe checks the configuration twice before it reloads the service:
 
-            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
-            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the reload only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the reload is due, and skips the reload if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to disable host-based authentication:
 
@@ -15001,7 +15249,7 @@ queries:
                 end)
                 verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
-                notifies :restart, "service[#{ssh_service}]", :delayed
+                notifies :reload, "service[#{ssh_service}]", :delayed
               end
             end
             ```
@@ -15058,7 +15306,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works. If your only access to this host is as `root` over SSH, first create a non-root account with `sudo` privileges and confirm you can log in with it and run `sudo`, otherwise disabling root login will lock you out.
+            **Warning: avoid locking yourself out.** Before you reload SSH, keep your current session open. Validate the configuration with `sshd -t`, reload the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works. If your only access to this host is as `root` over SSH, first create a non-root account with `sudo` privileges and confirm you can log in with it and run `sudo`, otherwise disabling root login will lock you out.
 
             To disable SSH root login or set it to prohibit password authentication, edit the `/etc/ssh/sshd_config` file and add or modify the following line:
 
@@ -15087,12 +15335,12 @@ queries:
             sshd -t
             ```
 
-            Restart the SSH service to apply the changes:
+            Reload the SSH service to apply the changes:
 
             Debian/Ubuntu distros:
 
             ```bash
-            systemctl restart ssh
+            systemctl reload ssh
             ```
 
             OR
@@ -15100,7 +15348,7 @@ queries:
             All other Linux distros:
 
             ```bash
-            systemctl restart sshd
+            systemctl reload sshd
             ```
         - id: bash
           desc: |
@@ -15136,24 +15384,26 @@ queries:
               echo "PermitRootLogin no" >> "$SSHD_CONFIG"
             fi
 
-            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            # Validate the new configuration before reloading. A syntax error here can lock you out of SSH.
             sshd -t
 
-            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            # Reload the SSH service so it reads the new configuration. A reload keeps open sessions, and systemd
+            # refuses a restart once several changes restart it within seconds, which would leave sshd stopped.
+            # The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
             if systemctl list-unit-files | grep -q '^ssh\.service'; then
-              systemctl restart ssh
+              systemctl reload-or-restart ssh
             else
-              systemctl restart sshd
+              systemctl reload-or-restart sshd
             fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The playbook checks the configuration twice before it reloads the service:
 
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
-            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service reloads only if that check passes.
 
             To disable SSH root login or set it to prohibit password authentication, use the following Ansible playbook:
 
@@ -15194,7 +15444,7 @@ queries:
                     validate: /usr/sbin/sshd -t -f %s
                   register: ssh_config_change
 
-                - name: Validate the SSH server configuration before restarting
+                - name: Validate the SSH server configuration before reloading
                   ansible.builtin.command: sshd -t
                   changed_when: false
                   when: ssh_config_change.changed
@@ -15203,20 +15453,20 @@ queries:
                   ansible.builtin.service_facts:
                   when: ssh_config_change.changed
 
-                - name: Restart the SSH service
+                - name: Reload the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
-                    state: restarted
+                    state: reloaded
                   when: ssh_config_change.changed
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The recipe checks the configuration twice before it reloads the service:
 
-            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
-            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the reload only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the reload is due, and skips the reload if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to stop root from logging in over SSH. Confirm that an administrative account with sudo access can log in before you apply it, or you will lock yourself out:
 
@@ -15265,7 +15515,7 @@ queries:
                 end)
                 verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
-                notifies :restart, "service[#{ssh_service}]", :delayed
+                notifies :reload, "service[#{ssh_service}]", :delayed
               end
             end
             ```
@@ -15322,7 +15572,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
+            **Warning: avoid locking yourself out.** Before you reload SSH, keep your current session open. Validate the configuration with `sshd -t`, reload the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
             To disable SSH PermitEmptyPasswords, edit the `/etc/ssh/sshd_config` file and add or modify the following line:
 
@@ -15345,12 +15595,12 @@ queries:
             sshd -t
             ```
 
-            Restart the SSH service to apply the changes:
+            Reload the SSH service to apply the changes:
 
             Debian/Ubuntu distros:
 
             ```bash
-            systemctl restart ssh
+            systemctl reload ssh
             ```
 
             OR
@@ -15358,7 +15608,7 @@ queries:
             All other Linux distros:
 
             ```bash
-            systemctl restart sshd
+            systemctl reload sshd
             ```
         - id: bash
           desc: |
@@ -15394,24 +15644,26 @@ queries:
               echo "PermitEmptyPasswords no" >> "$SSHD_CONFIG"
             fi
 
-            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            # Validate the new configuration before reloading. A syntax error here can lock you out of SSH.
             sshd -t
 
-            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            # Reload the SSH service so it reads the new configuration. A reload keeps open sessions, and systemd
+            # refuses a restart once several changes restart it within seconds, which would leave sshd stopped.
+            # The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
             if systemctl list-unit-files | grep -q '^ssh\.service'; then
-              systemctl restart ssh
+              systemctl reload-or-restart ssh
             else
-              systemctl restart sshd
+              systemctl reload-or-restart sshd
             fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The playbook checks the configuration twice before it reloads the service:
 
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
-            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service reloads only if that check passes.
 
             To disable SSH PermitEmptyPasswords, use the following Ansible playbook:
 
@@ -15452,7 +15704,7 @@ queries:
                     validate: /usr/sbin/sshd -t -f %s
                   register: ssh_config_change
 
-                - name: Validate the SSH server configuration before restarting
+                - name: Validate the SSH server configuration before reloading
                   ansible.builtin.command: sshd -t
                   changed_when: false
                   when: ssh_config_change.changed
@@ -15461,20 +15713,20 @@ queries:
                   ansible.builtin.service_facts:
                   when: ssh_config_change.changed
 
-                - name: Restart the SSH service
+                - name: Reload the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
-                    state: restarted
+                    state: reloaded
                   when: ssh_config_change.changed
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The recipe checks the configuration twice before it reloads the service:
 
-            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
-            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the reload only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the reload is due, and skips the reload if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to reject accounts with an empty password:
 
@@ -15523,7 +15775,7 @@ queries:
                 end)
                 verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
-                notifies :restart, "service[#{ssh_service}]", :delayed
+                notifies :reload, "service[#{ssh_service}]", :delayed
               end
             end
             ```
@@ -15582,7 +15834,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
+            **Warning: avoid locking yourself out.** Before you reload SSH, keep your current session open. Validate the configuration with `sshd -t`, reload the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
             To disable SSH PermitUserEnvironment, edit the `/etc/ssh/sshd_config` file and add or modify the following line:
 
@@ -15605,12 +15857,12 @@ queries:
             sshd -t
             ```
 
-            Restart the SSH service to apply the changes:
+            Reload the SSH service to apply the changes:
 
             Debian/Ubuntu distros:
 
             ```bash
-            systemctl restart ssh
+            systemctl reload ssh
             ```
 
             OR
@@ -15618,7 +15870,7 @@ queries:
             All other Linux distros:
 
             ```bash
-            systemctl restart sshd
+            systemctl reload sshd
             ```
         - id: bash
           desc: |
@@ -15654,24 +15906,26 @@ queries:
               echo "PermitUserEnvironment no" >> "$SSHD_CONFIG"
             fi
 
-            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            # Validate the new configuration before reloading. A syntax error here can lock you out of SSH.
             sshd -t
 
-            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            # Reload the SSH service so it reads the new configuration. A reload keeps open sessions, and systemd
+            # refuses a restart once several changes restart it within seconds, which would leave sshd stopped.
+            # The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
             if systemctl list-unit-files | grep -q '^ssh\.service'; then
-              systemctl restart ssh
+              systemctl reload-or-restart ssh
             else
-              systemctl restart sshd
+              systemctl reload-or-restart sshd
             fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The playbook checks the configuration twice before it reloads the service:
 
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
-            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service reloads only if that check passes.
 
             To disable SSH PermitUserEnvironment, use the following Ansible playbook:
 
@@ -15712,7 +15966,7 @@ queries:
                     validate: /usr/sbin/sshd -t -f %s
                   register: ssh_config_change
 
-                - name: Validate the SSH server configuration before restarting
+                - name: Validate the SSH server configuration before reloading
                   ansible.builtin.command: sshd -t
                   changed_when: false
                   when: ssh_config_change.changed
@@ -15721,20 +15975,20 @@ queries:
                   ansible.builtin.service_facts:
                   when: ssh_config_change.changed
 
-                - name: Restart the SSH service
+                - name: Reload the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
-                    state: restarted
+                    state: reloaded
                   when: ssh_config_change.changed
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The recipe checks the configuration twice before it reloads the service:
 
-            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
-            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the reload only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the reload is due, and skips the reload if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to stop sshd from reading user-supplied environment options:
 
@@ -15783,7 +16037,7 @@ queries:
                 end)
                 verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
-                notifies :restart, "service[#{ssh_service}]", :delayed
+                notifies :reload, "service[#{ssh_service}]", :delayed
               end
             end
             ```
@@ -15852,7 +16106,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works. Setting a cipher list that your SSH clients do not support is one of the most common causes of a total SSH lockout, so verify the new connection from each client type you rely on.
+            **Warning: avoid locking yourself out.** Before you reload SSH, keep your current session open. Validate the configuration with `sshd -t`, reload the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works. Setting a cipher list that your SSH clients do not support is one of the most common causes of a total SSH lockout, so verify the new connection from each client type you rely on.
 
             To configure SSH to use only strong ciphers, edit the `/etc/ssh/sshd_config` file and add or modify the `Ciphers` parameter to include a comma-separated list of approved ciphers.
 
@@ -15877,7 +16131,7 @@ queries:
             echo 'Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr' >> /etc/ssh/sshd_config.d/00-hardening.conf
             ```
 
-            Validate the configuration and restart the SSH service to apply the changes:
+            Validate the configuration and reload the SSH service to apply the changes:
 
             ```bash
             sshd -t
@@ -15886,7 +16140,7 @@ queries:
             Debian/Ubuntu distros:
 
             ```bash
-            systemctl restart ssh
+            systemctl reload ssh
             ```
 
             OR
@@ -15894,7 +16148,7 @@ queries:
             All other Linux distros:
 
             ```bash
-            systemctl restart sshd
+            systemctl reload sshd
             ```
         - id: bash
           desc: |
@@ -15938,24 +16192,26 @@ queries:
               echo "$CIPHER_LINE" >> "$SSHD_CONFIG"
             fi
 
-            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            # Validate the new configuration before reloading. A syntax error here can lock you out of SSH.
             sshd -t
 
-            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            # Reload the SSH service so it reads the new configuration. A reload keeps open sessions, and systemd
+            # refuses a restart once several changes restart it within seconds, which would leave sshd stopped.
+            # The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
             if systemctl list-unit-files | grep -q '^ssh\.service'; then
-              systemctl restart ssh
+              systemctl reload-or-restart ssh
             else
-              systemctl restart sshd
+              systemctl reload-or-restart sshd
             fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The playbook checks the configuration twice before it reloads the service:
 
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
-            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service reloads only if that check passes.
 
             To configure SSH to use only strong ciphers, use the following Ansible playbook. On hosts running OpenSSH 6.x, change the `Ciphers` line to `Ciphers aes256-ctr,aes192-ctr,aes128-ctr` because the chacha20 and GCM ciphers are not supported there:
 
@@ -15998,7 +16254,7 @@ queries:
                     validate: /usr/sbin/sshd -t -f %s
                   register: ssh_ciphers_config_change
 
-                - name: Validate the SSH server configuration before restarting
+                - name: Validate the SSH server configuration before reloading
                   ansible.builtin.command: sshd -t
                   changed_when: false
                   when: ssh_ciphers_config_change.changed
@@ -16007,20 +16263,20 @@ queries:
                   ansible.builtin.service_facts:
                   when: ssh_ciphers_config_change.changed
 
-                - name: Restart the SSH service
+                - name: Reload the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
-                    state: restarted
+                    state: reloaded
                   when: ssh_ciphers_config_change.changed
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The recipe checks the configuration twice before it reloads the service:
 
-            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
-            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the reload only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the reload is due, and skips the reload if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to restrict SSH to strong ciphers. On hosts running OpenSSH 6.x, change the value to `aes256-ctr,aes192-ctr,aes128-ctr`, because the chacha20 and GCM ciphers are not supported there:
 
@@ -16069,7 +16325,7 @@ queries:
                 end)
                 verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
-                notifies :restart, "service[#{ssh_service}]", :delayed
+                notifies :reload, "service[#{ssh_service}]", :delayed
               end
             end
             ```
@@ -16133,7 +16389,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works. Setting a MAC list that your SSH clients do not support is one of the most common causes of a total SSH lockout, so verify the new connection from each client type you rely on.
+            **Warning: avoid locking yourself out.** Before you reload SSH, keep your current session open. Validate the configuration with `sshd -t`, reload the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works. Setting a MAC list that your SSH clients do not support is one of the most common causes of a total SSH lockout, so verify the new connection from each client type you rely on.
 
             To configure SSH to use only strong MAC algorithms, edit the `/etc/ssh/sshd_config` file and add or modify the `MACs` parameter to include a comma-separated list of approved MAC algorithms. Every algorithm in the list must be one of `hmac-sha2-512-etm@openssh.com`, `hmac-sha2-256-etm@openssh.com`, `umac-128-etm@openssh.com`, `hmac-sha2-512`, `hmac-sha2-256`, or `umac-128@openssh.com`. A single algorithm outside that set, such as an MD5-based or `-96` truncated algorithm, fails the check.
 
@@ -16152,7 +16408,7 @@ queries:
             echo 'MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256' >> /etc/ssh/sshd_config.d/00-hardening.conf
             ```
 
-            Validate the configuration and restart the SSH service to apply the changes:
+            Validate the configuration and reload the SSH service to apply the changes:
 
             ```bash
             sshd -t
@@ -16161,7 +16417,7 @@ queries:
             Debian/Ubuntu distros:
 
             ```bash
-            systemctl restart ssh
+            systemctl reload ssh
             ```
 
             OR
@@ -16169,7 +16425,7 @@ queries:
             All other Linux distros:
 
             ```bash
-            systemctl restart sshd
+            systemctl reload sshd
             ```
         - id: bash
           desc: |
@@ -16207,24 +16463,26 @@ queries:
               echo "$MAC_LINE" >> "$SSHD_CONFIG"
             fi
 
-            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            # Validate the new configuration before reloading. A syntax error here can lock you out of SSH.
             sshd -t
 
-            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            # Reload the SSH service so it reads the new configuration. A reload keeps open sessions, and systemd
+            # refuses a restart once several changes restart it within seconds, which would leave sshd stopped.
+            # The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
             if systemctl list-unit-files | grep -q '^ssh\.service'; then
-              systemctl restart ssh
+              systemctl reload-or-restart ssh
             else
-              systemctl restart sshd
+              systemctl reload-or-restart sshd
             fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The playbook checks the configuration twice before it reloads the service:
 
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
-            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service reloads only if that check passes.
 
             To configure SSH to use only strong MAC algorithms, use the following Ansible playbook:
 
@@ -16267,7 +16525,7 @@ queries:
                     validate: /usr/sbin/sshd -t -f %s
                   register: ssh_mac_config_change
 
-                - name: Validate the SSH server configuration before restarting
+                - name: Validate the SSH server configuration before reloading
                   ansible.builtin.command: sshd -t
                   changed_when: false
                   when: ssh_mac_config_change.changed
@@ -16276,20 +16534,20 @@ queries:
                   ansible.builtin.service_facts:
                   when: ssh_mac_config_change.changed
 
-                - name: Restart the SSH service
+                - name: Reload the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
-                    state: restarted
+                    state: reloaded
                   when: ssh_mac_config_change.changed
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The recipe checks the configuration twice before it reloads the service:
 
-            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
-            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the reload only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the reload is due, and skips the reload if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to restrict SSH to strong MAC algorithms:
 
@@ -16338,7 +16596,7 @@ queries:
                 end)
                 verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
-                notifies :restart, "service[#{ssh_service}]", :delayed
+                notifies :reload, "service[#{ssh_service}]", :delayed
               end
             end
             ```
@@ -16421,7 +16679,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works. A key exchange list that your SSH clients do not support is one of the most common causes of a total SSH lockout, so verify the new connection from each client type you rely on.
+            **Warning: avoid locking yourself out.** Before you reload SSH, keep your current session open. Validate the configuration with `sshd -t`, reload the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works. A key exchange list that your SSH clients do not support is one of the most common causes of a total SSH lockout, so verify the new connection from each client type you rely on.
 
             To configure SSH to use only approved key exchange algorithms, edit the `/etc/ssh/sshd_config` file and add or modify the `KexAlgorithms` parameter based on your `openssh-server` version.
 
@@ -16498,12 +16756,12 @@ queries:
             sshd -t
             ```
 
-            Restart the SSH service to apply the changes:
+            Reload the SSH service to apply the changes:
 
             Debian/Ubuntu distros:
 
             ```bash
-            systemctl restart ssh
+            systemctl reload ssh
             ```
 
             OR
@@ -16511,7 +16769,7 @@ queries:
             All other Linux distros:
 
             ```bash
-            systemctl restart sshd
+            systemctl reload sshd
             ```
         - id: bash
           desc: |
@@ -16574,24 +16832,26 @@ queries:
               echo "KexAlgorithms $kex_algos" >> "$SSHD_CONFIG"
             fi
 
-            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            # Validate the new configuration before reloading. A syntax error here can lock you out of SSH.
             sshd -t
 
-            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            # Reload the SSH service so it reads the new configuration. A reload keeps open sessions, and systemd
+            # refuses a restart once several changes restart it within seconds, which would leave sshd stopped.
+            # The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
             if systemctl list-unit-files | grep -q '^ssh\.service'; then
-              systemctl restart ssh
+              systemctl reload-or-restart ssh
             else
-              systemctl restart sshd
+              systemctl reload-or-restart sshd
             fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The playbook checks the configuration twice before it reloads the service:
 
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
-            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service reloads only if that check passes.
 
             To configure SSH to use only approved key exchange algorithms, use the following Ansible playbook. It reads the installed OpenSSH release and writes the list that release recognizes, changing lists at 6.5, 7.3, 8.0, 8.5 and 9.9, the releases that added or renamed each algorithm. On a release older than 4.4 it fails the host without editing anything, because no key exchange those releases carry meets this check:
 
@@ -16667,7 +16927,7 @@ queries:
                     validate: /usr/sbin/sshd -t -f %s
                   register: kexalgos_config_change
 
-                - name: Validate the SSH server configuration before restarting
+                - name: Validate the SSH server configuration before reloading
                   ansible.builtin.command: sshd -t
                   changed_when: false
                   when: kexalgos_config_change.changed
@@ -16676,20 +16936,20 @@ queries:
                   ansible.builtin.service_facts:
                   when: kexalgos_config_change.changed
 
-                - name: Restart the SSH service
+                - name: Reload the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
-                    state: restarted
+                    state: reloaded
                   when: kexalgos_config_change.changed
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The recipe checks the configuration twice before it reloads the service:
 
-            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
-            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the reload only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the reload is due, and skips the reload if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to restrict SSH to approved key exchange algorithms. The algorithm list depends on the OpenSSH release, so it is selected from the version reported by the installed binary. `sshd` rejects a name its release does not recognize, so the recipe changes lists at 6.5, 7.3, 8.0, 8.5 and 9.9, the releases that added or renamed each algorithm. On a release older than 4.4 it raises without editing anything, because no key exchange those releases carry meets this check:
 
@@ -16756,7 +17016,7 @@ queries:
                 end)
                 verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
-                notifies :restart, "service[#{ssh_service}]", :delayed
+                notifies :reload, "service[#{ssh_service}]", :delayed
               end
             end
             ```
@@ -16846,7 +17106,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
+            **Warning: avoid locking yourself out.** Before you reload SSH, keep your current session open. Validate the configuration with `sshd -t`, reload the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
             To set the SSH idle timeout interval, edit the `/etc/ssh/sshd_config` file and add or modify the `ClientAliveInterval` and `ClientAliveCountMax` parameters. `ClientAliveInterval` must be between 1 and 300 seconds and `ClientAliveCountMax` must be between 1 and 3. With the example values, `sshd` closes a session after two unanswered keepalives sent 300 seconds apart, about ten minutes after the client stops responding. Any `Match` block that sets either keyword must also use a value in these ranges.
 
@@ -16867,7 +17127,7 @@ queries:
             echo 'ClientAliveCountMax 2' >> /etc/ssh/sshd_config.d/00-hardening.conf
             ```
 
-            Validate the configuration and restart the SSH service to apply the changes:
+            Validate the configuration and reload the SSH service to apply the changes:
 
             ```bash
             sshd -t
@@ -16876,7 +17136,7 @@ queries:
             Debian/Ubuntu distros:
 
             ```bash
-            systemctl restart ssh
+            systemctl reload ssh
             ```
 
             OR
@@ -16884,7 +17144,7 @@ queries:
             All other Linux distros:
 
             ```bash
-            systemctl restart sshd
+            systemctl reload sshd
             ```
         - id: bash
           desc: |
@@ -16928,24 +17188,26 @@ queries:
               echo 'ClientAliveCountMax 2' >> "$SSHD_CONFIG"
             fi
 
-            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            # Validate the new configuration before reloading. A syntax error here can lock you out of SSH.
             sshd -t
 
-            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            # Reload the SSH service so it reads the new configuration. A reload keeps open sessions, and systemd
+            # refuses a restart once several changes restart it within seconds, which would leave sshd stopped.
+            # The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
             if systemctl list-unit-files | grep -q '^ssh\.service'; then
-              systemctl restart ssh
+              systemctl reload-or-restart ssh
             else
-              systemctl restart sshd
+              systemctl reload-or-restart sshd
             fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The playbook checks the configuration twice before it reloads the service:
 
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
-            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service reloads only if that check passes.
 
             To set the SSH idle timeout interval using Ansible, use the following playbook:
 
@@ -16998,7 +17260,7 @@ queries:
                     validate: /usr/sbin/sshd -t -f %s
                   register: ssh_countmax_change
 
-                - name: Validate the SSH server configuration before restarting
+                - name: Validate the SSH server configuration before reloading
                   ansible.builtin.command: sshd -t
                   changed_when: false
                   when: ssh_interval_change.changed or ssh_countmax_change.changed
@@ -17007,20 +17269,20 @@ queries:
                   ansible.builtin.service_facts:
                   when: ssh_interval_change.changed or ssh_countmax_change.changed
 
-                - name: Restart the SSH service
+                - name: Reload the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
-                    state: restarted
+                    state: reloaded
                   when: ssh_interval_change.changed or ssh_countmax_change.changed
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The recipe checks the configuration twice before it reloads the service:
 
-            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
-            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the reload only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the reload is due, and skips the reload if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to disconnect idle SSH sessions after ten minutes:
 
@@ -17069,7 +17331,7 @@ queries:
                 end)
                 verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
-                notifies :restart, "service[#{ssh_service}]", :delayed
+                notifies :reload, "service[#{ssh_service}]", :delayed
               end
             end
             ```
@@ -17127,7 +17389,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
+            **Warning: avoid locking yourself out.** Before you reload SSH, keep your current session open. Validate the configuration with `sshd -t`, reload the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
             To set the SSH LoginGraceTime, edit the `/etc/ssh/sshd_config` file and add or modify the `LoginGraceTime` parameter. The value must be between 1 and 60 seconds. A value of `0` removes the limit entirely, and an absent directive leaves the OpenSSH default of 120 seconds in place, so both fail the check.
 
@@ -17146,7 +17408,7 @@ queries:
             echo 'LoginGraceTime 60' >> /etc/ssh/sshd_config.d/00-hardening.conf
             ```
 
-            Validate the configuration and restart the SSH service to apply the changes:
+            Validate the configuration and reload the SSH service to apply the changes:
 
             ```bash
             sshd -t
@@ -17155,7 +17417,7 @@ queries:
             Debian/Ubuntu distros:
 
             ```bash
-            systemctl restart ssh
+            systemctl reload ssh
             ```
 
             OR
@@ -17163,7 +17425,7 @@ queries:
             All other Linux distros:
 
             ```bash
-            systemctl restart sshd
+            systemctl reload sshd
             ```
         - id: bash
           desc: |
@@ -17199,24 +17461,26 @@ queries:
               echo 'LoginGraceTime 60' >> "$SSHD_CONFIG"
             fi
 
-            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            # Validate the new configuration before reloading. A syntax error here can lock you out of SSH.
             sshd -t
 
-            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            # Reload the SSH service so it reads the new configuration. A reload keeps open sessions, and systemd
+            # refuses a restart once several changes restart it within seconds, which would leave sshd stopped.
+            # The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
             if systemctl list-unit-files | grep -q '^ssh\.service'; then
-              systemctl restart ssh
+              systemctl reload-or-restart ssh
             else
-              systemctl restart sshd
+              systemctl reload-or-restart sshd
             fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The playbook checks the configuration twice before it reloads the service:
 
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
-            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service reloads only if that check passes.
 
             To set the SSH LoginGraceTime using Ansible, use the following playbook:
 
@@ -17259,7 +17523,7 @@ queries:
                     validate: /usr/sbin/sshd -t -f %s
                   register: ssh_logingracetime_change
 
-                - name: Validate the SSH server configuration before restarting
+                - name: Validate the SSH server configuration before reloading
                   ansible.builtin.command: sshd -t
                   changed_when: false
                   when: ssh_logingracetime_change.changed
@@ -17268,20 +17532,20 @@ queries:
                   ansible.builtin.service_facts:
                   when: ssh_logingracetime_change.changed
 
-                - name: Restart the SSH service
+                - name: Reload the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
-                    state: restarted
+                    state: reloaded
                   when: ssh_logingracetime_change.changed
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The recipe checks the configuration twice before it reloads the service:
 
-            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
-            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the reload only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the reload is due, and skips the reload if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to close connections that do not authenticate within one minute:
 
@@ -17330,7 +17594,7 @@ queries:
                 end)
                 verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
-                notifies :restart, "service[#{ssh_service}]", :delayed
+                notifies :reload, "service[#{ssh_service}]", :delayed
               end
             end
             ```
@@ -17392,7 +17656,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works. Confirm that your own administrative account is a member of the allowed group or is named in `AllowUsers` before you apply the change, otherwise you will be denied access along with everyone else not on the list.
+            **Warning: avoid locking yourself out.** Before you reload SSH, keep your current session open. Validate the configuration with `sshd -t`, reload the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works. Confirm that your own administrative account is a member of the allowed group or is named in `AllowUsers` before you apply the change, otherwise you will be denied access along with everyone else not on the list.
 
             openSUSE Leap 16 ships the SSH server configuration only as `/usr/etc/ssh/sshd_config`, so `/etc/ssh/sshd_config` does not exist there. sshd reads `/etc/ssh/sshd_config` in place of the vendor file once it exists, so create it as a copy of the vendor file rather than a new file. The copy no longer follows changes that package updates make to the vendor file:
 
@@ -17408,7 +17672,7 @@ queries:
             AllowGroups sshusers
             ```
 
-            Validate the configuration and restart the SSH service to apply the changes:
+            Validate the configuration and reload the SSH service to apply the changes:
 
             ```bash
             sshd -t
@@ -17417,7 +17681,7 @@ queries:
             Debian/Ubuntu distros:
 
             ```bash
-            systemctl restart ssh
+            systemctl reload ssh
             ```
 
             OR
@@ -17425,20 +17689,30 @@ queries:
             All other Linux distros:
 
             ```bash
-            systemctl restart sshd
+            systemctl reload sshd
             ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            To limit SSH access, you can run the following bash script. Before running it, replace the example group with a group that contains every account that must retain SSH access, including your administrative accounts. Once `AllowGroups` is set, any account outside the listed groups is denied SSH access.
+            To limit SSH access, you can run the following bash script. Once `AllowGroups` is set, any account outside the group is denied SSH access. The script creates the group if it does not exist and adds the account that runs it through `sudo`, so that account keeps access. List every other account that must keep SSH access in `ALLOW_MEMBERS` before running it. The script stops without changing `sshd_config` if the group would have no members.
 
             ```bash
             #!/bin/bash
             set -e
 
-            # Replace with the group that should retain SSH access
-            ALLOW_GROUPS="sshusers"
+            # The group that keeps SSH access, and the accounts to add to it.
+            ALLOW_GROUP="sshusers"
+            ALLOW_MEMBERS="${SUDO_USER:-}"
+
+            getent group "$ALLOW_GROUP" > /dev/null || groupadd "$ALLOW_GROUP"
+            for member in $ALLOW_MEMBERS; do
+              usermod -a -G "$ALLOW_GROUP" "$member"
+            done
+            if [ -z "$(getent group "$ALLOW_GROUP" | cut -d: -f4)" ]; then
+              echo "Group $ALLOW_GROUP has no members. Add the accounts that must keep SSH access to ALLOW_MEMBERS." >&2
+              exit 1
+            fi
 
             # openSUSE Leap 16 ships only /usr/etc/ssh/sshd_config. sshd reads /etc/ssh/sshd_config in
             # place of it once that exists, so create it as a copy of the vendor file.
@@ -17448,32 +17722,34 @@ queries:
 
             if grep -q '^AllowGroups' /etc/ssh/sshd_config; then
               echo "Updating existing AllowGroups configuration value"
-              sed -i "s/^AllowGroups.*/AllowGroups $ALLOW_GROUPS/" /etc/ssh/sshd_config
+              sed -i "s/^AllowGroups.*/AllowGroups $ALLOW_GROUP/" /etc/ssh/sshd_config
             else
               echo "Adding AllowGroups configuration value to SSH config"
-              echo "AllowGroups $ALLOW_GROUPS" >> /etc/ssh/sshd_config
+              echo "AllowGroups $ALLOW_GROUP" >> /etc/ssh/sshd_config
             fi
 
-            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            # Validate the new configuration before reloading. A syntax error here can lock you out of SSH.
             sshd -t
 
-            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            # Reload the SSH service so it reads the new configuration. A reload keeps open sessions, and systemd
+            # refuses a restart once several changes restart it within seconds, which would leave sshd stopped.
+            # The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
             if systemctl list-unit-files | grep -q '^ssh\.service'; then
-              systemctl restart ssh
+              systemctl reload-or-restart ssh
             else
-              systemctl restart sshd
+              systemctl reload-or-restart sshd
             fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The playbook checks the configuration twice before it reloads the service:
 
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
-            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service reloads only if that check passes.
 
-            **Warning: avoid locking yourself out.** Once `AllowGroups` is set, every account outside the listed groups is denied SSH access, including the account Ansible connects with. Before you run this playbook, set `ssh_allow_groups` to a space-separated list of groups that together contain every account that must keep SSH access, and make sure those groups already exist with their members. To limit SSH access using Ansible, use the following playbook:
+            **Warning: avoid locking yourself out.** Once `AllowGroups` is set, every account outside the group is denied SSH access. The playbook creates the group named in `ssh_allow_group` and adds the account Ansible connects with, so that account keeps access. Add every other account that must keep SSH access to `ssh_allow_members` before you run it. To limit SSH access using Ansible, use the following playbook:
 
             ```yaml
             ---
@@ -17481,9 +17757,22 @@ queries:
               hosts: all
               become: true
               vars:
-                ssh_allow_groups: "sshusers"
+                ssh_allow_group: sshusers
+                ssh_allow_members: []
 
               tasks:
+                - name: Create the group that keeps SSH access
+                  ansible.builtin.group:
+                    name: "{{ ssh_allow_group }}"
+                    state: present
+
+                - name: Add the connecting account and the listed accounts to the group
+                  ansible.builtin.user:
+                    name: "{{ item }}"
+                    groups: "{{ ssh_allow_group }}"
+                    append: true
+                  loop: "{{ ([ansible_env.SUDO_USER | default(ansible_user_id)] + ssh_allow_members) | unique }}"
+
                 # openSUSE Leap 16 ships only /usr/etc/ssh/sshd_config, and sshd reads /etc/ssh/sshd_config in place of it
                 - name: Check for the vendor SSH server configuration
                   ansible.builtin.stat:
@@ -17505,13 +17794,13 @@ queries:
                   ansible.builtin.lineinfile:
                     path: /etc/ssh/sshd_config
                     regexp: '^AllowGroups'
-                    line: "AllowGroups {{ ssh_allow_groups }}"
+                    line: "AllowGroups {{ ssh_allow_group }}"
                     create: yes
                     state: present
                     validate: /usr/sbin/sshd -t -f %s
                   register: allow_groups_changed
 
-                - name: Validate the SSH server configuration before restarting
+                - name: Validate the SSH server configuration before reloading
                   ansible.builtin.command: sshd -t
                   changed_when: false
                   when: allow_groups_changed.changed
@@ -17520,26 +17809,35 @@ queries:
                   ansible.builtin.service_facts:
                   when: allow_groups_changed.changed
 
-                - name: Restart the SSH service
+                - name: Reload the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
-                    state: restarted
+                    state: reloaded
                   when: allow_groups_changed.changed
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The recipe checks the configuration twice before it reloads the service:
 
-            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
-            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the reload only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the reload is due, and skips the reload if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
-            Use this Chef Infra recipe code to limit SSH access to a named group. Create the group and add your administrators to it before you apply this, or no one will be able to log in:
+            Use this Chef Infra recipe code to limit SSH access to a named group. The recipe creates the group and adds the account that runs Chef Infra Client through `sudo`, so that account keeps access. Add every other account that must keep SSH access to `allow_members` before you apply it:
 
             ```ruby
             sshd_config = '/etc/ssh/sshd_config'
             ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+            allow_group = 'sshusers'
+            allow_members = [ENV['SUDO_USER']].compact
+            raise 'Add the accounts that must keep SSH access to allow_members' if allow_members.empty?
+
+            group allow_group do
+              members allow_members
+              append true
+              action :create
+            end
 
             # openSUSE Leap 16 ships only /usr/etc/ssh/sshd_config. sshd reads /etc/ssh/sshd_config in
             # place of it once that exists, so create it as a copy of the vendor file.
@@ -17558,7 +17856,7 @@ queries:
               only_if '/usr/sbin/sshd -t'
             end
 
-            { 'AllowGroups' => 'sshusers' }.each do |keyword, value|
+            { 'AllowGroups' => allow_group }.each do |keyword, value|
               file "set #{keyword} in sshd_config" do
                 path sshd_config
                 content(lazy do
@@ -17572,7 +17870,7 @@ queries:
                 end)
                 verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
-                notifies :restart, "service[#{ssh_service}]", :delayed
+                notifies :reload, "service[#{ssh_service}]", :delayed
               end
             end
             ```
@@ -17629,7 +17927,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
+            **Warning: avoid locking yourself out.** Before you reload SSH, keep your current session open. Validate the configuration with `sshd -t`, reload the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
             To set the SSH warning banner, edit the `/etc/ssh/sshd_config` file and set the `Banner` parameter to `/etc/issue.net`. The path must be exactly `/etc/issue.net`, because any other file or `Banner none` fails the check.
 
@@ -17654,7 +17952,7 @@ queries:
             echo 'Banner /etc/issue.net' >> /etc/ssh/sshd_config.d/00-hardening.conf
             ```
 
-            Validate the configuration and restart the SSH service to apply the changes:
+            Validate the configuration and reload the SSH service to apply the changes:
 
             ```bash
             sshd -t
@@ -17663,7 +17961,7 @@ queries:
             Debian/Ubuntu distros:
 
             ```bash
-            systemctl restart ssh
+            systemctl reload ssh
             ```
 
             OR
@@ -17671,7 +17969,7 @@ queries:
             All other Linux distros:
 
             ```bash
-            systemctl restart sshd
+            systemctl reload sshd
             ```
         - id: bash
           desc: |
@@ -17708,24 +18006,26 @@ queries:
               echo "Banner /etc/issue.net" >> "$SSHD_CONFIG"
             fi
 
-            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            # Validate the new configuration before reloading. A syntax error here can lock you out of SSH.
             sshd -t
 
-            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            # Reload the SSH service so it reads the new configuration. A reload keeps open sessions, and systemd
+            # refuses a restart once several changes restart it within seconds, which would leave sshd stopped.
+            # The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
             if systemctl list-unit-files | grep -q '^ssh\.service'; then
-              systemctl restart ssh
+              systemctl reload-or-restart ssh
             else
-              systemctl restart sshd
+              systemctl reload-or-restart sshd
             fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The playbook checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The playbook checks the configuration twice before it reloads the service:
 
             1. The `validate` option runs `sshd -t` against a temporary copy of the edited file. Ansible writes the file only if that copy passes.
-            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service restarts only if that check passes.
+            2. A separate `sshd -t` task checks the complete configuration, including the files it loads through `Include`. The service reloads only if that check passes.
 
             To set the SSH warning banner using Ansible, use the following playbook:
 
@@ -17768,7 +18068,7 @@ queries:
                     validate: /usr/sbin/sshd -t -f %s
                   register: ssh_banner_change
 
-                - name: Validate the SSH server configuration before restarting
+                - name: Validate the SSH server configuration before reloading
                   ansible.builtin.command: sshd -t
                   changed_when: false
                   when: ssh_banner_change.changed
@@ -17777,20 +18077,20 @@ queries:
                   ansible.builtin.service_facts:
                   when: ssh_banner_change.changed
 
-                - name: Restart the SSH service
+                - name: Reload the SSH service
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
-                    state: restarted
+                    state: reloaded
                   when: ssh_banner_change.changed
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH service does not start again after the restart and new SSH logins fail. The recipe checks the configuration twice before it restarts the service:
+            **Warning: an invalid SSH server configuration locks out remote access.** If `sshd` cannot parse its configuration, the SSH server exits when it reloads and new SSH logins fail. The recipe checks the configuration twice before it reloads the service:
 
-            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the restart only if that copy passes.
-            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the restart is due, and skips the restart if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
+            1. The `verify` property runs `sshd -t` against a temporary copy of the edited file. Chef writes the file and queues the reload only if that copy passes.
+            2. The `only_if` guard on the service runs `sshd -t` against the complete configuration when the reload is due, and skips the reload if the check fails. The guard belongs on the service itself, because Chef still runs queued delayed notifications when a later resource fails the run.
 
             Use this Chef Infra recipe code to present a warning banner before authentication:
 
@@ -17839,7 +18139,7 @@ queries:
                 end)
                 verify '/usr/sbin/sshd -t -f %{path}'
                 not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
-                notifies :restart, "service[#{ssh_service}]", :delayed
+                notifies :reload, "service[#{ssh_service}]", :delayed
               end
             end
             ```
@@ -20370,9 +20670,11 @@ queries:
       // `su` should be limited to a trusted group by pam_wheel, which keys on the
       // caller's real uid. Selecting the service by name returns an empty list when
       // `/etc/pam.d/su` is absent, so a host missing the file fails this check
-      // rather than feeding a null into the group comparison.
+      // rather than feeding a null into the group comparison. `containsAll` reports
+      // a repeated element as missing, so two lines naming the same group are
+      // deduplicated before the comparison.
       suRestrictedPam = pam.conf.service(name: "su").entries.where(pamType == "auth" && module == "pam_wheel.so" && params["use_uid"] != null)
-      suRestrictedGroups = suRestrictedPam.where(params["group"] != null).map(params["group"])
+      suRestrictedGroups = suRestrictedPam.where(params["group"] != null).map(params["group"]).unique()
 
       suRestrictedPam != empty
       groups.map(name).containsAll(suRestrictedGroups)
@@ -20484,8 +20786,16 @@ queries:
             To lock down use of the `su` command entirely instead, create an empty group and reference it in the PAM configuration in place of the line above:
 
             ```bash
-            groupadd sugroup
-            echo "auth required pam_wheel.so use_uid group=sugroup" >> /etc/pam.d/su
+            #!/bin/bash
+            set -e
+
+            if [ ! -f /etc/pam.d/su ] && [ -f /usr/lib/pam.d/su ]; then
+              cp /usr/lib/pam.d/su /etc/pam.d/su
+            fi
+            getent group sugroup >/dev/null || groupadd sugroup
+            if ! grep -qE '^\s*auth\s+required\s+pam_wheel\.so\s+use_uid\s+group=sugroup\s*$' /etc/pam.d/su; then
+              echo "auth required pam_wheel.so use_uid group=sugroup" >> /etc/pam.d/su
+            fi
             ```
         - id: ansible
           desc: |
