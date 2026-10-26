@@ -4,9 +4,11 @@
 package scan
 
 import (
+	"errors"
+	"maps"
+	"slices"
 	"sync"
 
-	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/llx"
@@ -157,10 +159,5 @@ func (r *AggregateReporter) AccumulatedBytes() (reports, resolvedPolicies, vulnR
 func (r *AggregateReporter) Error() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	var err error
-
-	for _, curError := range r.assetErrors {
-		err = multierror.Append(err, curError)
-	}
-	return err
+	return errors.Join(slices.Collect(maps.Values(r.assetErrors))...)
 }

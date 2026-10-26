@@ -10,7 +10,6 @@ import (
 	"maps"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/llx"
@@ -782,7 +781,7 @@ func (db *Db) UpdateData(ctx context.Context, assetMrn string, data map[string]*
 	}
 
 	res := make(map[string]types.Type, len(data))
-	var errList error
+	var errs []error
 	for dpChecksum, val := range data {
 		info, ok := collectorJob.Datapoints[dpChecksum]
 		if !ok {
@@ -799,7 +798,7 @@ func (db *Db) UpdateData(ctx context.Context, assetMrn string, data map[string]*
 				Str("received", types.Type(val.Data.Type).Label()).
 				Msg("resolver.db> failed to store data, types don't match")
 
-			errList = multierror.Append(errList, fmt.Errorf("failed to store data for %q, %w: expected %s, got %s",
+			errs = append(errs, fmt.Errorf("failed to store data for %q, %w: expected %s, got %s",
 				dpChecksum, errTypesDontMatch, types.Type(info.Type).Label(), types.Type(val.Data.Type).Label()))
 
 			continue
@@ -807,7 +806,7 @@ func (db *Db) UpdateData(ctx context.Context, assetMrn string, data map[string]*
 
 		err := db.setDatum(ctx, assetMrn, dpChecksum, val)
 		if err != nil {
-			errList = multierror.Append(errList, err)
+			errs = append(errs, err)
 			continue
 		}
 
@@ -816,8 +815,8 @@ func (db *Db) UpdateData(ctx context.Context, assetMrn string, data map[string]*
 		res[dpChecksum] = types.Type(info.Type)
 	}
 
-	if errList != nil {
-		return nil, errList
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
 	}
 
 	return res, nil

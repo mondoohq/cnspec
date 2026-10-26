@@ -12,7 +12,6 @@ import (
 	"slices"
 
 	"github.com/cockroachdb/errors"
-	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/internal/reportfile"
 	"go.mondoo.com/cnspec/policy"
@@ -199,10 +198,9 @@ func (c *classFiles) removeStale() {
 // Close finalizes every file it opened. Every one is closed even if an earlier
 // one fails, so a single bad file does not leave the rest without their footers.
 func (c *classFiles) Close() error {
-	var errs *multierror.Error
+	var errs []error
 	for _, class := range slices.Sorted(maps.Keys(c.writers)) {
-		errs = multierror.Append(errs, c.writers[class].Close())
-		errs = multierror.Append(errs, c.files[class].Close())
+		errs = append(errs, c.writers[class].Close(), c.files[class].Close())
 	}
-	return errs.ErrorOrNil()
+	return errors.Join(errs...)
 }
