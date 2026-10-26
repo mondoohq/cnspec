@@ -364,11 +364,12 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to disable `savecore`. The FreeBSD service provider derives the `savecore_enable` rc variable from the rc script and clears it in `/etc/rc.conf`:
+            Use this Chef Infra recipe code to disable `savecore`. FreeBSD enables it in `/etc/defaults/rc.conf` rather than `/etc/rc.conf`. The Chef `service` resource reads only `/etc/rc.conf`, finds no `savecore_enable` line there, and reports the service as already disabled, so the recipe sets the variable with `sysrc` instead:
 
             ```ruby
-            service 'savecore' do
-              action :disable
+            execute 'disable savecore' do
+              command 'sysrc savecore_enable=NO'
+              not_if 'test "$(sysrc -n savecore_enable)" = NO'
             end
             ```
   - uid: mondoo-freebsd-security-core-dump-storage-is-disabled
@@ -6170,6 +6171,16 @@ queries:
             set -e
 
             echo "Checking for non-root UID 0 accounts..."
+
+            # FreeBSD ships a toor account with UID 0 and a locked password.
+            # Remove it only in that stock state. A toor account that has been
+            # given a password may be someone's recovery login, so leave it to
+            # the check below.
+            if awk -F: '$1 == "toor" && $2 == "*" && $3 == 0 { found = 1 } END { exit !found }' /etc/master.passwd; then
+              pw userdel toor
+              echo "Removed the stock toor account."
+            fi
+
             EXTRA_UID0=$(awk -F: '$3 == 0 && $1 != "root" { print $1 }' /etc/passwd)
 
             if [ -n "$EXTRA_UID0" ]; then
@@ -6179,22 +6190,39 @@ queries:
               exit 1
             fi
 
-            echo "Only root has UID 0. No action needed."
+            echo "Only root has UID 0."
             ```
         - id: ansible
           desc: |
-            To detect non-root UID 0 accounts using Ansible:
+            To remove the stock `toor` account and detect any other non-root UID 0 account using Ansible:
 
             1. Add the following tasks to a playbook targeting the FreeBSD host.
-            2. Run the playbook, then manually remove or re-number any reported account.
+            2. Run the playbook, then manually remove or re-number any account it reports.
+
+            The playbook removes `toor` only while it still has UID 0 and the locked password FreeBSD ships it with. A `toor` account that has been given a password is reported instead, because it may be someone's recovery login.
 
             ```yaml
             ---
-            - name: Find non-root accounts with UID 0
+            - name: Remove non-root accounts with UID 0
               hosts: all
               become: true
 
               tasks:
+                - name: Read the toor account
+                  ansible.builtin.getent:
+                    database: passwd
+                    key: toor
+                    fail_key: false
+
+                - name: Remove the stock toor account
+                  ansible.builtin.user:
+                    name: toor
+                    state: absent
+                  when:
+                    - getent_passwd.toor is not none
+                    - getent_passwd.toor[0] == '*'
+                    - getent_passwd.toor[1] == '0'
+
                 - name: Find non-root accounts with UID 0
                   ansible.builtin.shell: "awk -F: '$3 == 0 && $1 != \"root\" { print $1 }' /etc/passwd"
                   register: uid0_accounts
@@ -6205,7 +6233,18 @@ queries:
                     msg: "Non-root UID 0 accounts found: {{ uid0_accounts.stdout }}"
                   when: uid0_accounts.stdout | length > 0
             ```
-        # No Chef Infra remediation: resolving this means deciding which account or sudoers entry to change, which is a human decision rather than a converge step.
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to remove the `toor` account FreeBSD ships with UID 0. The guard removes it only while it still has UID 0 and its locked password, because a `toor` account that has been given a password may be someone's recovery login. Any other non-root UID 0 account needs a decision about who uses it, so remove it or give it a unique UID by hand with `pw userdel` or `pw usermod -u`:
+
+            ```ruby
+            user 'toor' do
+              action :remove
+              only_if { ::File.foreach('/etc/master.passwd').any? { |line| line.start_with?('toor:*:0:') } }
+            end
+            ```
   - uid: mondoo-freebsd-security-no-duplicate-uids-exist
     title: Ensure no duplicate UIDs exist
     impact: 80
@@ -7012,13 +7051,15 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-3-1
       compliance/vda-isa-5: vda-isa-5-4-2-1
     mql: |
-      package("sudo").installed
+      package("sudo").installed || file("/usr/local/bin/sudo").exists
     docs:
       refs:
         - url: https://docs.freebsd.org/en/books/handbook/security/
           title: FreeBSD Handbook - Security
       desc: |
         This check verifies that the `sudo` package is installed.
+
+        The check passes when pkg lists the `sudo` package or when the `sudo` binary exists at `/usr/local/bin/sudo`. Some FreeBSD images ship `sudo` and other packages in the package database but leave `pkg` itself unbootstrapped, and on those hosts `pkg` cannot list any package until it is bootstrapped.
 
         **Why this matters**
 
@@ -7031,6 +7072,14 @@ queries:
         ```
 
         If `pkg info` reports the package as installed, the check passes. If the package is not found, the check fails.
+
+        If `pkg info` instead asks to bootstrap the package management tool, `pkg` is not installed yet. Check for the binary instead:
+
+        ```bash
+        ls -l /usr/local/bin/sudo
+        ```
+
+        If the file exists, the check passes.
       remediation:
         - id: cli
           desc: |
@@ -7055,9 +7104,9 @@ queries:
             else
               # Refresh the package catalog first; on a fresh host it may be
               # stale or absent, which would make `pkg install` fail or install
-              # an outdated version. On a minimal install where pkg itself is
-              # not yet present, run `pkg bootstrap` before this step.
-              pkg update
+              # an outdated version. ASSUME_ALWAYS_YES lets the pkg bootstrapper
+              # install pkg itself without a prompt on a host that lacks it.
+              ASSUME_ALWAYS_YES=yes pkg update
               pkg install -y sudo
               echo "sudo installed."
             fi
@@ -7085,11 +7134,17 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to install sudo. On FreeBSD the `package` resource resolves to `freebsd_package`, which uses pkg:
+            Use this Chef Infra recipe code to install sudo. On FreeBSD the `package` resource resolves to `freebsd_package`, which asks the remote pkg catalogue for the candidate version even when the package is already installed, and fails when that catalogue has not been fetched. Some FreeBSD images also ship without `pkg` itself bootstrapped. The recipe therefore runs `pkg update` first, with `ASSUME_ALWAYS_YES` so the bootstrapper installs `pkg` without a prompt, and skips both steps when `sudo` is already present:
 
             ```ruby
+            execute 'pkg update' do
+              environment('ASSUME_ALWAYS_YES' => 'yes')
+              not_if { ::File.exist?('/usr/local/bin/sudo') }
+            end
+
             package 'sudo' do
               action :install
+              not_if { ::File.exist?('/usr/local/bin/sudo') }
             end
             ```
   - uid: mondoo-freebsd-security-sudo-commands-use-pty
@@ -7111,7 +7166,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-3-1
       compliance/vda-isa-5: vda-isa-5-4-2-1
     filters: |
-      package("sudo").installed
+      package("sudo").installed || file("/usr/local/bin/sudo").exists
     mql: |
       sudoers.defaults.any(parameter == "use_pty" && negated == false)
     docs:
@@ -7202,14 +7257,17 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to require a pseudo terminal for sudo. The `sudo` resource knows FreeBSD keeps its sudoers configuration under `/usr/local/etc`, and validates the generated file with `visudo` before installing it.
+            Use this Chef Infra recipe code to require a pseudo terminal for sudo. The recipe writes a drop-in file under `/usr/local/etc/sudoers.d`, which the sudoers file shipped by the FreeBSD sudo package includes. The `verify` property runs `visudo -c` against the new file, and Chef installs it only if that check passes.
 
-            Set `visudo_binary` to `/usr/local/sbin/visudo`, where the sudo package installs it. The resource looks for `/usr/sbin/visudo` by default, and when that file is missing it logs a warning and installs the file without validating it:
+            The `sudo` resource cannot write this file. It refuses to create a sudoers file that sets only `Defaults` and no user or group rule:
 
             ```ruby
-            sudo '99-use-pty' do
-              defaults ['use_pty']
-              visudo_binary '/usr/local/sbin/visudo'
+            file '/usr/local/etc/sudoers.d/99-use-pty' do
+              content "Defaults use_pty\n"
+              owner 'root'
+              group 'wheel'
+              mode '0440'
+              verify '/usr/local/sbin/visudo -cf %{path}'
             end
             ```
   - uid: mondoo-freebsd-security-sudo-nopasswd-is-not-configured
@@ -7231,7 +7289,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-3-1
       compliance/vda-isa-5: vda-isa-5-4-2-1
     filters: |
-      package("sudo").installed
+      package("sudo").installed || file("/usr/local/bin/sudo").exists
     mql: |
       sudoers.userSpecs.none( tags.any( _.downcase == "nopasswd" ) )
     docs:
