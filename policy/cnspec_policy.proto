@@ -1333,6 +1333,11 @@ service PolicyResolver {
   // GetScanParameters returns server-controlled parameters for scans in the
   // given scope (space or org MRN), such as client-side mql features to enable.
   rpc GetScanParameters(GetScanParametersReq) returns (ScanParameters) {}
+
+  // ClaimAssets asks which discovered assets the server can materialize from
+  // claim records (ADR-305, server-side design). A missing verdict means SCAN;
+  // every error must be treated as all-scan.
+  rpc ClaimAssets(ClaimAssetsReq) returns (ClaimAssetsResp) {}
 }
 
 message PolicyAssignment {
@@ -1681,6 +1686,35 @@ message SynchronizeAssetsResp {
   map<string, SynchronizeAssetsRespAssetDetail> details = 1;
 }
 
+message ClaimAssetsReq {
+  // The space the scan reports into; claims are matched within it.
+  string space_mrn = 1;
+  // The discovered assets to ask about. Each entry is a minimal projection of
+  // the pre-connect asset (id, name, platform ids, claims, labels, annotations,
+  // managed_by, trace_id, category): it never carries connections or
+  // credentials. Verdict indices refer to positions in this list.
+  repeated cnquery.providers.v1.Asset list = 2;
+}
+
+message ClaimAssetVerdict {
+  // Position of the asset in ClaimAssetsReq.list.
+  int32 index = 1;
+  Action action = 2;
+
+  enum Action {
+    // Default and fail-open: scan the asset as usual.
+    SCAN = 0;
+    // The server has materialized the asset from claim records. The client
+    // never connects it, so anything it would have discovered is not
+    // discovered: servers must only claim leaf assets.
+    CLAIMED = 1;
+  }
+}
+
+message ClaimAssetsResp {
+  repeated ClaimAssetVerdict verdicts = 1;
+}
+
 message GetScanParametersReq {
   string scope_mrn = 1;  // space or org MRN
 }
@@ -1694,6 +1728,10 @@ message ScanParameters {
   // pointed at it without any client-side change. Zero (or unset) means the
   // server sets no limit and the client decides on its own.
   int32 max_parallelism = 2;
+
+  // Server-driven gate for the client claim lane; zero value keeps the lane
+  // off.
+  bool claim_assets_enabled = 3;
 }
 
 message PurgeAssetsRequest {

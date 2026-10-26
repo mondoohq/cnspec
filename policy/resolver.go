@@ -350,6 +350,11 @@ func (s *LocalServices) GetScanParameters(context.Context, *GetScanParametersReq
 	return &ScanParameters{}, nil
 }
 
+// ClaimAssets is all-scan for local services: local and incognito scans never claim
+func (s *LocalServices) ClaimAssets(context.Context, *ClaimAssetsReq) (*ClaimAssetsResp, error) {
+	return &ClaimAssetsResp{}, nil
+}
+
 // HELPER METHODS
 // =================
 
