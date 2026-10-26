@@ -34,8 +34,9 @@ _DOCTL_SECTION_HEADER = re.compile(r"^[A-Z][^:\n]*:\s*$")
 # lowercase identifier, then whitespace before the description. Cobra pads
 # names to the longest one plus a single space, so the longest subcommand in
 # a group has exactly one space before its description. A command with no
-# short description leaves only the padding.
-_DOCTL_SUBCOMMAND_LINE = re.compile(r"^  ([a-z][a-z0-9-]*)(?:\s+\S|\s*$)")
+# short description leaves only the padding, so the name need only end at
+# whitespace or the end of the line.
+_DOCTL_SUBCOMMAND_LINE = re.compile(r"^  ([a-z][a-z0-9-]*)(?:\s|$)")
 
 # Flag line: "      --flag-name <type>   <description>" or
 # "  -X, --flag-name <type>   <description>". We only capture the long form.
