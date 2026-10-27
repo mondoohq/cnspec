@@ -240,3 +240,25 @@ func TestAggregateReporterSnapshotsAssets(t *testing.T) {
 	assert.Equal(t, "//assets/parent", got.Relationships[0].Asset.Mrn)
 	assert.Nil(t, got.Relationships[0].Asset.Connections)
 }
+
+func BenchmarkSnapshotAsset(b *testing.B) {
+	asset := &inventory.Asset{
+		Id:          "asset-1",
+		Mrn:         "//assets/1",
+		Name:        "node-1",
+		PlatformIds: []string{"//platformid.api.mondoo.app/runtime/k8s/uid/1"},
+		Platform:    &inventory.Platform{Name: "k8s-node", Title: "Kubernetes Node", Family: []string{"k8s"}},
+		Labels:      map[string]string{"env": "prod", "team": "platform"},
+		Annotations: map[string]string{"owner": "scan"},
+		Connections: []*inventory.Config{{Type: "k8s", Options: map[string]string{"path": strings.Repeat("p", 2048)}}},
+		Relationships: []*inventory.AssetRelationship{{
+			Asset:        &inventory.Asset{Mrn: "//assets/cluster", Name: "cluster", Connections: []*inventory.Config{{Type: "k8s"}}},
+			ResourceType: "k8s.node",
+			ResourceId:   "node-1",
+		}},
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = snapshotAsset(asset)
+	}
+}
