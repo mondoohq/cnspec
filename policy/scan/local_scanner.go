@@ -696,17 +696,18 @@ type scanContext struct {
 	services  *policy.Services
 	spaceMrn  string
 
-	// claimedSubtrees is the set of roots registerRootTasks has already run
-	// the claim lane over, so scanSubtree's own pre-pass on the same root is
-	// free. Only roots are ever visited twice, so only roots are inserted;
+	// registeredRoots is the set of roots registerRootTasks has already run
+	// the claim lane over and reported as discovered, so scanSubtree's own
+	// pre-pass and Discovered call on the same root are skipped. Only roots
+	// are ever visited twice, so only roots are inserted;
 	// branch nodes are not retained for the whole run. It is read and written
 	// without a lock: distributeJob iterates roots sequentially and
 	// scanSubtree recurses sequentially, so access is strictly sequential.
-	claimedSubtrees map[*discovery.TrackedAsset]struct{}
+	registeredRoots map[*discovery.TrackedAsset]struct{}
 
 	// claimedCount is how many children the claim lane skipped this run. A
 	// run that scanned nothing but claimed something is a success. Sequential
-	// access, like claimedSubtrees.
+	// access, like registeredRoots.
 	claimedCount int
 }
 
@@ -714,16 +715,21 @@ type scanContext struct {
 // progress bar so the TODO list knows how much work is pending and doesn't
 // close prematurely.
 //
-// The claim lane runs over the root's children first, so a claimed child is
-// never registered as a pending task: it would sit in the TODO list until
-// Close. scanSubtree calls the pre-pass again for the same root; the visited
-// set makes that second call free.
+// The root's children are reported as discovered first, then the claim lane
+// runs over them, so a claimed child is counted as filtered only after it was
+// counted as discovered, and is never registered as a pending task: it would
+// sit in the TODO list until Close. scanSubtree calls the pre-pass again for
+// the same root; the visited set makes that second call free and keeps the
+// children from being reported as discovered twice.
 func (sc *scanContext) registerRootTasks(ctx context.Context, root *discovery.TrackedAsset) {
-	sc.claimSubtreeChildren(ctx, root)
-	if sc.claimedSubtrees == nil {
-		sc.claimedSubtrees = map[*discovery.TrackedAsset]struct{}{}
+	if len(root.Children) > 0 {
+		sc.multiprogress.Discovered(len(root.Children))
 	}
-	sc.claimedSubtrees[root] = struct{}{}
+	sc.claimSubtreeChildren(ctx, root)
+	if sc.registeredRoots == nil {
+		sc.registeredRoots = map[*discovery.TrackedAsset]struct{}{}
+	}
+	sc.registeredRoots[root] = struct{}{}
 
 	if len(root.Asset.PlatformIds) > 0 {
 		sc.multiprogress.AddTask(root.Asset.PlatformIds[0], root.Asset)
@@ -772,7 +778,7 @@ func (sc *scanContext) claimSubtreeChildren(ctx context.Context, node *discovery
 	if !sc.claimLane.active() {
 		return
 	}
-	if _, done := sc.claimedSubtrees[node]; done {
+	if _, done := sc.registeredRoots[node]; done {
 		return
 	}
 
@@ -839,7 +845,8 @@ func isReportableChildConnectError(err error) bool {
 // dispatched for scanning without waiting for child scans to finish first.
 // This lets the node scan run concurrently with any still-running children.
 func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedAsset) error {
-	if len(node.Children) > 0 {
+	// A registered root's children were reported by registerRootTasks.
+	if _, registered := sc.registeredRoots[node]; !registered && len(node.Children) > 0 {
 		sc.multiprogress.Discovered(len(node.Children))
 	}
 

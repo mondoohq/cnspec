@@ -204,16 +204,27 @@ func TestClaimLaneStateDisablesOnce(t *testing.T) {
 	assert.False(t, off.active(), "never enabled")
 }
 
-// filteredCounter is a MultiProgress that records Filtered and AddTask calls.
+// filteredCounter is a MultiProgress that records Discovered, Filtered and
+// AddTask calls, and the order of the Discovered and Filtered ones.
 type filteredCounter struct {
 	progress.NoopMultiProgress
-	filtered int
-	added    []string
+	discovered int
+	filtered   int
+	added      []string
+	counts     []string
 }
 
 func (f *filteredCounter) AddTask(index string, _ *inventory.Asset) { f.added = append(f.added, index) }
 
-func (f *filteredCounter) Filtered(n int) { f.filtered += n }
+func (f *filteredCounter) Discovered(n int) {
+	f.discovered += n
+	f.counts = append(f.counts, fmt.Sprintf("discovered %d", n))
+}
+
+func (f *filteredCounter) Filtered(n int) {
+	f.filtered += n
+	f.counts = append(f.counts, fmt.Sprintf("filtered %d", n))
+}
 
 func TestClaimAssetsEnabledGetterAndLaneState(t *testing.T) {
 	var nilParams *policy.ScanParameters
@@ -383,8 +394,8 @@ func TestClaimPrePassIsIdempotentForRoots(t *testing.T) {
 	branch := &discovery.TrackedAsset{Asset: &inventory.Asset{}, Children: []*discovery.TrackedAsset{claimChild("c")}}
 	sc.claimSubtreeChildren(context.Background(), branch)
 	assert.Len(t, r.reqs, 2)
-	assert.Len(t, sc.claimedSubtrees, 1, "only the root is in the visited set")
-	assert.Contains(t, sc.claimedSubtrees, root)
+	assert.Len(t, sc.registeredRoots, 1, "only the root is in the visited set")
+	assert.Contains(t, sc.registeredRoots, root)
 }
 
 // A claimed root child must not be registered as a pending progress task:
@@ -563,6 +574,37 @@ func TestScanSubtreeAllClaimed(t *testing.T) {
 	assert.Empty(t, connSem, "no connection slot was taken")
 	assert.Nil(t, root.Children, "subtree cleanup still runs")
 	assert.NoError(t, sc.errNothingScanned(), "an all-claimed run is a success")
+}
+
+// A root goes through registerRootTasks before scanSubtree. Its children must
+// be reported as discovered once, and before any of them is reported filtered,
+// so the progress footer never shows more filtered than discovered.
+func TestRegisteredRootReportsDiscoveredBeforeFiltered(t *testing.T) {
+	r := &claimResolver{claimed: func(_, i int) bool { return i != 1 }}
+	mp := &filteredCounter{}
+	dispatcher := &scanDispatcher{}
+	sc := &scanContext{
+		explorer:      &discovery.AssetExplorer{},
+		reporter:      NewAggregateReporter(),
+		multiprogress: mp,
+		connSem:       make(chan struct{}, 2),
+		batcher:       newSyncBatcher(dispatcher, nil, "", nil, mp, 0),
+		dispatcher:    dispatcher,
+		claimLane:     newClaimLaneState(&policy.ScanParameters{ClaimAssetsEnabled: true}, claimServices(r), ""),
+		services:      claimServices(r),
+		spaceMrn:      "//space",
+	}
+	root := &discovery.TrackedAsset{Asset: &inventory.Asset{Name: "registry"}}
+	root.Children = []*discovery.TrackedAsset{claimChild("a"), claimChild("b"), claimChild("c")}
+
+	sc.registerRootTasks(context.Background(), root)
+	// Stand in for the one unclaimed child so scanSubtree has nothing to connect.
+	root.Children[1].Asset = nil
+	require.NoError(t, sc.scanSubtree(context.Background(), root))
+
+	assert.Equal(t, 3, mp.discovered, "a registered root's children are reported once")
+	require.NotEmpty(t, mp.counts)
+	assert.Equal(t, "discovered 3", mp.counts[0], "discovered before any filtered: %v", mp.counts)
 }
 
 func TestErrNothingScanned(t *testing.T) {
