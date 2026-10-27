@@ -171,7 +171,7 @@ func TestKyvernoMappedKubernetesChecks(t *testing.T) {
 
 	ingressClass := bestPracticesQueries["mondoo-kubernetes-best-practices-ingress-approved-class-annotation"]
 	assert.Contains(t, ingressClass, `k8s.ingress.annotations["kubernetes.io/ingress.class"]`)
-	assert.Contains(t, ingressClass, `if (k8s.ingress.ingressClassName != "")`)
+	assert.Contains(t, ingressClass, `if (k8s.ingress.ingressClassName != empty && k8s.ingress.ingressClassName != "")`)
 	assert.Contains(t, ingressClass, `k8s.ingress.ingressClassName.in(["HAProxy", "nginx"])`)
 	assert.Contains(t, ingressClass, `defaultIngressClasses = k8s.ingressClasses.where(annotations["ingressclass.kubernetes.io/is-default-class"] == "true")`)
 	assert.Contains(t, ingressClass, `defaultIngressClasses.length == 1`)
