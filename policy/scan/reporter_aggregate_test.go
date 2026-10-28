@@ -213,3 +213,52 @@ func TestPullsFromRegistry(t *testing.T) {
 	assert.False(t, pullsFromRegistry(&inventory.Asset{Connections: []*inventory.Config{{Type: "aws"}}}))
 	assert.False(t, pullsFromRegistry(&inventory.Asset{}))
 }
+
+func TestAggregateReporterSnapshotsAssets(t *testing.T) {
+	r := NewAggregateReporter()
+	asset := &inventory.Asset{
+		Mrn:         "//assets/1",
+		Name:        "target",
+		Labels:      map[string]string{"env": "prod"},
+		Connections: []*inventory.Config{{Type: "ssh", Options: map[string]string{"key": strings.Repeat("k", 2048)}}},
+		Relationships: []*inventory.AssetRelationship{{
+			Asset:        &inventory.Asset{Mrn: "//assets/parent", Name: "parent", Connections: []*inventory.Config{{Type: "ssh"}}},
+			ResourceType: "k8s.pod",
+			ResourceId:   "pod-1",
+		}},
+	}
+	r.AddReport(asset, &AssetReport{ResolvedPolicy: &policy.ResolvedPolicy{}, Report: &policy.Report{Score: &policy.Score{Value: 100}}})
+	asset.Name = "mutated"
+	asset.Labels["env"] = "dev"
+	got := r.Reports().GetFull().Assets[asset.Mrn]
+	require.NotNil(t, got)
+	assert.Equal(t, "target", got.Name)
+	assert.Equal(t, "prod", got.Labels["env"])
+	assert.Nil(t, got.Connections)
+	require.Len(t, got.Relationships, 1)
+	assert.Equal(t, "pod-1", got.Relationships[0].ResourceId)
+	assert.Equal(t, "//assets/parent", got.Relationships[0].Asset.Mrn)
+	assert.Nil(t, got.Relationships[0].Asset.Connections)
+}
+
+func BenchmarkSnapshotAsset(b *testing.B) {
+	asset := &inventory.Asset{
+		Id:          "asset-1",
+		Mrn:         "//assets/1",
+		Name:        "node-1",
+		PlatformIds: []string{"//platformid.api.mondoo.app/runtime/k8s/uid/1"},
+		Platform:    &inventory.Platform{Name: "k8s-node", Title: "Kubernetes Node", Family: []string{"k8s"}},
+		Labels:      map[string]string{"env": "prod", "team": "platform"},
+		Annotations: map[string]string{"owner": "scan"},
+		Connections: []*inventory.Config{{Type: "k8s", Options: map[string]string{"path": strings.Repeat("p", 2048)}}},
+		Relationships: []*inventory.AssetRelationship{{
+			Asset:        &inventory.Asset{Mrn: "//assets/cluster", Name: "cluster", Connections: []*inventory.Config{{Type: "k8s"}}},
+			ResourceType: "k8s.node",
+			ResourceId:   "node-1",
+		}},
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = snapshotAsset(asset)
+	}
+}
