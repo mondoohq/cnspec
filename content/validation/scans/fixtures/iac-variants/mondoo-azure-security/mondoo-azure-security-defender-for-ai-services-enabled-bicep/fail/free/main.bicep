@@ -1,0 +1,8 @@
+targetScope = 'subscription'
+
+resource pricing 'Microsoft.Security/pricings@2023-01-01' = {
+  name: 'AI'
+  properties: {
+    pricingTier: 'Free'
+  }
+}
