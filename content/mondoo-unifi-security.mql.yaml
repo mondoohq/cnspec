@@ -374,7 +374,7 @@ queries:
         # No cli remediation: wireless network security is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
         - id: terraform
           desc: |
-            To enable WPA3 support on a wireless network in Terraform, set `wpa3_support = true` (and optionally `wpa3_transition = true` for backward-compatible mode) on every secured `unifi_wlan` resource:
+            To enable WPA3 support on a wireless network in Terraform, set `support = true` inside the `wpa3` attribute on every secured `unifi_wlan` resource, and optionally `transition = true` for backward-compatible mode. The provider accepts WPA3 only when `security` is `wpapsk` and Protected Management Frames are on, so set `pmf_mode` in the same resource:
 
             ```hcl
             # The provider exposes UniFi user groups as client QOS rates; this
@@ -384,13 +384,17 @@ queries:
             }
 
             resource "unifi_wlan" "modern" {
-              name            = "internal"
-              security        = "wpapsk"
-              passphrase      = var.wifi_passphrase
-              wpa3_support    = true
-              wpa3_transition = true
-              network_id      = unifi_network.lan.id
-              user_group_id   = data.unifi_client_qos_rate.default.id
+              name          = "internal"
+              security      = "wpapsk"
+              passphrase    = var.wifi_passphrase
+              pmf_mode      = "optional"
+              network_id    = unifi_network.lan.id
+              user_group_id = data.unifi_client_qos_rate.default.id
+
+              wpa3 = {
+                support    = true
+                transition = true
+              }
             }
             ```
     refs:
@@ -404,15 +408,15 @@ queries:
   - uid: mondoo-unifi-security-wlans-wpa3-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_wlan")
     mql: |
-      terraform.resources("unifi_wlan").where(arguments["security"] != "open").all(arguments["wpa3_support"] == true || arguments["wpa3_transition"] == true)
+      terraform.resources("unifi_wlan").where(arguments["security"] != "open").all(arguments["wpa3"]["support"] == true || arguments["wpa3"]["transition"] == true)
   - uid: mondoo-unifi-security-wlans-wpa3-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_wlan")
     mql: |
-      terraform.plan.resourceChanges.where(type == "unifi_wlan" && change.after.security != "open").all(change.after.wpa3_support == true || change.after.wpa3_transition == true)
+      terraform.plan.resourceChanges.where(type == "unifi_wlan" && change.after.security != "open").all(change.after.wpa3.support == true || change.after.wpa3.transition == true)
   - uid: mondoo-unifi-security-wlans-wpa3-enabled-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "unifi_wlan")
     mql: |
-      terraform.state.resources.where(type == "unifi_wlan" && values.security != "open").all(values.wpa3_support == true || values.wpa3_transition == true)
+      terraform.state.resources.where(type == "unifi_wlan" && values.security != "open").all(values.wpa3.support == true || values.wpa3.transition == true)
 
   - uid: mondoo-unifi-security-wlans-pmf-enabled
     title: Ensure Protected Management Frames are enabled
@@ -526,8 +530,7 @@ queries:
       terraform.state.resources.where(type == "unifi_wlan" && values.security != "open").all(values.pmf_mode.in(["required", "optional"]))
 
   # No Terraform variants yet: the ubiquiti-community/unifi unifi_wlan resource does carry
-  # the cipher selector as the `wpa_enc` attribute (`auto`, `ccmp`, `gcmp`, `ccmp-256`,
-  # `gcmp-256`), so a Terraform remediation entry is provided below. The HCL, plan, and
+  # the cipher selector as `wpa.enc` (`auto`, `ccmp`, `gcmp`, `ccmp-256`, `gcmp-256`), so a Terraform remediation entry is provided below. The HCL, plan, and
   # state variants have not been written.
   - uid: mondoo-unifi-security-wlans-strong-encryption-cipher
     filters: asset.platform == "unifi"
@@ -585,7 +588,7 @@ queries:
         # No cli remediation: wireless network security is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
         - id: terraform
           desc: |
-            To pin the encryption cipher in Terraform, set `wpa_enc` to `ccmp` or `gcmp-256` on every secured `unifi_wlan` resource. Leaving the attribute unset selects `auto`, which lets the controller keep a weaker cipher negotiable:
+            To pin the encryption cipher in Terraform, set `enc` to `ccmp` or `gcmp-256` inside the `wpa` attribute on every secured `unifi_wlan` resource. Leaving it unset keeps whatever cipher the controller already has, which may be `auto` and leave a weaker cipher negotiable:
 
             ```hcl
             # The provider exposes UniFi user groups as client QOS rates; this
@@ -598,9 +601,12 @@ queries:
               name          = "internal"
               security      = "wpapsk"
               passphrase    = var.wifi_passphrase
-              wpa_enc       = "ccmp"
               network_id    = unifi_network.lan.id
               user_group_id = data.unifi_client_qos_rate.default.id
+
+              wpa = {
+                enc = "ccmp"
+              }
             }
             ```
     refs:
@@ -1207,14 +1213,16 @@ queries:
         # No cli remediation: gateway security is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
         - id: terraform
           desc: |
-            To disable UPnP on the gateway in Terraform, set `upnp_enabled = false` inside the `usg` nested attribute on a `unifi_setting` resource:
+            To disable UPnP on the gateway in Terraform, set `enabled = false` inside `usg.upnp` on a `unifi_setting` resource:
 
             ```hcl
             resource "unifi_setting" "gateway" {
               site = "default"
 
               usg = {
-                upnp_enabled = false
+                upnp = {
+                  enabled = false
+                }
               }
             }
             ```
@@ -1229,15 +1237,15 @@ queries:
   - uid: mondoo-unifi-security-upnp-disabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_setting")
     mql: |
-      terraform.resources("unifi_setting").where(arguments["usg"] != empty).all(arguments["usg"]["upnp_enabled"] == false)
+      terraform.resources("unifi_setting").where(arguments["usg"] != empty).all(arguments["usg"]["upnp"]["enabled"] == false)
   - uid: mondoo-unifi-security-upnp-disabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_setting")
     mql: |
-      terraform.plan.resourceChanges.where(type == "unifi_setting" && change.after.usg != empty).all(change.after.usg.upnp_enabled == false)
+      terraform.plan.resourceChanges.where(type == "unifi_setting" && change.after.usg != empty).all(change.after.usg.upnp.enabled == false)
   - uid: mondoo-unifi-security-upnp-disabled-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "unifi_setting")
     mql: |
-      terraform.state.resources.where(type == "unifi_setting" && values.usg != empty).all(values.usg.upnp_enabled == false)
+      terraform.state.resources.where(type == "unifi_setting" && values.usg != empty).all(values.usg.upnp.enabled == false)
 
   - uid: mondoo-unifi-security-broadcast-ping-disabled
     title: Ensure broadcast ping response is disabled
@@ -1674,13 +1682,15 @@ queries:
         # No cli remediation: global switch settings are controller-managed; the device SSH CLI cannot change them and the controller overwrites local changes on provision.
         - id: terraform
           desc: |
-            To set the STP version to RSTP in Terraform, set `stp_version = "rstp"` on each `unifi_device` resource that manages a switch. The check run against a live controller inspects the site-wide global switch STP version, while the ubiquiti-community/unifi provider only exposes STP per device, so this setting must be applied to every declared switch:
+            To set the STP version to RSTP in Terraform, set `stp_version = "rstp"` inside the `global_switch` attribute on the `unifi_setting` resource. This is the same site-wide setting the check reads from a live controller:
 
             ```hcl
-            resource "unifi_device" "switch" {
-              mac          = "aa:bb:cc:dd:ee:ff"
-              stp_version  = "rstp"
-              stp_priority = 32768
+            resource "unifi_setting" "switching" {
+              site = "default"
+
+              global_switch = {
+                stp_version = "rstp"
+              }
             }
             ```
     refs:
@@ -1692,17 +1702,17 @@ queries:
     mql: |
       unifi.siteSettings.globalSwitch.stpVersion == "rstp"
   - uid: mondoo-unifi-security-stp-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_device")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_setting")
     mql: |
-      terraform.resources("unifi_device").where(arguments["stp_version"] != empty).all(arguments["stp_version"] == "rstp")
+      terraform.resources("unifi_setting").where(arguments["global_switch"] != empty).all(arguments["global_switch"]["stp_version"] == "rstp")
   - uid: mondoo-unifi-security-stp-enabled-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_device")
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_setting")
     mql: |
-      terraform.plan.resourceChanges.where(type == "unifi_device" && change.after.stp_version != empty).all(change.after.stp_version == "rstp")
+      terraform.plan.resourceChanges.where(type == "unifi_setting" && change.after.global_switch != empty).all(change.after.global_switch.stp_version == "rstp")
   - uid: mondoo-unifi-security-stp-enabled-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "unifi_device")
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "unifi_setting")
     mql: |
-      terraform.state.resources.where(type == "unifi_device" && values.stp_version != empty).all(values.stp_version == "rstp")
+      terraform.state.resources.where(type == "unifi_setting" && values.global_switch != empty).all(values.global_switch.stp_version == "rstp")
 
   # ─── Management & Controller ─────────────────────────────────────────────────
   - uid: mondoo-unifi-security-ssh-disabled
@@ -1776,14 +1786,16 @@ queries:
         # No cli remediation: the device SSH setting is a controller-managed site setting; the device SSH CLI cannot durably change it and the controller overwrites local changes on provision.
         - id: terraform
           desc: |
-            To disable SSH access to UniFi devices in Terraform, set `ssh_enabled = false` inside the `mgmt` nested attribute on a `unifi_setting` resource:
+            To disable SSH access to UniFi devices in Terraform, set `enabled = false` inside `mgmt.ssh` on a `unifi_setting` resource:
 
             ```hcl
             resource "unifi_setting" "mgmt" {
               site = "default"
 
               mgmt = {
-                ssh_enabled = false
+                ssh = {
+                  enabled = false
+                }
               }
             }
             ```
@@ -1798,19 +1810,19 @@ queries:
   - uid: mondoo-unifi-security-ssh-disabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_setting")
     mql: |
-      terraform.resources("unifi_setting").where(arguments["mgmt"] != empty).all(arguments["mgmt"]["ssh_enabled"] == false)
+      terraform.resources("unifi_setting").where(arguments["mgmt"] != empty).all(arguments["mgmt"]["ssh"]["enabled"] == false)
   - uid: mondoo-unifi-security-ssh-disabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_setting")
     mql: |
-      terraform.plan.resourceChanges.where(type == "unifi_setting" && change.after.mgmt != empty).all(change.after.mgmt.ssh_enabled == false)
+      terraform.plan.resourceChanges.where(type == "unifi_setting" && change.after.mgmt != empty).all(change.after.mgmt.ssh.enabled == false)
   - uid: mondoo-unifi-security-ssh-disabled-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "unifi_setting")
     mql: |
-      terraform.state.resources.where(type == "unifi_setting" && values.mgmt != empty).all(values.mgmt.ssh_enabled == false)
+      terraform.state.resources.where(type == "unifi_setting" && values.mgmt != empty).all(values.mgmt.ssh.enabled == false)
 
   # No Terraform variants yet: the ubiquiti-community/unifi unifi_setting resource does
-  # carry the toggle as `mgmt.ssh_auth_password_enabled`, documented as "Allow SSH password
-  # authentication (in addition to keys)", next to the `mgmt.ssh_keys` enrollment list. A
+  # carry the toggle as `mgmt.ssh.auth_password_enabled`, documented as "Allow SSH password
+  # authentication (in addition to keys)", next to the `mgmt.ssh.keys` enrollment list. A
   # Terraform remediation entry is provided below; the HCL, plan, and state variants have
   # not been written.
   - uid: mondoo-unifi-security-ssh-password-auth-disabled
@@ -1874,20 +1886,22 @@ queries:
         # No cli remediation: the device SSH authentication setting is a controller-managed site setting; the device SSH CLI cannot durably change it and the controller overwrites local changes on provision.
         - id: terraform
           desc: |
-            To disable SSH password authentication in Terraform, enroll administrator public keys through `mgmt.ssh_keys` and set `ssh_auth_password_enabled = false` inside the same `mgmt` attribute on the `unifi_setting` resource. Declare the keys in the same apply so key-based access exists the moment password authentication is withdrawn:
+            To disable SSH password authentication in Terraform, enroll administrator public keys through `mgmt.ssh.keys` and set `auth_password_enabled = false` inside the same `mgmt.ssh` attribute on the `unifi_setting` resource. Declare the keys in the same apply so key-based access exists the moment password authentication is withdrawn:
 
             ```hcl
             resource "unifi_setting" "mgmt" {
               site = "default"
 
               mgmt = {
-                ssh_enabled               = true
-                ssh_auth_password_enabled = false
-                ssh_keys = [{
-                  name = "netops"
-                  type = "ssh-ed25519"
-                  key  = var.netops_ssh_public_key
-                }]
+                ssh = {
+                  enabled               = true
+                  auth_password_enabled = false
+                  keys = [{
+                    name = "netops"
+                    type = "ssh-ed25519"
+                    key  = var.netops_ssh_public_key
+                  }]
+                }
               }
             }
             ```
@@ -2104,14 +2118,17 @@ queries:
         # No cli remediation: the auto-update setting is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
         - id: terraform
           desc: |
-            To enable automatic firmware upgrades in Terraform, set `auto_upgrade = true` inside the `mgmt` nested attribute on a `unifi_setting` resource:
+            To enable automatic firmware upgrades in Terraform, set `enabled = true` inside `mgmt.auto_upgrade` on a `unifi_setting` resource, and set `hour` to a low-traffic hour of the day:
 
             ```hcl
             resource "unifi_setting" "mgmt" {
               site = "default"
 
               mgmt = {
-                auto_upgrade = true
+                auto_upgrade = {
+                  enabled = true
+                  hour    = 3
+                }
               }
             }
             ```
@@ -2126,15 +2143,15 @@ queries:
   - uid: mondoo-unifi-security-auto-upgrade-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_setting")
     mql: |
-      terraform.resources("unifi_setting").where(arguments["mgmt"] != empty).all(arguments["mgmt"]["auto_upgrade"] == true)
+      terraform.resources("unifi_setting").where(arguments["mgmt"] != empty).all(arguments["mgmt"]["auto_upgrade"]["enabled"] == true)
   - uid: mondoo-unifi-security-auto-upgrade-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_setting")
     mql: |
-      terraform.plan.resourceChanges.where(type == "unifi_setting" && change.after.mgmt != empty).all(change.after.mgmt.auto_upgrade == true)
+      terraform.plan.resourceChanges.where(type == "unifi_setting" && change.after.mgmt != empty).all(change.after.mgmt.auto_upgrade.enabled == true)
   - uid: mondoo-unifi-security-auto-upgrade-enabled-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "unifi_setting")
     mql: |
-      terraform.state.resources.where(type == "unifi_setting" && values.mgmt != empty).all(values.mgmt.auto_upgrade == true)
+      terraform.state.resources.where(type == "unifi_setting" && values.mgmt != empty).all(values.mgmt.auto_upgrade.enabled == true)
 
   # No Terraform variants: the analytics/telemetry opt-out is a controller-wide setting
   # (controller.enableAnalytics), not a site setting. No attribute on the
@@ -2267,10 +2284,12 @@ queries:
               site = "default"
 
               syslog = {
-                enabled         = true
-                ip              = "10.0.0.20"
-                port            = 514
-                this_controller = true
+                enabled = true
+                ip      = "10.0.0.20"
+                port    = 514
+                this_controller = {
+                  enabled = true
+                }
                 contents = [
                   "device",
                   "admin_activity",
@@ -3187,17 +3206,19 @@ queries:
         # No cli remediation: gateway security is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
         - id: terraform
           desc: |
-            To enable geo-IP filtering in Terraform, set the `geo_ip_filtering_*` attributes inside the `usg` attribute on the `unifi_setting` resource:
+            To enable geo-IP filtering in Terraform, set `enabled = true` inside `usg.geo_ip_filtering` on the `unifi_setting` resource, along with the action, countries, and traffic direction:
 
             ```hcl
             resource "unifi_setting" "gateway" {
               site = "default"
 
               usg = {
-                geo_ip_filtering_enabled           = true
-                geo_ip_filtering_block             = "block"
-                geo_ip_filtering_countries         = "KP,IR"
-                geo_ip_filtering_traffic_direction = "both"
+                geo_ip_filtering = {
+                  enabled           = true
+                  block             = "block"
+                  countries         = "KP,IR"
+                  traffic_direction = "both"
+                }
               }
             }
             ```
@@ -3205,8 +3226,8 @@ queries:
       - url: https://help.ui.com/hc/en-us/articles/115003173168
         title: UniFi gateway settings
 
-  # `wpa3_transition` defaults to `false` in the ubiquiti-community/unifi provider, so the
-  # HCL variant accepts it omitted with `!= true`; plan and state carry the resolved value.
+  # `wpa3.transition` is computed from the controller when omitted, so an omitted value
+  # keeps whatever the controller already has; every variant requires an explicit `false`.
   # Like the other unifi_wlan variants, the Terraform variants also evaluate WLANs declared
   # with `enabled = false`, since flipping that attribute puts the declared security live.
   - uid: mondoo-unifi-security-wlans-wpa3-only
@@ -3278,7 +3299,7 @@ queries:
         # No cli remediation: wireless security is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
         - id: terraform
           desc: |
-            To require WPA3 without transition mode in Terraform, set `wpa3_support = true` and `wpa3_transition = false` on the `unifi_wlan` resource. The provider accepts WPA3 only when `security` is `wpapsk` and Protected Management Frames are on, so set `pmf_mode` in the same resource:
+            To require WPA3 without transition mode in Terraform, set `support = true` and `transition = false` inside the `wpa3` attribute on the `unifi_wlan` resource. The provider accepts WPA3 only when `security` is `wpapsk` and Protected Management Frames are on, so set `pmf_mode` in the same resource:
 
             ```hcl
             # The provider exposes UniFi user groups as client QOS rates; this
@@ -3288,14 +3309,17 @@ queries:
             }
 
             resource "unifi_wlan" "wpa3_only" {
-              name            = "staff"
-              security        = "wpapsk"
-              passphrase      = var.wifi_passphrase
-              pmf_mode        = "required"
-              wpa3_support    = true
-              wpa3_transition = false
-              network_id      = unifi_network.lan.id
-              user_group_id   = data.unifi_client_qos_rate.default.id
+              name          = "staff"
+              security      = "wpapsk"
+              passphrase    = var.wifi_passphrase
+              pmf_mode      = "required"
+              network_id    = unifi_network.lan.id
+              user_group_id = data.unifi_client_qos_rate.default.id
+
+              wpa3 = {
+                support    = true
+                transition = false
+              }
             }
             ```
     refs:
@@ -3308,12 +3332,12 @@ queries:
   - uid: mondoo-unifi-security-wlans-wpa3-only-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_wlan")
     mql: |
-      terraform.resources("unifi_wlan").where(arguments["security"] != "open").all(arguments["wpa3_support"] == true && arguments["wpa3_transition"] != true)
+      terraform.resources("unifi_wlan").where(arguments["security"] != "open").all(arguments["wpa3"]["support"] == true && arguments["wpa3"]["transition"] == false)
   - uid: mondoo-unifi-security-wlans-wpa3-only-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_wlan")
     mql: |
-      terraform.plan.resourceChanges.where(type == "unifi_wlan" && change.after.security != "open").all(change.after.wpa3_support == true && change.after.wpa3_transition == false)
+      terraform.plan.resourceChanges.where(type == "unifi_wlan" && change.after.security != "open").all(change.after.wpa3.support == true && change.after.wpa3.transition == false)
   - uid: mondoo-unifi-security-wlans-wpa3-only-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "unifi_wlan")
     mql: |
-      terraform.state.resources.where(type == "unifi_wlan" && values.security != "open").all(values.wpa3_support == true && values.wpa3_transition == false)
+      terraform.state.resources.where(type == "unifi_wlan" && values.security != "open").all(values.wpa3.support == true && values.wpa3.transition == false)

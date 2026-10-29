@@ -2,6 +2,8 @@ resource "unifi_setting" "mgmt" {
   site = "default"
 
   mgmt = {
-    auto_upgrade = true
+    auto_upgrade = {
+      enabled = true
+    }
   }
 }
