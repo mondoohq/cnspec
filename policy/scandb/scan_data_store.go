@@ -38,6 +38,12 @@ type UploadFileMetadata struct {
 	CreatedAt       string `json:"created_at"`
 	ClientVersion   string `json:"client_version"`
 	ClientBuild     string `json:"client_build"`
+	// The resolved policy the scan ran (Meta* keys above); empty when the
+	// file predates them.
+	ResolvedPolicyGraphExecutionChecksum string `json:"resolved_policy_graph_execution_checksum"`
+	ResolvedPolicyFiltersChecksum        string `json:"resolved_policy_filters_checksum"`
+	ResolvedPolicyExecutionJobChecksum   string `json:"resolved_policy_execution_job_checksum"`
+	ResolvedPolicyCollectorJobChecksum   string `json:"resolved_policy_collector_job_checksum"`
 }
 
 type ScanDataStoreReader interface {
@@ -78,6 +84,20 @@ type ScanDataStore interface {
 // checksum support. Checksum presence is announced by the
 // checksum_algo_version metadata key instead.
 const SchemaVersion = "1.0"
+
+// Metadata keys naming the resolved policy the scan actually ran: the values
+// come straight from the ResolvedPolicy that ResolveAndUpdateJobs returned
+// for the asset. A resolved policy can be replaced server-side after the
+// scan resolved it (a policy change that reached the asset late); with these
+// keys the server can tell a scan that ran a since-replaced policy from one
+// that ran the current one, instead of guessing from the rows. Files from
+// older clients do not carry them; readers treat absence as unknown.
+const (
+	MetaResolvedPolicyGraphExecutionChecksum = "resolved_policy_graph_execution_checksum"
+	MetaResolvedPolicyFiltersChecksum        = "resolved_policy_filters_checksum"
+	MetaResolvedPolicyExecutionJobChecksum   = "resolved_policy_execution_job_checksum"
+	MetaResolvedPolicyCollectorJobChecksum   = "resolved_policy_collector_job_checksum"
+)
 
 // readOnlyDSN builds a DSN that SQLite itself enforces as read-only. The
 // file: URI form is required: with a plain-path DSN the driver ignores the
@@ -384,6 +404,36 @@ func (s *SqliteScanDataStore) WriteAssetFilters(ctx context.Context, codeIDs []s
 	return nil
 }
 
+// WriteResolvedPolicyChecksums records which resolved policy the scan ran,
+// as the MetaResolvedPolicy* metadata keys. Only non-empty values are
+// written, so a reader can tell "not reported" from "reported empty".
+// A later call replaces the values (a re-resolve within one scan).
+func (s *SqliteScanDataStore) WriteResolvedPolicyChecksums(ctx context.Context, rp *policy.ResolvedPolicy) error {
+	if rp == nil {
+		return nil
+	}
+	if s.readOnly {
+		return fmt.Errorf("cannot write resolved policy checksums in read-only mode")
+	}
+	values := []struct{ key, value string }{
+		{MetaResolvedPolicyGraphExecutionChecksum, rp.GraphExecutionChecksum},
+		{MetaResolvedPolicyFiltersChecksum, rp.FiltersChecksum},
+		{MetaResolvedPolicyExecutionJobChecksum, rp.ExecutionJob.GetChecksum()},
+		{MetaResolvedPolicyCollectorJobChecksum, rp.CollectorJob.GetChecksum()},
+	}
+	for _, kv := range values {
+		if kv.value == "" {
+			continue
+		}
+		if _, err := s.sqlDB.ExecContext(ctx,
+			`INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)`,
+			kv.key, kv.value); err != nil {
+			return fmt.Errorf("failed to write metadata %s: %w", kv.key, err)
+		}
+	}
+	return nil
+}
+
 // GetAssetFilters retrieves the code_ids of the asset filters captured
 // during the original scan. Returns policy.ErrAssetFiltersNotFound for
 // scan databases that don't carry the optional asset_filters table or
@@ -508,6 +558,11 @@ func (s *SqliteScanDataStore) GetMetadata() (*UploadFileMetadata, error) {
 		CreatedAt:       rawMetadata["created_at"],
 		ClientVersion:   rawMetadata["client_version"],
 		ClientBuild:     rawMetadata["client_build"],
+
+		ResolvedPolicyGraphExecutionChecksum: rawMetadata[MetaResolvedPolicyGraphExecutionChecksum],
+		ResolvedPolicyFiltersChecksum:        rawMetadata[MetaResolvedPolicyFiltersChecksum],
+		ResolvedPolicyExecutionJobChecksum:   rawMetadata[MetaResolvedPolicyExecutionJobChecksum],
+		ResolvedPolicyCollectorJobChecksum:   rawMetadata[MetaResolvedPolicyCollectorJobChecksum],
 	}
 
 	return metadata, nil

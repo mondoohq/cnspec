@@ -688,6 +688,17 @@ func (db *Db) SetAssetResolvedPolicy(ctx context.Context, assetMrn string, resol
 	assetw.ResolvedPolicy = resolvedPolicy
 	assetw.resolvedPolicyVersion = string(version)
 
+	// Best effort: the scan database names the resolved policy it ran, but a
+	// scan never fails because that note could not be written.
+	if db.writer != nil {
+		if err := db.writer.SetResolvedPolicy(ctx, assetMrn, resolvedPolicy); err != nil {
+			log.Warn().
+				Err(err).
+				Str("asset", assetMrn).
+				Msg("resolver.db> failed to record the resolved policy checksums in the scan data store")
+		}
+	}
+
 	var err error
 	collectorJob := resolvedPolicy.CollectorJob
 	for checksum, info := range collectorJob.Datapoints {
