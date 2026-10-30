@@ -405,9 +405,11 @@ func (s *SqliteScanDataStore) WriteAssetFilters(ctx context.Context, codeIDs []s
 }
 
 // WriteResolvedPolicyChecksums records which resolved policy the scan ran,
-// as the MetaResolvedPolicy* metadata keys. Only non-empty values are
-// written, so a reader can tell "not reported" from "reported empty".
-// A later call replaces the values (a re-resolve within one scan).
+// as the MetaResolvedPolicy* metadata keys. The four keys are written as
+// one set, in one transaction: every key is removed first, then the ones
+// with a non-empty value are inserted. So a reader can tell "not reported"
+// from "reported empty", and a later call (a re-resolve within one scan)
+// replaces the whole set, including keys whose value became empty.
 func (s *SqliteScanDataStore) WriteResolvedPolicyChecksums(ctx context.Context, rp *policy.ResolvedPolicy) error {
 	if rp == nil {
 		return nil
@@ -421,15 +423,30 @@ func (s *SqliteScanDataStore) WriteResolvedPolicyChecksums(ctx context.Context, 
 		{MetaResolvedPolicyExecutionJobChecksum, rp.ExecutionJob.GetChecksum()},
 		{MetaResolvedPolicyCollectorJobChecksum, rp.CollectorJob.GetChecksum()},
 	}
+
+	tx, err := s.sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin resolved policy checksums write: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+
+	for _, kv := range values {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM metadata WHERE key = ?`, kv.key); err != nil {
+			return fmt.Errorf("failed to clear metadata %s: %w", kv.key, err)
+		}
+	}
 	for _, kv := range values {
 		if kv.value == "" {
 			continue
 		}
-		if _, err := s.sqlDB.ExecContext(ctx,
-			`INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)`,
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO metadata (key, value) VALUES (?, ?)`,
 			kv.key, kv.value); err != nil {
 			return fmt.Errorf("failed to write metadata %s: %w", kv.key, err)
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit resolved policy checksums: %w", err)
 	}
 	return nil
 }

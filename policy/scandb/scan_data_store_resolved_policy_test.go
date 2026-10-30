@@ -119,6 +119,35 @@ func TestSqliteScanDataStore_ResolvedPolicyChecksums(t *testing.T) {
 		assert.Equal(t, "collector-2", meta.ResolvedPolicyCollectorJobChecksum)
 	})
 
+	t.Run("a second write removes keys whose value became empty", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "rp.db")
+		store, err := NewSqliteScanDataStore(dbPath, resolvedPolicyTestAssetMrn)
+		require.NoError(t, err)
+
+		require.NoError(t, store.WriteResolvedPolicyChecksums(ctx, fullResolvedPolicy("1")))
+		// The re-resolve carries no execution or collector job: the keys
+		// the first write left must not survive as the stale "1" values.
+		require.NoError(t, store.WriteResolvedPolicyChecksums(ctx, &policy.ResolvedPolicy{
+			GraphExecutionChecksum: "graph-2",
+			FiltersChecksum:        "filters-2",
+		}))
+
+		reader := finalizeAndReopen(t, store, dbPath)
+		meta, err := reader.GetMetadata()
+		require.NoError(t, err)
+		assert.Equal(t, "graph-2", meta.ResolvedPolicyGraphExecutionChecksum)
+		assert.Equal(t, "filters-2", meta.ResolvedPolicyFiltersChecksum)
+		assert.Empty(t, meta.ResolvedPolicyExecutionJobChecksum)
+		assert.Empty(t, meta.ResolvedPolicyCollectorJobChecksum)
+
+		rows := metadataRows(t, reader)
+		_, present := rows[MetaResolvedPolicyExecutionJobChecksum]
+		assert.False(t, present, "the first write's execution job checksum is removed, not kept")
+		_, present = rows[MetaResolvedPolicyCollectorJobChecksum]
+		assert.False(t, present, "the first write's collector job checksum is removed, not kept")
+		assert.Equal(t, SchemaVersion, rows["schema_version"], "the other metadata keys are untouched")
+	})
+
 	t.Run("only non-empty values are written", func(t *testing.T) {
 		dbPath := filepath.Join(t.TempDir(), "rp.db")
 		store, err := NewSqliteScanDataStore(dbPath, resolvedPolicyTestAssetMrn)
