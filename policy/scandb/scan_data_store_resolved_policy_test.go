@@ -145,7 +145,7 @@ func TestSqliteScanDataStore_ResolvedPolicyChecksums(t *testing.T) {
 		assert.False(t, present, "the first write's execution job checksum is removed, not kept")
 		_, present = rows[MetaResolvedPolicyCollectorJobChecksum]
 		assert.False(t, present, "the first write's collector job checksum is removed, not kept")
-		assert.Equal(t, SchemaVersion, rows["schema_version"], "the other metadata keys are untouched")
+		assert.Equal(t, SchemaVersion, rows[MetaSchemaVersion], "the other metadata keys are untouched")
 	})
 
 	t.Run("only non-empty values are written", func(t *testing.T) {

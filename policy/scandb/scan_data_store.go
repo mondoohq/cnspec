@@ -85,6 +85,18 @@ type ScanDataStore interface {
 // checksum_algo_version metadata key instead.
 const SchemaVersion = "1.0"
 
+// Metadata keys every scan database carries (insertMetadata), read back by
+// GetMetadata into UploadFileMetadata. MetaChecksumAlgoVersion (checksum.go)
+// joins them once the rows are checksummed.
+const (
+	MetaSchemaVersion   = "schema_version"
+	MetaAssetMrn        = checksum.ManifestMetaAssetMrn // "asset_mrn", the same key the manifest carries
+	MetaUploadSessionID = "upload_session_id"
+	MetaCreatedAt       = "created_at"
+	MetaClientVersion   = "client_version"
+	MetaClientBuild     = "client_build"
+)
+
 // Metadata keys naming the resolved policy the scan actually ran: the values
 // come straight from the ResolvedPolicy that ResolveAndUpdateJobs returned
 // for the asset. A resolved policy can be replaced server-side after the
@@ -300,11 +312,11 @@ func (s *SqliteScanDataStore) initializeDatabase() error {
 func (s *SqliteScanDataStore) insertMetadata() error {
 	ctx := context.Background()
 	metadata := map[string]string{
-		"schema_version": SchemaVersion,
-		"asset_mrn":      s.assetMrn,
-		"created_at":     time.Now().Format(time.RFC3339),
-		"client_version": cnspec.GetVersion(),
-		"client_build":   cnspec.GetBuild(),
+		MetaSchemaVersion: SchemaVersion,
+		MetaAssetMrn:      s.assetMrn,
+		MetaCreatedAt:     time.Now().Format(time.RFC3339),
+		MetaClientVersion: cnspec.GetVersion(),
+		MetaClientBuild:   cnspec.GetBuild(),
 	}
 
 	for key, value := range metadata {
@@ -569,12 +581,12 @@ func (s *SqliteScanDataStore) GetMetadata() (*UploadFileMetadata, error) {
 
 	// Parse into structured metadata
 	metadata := &UploadFileMetadata{
-		SchemaVersion:   rawMetadata["schema_version"],
-		AssetMrn:        rawMetadata["asset_mrn"],
-		UploadSessionId: rawMetadata["upload_session_id"],
-		CreatedAt:       rawMetadata["created_at"],
-		ClientVersion:   rawMetadata["client_version"],
-		ClientBuild:     rawMetadata["client_build"],
+		SchemaVersion:   rawMetadata[MetaSchemaVersion],
+		AssetMrn:        rawMetadata[MetaAssetMrn],
+		UploadSessionId: rawMetadata[MetaUploadSessionID],
+		CreatedAt:       rawMetadata[MetaCreatedAt],
+		ClientVersion:   rawMetadata[MetaClientVersion],
+		ClientBuild:     rawMetadata[MetaClientBuild],
 
 		ResolvedPolicyGraphExecutionChecksum: rawMetadata[MetaResolvedPolicyGraphExecutionChecksum],
 		ResolvedPolicyFiltersChecksum:        rawMetadata[MetaResolvedPolicyFiltersChecksum],
