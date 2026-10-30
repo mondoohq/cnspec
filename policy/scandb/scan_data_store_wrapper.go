@@ -159,3 +159,20 @@ func (w *ScanDataStoreWrapper) SetAssetFilters(ctx context.Context, assetMrn str
 	}
 	return store.WriteAssetFilters(ctx, codeIDs)
 }
+
+// SetResolvedPolicy records the resolved policy the scan ran in the scan
+// database's metadata (see SqliteScanDataStore.WriteResolvedPolicyChecksums).
+// Stores other than the SQLite one keep nothing.
+func (w *ScanDataStoreWrapper) SetResolvedPolicy(ctx context.Context, assetMrn string, rp *policy.ResolvedPolicy) error {
+	if err := w.validate(assetMrn); err != nil {
+		return err
+	}
+	if rp == nil {
+		return nil
+	}
+	store, ok := w.store.(*SqliteScanDataStore)
+	if !ok {
+		return nil
+	}
+	return store.WriteResolvedPolicyChecksums(ctx, rp)
+}

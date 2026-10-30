@@ -38,6 +38,11 @@ type DataStore interface {
 	// no-op; the SQLite scandb wrapper persists the code_ids so a
 	// captured scan db carries enough state for offline replay.
 	SetAssetFilters(ctx context.Context, assetMrn string, filters *policy.Mqueries) error
+	// SetResolvedPolicy records the resolved policy the scanner received
+	// from ResolveAndUpdateJobs for the asset. The default in-memory cache
+	// treats it as a no-op; the SQLite scandb wrapper persists its checksums
+	// as metadata so the upload names the policy it actually ran.
+	SetResolvedPolicy(ctx context.Context, assetMrn string, resolvedPolicy *policy.ResolvedPolicy) error
 }
 
 type cacheDataWriter struct {
@@ -123,6 +128,12 @@ func (n *cacheDataWriter) StreamRisks(ctx context.Context, assetMrn string, f fu
 // SetAssetFilters is a no-op for the cache writer — filter capture is only
 // useful when the scan database is being persisted (i.e. the scandb wrapper).
 func (n *cacheDataWriter) SetAssetFilters(_ context.Context, _ string, _ *policy.Mqueries) error {
+	return nil
+}
+
+// SetResolvedPolicy is a no-op for the cache writer — the resolved policy's
+// checksums only matter when the scan database is being persisted.
+func (n *cacheDataWriter) SetResolvedPolicy(_ context.Context, _ string, _ *policy.ResolvedPolicy) error {
 	return nil
 }
 

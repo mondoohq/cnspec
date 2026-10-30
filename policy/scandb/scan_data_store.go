@@ -38,6 +38,12 @@ type UploadFileMetadata struct {
 	CreatedAt       string `json:"created_at"`
 	ClientVersion   string `json:"client_version"`
 	ClientBuild     string `json:"client_build"`
+	// The resolved policy the scan ran (Meta* keys above); empty when the
+	// file predates them.
+	ResolvedPolicyGraphExecutionChecksum string `json:"resolved_policy_graph_execution_checksum"`
+	ResolvedPolicyFiltersChecksum        string `json:"resolved_policy_filters_checksum"`
+	ResolvedPolicyExecutionJobChecksum   string `json:"resolved_policy_execution_job_checksum"`
+	ResolvedPolicyCollectorJobChecksum   string `json:"resolved_policy_collector_job_checksum"`
 }
 
 type ScanDataStoreReader interface {
@@ -78,6 +84,32 @@ type ScanDataStore interface {
 // checksum support. Checksum presence is announced by the
 // checksum_algo_version metadata key instead.
 const SchemaVersion = "1.0"
+
+// Metadata keys every scan database carries (insertMetadata), read back by
+// GetMetadata into UploadFileMetadata. MetaChecksumAlgoVersion (checksum.go)
+// joins them once the rows are checksummed.
+const (
+	MetaSchemaVersion   = "schema_version"
+	MetaAssetMrn        = checksum.ManifestMetaAssetMrn // "asset_mrn", the same key the manifest carries
+	MetaUploadSessionID = "upload_session_id"
+	MetaCreatedAt       = "created_at"
+	MetaClientVersion   = "client_version"
+	MetaClientBuild     = "client_build"
+)
+
+// Metadata keys naming the resolved policy the scan actually ran: the values
+// come straight from the ResolvedPolicy that ResolveAndUpdateJobs returned
+// for the asset. A resolved policy can be replaced server-side after the
+// scan resolved it (a policy change that reached the asset late); with these
+// keys the server can tell a scan that ran a since-replaced policy from one
+// that ran the current one, instead of guessing from the rows. Files from
+// older clients do not carry them; readers treat absence as unknown.
+const (
+	MetaResolvedPolicyGraphExecutionChecksum = "resolved_policy_graph_execution_checksum"
+	MetaResolvedPolicyFiltersChecksum        = "resolved_policy_filters_checksum"
+	MetaResolvedPolicyExecutionJobChecksum   = "resolved_policy_execution_job_checksum"
+	MetaResolvedPolicyCollectorJobChecksum   = "resolved_policy_collector_job_checksum"
+)
 
 // readOnlyDSN builds a DSN that SQLite itself enforces as read-only. The
 // file: URI form is required: with a plain-path DSN the driver ignores the
@@ -280,11 +312,11 @@ func (s *SqliteScanDataStore) initializeDatabase() error {
 func (s *SqliteScanDataStore) insertMetadata() error {
 	ctx := context.Background()
 	metadata := map[string]string{
-		"schema_version": SchemaVersion,
-		"asset_mrn":      s.assetMrn,
-		"created_at":     time.Now().Format(time.RFC3339),
-		"client_version": cnspec.GetVersion(),
-		"client_build":   cnspec.GetBuild(),
+		MetaSchemaVersion: SchemaVersion,
+		MetaAssetMrn:      s.assetMrn,
+		MetaCreatedAt:     time.Now().Format(time.RFC3339),
+		MetaClientVersion: cnspec.GetVersion(),
+		MetaClientBuild:   cnspec.GetBuild(),
 	}
 
 	for key, value := range metadata {
@@ -380,6 +412,53 @@ func (s *SqliteScanDataStore) WriteAssetFilters(ctx context.Context, codeIDs []s
 		if err := s.queries.InsertAssetFilter(ctx, id); err != nil {
 			return fmt.Errorf("failed to write asset filter %s: %w", id, err)
 		}
+	}
+	return nil
+}
+
+// WriteResolvedPolicyChecksums records which resolved policy the scan ran,
+// as the MetaResolvedPolicy* metadata keys. The four keys are written as
+// one set, in one transaction: every key is removed first, then the ones
+// with a non-empty value are inserted. So a reader can tell "not reported"
+// from "reported empty", and a later call (a re-resolve within one scan)
+// replaces the whole set, including keys whose value became empty.
+func (s *SqliteScanDataStore) WriteResolvedPolicyChecksums(ctx context.Context, rp *policy.ResolvedPolicy) error {
+	if rp == nil {
+		return nil
+	}
+	if s.readOnly {
+		return fmt.Errorf("cannot write resolved policy checksums in read-only mode")
+	}
+	values := []struct{ key, value string }{
+		{MetaResolvedPolicyGraphExecutionChecksum, rp.GraphExecutionChecksum},
+		{MetaResolvedPolicyFiltersChecksum, rp.FiltersChecksum},
+		{MetaResolvedPolicyExecutionJobChecksum, rp.ExecutionJob.GetChecksum()},
+		{MetaResolvedPolicyCollectorJobChecksum, rp.CollectorJob.GetChecksum()},
+	}
+
+	tx, err := s.sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin resolved policy checksums write: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+
+	for _, kv := range values {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM metadata WHERE key = ?`, kv.key); err != nil {
+			return fmt.Errorf("failed to clear metadata %s: %w", kv.key, err)
+		}
+	}
+	for _, kv := range values {
+		if kv.value == "" {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO metadata (key, value) VALUES (?, ?)`,
+			kv.key, kv.value); err != nil {
+			return fmt.Errorf("failed to write metadata %s: %w", kv.key, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit resolved policy checksums: %w", err)
 	}
 	return nil
 }
@@ -502,12 +581,17 @@ func (s *SqliteScanDataStore) GetMetadata() (*UploadFileMetadata, error) {
 
 	// Parse into structured metadata
 	metadata := &UploadFileMetadata{
-		SchemaVersion:   rawMetadata["schema_version"],
-		AssetMrn:        rawMetadata["asset_mrn"],
-		UploadSessionId: rawMetadata["upload_session_id"],
-		CreatedAt:       rawMetadata["created_at"],
-		ClientVersion:   rawMetadata["client_version"],
-		ClientBuild:     rawMetadata["client_build"],
+		SchemaVersion:   rawMetadata[MetaSchemaVersion],
+		AssetMrn:        rawMetadata[MetaAssetMrn],
+		UploadSessionId: rawMetadata[MetaUploadSessionID],
+		CreatedAt:       rawMetadata[MetaCreatedAt],
+		ClientVersion:   rawMetadata[MetaClientVersion],
+		ClientBuild:     rawMetadata[MetaClientBuild],
+
+		ResolvedPolicyGraphExecutionChecksum: rawMetadata[MetaResolvedPolicyGraphExecutionChecksum],
+		ResolvedPolicyFiltersChecksum:        rawMetadata[MetaResolvedPolicyFiltersChecksum],
+		ResolvedPolicyExecutionJobChecksum:   rawMetadata[MetaResolvedPolicyExecutionJobChecksum],
+		ResolvedPolicyCollectorJobChecksum:   rawMetadata[MetaResolvedPolicyCollectorJobChecksum],
 	}
 
 	return metadata, nil
