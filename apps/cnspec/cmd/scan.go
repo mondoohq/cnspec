@@ -629,7 +629,7 @@ func (c *scanConfig) loadPolicies(ctx context.Context) error {
 		// ensure all required providers are installed before we try to compile the bundle
 		if bundle.HasRequirements() {
 			if err := bundle.EnsureRequirements(AutoUpdateEnabled()); err != nil {
-				return errors.Wrap(err, "failed to ensure policy requirements")
+				log.Warn().Err(err).Msg("failed to ensure some policy requirements, continuing with available providers")
 			}
 		}
 
