@@ -64,71 +64,6 @@ func (r *defaultReporter) beginAssetSection() {
 	r.assetBodyPrinted = true
 }
 
-// hasQueryPacks returns true if the bundle contains any
-// data-only policies (i.e. converted querypacks).
-func (r *defaultReporter) hasQueryPacks() bool {
-	if r.bundle == nil {
-		return false
-	}
-	for _, p := range r.bundle.Policies {
-		if p.ScoringSystem == policy.ScoringSystem_DATA_ONLY {
-			return true
-		}
-	}
-	return false
-}
-
-// querypackDataQueryIDs returns the set of execution query IDs (CodeIds) that
-// belong to querypack policies (DATA_ONLY scoring system). It walks from
-// DATA_ONLY policy reporting jobs down through ChildJobs to find all
-// EXECUTION_QUERY reporting jobs and collects their QrIds.
-func (r *defaultReporter) querypackDataQueryIDs(resolved *policy.ResolvedPolicy) map[string]bool {
-	if r.bundle == nil || resolved == nil || resolved.CollectorJob == nil {
-		return nil
-	}
-
-	rjobs := resolved.CollectorJob.ReportingJobs
-
-	// Find all POLICY reporting jobs with DATA_ONLY scoring system
-	var dataOnlyUUIDs []string
-	for uuid, rj := range rjobs {
-		if rj.Type == policy.ReportingJob_POLICY && rj.ScoringSystem == policy.ScoringSystem_DATA_ONLY {
-			dataOnlyUUIDs = append(dataOnlyUUIDs, uuid)
-		}
-	}
-	if len(dataOnlyUUIDs) == 0 {
-		return nil
-	}
-
-	// Walk down from DATA_ONLY policy jobs through ChildJobs to collect
-	// EXECUTION_QUERY QrIds (which are CodeIds used as keys in ExecutionJob.Queries)
-	result := map[string]bool{}
-	visited := map[string]bool{}
-	var walk func(uuid string)
-	walk = func(uuid string) {
-		if visited[uuid] {
-			return
-		}
-		visited[uuid] = true
-		rj := rjobs[uuid]
-		if rj == nil {
-			return
-		}
-		if rj.Type == policy.ReportingJob_EXECUTION_QUERY {
-			result[rj.QrId] = true
-			return
-		}
-		for childUUID := range rj.ChildJobs {
-			walk(childUUID)
-		}
-	}
-	for _, uuid := range dataOnlyUUIDs {
-		walk(uuid)
-	}
-
-	return result
-}
-
 // styled returns a termenv.Style with faint applied if faint is true.
 func (r *defaultReporter) styled(s string, faint bool) termenv.Style {
 	st := termenv.String(s)
@@ -377,7 +312,7 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 			r.printAssetControls(resolved, report, controls, assetMrn, asset)
 		}
 
-		if r.Conf.printData || r.Conf.printChecks || r.hasQueryPacks() {
+		if r.Conf.printData || r.Conf.printChecks {
 			r.printAssetQueries(resolved, report, queries, previewChecks, assetMrn, asset)
 		}
 
@@ -502,21 +437,9 @@ type previewGroup struct {
 func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, report *policy.Report, queries map[string]*policy.Mquery, checkToPreview map[string]*policy.PolicyGroup, assetMrn string, asset *inventory.Asset) {
 	results := report.RawResults()
 
-	// Determine which data queries to print:
-	// - If printData is true (explicit user opt-in): print ALL data queries
-	// - If printData is false (default): print only data queries from querypacks (DATA_ONLY policies)
-	printAllData := r.Conf.printData
-	var querypackIDs map[string]bool
-	if !printAllData {
-		querypackIDs = r.querypackDataQueryIDs(resolved)
-	}
-
-	if printAllData || len(querypackIDs) > 0 {
+	if r.Conf.printData {
 		dataQueriesOutput := ""
 		resolved.WithDataQueries(func(id string, query *policy.ExecutionQuery) {
-			if !printAllData && !querypackIDs[id] {
-				return
-			}
 			data := query.Code.FilterResults(results)
 			result := r.Printer.Datas(query.Code, data)
 			if result == "" {

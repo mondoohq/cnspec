@@ -12,10 +12,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/internal/reportfixture"
 	"go.mondoo.com/cnspec/policy"
+	"go.mondoo.com/mql"
 	"go.mondoo.com/mql/cli/printer"
 	"go.mondoo.com/mql/cli/theme/colors"
 	"go.mondoo.com/mql/llx"
+	"go.mondoo.com/mql/mqlc"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/providers-sdk/v1/testutils"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/mql/utils/iox"
 )
@@ -192,5 +195,86 @@ func TestVulnReporter(t *testing.T) {
 		assert.Contains(t, out, "package: lodash")
 		assert.Contains(t, out, "severity: CRITICAL")
 		assert.Contains(t, out, "fixed: 4.17.21")
+	})
+}
+
+// TestCompactReporterQuerypackData covers data queries from query packs
+// (DATA_ONLY policies): the compact output prints them only when the user
+// asks for data, the same as data queries from scored policies.
+func TestCompactReporterQuerypackData(t *testing.T) {
+	coreSchema := testutils.MustLoadSchema(testutils.SchemaProvider{Provider: "core"})
+	codeBundle, err := mqlc.Compile("asset.name", nil, mqlc.NewConfig(coreSchema, mql.DefaultFeatures))
+	require.NoError(t, err)
+	entrypoint := codeBundle.CodeV2.Blocks[0].Entrypoints[0]
+	checksum := codeBundle.CodeV2.Checksums[entrypoint]
+
+	assetMrn := "//assets.api.mondoo.app/spaces/test/assets/querypack"
+	packMrn := "//policy.api.mondoo.app/policies/example-querypack"
+	codeID := codeBundle.CodeV2.Id
+
+	data := &policy.ReportCollection{
+		Assets: map[string]*inventory.Asset{
+			assetMrn: {
+				Mrn:      assetMrn,
+				Name:     "querypack-asset",
+				Platform: &inventory.Platform{Name: "alpine", Title: "Alpine Linux"},
+			},
+		},
+		Reports: map[string]*policy.Report{
+			assetMrn: {
+				ScoringMrn: assetMrn,
+				Score:      &policy.Score{},
+				Scores:     map[string]*policy.Score{},
+				Data: map[string]*llx.Result{
+					checksum: llx.StringData("querypack-marker").Result(),
+				},
+			},
+		},
+		ResolvedPolicies: map[string]*policy.ResolvedPolicy{
+			assetMrn: {
+				ExecutionJob: &policy.ExecutionJob{Queries: map[string]*policy.ExecutionQuery{
+					codeID: {Query: "asset.name", Code: codeBundle},
+				}},
+				CollectorJob: &policy.CollectorJob{
+					ReportingJobs: map[string]*policy.ReportingJob{
+						"pack": {
+							Uuid: "pack", QrId: packMrn, Type: policy.ReportingJob_POLICY,
+							ScoringSystem: policy.ScoringSystem_DATA_ONLY,
+							ChildJobs:     map[string]*policy.Impact{"query": nil},
+						},
+						"query": {Uuid: "query", QrId: codeID, Type: policy.ReportingJob_EXECUTION_QUERY},
+					},
+					ReportingQueries: map[string]*policy.StringArray{},
+				},
+			},
+		},
+		Bundle: &policy.Bundle{
+			Policies: []*policy.Policy{{Mrn: packMrn, ScoringSystem: policy.ScoringSystem_DATA_ONLY}},
+		},
+	}
+
+	render := func(conf *PrintConfig) string {
+		buf := bytes.Buffer{}
+		rr := &defaultReporter{
+			Reporter: &Reporter{Conf: conf, Printer: &printer.DefaultPrinter, Colors: &colors.DefaultColorTheme},
+			output:   &iox.IOWriter{Writer: &buf},
+			data:     data,
+		}
+		require.NoError(t, rr.print())
+		return buf.String()
+	}
+
+	t.Run("default hides querypack data", func(t *testing.T) {
+		out := render(defaultPrintConfig())
+		assert.NotContains(t, out, "Data queries:")
+		assert.NotContains(t, out, "querypack-marker")
+	})
+
+	t.Run("data option prints querypack data", func(t *testing.T) {
+		conf, err := ParseConfig("compact,data")
+		require.NoError(t, err)
+		out := render(conf)
+		assert.Contains(t, out, "Data queries:")
+		assert.Contains(t, out, "querypack-marker")
 	})
 }
