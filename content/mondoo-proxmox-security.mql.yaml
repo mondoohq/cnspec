@@ -4830,6 +4830,10 @@ queries:
             augenrules --load
             systemctl restart auditd
             ```
+
+            If `augenrules --load` reports `Error sending add rule data request (Rule exists)`, the rule on the line it names in `/etc/audit/audit.rules` is already loaded, and every rule after that line was skipped. Print that line with `sed -n '<line>p' /etc/audit/audit.rules`, find the file in `/etc/audit/rules.d/` that holds a second copy with `grep -rnxF -- '<rule>' /etc/audit/rules.d/`, delete one copy, and run `augenrules --load` again.
+
+            If no file in `/etc/audit/rules.d/` contains a line that is only `-D`, add one to the file you created. `augenrules` moves it to the top of `/etc/audit/audit.rules`, so each load first clears the rules already in the kernel and a second load does not collide with the first.
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -4838,7 +4842,8 @@ queries:
 
             ```bash
             #!/bin/bash
-            set -e
+
+            RULES_FILE="/etc/audit/rules.d/pve.rules"
 
             if ! command -v auditctl >/dev/null; then
               apt-get update
@@ -4846,9 +4851,25 @@ queries:
             fi
 
             install -d -m 0750 /etc/audit/rules.d
-            cat > /etc/audit/rules.d/pve.rules <<'EOF'
+            cat > "$RULES_FILE" <<'EOF'
             -w /etc/pve/ -p wa -k pve-config
             EOF
+
+            # auditctl stops at the first rule the kernel already has ("Rule exists") and
+            # skips every rule after it. Leave out lines another rules.d file already holds.
+            for other in /etc/audit/rules.d/*.rules; do
+              if [ "$other" != "$RULES_FILE" ]; then
+                grep -vxF -f "$other" "$RULES_FILE" > "$RULES_FILE.tmp"
+                cat "$RULES_FILE.tmp" > "$RULES_FILE"
+              fi
+            done
+            rm -f "$RULES_FILE.tmp"
+
+            # augenrules moves a bare -D to the top of audit.rules, so each load clears the
+            # loaded rules first. Without one, a rule from an earlier load collides again.
+            if ! grep -qE '^[[:space:]]*-D[[:space:]]*$' /etc/audit/rules.d/*.rules; then
+              echo "-D" >> "$RULES_FILE"
+            fi
 
             augenrules --load
             systemctl restart auditd
