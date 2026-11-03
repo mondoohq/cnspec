@@ -49,6 +49,7 @@ policies:
           - uid: mondoo-anthropic-security-limit-org-admins
           - uid: mondoo-anthropic-security-no-pending-admin-invites
           - uid: mondoo-anthropic-security-no-expired-pending-invites
+          - uid: mondoo-anthropic-security-no-admin-service-accounts
       - title: Credential Hygiene
         filters: asset.family.contains("claude")
         checks:
@@ -62,6 +63,14 @@ policies:
         filters: asset.family.contains("claude")
         checks:
           - uid: mondoo-anthropic-security-activity-log-available
+      - title: Cost Controls
+        filters: asset.platform == "claude-organization"
+        checks:
+          - uid: mondoo-anthropic-security-member-spend-limits
+      - title: Managed Agents
+        filters: asset.platform == "claude"
+        checks:
+          - uid: mondoo-anthropic-security-agent-mcp-servers-https
     scoring_system: highest impact
 
 queries:
@@ -289,3 +298,106 @@ queries:
 
             1. Provision an **admin API key** scoped for security monitoring.
             2. Ingest the organization activity feed into your SIEM for retention and review.
+
+  - uid: mondoo-anthropic-security-no-admin-service-accounts
+    title: Ensure service accounts do not hold the organization admin role
+    impact: 70
+    mql: |
+      claude.organization.serviceAccounts.where(archivedAt == empty).all(organizationRole != "admin")
+    docs:
+      desc: |
+        This check ensures no active service account holds the admin role in the organization. A service account is a non-human identity that automation and workload identity federation act through. With the admin role it can add members, change roles, and issue API keys without a person approving the change.
+
+        **Why this matters**
+
+        - **Unattended privilege:** A leaked credential or a misconfigured federation rule for an admin service account hands over control of the whole organization.
+        - **Weak attribution:** Changes made by a service account are not tied to a person, so they are harder to review and to dispute.
+
+        **Risk mitigation**
+
+        - **Developer role for automation:** Workloads that call the API need the developer role, not admin.
+        - **Human administrators:** Keep organization administration with named members whose actions appear under their own identity in the activity log.
+      audit: |
+        ### Audit via Console
+
+        1. Open **Settings > Service accounts** in the Claude Console.
+        2. Review the organization role of each active service account.
+
+        A passing result shows no active service account with the admin role. A failing result names a service account that holds it.
+      remediation:
+        - id: console
+          desc: |
+            To remove the admin role from a service account:
+
+            1. Open **Settings > Service accounts** in the Claude Console.
+            2. Select the service account that holds the admin role.
+            3. Change its organization role to **Developer**.
+            4. If the account no longer serves a workload, archive it instead.
+
+  - uid: mondoo-anthropic-security-member-spend-limits
+    title: Ensure every organization member has a spend limit
+    impact: 50
+    mql: |
+      limitedMembers = claude.organization.effectiveSpendLimits.where(actorType == "user_actor" && amount != empty).map(actorEmail)
+      claude.organization.members.all(email.in(limitedMembers))
+    docs:
+      desc: |
+        This check ensures each organization member is capped by a spend limit in at least one period. The limit may be set on the member directly or inherited from a seat tier, an RBAC group, a workspace, or the organization. A member with no effective limit in any period can spend without bound.
+
+        **Why this matters**
+
+        - **Leaked credentials:** An attacker holding a member's API key or session can run up charges until someone notices. A spend limit caps that loss.
+        - **Runaway automation:** A script or agent stuck in a loop consumes tokens at machine speed. A limit stops it at a known cost.
+
+        **Risk mitigation**
+
+        - **Organization default:** An organization-wide limit covers every member, including members added later.
+        - **Tighter limits where needed:** Seat tier, group, and workspace limits narrow the cap for members who need less.
+      audit: |
+        ### Audit via Console
+
+        1. Open **Settings > Spend limits** in the Claude Console.
+        2. Review the effective limit for each member across the daily, weekly, and monthly periods.
+
+        A passing result shows every member with a limit in at least one period. A failing result shows a member with no limit in any period.
+      remediation:
+        - id: console
+          desc: |
+            To cap spend for every member:
+
+            1. Open **Settings > Spend limits** in the Claude Console.
+            2. Set an organization-wide monthly limit so that every member, including members added later, inherits a cap.
+            3. Set lower limits on seat tiers, groups, or individual members where their usage warrants it.
+
+  - uid: mondoo-anthropic-security-agent-mcp-servers-https
+    title: Ensure managed agents reach MCP servers over HTTPS
+    impact: 70
+    mql: |
+      claude.agents.where(archivedAt == empty).all(mcpServers.values.all(_ == /^https:\/\//i))
+    docs:
+      desc: |
+        This check ensures every MCP server URL configured on an active managed agent uses HTTPS. An agent calls its MCP servers during a session, sending tool inputs drawn from the conversation and receiving tool results that the model then acts on.
+
+        **Why this matters**
+
+        - **Confidentiality:** Over plain HTTP, tool calls and their results cross the network in cleartext, along with any credential the server expects in the request.
+        - **Integrity:** Without TLS, anyone on the network path can alter tool results and steer the agent with injected instructions.
+
+        **Risk mitigation**
+
+        - **TLS for every server:** HTTPS authenticates the server and protects tool traffic in both directions.
+      audit: |
+        ### Audit via Console
+
+        1. Open **Agents** in the Claude Console.
+        2. For each active agent, review the URLs of its configured MCP servers.
+
+        A passing result shows every MCP server URL beginning with `https://`. A failing result names an agent with a server reached over another scheme.
+      remediation:
+        - id: console
+          desc: |
+            To move an agent's MCP servers to HTTPS:
+
+            1. Serve each MCP server behind TLS with a certificate the agent can validate.
+            2. Open the agent in the Claude Console and replace each `http://` server URL with its `https://` equivalent.
+            3. If a server cannot be served over TLS, remove it from the agent.
