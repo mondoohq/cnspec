@@ -87,6 +87,10 @@ type LocalScanner struct {
 	strict bool
 	// exceptions is how exceptions from config files are treated (ADR-0006).
 	exceptions *exceptionsConfig
+	// installPolicyRequirements installs every provider the bundle's policies
+	// and packs require before scanning. Off, only the providers the assets
+	// connect with (and their dependencies) are installed.
+	installPolicyRequirements bool
 }
 
 const (
@@ -134,6 +138,17 @@ func WithReportType(reportType ReportType) ScannerOption {
 func WithAutoUpdate(onoff bool) ScannerOption {
 	return func(s *LocalScanner) {
 		s.autoUpdate = onoff
+	}
+}
+
+// WithInstallPolicyRequirements installs every provider the bundle's policies
+// and packs list under require: before the scan. Off (the default), a scan
+// installs only the providers its assets connect with; policies whose filters
+// need any other provider cannot apply to those assets, and their filters are
+// skipped because they do not compile.
+func WithInstallPolicyRequirements(onoff bool) ScannerOption {
+	return func(s *LocalScanner) {
+		s.installPolicyRequirements = onoff
 	}
 }
 
@@ -500,10 +515,10 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		return nil, err
 	}
 
-	// Ensure all required providers are installed before we try to run the scan.
-	// We only check here for bundles fetched from the server. Local policy bundles
-	// already have their requirements ensured before compilation in loadPolicies().
-	if job.Bundle != nil && upstream != nil && upstream.Creds != nil && job.Bundle.HasRequirements() {
+	// Install the providers the space bundle requires, only on request. By
+	// default the assets' connections bring their own providers, and filters
+	// that need any other provider are skipped because they do not compile.
+	if s.installPolicyRequirements && job.Bundle != nil && upstream != nil && upstream.Creds != nil && job.Bundle.HasRequirements() {
 		if err := job.Bundle.EnsureRequirements(s.autoUpdate); err != nil {
 			return nil, errors.Wrap(err, "failed to ensure policy requirements")
 		}
@@ -1226,6 +1241,8 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 			Runtime:          job.runtime,
 			ProgressReporter: job.ProgressReporter,
 			exceptions:       s.exceptions,
+
+			installPolicyRequirements: s.installPolicyRequirements,
 		}
 		log.Debug().Str("asset", job.Asset.Name).Msg("run scan")
 		res, policyErr = scanner.run()
@@ -1421,6 +1438,8 @@ type localAssetScanner struct {
 	// compiledQueries are the queries of the asset's compiled bundle, set
 	// when the bundle is compiled locally; they translate excepted check UIDs.
 	compiledQueries []*policy.Mquery
+	// installPolicyRequirements is the scanner's; see WithInstallPolicyRequirements.
+	installPolicyRequirements bool
 }
 
 // run() runs a bundle on a single asset. It returns the results of the scan and an error if the scan failed. Even in
@@ -1563,9 +1582,9 @@ func (s *localAssetScanner) prepareAsset() error {
 	// compiles into every asset that follows it.
 	bundle := s.job.Bundle.CloneVT()
 
-	// Ensure any required providers declared in the bundle are installed
-	// before we try to compile it. This handles bundles with Require metadata.
-	if bundle.HasRequirements() {
+	// Install the providers the bundle requires, only on request. By default
+	// the compile below drops what needs a provider that is not installed.
+	if s.installPolicyRequirements && bundle.HasRequirements() {
 		if err := bundle.EnsureRequirements(true); err != nil {
 			log.Warn().Err(err).Msg("failed to ensure some policy requirements, continuing with available providers")
 		}
