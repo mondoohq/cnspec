@@ -862,15 +862,7 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 			policy.ComputedFilters = &Filters{Items: map[string]*Mquery{}}
 		}
 		if err := policy.ComputedFilters.Compile(ownerMrn, conf.CompilerConfig); err != nil {
-			if conf.RemoveFailing {
-				// The policy's own filters need a provider that is not
-				// installed, so the policy cannot apply here.
-				log.Warn().Err(err).Str("policy", policy.Mrn).Msg("policy filters do not compile, dropping the policy's groups")
-				policy.ComputedFilters = &Filters{Items: map[string]*Mquery{}}
-				policy.Groups = nil
-			} else {
-				return nil, multierr.Wrap(err, "failed to compile policy filters")
-			}
+			return nil, multierr.Wrap(err, "failed to compile policy filters")
 		}
 
 		// ---- GROUPs -------------
