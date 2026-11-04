@@ -46,7 +46,7 @@ require (
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/zclconf/go-cty v1.19.0
 	go.mondoo.com/mondoo-go v0.0.0-20261031000800-f0b80cba330d
-	go.mondoo.com/mql v0.0.0-20261101143542-9d9f37442d90
+	go.mondoo.com/mql v0.0.0-20261102204944-01d9adc16ef8
 	go.mondoo.com/ranger-rpc v0.8.1
 	gocloud.dev v0.47.0
 	golang.org/x/sync v0.24.0
@@ -371,7 +371,7 @@ require (
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad // indirect
 	k8s.io/kubelet v0.37.2 // indirect
-	modernc.org/libc v1.79.1 // indirect
+	modernc.org/libc v1.80.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 	modernc.org/sqlite v1.61.1 // indirect
