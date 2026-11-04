@@ -38,20 +38,22 @@ import (
 	"go.mondoo.com/mql/providers-sdk/v1/upstream"
 )
 
-// installPolicyRequirementsFlag turns the pre-scan install of every provider a
-// policy's require: names back on. Off (the default), a scan installs only the
-// providers its assets connect with, plus their declared dependencies; a policy
-// whose filters need any other provider does not compile, so it cannot apply to
-// those assets anyway.
+// installPolicyRequirementsFlag installs every provider that a policy bundle
+// compiled on this machine (-f, or the registry bundles of an incognito scan)
+// names under require: before it is compiled. Off (the default), a scan installs
+// only the providers its assets connect with, plus their declared dependencies.
+//
+// Bundles fetched from Mondoo Platform never have their requirements installed:
+// they are not compiled here, and filter evaluation skips the filters that need
+// a provider that is not installed.
 const installPolicyRequirementsFlag = "install-policy-requirements"
 
-// installPolicyRequirementsEnabled reports whether a scan installs every
-// provider its policies require before it starts.
+// installPolicyRequirementsEnabled reports whether a scan installs the
+// providers that a locally compiled policy bundle requires.
 //
 // Precedence, highest first:
 //  1. the --install-policy-requirements flag on scan, when given
-//  2. the MONDOO_INSTALL_POLICY_REQUIREMENTS environment variable, which is how
-//     `serve` (no such flag) turns it on
+//  2. the MONDOO_INSTALL_POLICY_REQUIREMENTS environment variable
 //  3. install-policy-requirements in mondoo.yml
 //  4. off
 //
@@ -112,7 +114,7 @@ func init() {
 	_ = scanCmd.Flags().MarkHidden("output-scan-db")
 	_ = scanCmd.Flags().Bool("collect-support-bundle", false, "Collect a support bundle (debug logs, asset bundle, inventory, resolved policy, report, provider versions) for sharing with Mondoo support. By default writes to a timestamped directory in the current working dir; override with --support-bundle-dir.")
 	_ = scanCmd.Flags().String("support-bundle-dir", "", "Directory to write the support bundle into. Only used when --collect-support-bundle is set. Defaults to ./cnspec-support-bundle-<timestamp>/.")
-	_ = scanCmd.Flags().Bool(installPolicyRequirementsFlag, false, "Install every provider the policies list under require: before scanning, not only the providers the scanned assets connect with. Also set with MONDOO_INSTALL_POLICY_REQUIREMENTS")
+	_ = scanCmd.Flags().Bool(installPolicyRequirementsFlag, false, "Install every provider that a local policy bundle (-f, --incognito) lists under require: before compiling it, not only the providers the scanned assets connect with")
 	_ = scanCmd.Flags().String("exceptions-submit", "auto", "Preview: When to submit exceptions from mondoo.yml files to Mondoo Platform: auto (a CI run on the default branch; set MONDOO_DEFAULT_BRANCH on Jenkins, Azure Pipelines or CircleCI if they cannot tell it), always, or never")
 }
 
@@ -650,9 +652,8 @@ func (c *scanConfig) loadPolicies(ctx context.Context) error {
 			return err
 		}
 
-		// Only on request (installPolicyRequirementsFlag): by default the
-		// providers come from the assets' connections, and RemoveFailing below
-		// drops what needs any other provider.
+		// ensure all required providers are installed before we try to compile
+		// the bundle, when asked to (installPolicyRequirementsFlag)
 		if installPolicyRequirementsEnabled() && bundle.HasRequirements() {
 			if err := bundle.EnsureRequirements(AutoUpdateEnabled()); err != nil {
 				return errors.Wrap(err, "failed to ensure policy requirements")

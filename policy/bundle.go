@@ -866,21 +866,13 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 		}
 
 		// ---- GROUPs -------------
-		keptGroups := make([]*PolicyGroup, 0, len(policy.Groups))
 		for i := range policy.Groups {
 			group := policy.Groups[i]
 
 			// When filters are initially added they haven't been compiled
 			if err := group.Filters.Compile(ownerMrn, conf.CompilerConfig); err != nil {
-				if conf.RemoveFailing {
-					// The group's filters need a provider that is not installed,
-					// so the group cannot apply here; drop it, not the bundle.
-					log.Warn().Err(err).Str("policy", policy.Mrn).Str("group", group.Title).Msg("group filters do not compile, dropping group")
-					continue
-				}
 				return nil, multierr.Wrap(err, "failed to compile policy group filters")
 			}
-			keptGroups = append(keptGroups, group)
 
 			if group.Filters != nil {
 				for j := range group.Filters.Items {
@@ -904,7 +896,6 @@ func (p *Bundle) CompileExt(ctx context.Context, conf BundleCompileConf) (*Polic
 				return nil, err
 			}
 		}
-		policy.Groups = keptGroups
 
 		// ---- RISK FACTORS ---------
 		for i := range policy.RiskFactors {
@@ -1709,13 +1700,6 @@ func (c *bundleCache) precompileQuery(query *Mquery, policy *Policy) *Mquery {
 
 	// filters have no dependencies, so we can compile them early
 	if err := query.Filters.Compile(c.ownerMrn, c.conf.CompilerConfig); err != nil {
-		if c.conf.RemoveFailing {
-			// The query's filters need a provider that is not installed, so
-			// it cannot apply here; remove it like a query whose MQL fails.
-			log.Warn().Err(err).Str("mrn", query.Mrn).Msg("query filters do not compile, removing query")
-			c.removeQueries[query.Mrn] = struct{}{}
-			return nil
-		}
 		c.errors = append(c.errors, fmt.Errorf("failed to compile filters for query %s: %v", query.Mrn, err))
 		return nil
 	}

@@ -81,7 +81,6 @@ var serveApiCmd = &cobra.Command{
 			scan.WithScanSource(scan.ScanSourceService),
 			// Each run here is a remote request to the scan API.
 			scan.WithActivityTrigger(policy.AssetActivityTrigger_ASSET_ACTIVITY_TRIGGER_TRIGGERED),
-			scan.WithInstallPolicyRequirements(installPolicyRequirementsEnabled()),
 		)
 		if err := scanner.EnableQueue(); err != nil {
 			log.Fatal().Err(err).Msg("could not enable scan queue")
