@@ -87,10 +87,9 @@ type LocalScanner struct {
 	strict bool
 	// exceptions is how exceptions from config files are treated (ADR-0006).
 	exceptions *exceptionsConfig
-	// installPolicyRequirements installs every provider that the policies and
-	// packs of a locally compiled bundle require before it is compiled. Off,
-	// only the providers the assets connect with (and their dependencies) are
-	// installed.
+	// installPolicyRequirements installs every provider the bundle's policies
+	// and packs require before scanning. Off, only the providers the assets
+	// connect with (and their dependencies) are installed.
 	installPolicyRequirements bool
 }
 
@@ -142,11 +141,12 @@ func WithAutoUpdate(onoff bool) ScannerOption {
 	}
 }
 
-// WithInstallPolicyRequirements installs every provider that the policies and
-// packs of a locally compiled bundle (incognito) list under require: before it
-// is compiled. Off (the default), only the providers the assets connect with are
-// installed. Bundles fetched from Mondoo Platform never have their requirements
-// installed: they are not compiled here.
+// WithInstallPolicyRequirements installs every provider the bundle's policies
+// and packs list under require: before the scan, whether the bundle comes from
+// Mondoo Platform or is compiled locally (incognito). Off (the default), a scan
+// installs only the providers its assets connect with. A bundle from Mondoo
+// Platform is not compiled here, so filter evaluation simply skips the filters
+// that need a provider that is not installed.
 func WithInstallPolicyRequirements(onoff bool) ScannerOption {
 	return func(s *LocalScanner) {
 		s.installPolicyRequirements = onoff
@@ -516,11 +516,17 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		return nil, err
 	}
 
-	// A bundle fetched from Mondoo Platform holds the policies of the whole
-	// space, but it is not compiled here, so its requirements are not
-	// installed: the assets' connections bring their own providers, and filter
-	// evaluation skips the filters that need any other provider because they do
-	// not compile.
+	// Ensure all required providers are installed before we try to run the scan.
+	// We only check here for bundles fetched from the server. Local policy bundles
+	// already have their requirements ensured before compilation in loadPolicies().
+	// Only on request (WithInstallPolicyRequirements): by default the assets'
+	// connections bring their own providers, and filter evaluation skips the
+	// filters that need any other provider because they do not compile.
+	if s.installPolicyRequirements && job.Bundle != nil && upstream != nil && upstream.Creds != nil && job.Bundle.HasRequirements() {
+		if err := job.Bundle.EnsureRequirements(s.autoUpdate); err != nil {
+			return nil, errors.Wrap(err, "failed to ensure policy requirements")
+		}
+	}
 
 	// Enable staged discovery on root inventory assets so that providers
 	// supporting it can split discovery into phases (e.g. cluster first,

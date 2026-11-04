@@ -52,7 +52,8 @@ func TestInstallPolicyRequirementsEnabled(t *testing.T) {
 		{name: "config true", config: "install-policy-requirements: true\n", want: true},
 		{name: "env false beats config true", config: "install-policy-requirements: true\n", env: "false", want: false},
 		{name: "flag false beats env true", env: "true", args: []string{"--install-policy-requirements=false"}, want: false},
-		// An unset flag's default must not hide the environment variable.
+		// serve has no such flag and scan leaves it unset: its default must not
+		// hide the environment variable.
 		{name: "unchanged flag default does not override env", env: "true", want: true},
 	}
 	for _, tc := range tests {
