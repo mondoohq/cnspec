@@ -516,13 +516,17 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
       postgresql.conf.sslCiphers != empty
-      postgresql.conf.sslCiphers == /HIGH/
-      postgresql.conf.sslCiphers == /!aNULL/
+      // No entry enables a weak group or suite. Entries starting with ! or -
+      // remove suites, so they don't count.
+      postgresql.conf.sslCiphers != /(^|[:, ;])([^!:, ;-][^:, ;]*)?(MEDIUM|LOW|EXP|NULL|RC4|3DES|DES-CBC|MD5)/
+      postgresql.conf.sslCiphers != /(^|[:, ;])(ALL|DEFAULT|COMPLEMENTOFALL|COMPLEMENTOFDEFAULT)([:, ;]|$)/
+      // HIGH also admits the unauthenticated suites unless !aNULL removes them.
+      postgresql.conf.sslCiphers != /(^|[:, ;])HIGH([:, ;]|$)/ || postgresql.conf.sslCiphers == /(^|[:, ;])!aNULL([:, ;]|$)/
     docs:
       desc: |
         This check verifies that the server offers only cipher suites that authenticate it and provide adequate key strength.
 
-        `ssl_ciphers` in `postgresql.conf` is handed straight to the TLS library. The check requires the value to be set, to be built on the `HIGH` grouping, and to exclude the unauthenticated `aNULL` suites explicitly. A reload applies the list to subsequent handshakes.
+        `ssl_ciphers` in `postgresql.conf` is handed straight to the TLS library. The check requires the value to be set and to enable no weak grouping or suite (`ALL`, `DEFAULT`, `MEDIUM`, `LOW`, export, `NULL`, RC4, 3DES, single DES or MD5). A value built on the `HIGH` grouping must also exclude the unauthenticated `aNULL` suites explicitly, while an explicit list of strong suites needs no exclusions. A reload applies the list to subsequent handshakes.
 
         **Why this matters**
 
@@ -548,7 +552,7 @@ queries:
         openssl ciphers -v "$(sudo -u postgres psql -tAc 'SHOW ssl_ciphers;')"
         ```
 
-        A passing result is built on `HIGH` and contains `!aNULL`, and the expansion lists no suite whose authentication column reads `Au=None`. A failing result uses `ALL`, omits `!aNULL`, or is unset.
+        A passing result is either an explicit list of strong suites or built on `HIGH` with `!aNULL`, and the expansion lists no suite whose authentication column reads `Au=None`. A failing result is unset, uses `ALL`, `DEFAULT`, `MEDIUM` or `LOW`, enables a weak suite such as RC4 or 3DES, or is built on `HIGH` without `!aNULL`.
       remediation:
         - id: cli
           desc: |
