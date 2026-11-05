@@ -60,13 +60,22 @@ func TestNoOpReporter_Reports(t *testing.T) {
 	})
 }
 
-func TestErrorReporter_WorstScoreSkipsUnrated(t *testing.T) {
-	r := NewErrorReporter()
-	r.AddReport(&inventory.Asset{Mrn: "//assets/rated"}, &AssetReport{Report: &policy.Report{Score: &policy.Score{Type: policy.ScoreType_Result, Value: 55, ScoreCompletion: 100}}})
-	r.AddReport(&inventory.Asset{Mrn: "//assets/unscored"}, &AssetReport{Report: &policy.Report{Score: &policy.Score{Type: policy.ScoreType_Unscored}}})
+// Every reporter computes ScanResult.WorstScore the same way, so a scan
+// reports the same worst score whichever report type it ran with.
+func TestReporters_WorstScoreSkipsUnrated(t *testing.T) {
+	for name, r := range map[string]Reporter{
+		"aggregate": NewAggregateReporter(),
+		"error":     NewErrorReporter(),
+		"noop":      NewNoOpReporter(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			r.AddReport(&inventory.Asset{Mrn: "//assets/rated"}, &AssetReport{Report: &policy.Report{Score: &policy.Score{Type: policy.ScoreType_Result, Value: 55, ScoreCompletion: 100}}})
+			r.AddReport(&inventory.Asset{Mrn: "//assets/unscored"}, &AssetReport{Report: &policy.Report{Score: &policy.Score{Type: policy.ScoreType_Unscored}}})
 
-	res := r.Reports()
-	require.NotNil(t, res.WorstScore)
-	assert.Equal(t, uint32(55), res.WorstScore.Value)
-	assert.True(t, res.Ok)
+			res := r.Reports()
+			require.NotNil(t, res.WorstScore)
+			assert.Equal(t, uint32(55), res.WorstScore.Value)
+			assert.True(t, res.Ok)
+		})
+	}
 }
