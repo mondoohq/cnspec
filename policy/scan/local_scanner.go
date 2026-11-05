@@ -503,9 +503,13 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	// Ensure all required providers are installed before we try to run the scan.
 	// We only check here for bundles fetched from the server. Local policy bundles
 	// already have their requirements ensured before compilation in loadPolicies().
+	// A failure is not fatal: the server bundle carries the requirements of every
+	// policy in the space, most of which do not apply to the assets in this scan.
+	// Filters that reference a missing provider fail to compile and are skipped,
+	// so only the checks that depend on it drop out.
 	if job.Bundle != nil && upstream != nil && upstream.Creds != nil && job.Bundle.HasRequirements() {
 		if err := job.Bundle.EnsureRequirements(s.autoUpdate); err != nil {
-			return nil, errors.Wrap(err, "failed to ensure policy requirements")
+			log.Warn().Err(err).Msg("failed to ensure some policy requirements, continuing with available providers")
 		}
 	}
 
