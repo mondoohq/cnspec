@@ -50,6 +50,9 @@ PRODUCTS = [
     # Function Compute 3.0 has the code `FC` (the 2023-03-30 API), so `fc`; its
     # 2.0 predecessor is a separate product, `FC-Open`, which is not used here.
     "cloudsso", "cr", "elasticsearch", "fc",
+    # Platform for AI: EAS inference services and gateways, and DSW notebooks.
+    # Model Studio (code `ModelStudio`) is the API key management product.
+    "eas", "modelstudio", "pai-dsw",
 ]
 
 
